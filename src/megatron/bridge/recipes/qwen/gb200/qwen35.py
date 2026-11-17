@@ -33,7 +33,9 @@ from megatron.bridge.training.mixed_precision import bf16_mixed, bf16_with_mxfp8
 
 
 _QWEN35_9B_BASE = "Qwen/Qwen3.5-9B-Base"
+_QWEN35_9B_BASE_REVISION = "68c46c4b3498877f3ef123c856ecfde50c39f404"  # pragma: allowlist secret
 _QWEN35_35B_A3B_BASE = "Qwen/Qwen3.5-35B-A3B-Base"
+_QWEN35_35B_A3B_BASE_REVISION = "0f0813072d2358973511097385626f21fcb6d422"  # pragma: allowlist secret
 _QWEN35_35B_A3B_INSTRUCT_REVISION = "59d61f3ce65a6d9863b86d2e96597125219dc754"  # pragma: allowlist secret
 _CODERFORGE_REVISION = "060fca96cf723b2ebab3181e9e59fafd273df3cb"  # pragma: allowlist secret
 
@@ -75,7 +77,12 @@ def _qwen35_text_35b_a3b_long_context_common(
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["gdn_norm_out", "moe"]
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # NCCL EP sizes its dispatch buffers once; packed (THD) batches take their per-rank bound from the pack length.
+    cfg.model.max_seq_length_per_sample = seq_length
+    # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
+    # which NCCL EP's faster dispatch exposes as a CPU stall.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
     cfg.model.moe_router_fusion = True
@@ -118,10 +125,8 @@ def _qwen35_text_35b_a3b_long_context_common(
         "CUDA_DEVICE_MAX_CONNECTIONS": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
     }
     cfg.checkpoint.load = None
     return cfg
@@ -194,12 +199,13 @@ def qwen35_text_9b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Return a text-only Qwen3.5-9B pretraining config for eight GB200 GPUs."""
     cfg = _pretrain_common()
 
-    text_config = AutoConfig.from_pretrained(_QWEN35_9B_BASE).text_config
+    text_config = AutoConfig.from_pretrained(_QWEN35_9B_BASE, revision=_QWEN35_9B_BASE_REVISION).text_config
     # The nested text config intentionally omits ``architectures``. AutoBridge
     # needs it to select the registered causal-LM bridge instead of the VLM.
     text_config.architectures = ["Qwen3_5ForCausalLM"]
     cfg.model = AutoBridge.from_hf_config(text_config).get_model_config()
     cfg.tokenizer.tokenizer_model = _QWEN35_9B_BASE
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN35_9B_BASE_REVISION}
     cfg.dataset.seq_length = 4096
     cfg.dataset.blend = None
     cfg.dataset.num_workers = 8
@@ -272,9 +278,11 @@ def qwen35_text_9b_pretrain_8gpu_gb200_bf16_deterministic_config() -> ConfigCont
     cfg = qwen35_text_9b_pretrain_8gpu_gb200_bf16_config()
     apply_determinism_overrides(cfg)
 
-    # Standalone Qwen3.5 override, not part of apply_determinism_overrides: Megatron-Core rejects
-    # deterministic_mode with Gated DeltaNet unless the torch kernel backend is used.
+    # TODO: revert the two overrides below once a deterministic fused GDN kernel is available.
+    # Megatron-Core rejects deterministic_mode with Gated DeltaNet unless the torch backend is used.
     cfg.model.gdn_kernel_backend = "torch"
+    # MBS 2 OOMs with the torch GDN backend.
+    cfg.train.micro_batch_size = 1
 
     # Keep the exact process environment visible on the recipe.
     cfg.env_vars = {
@@ -287,12 +295,13 @@ def qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Return a text-only Qwen3.5-35B-A3B pretraining config for eight GB200 GPUs."""
     cfg = _pretrain_common()
 
-    text_config = AutoConfig.from_pretrained(_QWEN35_35B_A3B_BASE).text_config
+    text_config = AutoConfig.from_pretrained(_QWEN35_35B_A3B_BASE, revision=_QWEN35_35B_A3B_BASE_REVISION).text_config
     # The nested text config intentionally omits ``architectures``. AutoBridge
     # needs it to select the registered causal-LM bridge instead of the VLM.
     text_config.architectures = ["Qwen3_5MoeForCausalLM"]
     cfg.model = AutoBridge.from_hf_config(text_config).get_model_config()
     cfg.tokenizer.tokenizer_model = _QWEN35_35B_A3B_BASE
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN35_35B_A3B_BASE_REVISION}
     cfg.dataset.seq_length = 4096
     cfg.dataset.blend = None
     cfg.dataset.num_workers = 8
@@ -342,7 +351,10 @@ def qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.rng.te_rng_tracker = True
 
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
+    # which NCCL EP's faster dispatch exposes as a CPU stall.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_num_sms = None
     cfg.model.moe_router_dtype = "fp32"
@@ -368,6 +380,11 @@ def qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
         overlap_grad_reduce=False,
         overlap_param_gather=False,
     )
+
+    # EP8 spans two four-GPU GB200 nodes in one NVL72 domain. NCCL EP discovers the
+    # NVLink domain itself, so only its dispatcher mode is declared here
+    # (high-throughput expert-major, pull dispatch / push combine).
+    cfg.env_vars = {"NCCL_EP_HT_EM_PULL_PUSH": 1}
     return cfg
 
 

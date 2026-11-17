@@ -45,7 +45,6 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 @pytest.fixture
 def native_hf_beam():
-    pytest.importorskip("transformers", minversion="5.20.1", reason="Native Beam requires Transformers >= 5.20.1")
     from transformers.models import beam
 
     return beam

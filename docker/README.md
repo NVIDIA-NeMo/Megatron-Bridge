@@ -37,10 +37,11 @@ as the final image, independently of the other Bridge dependencies. BuildKit cac
 it by platform, base image, source revision, GPU targets, and installer; registry
 caches must export intermediate stages with `mode=max` (as Bridge CI already does).
 The build checks that the wheel contains every requested GPU target without requiring
-a GPU. The base toolkit must support every requested target; the default PyTorch 26.09
-base supplies CUDA 13.4.1 with Rubin support. The installer's compiler check fails early
-for an older toolkit. The pinned MoK source owns architecture selection and its
-ThunderKittens compatibility patches, applied by `scripts/prepare_thunderkittens.sh`.
+a GPU. The base toolkit must support every requested target. The default base follows
+the regular `fw-base` image selected in `Dockerfile.ci`; the installer's compiler check
+fails early if that toolkit cannot build every requested target. The pinned MoK source
+owns architecture selection and its ThunderKittens compatibility patches, applied by
+`scripts/prepare_thunderkittens.sh`.
 
 Build only the MoK wheel stage on either native builder, for example:
 
@@ -235,7 +236,7 @@ docker build \
 | `APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH` | Set to `True` to apply the torch.library finalizer patch; `False` for base images it does not apply against (e.g. Rubin) |
 | `INSTALL_DEEPEP` | Set to `True` to build and install DeepEP and nvshmem |
 | `DEEPEP_COMMIT` | DeepEP git commit SHA |
-| `MOK_COMMIT` | Full Mixture of Kittens source commit SHA; defaults to `851378eae9799992b35f6312e262e7ca1bcb6831` |
+| `MOK_COMMIT` | Full Mixture of Kittens source commit SHA; defaults to `31a3dd0e994abd3b2fa20876baada30a7e5d9ee5` |
 | `MOK_ARCH` | GPU targets in each CPU platform's MoK wheel: `ALL` (default, Blackwell and Rubin), `SM100` (GB200/B200), `SM103` (GB300/B300), or `SM107` (Rubin) |
 | `REINSTALL_NVSHMEM` | Set to `True` to reinstall nvshmem (`nvidia-nvshmem-cu13`) over the base image version; only applied when `INSTALL_DEEPEP=True` |
 | `MCORE_TRIGGERED_TESTING` | Skip uv lockfile check for cross-version Megatron-LM testing |

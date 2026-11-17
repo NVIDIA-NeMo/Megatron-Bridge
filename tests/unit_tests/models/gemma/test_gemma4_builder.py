@@ -216,22 +216,19 @@ class TestGemma4ModelConfigRouting:
         assert Gemma4Bridge.MODEL_CONFIG_CLASS is Gemma4ModelConfig
         assert Gemma4Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
-    def test_vl_bridge_text_mode_returns_text_builder_config(self):
+    @pytest.mark.parametrize(
+        ("make_hf_config", "config_class"),
+        [(_dense_hf_config, Gemma4DenseModelConfig), (_moe_hf_config, Gemma4ModelConfig)],
+        ids=["dense", "moe"],
+    )
+    def test_vl_bridge_text_mode_returns_text_builder_config(self, make_hf_config, config_class):
         bridge = Gemma4VLBridge()
         bridge.gemma4_conversion_mode = "text"
 
-        model_config = bridge.hf_config_to_model_config(SimpleNamespace(text_config=_dense_hf_config()))
+        model_config = bridge.hf_config_to_model_config(SimpleNamespace(text_config=make_hf_config()))
 
-        assert type(model_config) is Gemma4DenseModelConfig
-        assert Gemma4VLBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
-
-    @pytest.mark.parametrize("mode", ["auto", "vl", "audio"])
-    def test_vl_bridge_rejects_builder_config_outside_text_mode(self, mode):
-        bridge = Gemma4VLBridge()
-        bridge.gemma4_conversion_mode = mode
-
-        with pytest.raises(ModelConfigNotSupportedError, match="GEMMA4_CONVERSION_MODE=text"):
-            bridge.hf_config_to_model_config(SimpleNamespace(text_config=_dense_hf_config()))
+        assert type(model_config) is config_class
+        assert Gemma4VLBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
     def test_diffusion_gemma_stays_on_providers(self):
         bridge = DiffusionGemmaBridge()

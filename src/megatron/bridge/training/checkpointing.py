@@ -107,6 +107,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     read_train_state,
 )
 from megatron.bridge.training.utils.log_utils import append_to_progress_log
+from megatron.bridge.training.utils.optimizer_utils import uses_distributed_optimizer
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.utils.common_utils import (
     get_rank_safe,
@@ -1402,9 +1403,10 @@ def save_checkpoint(
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
 
     # Collect cfg, model, RNG.
-    sharded_sd_metadata = _build_sharded_state_dict_metadata(cfg.optimizer.use_distributed_optimizer, ckpt_cfg)
+    use_distributed_optimizer = _uses_distributed_optimizer(cfg.optimizer, optimizer)
+    sharded_sd_metadata = _build_sharded_state_dict_metadata(use_distributed_optimizer, ckpt_cfg)
     sharded_sd_metadata["dp_cp_group"] = _checkpoint_dp_cp_group(pg_collection)
-    if cfg.optimizer.use_distributed_optimizer:
+    if use_distributed_optimizer:
         print_rank_0(
             f"Storing distributed optimizer sharded state of type {sharded_sd_metadata['distrib_optim_sharding_type']}"
         )
@@ -2496,6 +2498,7 @@ def _load_model_weights_from_checkpoint(
     # synchronization below so cached allocations cannot starve NCCL or the
     # conversion collectives that follow.
     del state_dict
+    del load_result
     del sharded_state_dict
     gc.collect()
     if torch.cuda.is_available():
@@ -2935,6 +2938,7 @@ def _load_checkpoint_from_path(
     model = unwrap_model(model)
     pg_collection = pg_collection or get_pg_collection(model)
     ckpt_format = cfg.checkpoint.ckpt_format
+    use_distributed_optimizer = _uses_distributed_optimizer(cfg.optimizer, optimizer)
 
     # HuggingFace-format directories are only honored for pretrained model
     # initialization.  Resume training via ``checkpoint.load`` should use a
@@ -3070,9 +3074,7 @@ def _load_checkpoint_from_path(
 
         if ckpt_type == CheckpointType.LOCAL:
             # Local checkpoints don't store content metadata in common.pt.
-            sharded_sd_metadata = _build_sharded_state_dict_metadata(
-                cfg.optimizer.use_distributed_optimizer, cfg.checkpoint
-            )
+            sharded_sd_metadata = _build_sharded_state_dict_metadata(use_distributed_optimizer, cfg.checkpoint)
         else:
             sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
         print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
@@ -3087,23 +3089,36 @@ def _load_checkpoint_from_path(
             gen_sd_optim = optimizer
             gen_sd_opt_param_scheduler = opt_param_scheduler
 
-            if cfg.optimizer.use_distributed_optimizer:
+            if use_distributed_optimizer:
                 if sharded_sd_metadata is None:
                     sharded_sd_metadata = {
                         "distrib_optim_sharding_type": (
                             "fully_sharded_model_space"
-                            if run_config["checkpoint"]["fully_parallel_save"]
+                            if not cfg.optimizer.use_distributed_optimizer
+                            or run_config["checkpoint"]["fully_parallel_save"]
                             else "dp_zero_gather_scatter"
                         ),
                     }
+                # Older mixed-optimizer checkpoints omitted this key and used
+                # DistributedOptimizer's model-space default.
+                sharding_type = sharded_sd_metadata.get("distrib_optim_sharding_type", "fully_sharded_model_space")
+                # Compact LayerWise state is stored in model space even when the
+                # shared metadata says dp_reshardable. Apply tensor-sharded
+                # restrictions only if either side actually uses DistOpt state.
+                has_tensor_sharded_state = (
+                    cfg.optimizer.use_distributed_optimizer
+                    or _has_distributed_optimizer(optimizer)
+                    or _has_distributed_optimizer_state(state_dict.get("optimizer", {}))
+                    or run_config.get("optimizer", {}).get("use_distributed_optimizer", False)
+                )
                 if (
                     not tp_pp_match
-                    and sharded_sd_metadata["distrib_optim_sharding_type"]
-                    not in DistributedOptimizer.checkpoint_fully_reshardable_formats
+                    and has_tensor_sharded_state
+                    and sharding_type not in DistributedOptimizer.checkpoint_fully_reshardable_formats
                 ):
                     raise RuntimeError(
                         f"{mismatch_msg}: not supported for DistributedOptimizer with sharding type"
-                        f" {sharded_sd_metadata['distrib_optim_sharding_type']}."
+                        f" {sharding_type}."
                         f" Please use `checkpoint_config.fully_parallel_save=True` for checkpoint saving."
                     )
         else:
@@ -3222,7 +3237,7 @@ def _load_checkpoint_from_path(
                 print_rank_0("Optimizer state was not saved in the FSDP checkpoint; using a fresh optimizer")
 
         optim_sd_kwargs = dict(
-            metadata=_build_sharded_state_dict_metadata(cfg.optimizer.use_distributed_optimizer, cfg.checkpoint),
+            metadata=_build_sharded_state_dict_metadata(use_distributed_optimizer, cfg.checkpoint),
             is_loading=True,
         )
         # DTensor optimizer state does not contain dtype-keyed FQNs.
@@ -3376,6 +3391,10 @@ def _load_checkpoint_from_path(
     # Load optimizer and scheduler
     if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim and not ignore_optimizer_state:
         try:
+            restore_lr_bounds = cfg.scheduler.override_opt_param_scheduler and not skip_load_to_model_and_opt
+            # The optimizer's groups still hold the LR bounds built from the current config; the
+            # checkpoint's groups replace them below.
+            built_lr_bounds = _param_group_lr_bounds(optimizer) if restore_lr_bounds else None
             if (
                 not skip_load_to_model_and_opt
                 and optimizer is not None
@@ -3413,8 +3432,10 @@ def _load_checkpoint_from_path(
                     opt_param_scheduler.load_state_dict(state_dict["lr_scheduler"])
                 else:
                     opt_param_scheduler.load_state_dict(state_dict["opt_param_scheduler"])
-            if cfg.scheduler.override_opt_param_scheduler and not skip_load_to_model_and_opt:
-                _restore_scheduler_runtime_overrides(cfg, state.train_state, optimizer, opt_param_scheduler)
+            if restore_lr_bounds:
+                _restore_scheduler_runtime_overrides(
+                    cfg, state.train_state, optimizer, opt_param_scheduler, built_lr_bounds
+                )
         except KeyError as e:
             print_rank_0(
                 "Unable to load optimizer from checkpoint {}. "
@@ -3802,16 +3823,50 @@ def _load_non_persistent_base_checkpoint(
         )
 
 
+def _param_group_lr_bounds(optimizer: MegatronOptimizer | None) -> list[dict[str, Any]] | None:
+    """Snapshot each param group's LR bounds and whether it follows the default LR schedule."""
+    if optimizer is None or getattr(optimizer, "is_stub_optimizer", False):
+        return None
+    return [
+        {
+            "max_lr": group.get("max_lr"),
+            "min_lr": group.get("min_lr"),
+            "default_config": group.get("default_config", True),
+        }
+        for group in optimizer.param_groups
+    ]
+
+
 def _restore_scheduler_runtime_overrides(
-    cfg: ConfigContainer, train_state: TrainState, optimizer: MegatronOptimizer | None, scheduler: Any | None
+    cfg: ConfigContainer,
+    train_state: TrainState,
+    optimizer: MegatronOptimizer | None,
+    scheduler: Any | None,
+    built_lr_bounds: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Restore runtime LR bounds after optimizer checkpoint groups replace them."""
+    """Restore runtime LR bounds after optimizer checkpoint groups replace them.
+
+    Groups on the default LR schedule take ``cfg.optimizer.lr`` / ``min_lr`` and decoupled-LR groups take
+    the decoupled bounds. Groups with their own LR override (``optimizer_config_override_provider``, e.g.
+    LoRA+ or LSQ scale learning) get back the bounds they were built with, given ``built_lr_bounds``
+    from :func:`_param_group_lr_bounds` taken before the optimizer state was loaded.
+    """
     if optimizer is None or getattr(optimizer, "is_stub_optimizer", False) or scheduler is None:
         print_rank_0("WARNING: scheduler override requires an optimizer and scheduler; skipping runtime LR bounds.")
         return
-    for group in optimizer.param_groups:
+    if built_lr_bounds is not None and [bounds["default_config"] for bounds in built_lr_bounds] != [
+        group.get("default_config", True) for group in optimizer.param_groups
+    ]:
+        print_rank_0(
+            "WARNING: optimizer param groups changed while loading the checkpoint; per-group LR overrides "
+            "are reset to the base LR."
+        )
+        built_lr_bounds = None
+    for i, group in enumerate(optimizer.param_groups):
         if group.get("is_decoupled_lr", False):
             max_lr, min_lr = cfg.optimizer.decoupled_lr, cfg.optimizer.decoupled_min_lr
+        elif built_lr_bounds is not None and not built_lr_bounds[i]["default_config"]:
+            max_lr, min_lr = built_lr_bounds[i]["max_lr"], built_lr_bounds[i]["min_lr"]
         else:
             max_lr, min_lr = cfg.optimizer.lr, cfg.optimizer.min_lr
         if max_lr is not None:
@@ -4182,6 +4237,32 @@ def load_fsdp_dtensor_checkpoint(
         state_dict["model"] = raw_model_state_dict
 
     return state_dict, checkpoint_name, release, CheckpointType.FSDP_DTENSOR
+
+
+def _has_distributed_optimizer(optimizer: MegatronOptimizer | None) -> bool:
+    """Find tensor-sharded DistributedOptimizer leaves inside optimizer wrappers."""
+    if isinstance(optimizer, DistributedOptimizer):
+        return True
+    if not isinstance(optimizer, MegatronOptimizer):
+        return False
+    return any(_has_distributed_optimizer(child) for child in getattr(optimizer, "chained_optimizers", ()))
+
+
+def _uses_distributed_optimizer(config: Any, optimizer: MegatronOptimizer | None) -> bool:
+    """Combine declared LayerWise mode with the constructed optimizer tree."""
+    return uses_distributed_optimizer(config) or _has_distributed_optimizer(optimizer)
+
+
+def _has_distributed_optimizer_state(state: object) -> bool:
+    """Detect saved tensor-sharded state, including nested optimizer chains."""
+    if isinstance(state, dict):
+        # DistOpt keeps this discriminator in common state, outside sharded tensors.
+        return "param_state_sharding_type" in state or any(
+            _has_distributed_optimizer_state(value) for value in state.values()
+        )
+    if isinstance(state, (list, tuple)):
+        return any(_has_distributed_optimizer_state(value) for value in state)
+    return False
 
 
 def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: CheckpointConfig) -> dict:

@@ -136,7 +136,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     layer_packed_seq_params = None if layer_uses_te_cudagraph else packed_seq_params
                     with inner_fp8_context:
                         hidden_states, context = layer(
-                            hidden_states=hidden_states,
+                            hidden_states,
                             attention_mask=attention_mask,
                             context=context,
                             context_mask=context_mask,
@@ -350,7 +350,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                         )
                         layer_packed_seq_params = None if layer_uses_te_cudagraph else packed_seq_params
                         hidden_states, context = layer(
-                            hidden_states=hidden_states,
+                            hidden_states,
                             attention_mask=attention_mask,
                             context=context,
                             context_mask=context_mask,
@@ -534,7 +534,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     )
                     with inner_fp8_context:
                         hidden_states, context = layer(
-                            hidden_states=hidden_states,
+                            hidden_states,
                             attention_mask=attention_mask,
                             context=context,
                             context_mask=context_mask,
@@ -753,7 +753,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     )
                     with self.offload_context, inner_fp8_context:
                         hidden_states, context = layer(
-                            hidden_states=hidden_states,
+                            hidden_states,
                             attention_mask=attention_mask,
                             context=context,
                             context_mask=context_mask,

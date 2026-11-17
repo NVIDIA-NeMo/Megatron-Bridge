@@ -32,7 +32,6 @@ scheduler:
   lr_warmup_iters: 0
 
 dist:
-  use_megatron_fsdp: false
   use_torch_fsdp2: false
 
 logger:
@@ -45,4 +44,5 @@ rng:
   seed: 42
 
 ddp:
+  use_megatron_fsdp: false
   grad_reduce_in_fp32: true

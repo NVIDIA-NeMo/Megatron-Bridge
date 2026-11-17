@@ -73,6 +73,12 @@ def llama3_8b_pretrain_8gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
 def llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     """LLaMA 3 8B pretrain: 8× VRNVL72, FP8-MX (alias of GB300)."""
     cfg = llama3_8b_pretrain_8gpu_gb300_fp8mx_config()
+    cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.model.fused_single_qkv_rope = True
+    # TE SwiGLU kernel; MCore requires bias_activation_fusion off with it.
+    cfg.model.use_te_activation_func = True
+    cfg.model.bias_activation_fusion = False
+    cfg.dataset.create_attention_mask = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -94,6 +100,13 @@ def llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 def llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
     """LLaMA 3 8B pretrain: 8× VRNVL72, NVFP4 (alias of GB300)."""
     cfg = llama3_8b_pretrain_8gpu_gb300_nvfp4_config()
+    # NVFP4BlockScaling takes fp8_dpa from this field, so DPA runs in FP8 under the FP4 recipe.
+    cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.model.fused_single_qkv_rope = True
+    # TE SwiGLU kernel; MCore requires bias_activation_fusion off with it.
+    cfg.model.use_te_activation_func = True
+    cfg.model.bias_activation_fusion = False
+    cfg.dataset.create_attention_mask = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -110,6 +123,8 @@ def llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
+        # FP8 recipe TE uses for the DPA enabled above.
+        "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
     }
     return cfg
 

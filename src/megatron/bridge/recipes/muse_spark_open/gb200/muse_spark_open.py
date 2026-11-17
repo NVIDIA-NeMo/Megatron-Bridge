@@ -17,8 +17,9 @@
 Every recipe dispatches the 256 routed experts with HybridEP, which needs each expert-parallel group inside one NVL72
 NVLink domain (16 nodes of 4 GPUs); allocate nodes in 16-node segments, one per NVL72 rack. The 4K and 8K SFT, LoRA,
 and image-text SFT recipes shard the experts with EP64: one EP64 group is one pipeline stage's 64 contiguous ranks, so
-the 192-GPU EP64 recipes run three pipeline stages and the 256-GPU one four. The 16-GPU image-text LoRA recipe keeps
-EP16 inside one NVLink domain. The pretraining and the 32K and 64K SFT recipes keep EP32, one group per pipeline stage
+the 192-GPU EP64 recipes run three pipeline stages and the 256-GPU one four. The 16-GPU image-text LoRA recipe and the
+16-GPU pretraining proxy, which keeps the first six decoder blocks, use EP16 inside one NVLink domain. The pretraining
+and the 32K and 64K SFT recipes keep EP32, one group per pipeline stage
 of 32 ranks: pretraining runs TP1 with full activation recompute and six pipeline stages on 192 GPUs, where that layout
 is faster than EP64 without recompute, or eight stages on 256 GPUs; the 32K recipe runs TP4/PP6/CP4 and recomputes
 only the MoE layers, and the 64K recipe runs TP4/PP6/CP4 with full activation recompute. The image-text SFT recipe
@@ -46,7 +47,7 @@ from megatron.bridge.recipes.utils.dataset_utils import (
     default_peft_config,
     default_tulu3_config,
 )
-from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS, DETERMINISM_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
@@ -239,6 +240,110 @@ def muse_spark_open_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+    }
+    return cfg
+
+
+def muse_spark_open_pretrain_16gpu_gb200_bf16_proxy_config() -> ConfigContainer:
+    """Return a deterministic 100-step text pretraining config for a six-block proxy on 16 GB200 GPUs.
+
+    The proxy keeps the first six of the 62 decoder blocks at full width, with their attention schedule: sliding-window
+    attention with RoPE in blocks 0, 2, 3, and 4, and full attention without RoPE in blocks 1 and 5. Each block keeps
+    the gated attention, the residual gates, and the latent MoE with all 256 routed experts and top-8 sigmoid
+    routing, so the proxy runs every decoder computation of the full model with 82B parameters, 5.8B of them active
+    per token. TP1/PP1/EP16 makes the 16 GPUs one HybridEP group inside one NVL72 domain, and the 16 data-parallel
+    replicas run 16 microbatches each per step at GBS 256; activations fit without recompute.
+
+    Megatron-Core deterministic mode with the unfused cross-entropy loss and NCCL Ring makes reruns on one software
+    stack repeat the same losses. Pass a checkpoint cut to the first six blocks with ``--pretrained_checkpoint`` to
+    start from natural expert routing; the recipe leaves it unset.
+
+    The peak learning rate is 3e-4, decaying to 3e-5, instead of the 192-GPU recipe's 3e-5. The cut model starts
+    above the loss of a uniform guess because its output layer was trained on the last block's output: at 3e-5 the
+    loss is still above 5 when warmup ends at step 40, while at 3e-4 it falls below 5 by step 20 and keeps falling
+    without spikes. Every other setting matches the 192-GPU recipe.
+    """
+    cfg = _pretrain_common()
+
+    cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID).get_model_config()
+    cfg.tokenizer.tokenizer_model = _MODEL_ID
+    cfg.model.seq_length = 4096
+    # The first six decoder blocks: each is an attention position followed by an MoE position.
+    cfg.model.num_layers = 12
+    cfg.model.hybrid_layer_pattern = "*E" * 6
+    # Per position: sliding-window attention in blocks 0, 2, 3, and 4, and no RoPE in the full-attention blocks 1 and 5.
+    cfg.model.window_attn_skip_freq = [1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0]
+    cfg.model.no_rope_freq = [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0]
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.cp_comm_type = "a2a"
+    cfg.model.sequence_parallel = False
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = True
+    cfg.model.freeze_audio_model = True
+    cfg.model.freeze_vision_projection = True
+    cfg.model.transformer_impl = "transformer_engine"
+    cfg.model.attention_backend = "auto"
+    # Deterministic mode requires the unfused cross-entropy loss and router aux-loss kernels.
+    cfg.model.deterministic_mode = True
+    cfg.model.cross_entropy_loss_fusion = False
+    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.moe_router_aux_loss_fusion = False
+    # The model config leaves these Megatron-Core fusions and pipeline-output deallocation off; they shorten the step.
+    cfg.model.bias_activation_fusion = True
+    cfg.model.gradient_accumulation_fusion = True
+    cfg.model.apply_rope_fusion = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.deallocate_pipeline_outputs = True
+    cfg.model.recompute_granularity = None
+    # HybridEP: the EP16 group is all 16 ranks (4 nodes) in one NVL72 domain.
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.moe_permute_fusion_into_hybridep = True
+    cfg.model.moe_shared_expert_overlap = False
+
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.num_workers = 8
+    cfg.dataset.random_seed = 1234
+
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.validation.eval_interval = 0
+    cfg.validation.eval_iters = 0
+    cfg.logger.log_interval = 1
+    cfg.logger.log_throughput = True
+    cfg.rng.seed = 1234
+    cfg.train.train_iters = 100
+    cfg.train.global_batch_size = 256
+    cfg.train.micro_batch_size = 1
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 10
+    cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=40,
+        max_lr=3e-4,
+        min_lr=3e-5,
+    )
+    cfg.scheduler.lr_decay_iters = 100
+    cfg.checkpoint.save_interval = 50
+    cfg.checkpoint.load = None
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        **DETERMINISM_ENV_VARS,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
@@ -979,6 +1084,7 @@ def muse_spark_open_sft_192gpu_gb200_bf16_multimodal_config() -> ConfigContainer
 __all__ = [
     "muse_spark_open_peft_16gpu_gb200_bf16_multimodal_config",
     "muse_spark_open_peft_64gpu_gb200_bf16_config",
+    "muse_spark_open_pretrain_16gpu_gb200_bf16_proxy_config",
     "muse_spark_open_pretrain_192gpu_gb200_bf16_config",
     "muse_spark_open_pretrain_256gpu_gb200_bf16_config",
     "muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config",

@@ -118,10 +118,10 @@ CONTAINER_MOUNTS=""
 # ==============================================================================
 # Recipe selection
 #
-# The SFT recipe is hardware-agnostic: use_fused_mhc=False (the validated, unfused
-# mHC path) runs on BOTH Hopper and Blackwell. (The fused mHC kernel currently NaNs
-# in SFT — see README Blockers — so there is no separate Blackwell recipe.) HARDWARE
-# only affects topology (nodes x gpus-per-node) below. MTP selects the recipe.
+# The SFT recipe is hardware-agnostic: it enables fused mHC on Blackwell and the
+# unfused mHC path on Hopper (see README Known Limitations for the numerics trade-off),
+# so there is no separate Blackwell recipe. HARDWARE only affects topology
+# (nodes x gpus-per-node) below. MTP selects the recipe.
 # ==============================================================================
 
 case "${MTP}" in

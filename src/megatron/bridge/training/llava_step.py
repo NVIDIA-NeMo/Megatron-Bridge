@@ -215,7 +215,7 @@ def get_batch(
         _validate_packed_parallelism(pg_collection=pg_collection)
 
     # slice batch along sequence dimension for context parallelism
-    batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
+    batch = get_batch_on_this_cp_rank(batch, dynamic_cp=False, cp_group=pg_collection.cp)
     assert batch.get("tokens") is not None or batch.get("input_ids") is not None, "tokens or input_ids must be present"
     input_ids = batch.get("tokens")
     if input_ids is None:

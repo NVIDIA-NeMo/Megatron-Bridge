@@ -110,6 +110,23 @@ class TestMinistral3BridgeProviderBridge:
         # Check rotary base configuration
         assert provider.rotary_base == 1000000
 
+    def test_provider_bridge_yarn_truncate_defaults_to_hf(self, ministral3_bridge, mock_hf_pretrained):
+        """An omitted truncate uses Hugging Face's YaRN default of rounding the correction range."""
+        assert "truncate" not in mock_hf_pretrained.config.text_config.rope_parameters
+
+        provider = ministral3_bridge.provider_bridge(mock_hf_pretrained)
+
+        assert provider.yarn_correction_range_round_to_int is True
+
+    @pytest.mark.parametrize("truncate", [True, False])
+    def test_provider_bridge_yarn_truncate_explicit(self, ministral3_bridge, mock_hf_pretrained, truncate):
+        """An explicit truncate in rope_parameters is preserved."""
+        mock_hf_pretrained.config.text_config.rope_parameters["truncate"] = truncate
+
+        provider = ministral3_bridge.provider_bridge(mock_hf_pretrained)
+
+        assert provider.yarn_correction_range_round_to_int is truncate
+
     def test_provider_bridge_hf_config_attribute(self, ministral3_bridge, mock_hf_pretrained):
         """Test provider_bridge sets hf_config attribute."""
         provider = ministral3_bridge.provider_bridge(mock_hf_pretrained)

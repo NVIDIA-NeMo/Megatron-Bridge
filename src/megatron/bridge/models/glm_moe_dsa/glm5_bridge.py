@@ -18,7 +18,8 @@ from typing import Any
 
 import torch
 from megatron.core.models.hybrid.hybrid_model import HybridModel
-from transformers import GlmMoeDsaForCausalLM
+from megatron.core.transformer.enums import AttnBackend
+from transformers import GlmMoeDsaForCausalLM, PretrainedConfig
 
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -28,8 +29,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.glm_moe_dsa.glm5_config import GLM5ModelConfig
 from megatron.bridge.models.glm_moe_dsa.glm5_provider import GLM5ModelProvider, glm_hybrid_pattern
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 logger = logging.getLogger(__name__)
@@ -57,11 +58,14 @@ class GLM5Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("zai-org/GLM-5.1")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
+    MODEL_CONFIG_CLASS = GLM5ModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
+
     @classmethod
-    def megatron_to_hf_config(cls, provider: GLM5ModelProvider) -> dict:
+    def megatron_to_hf_config(cls, provider: GLM5ModelProvider | GLM5ModelConfig) -> dict:
         """Export HF block counts and preserve the reference model's context length."""
         config = super().megatron_to_hf_config(provider)
         pattern = provider.hybrid_layer_pattern.split("/")[0].replace("|", "")
@@ -86,77 +90,78 @@ class GLM5Bridge(MegatronModelBridge):
             return False
         return super()._should_map_hf_config_field(hf_config, hf_name, megatron_name, value)
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GLM5ModelProvider:
-        provider = super().provider_bridge(hf_pretrained)
-        hf_config = hf_pretrained.config
-
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.add_bias_linear = False
-        provider.share_embeddings_and_output_weights = False
-        provider.qk_layernorm = True
-        provider.multi_latent_attention = True
-        # Megatron Core DSA prohibits rope fusion
-        provider.apply_rope_fusion = False
-        provider.is_hybrid_model = True
-
-        # Disable MTP (Multi-Token Prediction) by default
-        # HF config has num_nextn_predict_layers=1
-        provider.mtp_num_layers = None
-
-        provider.moe_grouped_gemm = True
-        provider.moe_router_pre_softmax = True
-        provider.moe_token_dispatcher_type = "flex"
-        provider.moe_flex_dispatcher_backend = "hybridep"
-        provider.moe_flex_dispatcher_num_sms = 16
-        provider.moe_permute_fusion_into_hybridep = False
-        provider.moe_router_load_balancing_type = "seq_aux_loss"
-        provider.moe_shared_expert_overlap = True
-        provider.moe_router_score_function = "sigmoid"
-        provider.moe_router_enable_expert_bias = True
-        provider.moe_router_bias_update_rate = 0
-        provider.moe_router_dtype = "fp32"
-        provider.moe_permute_fusion = True
-
-        provider.hidden_dropout = 0.0
-        provider.attention_softmax_in_fp32 = False
-
-        provider.make_vocab_size_divisible_by = 1280
-
-        # GLM5-specific: computed fields not in CONFIG_MAPPING
-        provider.hybrid_layer_pattern = glm_hybrid_pattern(
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Map a GLM-5 HF config to ``GLM5ModelConfig`` kwargs, as ``GLM5ModelProvider`` was configured."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        hybrid_layer_pattern = glm_hybrid_pattern(
             num_layers=hf_config.num_hidden_layers, first_k_dense_replace=hf_config.first_k_dense_replace
         )
-        provider.num_layers = 2 * hf_config.num_hidden_layers
-        provider.moe_layer_freq = [int(symbol == "E") for symbol in provider.hybrid_layer_pattern]
-        provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
-        # GlmMoeDsaConfig may normalize qk_rope_head_dim to head_dim while
-        # loading GLM-5.2. Recover the RoPE width from the model's invariant:
-        # total QK width = non-RoPE width + RoPE width.
-        provider.qk_pos_emb_head_dim = hf_config.qk_head_dim - hf_config.qk_nope_head_dim
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=False,
+            qk_layernorm=True,
+            multi_latent_attention=True,
+            # Megatron Core DSA prohibits rope fusion
+            apply_rope_fusion=False,
+            is_hybrid_model=True,
+            # Disable MTP (Multi-Token Prediction) by default
+            # HF config has num_nextn_predict_layers=1
+            mtp_num_layers=None,
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=True,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_flex_dispatcher_num_sms=16,
+            moe_permute_fusion_into_hybridep=False,
+            moe_router_load_balancing_type="seq_aux_loss",
+            moe_shared_expert_overlap=True,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_bias_update_rate=0,
+            moe_router_dtype="fp32",
+            moe_permute_fusion=True,
+            hidden_dropout=0.0,
+            attention_softmax_in_fp32=False,
+            make_vocab_size_divisible_by=1280,
+            # HybridModelProvider defaults that the builder config does not share.
+            attention_backend=AttnBackend.flash,
+            bias_dropout_fusion=True,
+            # GLM5-specific: computed fields not in CONFIG_MAPPING
+            hybrid_layer_pattern=hybrid_layer_pattern,
+            num_layers=2 * hf_config.num_hidden_layers,
+            moe_layer_freq=[int(symbol == "E") for symbol in hybrid_layer_pattern],
+            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size * hf_config.n_shared_experts,
+            # GlmMoeDsaConfig may normalize qk_rope_head_dim to head_dim while
+            # loading GLM-5.2. Recover the RoPE width from the model's invariant:
+            # total QK width = non-RoPE width + RoPE width.
+            qk_pos_emb_head_dim=hf_config.qk_head_dim - hf_config.qk_nope_head_dim,
+            # GLM5-specific: rotary_base is nested in rope_parameters
+            rotary_base=hf_config.rope_parameters["rope_theta"],
+            # GLM5 uses default rope (no YaRN scaling)
+            rotary_scaling_factor=1.0,
+            mscale=1.0,
+            mscale_all_dim=1.0,
+            cp_comm_type="allgather",
+            # DSA indexer params
+            experimental_attention_variant="dsa",
+            dsa_indexer_head_dim=hf_config.index_head_dim,
+            dsa_indexer_n_heads=hf_config.index_n_heads,
+            dsa_indexer_topk=hf_config.index_topk,
+            dsa_indexer_rope_interleaved=hf_config.indexer_rope_interleave,
+            dsa_indexer_topk_freq=getattr(hf_config, "index_topk_freq", 1),
+            dsa_indexer_skip_topk_offset=getattr(hf_config, "index_skip_topk_offset", 0),
+            dsa_indexer_rotate_activation=False,
+            dsa_indexer_k_norm_epsilon=1e-6,
+            dsa_indexer_loss_coeff=0.001,
+            dsa_indexer_use_sparse_loss=True,
+        )
+        return config_kwargs
 
-        # GLM5-specific: rotary_base is nested in rope_parameters
-        provider.rotary_base = hf_config.rope_parameters["rope_theta"]
-        # GLM5 uses default rope (no YaRN scaling)
-        provider.rotary_scaling_factor = 1.0
-        provider.mscale = 1.0
-        provider.mscale_all_dim = 1.0
-        provider.cp_comm_type = "allgather"
-
-        # DSA indexer params
-        provider.experimental_attention_variant = "dsa"
-        provider.dsa_indexer_head_dim = hf_config.index_head_dim
-        provider.dsa_indexer_n_heads = hf_config.index_n_heads
-        provider.dsa_indexer_topk = hf_config.index_topk
-        provider.dsa_indexer_rope_interleaved = hf_config.indexer_rope_interleave
-        provider.dsa_indexer_topk_freq = getattr(hf_config, "index_topk_freq", 1)
-        provider.dsa_indexer_skip_topk_offset = getattr(hf_config, "index_skip_topk_offset", 0)
-        provider.dsa_indexer_rotate_activation = False
-        provider.dsa_indexer_k_norm_epsilon = 1e-6
-        provider.dsa_indexer_loss_coeff = 0.001
-        provider.dsa_indexer_use_sparse_loss = True
-
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     def generate_pipeline_layout(self, num_layers: int, pp: int, mtp_layers: int = 0) -> list[list[str]] | None:
         """Defer DSA-aligned placement to the Hybrid provider's pattern finalization.

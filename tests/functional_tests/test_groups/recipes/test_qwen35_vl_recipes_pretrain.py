@@ -33,7 +33,15 @@ from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_rec
 pytestmark = pytest.mark.integration
 
 _TP2_PP1 = {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1}
-_TINY_MODEL = {"num_layers": 4, "linear_attention_freq": [1, 1, 1, 0]}
+# Qwen3.5 configs count Hybrid positions: each HF block is a GDN (``G``) or attention (``*``)
+# mixer followed by its dense MLP (``-``). Four blocks keep the full model's 3:1 GDN/attention mix.
+_TINY_HYBRID_PATTERN = "G-G-G-*-"
+_TINY_MODEL = {
+    "num_layers": len(_TINY_HYBRID_PATTERN),
+    "hybrid_layer_pattern": _TINY_HYBRID_PATTERN,
+    "linear_attention_freq": [int(symbol == "G") for symbol in _TINY_HYBRID_PATTERN],
+    "moe_layer_freq": [int(symbol == "E") for symbol in _TINY_HYBRID_PATTERN],
+}
 
 QWEN35_VL_PRETRAIN_RECIPES = [
     (

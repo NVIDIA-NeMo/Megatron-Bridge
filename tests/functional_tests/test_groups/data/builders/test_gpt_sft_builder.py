@@ -148,7 +148,7 @@ class TestGPTSFTDatasetBuilder:
     def test_paths_packed_with_msc_url(self, ensure_test_data):
         MultiStorageClientFeature.enable()
 
-        npy_path = f"msc://default{ensure_test_data}/datasets/finetune/test.npy"
+        npy_path = f"msc://__filesystem__{ensure_test_data}/datasets/finetune/test.npy"
         msc = MultiStorageClientFeature.import_package()
         msc.Path(npy_path).touch(exist_ok=True)
 
