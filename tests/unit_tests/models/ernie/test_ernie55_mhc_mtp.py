@@ -1135,6 +1135,38 @@ class TestSharedMTP:
         ):
             assert id(model.mtp.layers[0].get_parameter(name)) not in decoder_ids, name
 
+    def test_second_names_of_a_parameter_are_shared_too(self, pg_collection):
+        """MoK registers the routed experts' weights a second time (``megakernel_experts.routed_fc1_weight<i>``)
+        and computes with those names. Every name of an MTP parameter must take the decoder's parameter."""
+
+        class SecondNames(torch.nn.Module):
+            def __init__(self, experts: torch.nn.Module) -> None:
+                super().__init__()
+                for index, param in enumerate(experts.parameters()):
+                    self.register_parameter(f"routed_weight{index}", param)
+
+        model = _build_model(pg_collection, ernie_mtp_shared_last_layer=False)
+        body = model.mtp.layers[0].mtp_model_layer
+        decoder_moe, mtp_moe = model.decoder.layers[3].inner_layer.mlp, body.layers[1].inner_layer.mlp
+        for moe in (decoder_moe, mtp_moe):  # after the experts, as MoELayer builds its MoK backend
+            moe.megakernel_experts = SecondNames(moe.experts)
+        aliases = share_mtp_body_with_last_layer(model)
+        second = {alias: source for alias, source in aliases.items() if ".megakernel_experts." in alias}
+        assert len(second) == len(list(decoder_moe.experts.parameters())) > 0
+        for alias, source in second.items():
+            assert source.startswith("decoder.layers.3.inner_layer.mlp.megakernel_experts."), source
+            assert model.get_parameter(alias) is model.get_parameter(source)
+        for index, param in enumerate(decoder_moe.experts.parameters()):
+            assert getattr(mtp_moe.megakernel_experts, f"routed_weight{index}") is param
+        # Each tensor once, under its decoder name: no MTP copy left for the optimizer to train separately.
+        assert not [name for name, _ in model.named_parameters() if "mtp_model_layer" in name]
+        model.ernie55_mtp_aliases = aliases
+        assert check_ernie55_mtp_aliases(model) == len(aliases)
+        # PEFT leaves both sides of the second names alone too.
+        excluded = model.peft_excluded_module_paths()
+        assert "decoder.layers.3.inner_layer.mlp.megakernel_experts" in excluded
+        assert any(path.endswith("mtp_model_layer.layers.1.inner_layer.mlp.megakernel_experts") for path in excluded)
+
     def test_gradients_sum_both_uses(self, pg_collection):
         """Against an unshared twin with equal weights: shared grad = decoder-use grad + MTP-use grad."""
         model = _build_model(pg_collection, params_dtype=torch.float32)
