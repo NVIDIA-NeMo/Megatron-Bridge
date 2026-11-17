@@ -95,6 +95,18 @@ that Megatron-Core's MLP modules call, so the Megatron-Core blocks stay; the MLP
 (``use_te_activation_func=True``) is not usable, because Megatron-Core rejects it together with
 ``activation_func_tanh_clamp_scale``.
 
+Routed SiTU-GLU fused with the probability multiply (``ernie_fused_situ_prob``, off by default, needs
+``ernie_fused_ops``). Megatron-Core's ``TEGroupedMLP`` runs the routed activation as ``situ_glu``, a product with
+the fp32 probabilities and a cast back to bf16: three kernels forward and six backward, with the two roundings the
+reference has. With the flag, :class:`Ernie55MoELayer` turns its ``TEGroupedMLP`` into :class:`Ernie55GroupedMLP`,
+which computes the same two roundings in one Bridge Triton kernel per direction
+(:mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_situ_prob`): output and input gradient bitwise equal to
+the unfused path, the probability gradient summed over each row in the kernel's order. ``bias_activation_fusion``
+stays ``False``; Megatron-Core's fused bias-SiTU kernels round once and are not used. Megatron-Core's activation is a
+closure inside ``TEGroupedMLP._unfused_forward``, so :class:`Ernie55GroupedMLP` carries a copy of that method; the
+copy is tied to Megatron-Core's source by a fingerprint (:data:`TE_GROUPED_MLP_FORWARD_FINGERPRINTS`), and converting
+the experts under an unknown version raises instead of running a stale copy.
+
 Known differences from the reference implementation (not bugs):
 
 * Expert token counts are exact int64 in Megatron-Core. The reference implementation registers an fp32
@@ -112,22 +124,39 @@ Known differences from the reference implementation (not bugs):
 
 from __future__ import annotations
 
+import ast
+import functools
+import hashlib
+import inspect
+import io
+import logging
 import math
+import textwrap
+import tokenize
+from collections.abc import Callable
 
 import torch
 import torch.nn.functional as F
 from megatron.core.transformer.module import MegatronModule, mark_keep_in_fp32
+from megatron.core.transformer.moe import experts as mcore_experts
+from megatron.core.transformer.moe.experts import TEGroupedMLP
 from megatron.core.transformer.moe.moe_layer import MoELayer
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.transformer_config import TransformerConfig
+from torch import Tensor
 
+from megatron.bridge.models.ernie.modeling_ernie55 import fused_dispatch
 from megatron.bridge.models.ernie.modeling_ernie55.latent_mqa_core import _param_device
 
 
 __all__ = [
+    "TE_GROUPED_MLP_FORWARD_FINGERPRINTS",
+    "Ernie55GroupedMLP",
     "Ernie55LatentProjection",
     "Ernie55MoELayer",
     "Ernie55SplitFeatureRouter",
+    "te_grouped_mlp_forward_fingerprint",
+    "use_ernie55_fused_situ_prob",
     "validate_ernie55_moe_config",
 ]
 
@@ -161,6 +190,10 @@ def validate_ernie55_moe_config(config: TransformerConfig) -> None:
       routing, and this router uses the scores directly as gate values.
     * Dropless experts (``moe_expert_capacity_factor=None``) without biases, an ungated shared
       expert, and no fused RMSNorm-linear latent up-projection.
+    * With ``ernie_fused_situ_prob``: ``ernie_fused_ops=True``, SiTU-GLU (``activation_func_tanh_clamp_scale``
+      set), and the unfused routed activation it replaces: ``bias_activation_fusion=False``,
+      ``use_te_activation_func=False``, contiguous gate and up halves (``moe_mlp_glu_interleave_size=None``) and the
+      probabilities applied after the activation (``moe_apply_probs_on_input=False``).
 
     Args:
         config: Transformer config of the MoE layers.
@@ -233,6 +266,35 @@ def validate_ernie55_moe_config(config: TransformerConfig) -> None:
         not getattr(config, "moe_latent_up_projection_rmsnorm", False),
         "moe_latent_up_projection_rmsnorm is not supported; use moe_use_norm_before_up_proj for the latent norm.",
     )
+    if getattr(config, "ernie_fused_situ_prob", False):
+        require(
+            getattr(config, "ernie_fused_ops", False),
+            "ernie_fused_situ_prob=True fuses the SiTU-GLU kernel of ernie_fused_ops with the probability multiply; "
+            "set ernie_fused_ops=True.",
+        )
+        require(
+            getattr(config, "activation_func_tanh_clamp_scale", None) is not None,
+            "ernie_fused_situ_prob=True needs SiTU-GLU (activation_func_tanh_clamp_scale set, hidden_act='situ').",
+        )
+        require(
+            not getattr(config, "bias_activation_fusion", False),
+            "ernie_fused_situ_prob=True replaces the unfused routed activation and keeps its two roundings; "
+            "bias_activation_fusion must be False.",
+        )
+        require(
+            not getattr(config, "use_te_activation_func", False),
+            "ernie_fused_situ_prob=True replaces the unfused routed activation; use_te_activation_func must be False.",
+        )
+        require(
+            getattr(config, "moe_mlp_glu_interleave_size", None) is None,
+            "ernie_fused_situ_prob=True reads contiguous gate and up halves; moe_mlp_glu_interleave_size must be "
+            "None.",
+        )
+        require(
+            not getattr(config, "moe_apply_probs_on_input", False),
+            "ernie_fused_situ_prob=True applies the probabilities after the activation; moe_apply_probs_on_input "
+            "must be False.",
+        )
 
 
 class Ernie55SplitFeatureRouter(TopKRouter):
@@ -391,6 +453,255 @@ class Ernie55LatentProjection(MegatronModule):
         """No delayed weight-gradient computation."""
 
 
+TE_GROUPED_MLP_FORWARD_FINGERPRINTS: dict[str, str] = {
+    "d3fc97c39397908b55f73c970fd57e9ea98e11c827039fcee5ddc605f6ac4068": "Megatron-Core dev e2148f486d",
+}
+"""Fingerprints (:func:`te_grouped_mlp_forward_fingerprint`) of the Megatron-Core ``TEGroupedMLP._unfused_forward``
+versions that :meth:`Ernie55GroupedMLP._unfused_forward` reproduces, with the commit each was taken from."""
+
+
+def _normalized_source_text(source: str) -> str:
+    """Python source as a token string without comments, docstrings and line breaks inside statements.
+
+    Tokens keep their text; ``INDENT``, ``DEDENT`` and ``NEWLINE`` keep the block structure. Line breaks inside
+    statements, comments and docstrings do not change the result; any change to the other tokens does.
+    """
+    source = textwrap.dedent(source)
+    docstrings = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                if isinstance(first.value.value, str):
+                    docstrings.add((first.lineno, first.col_offset))
+    tokens = []
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type in (tokenize.COMMENT, tokenize.NL, tokenize.ENDMARKER) or token.start in docstrings:
+            continue
+        if token.type in (tokenize.INDENT, tokenize.DEDENT, tokenize.NEWLINE):
+            tokens.append(tokenize.tok_name[token.type])
+        else:
+            tokens.append(token.string)
+    return " ".join(tokens)
+
+
+def _source_fingerprint(function: Callable[..., object]) -> str:
+    """SHA-256 of ``function``'s source without comments, docstrings and layout (:func:`_normalized_source_text`)."""
+    return hashlib.sha256(_normalized_source_text(inspect.getsource(function)).encode()).hexdigest()
+
+
+@functools.cache
+def te_grouped_mlp_forward_fingerprint() -> str:
+    """Fingerprint of Megatron-Core's ``TEGroupedMLP._unfused_forward``: SHA-256 of its source without layout.
+
+    :class:`Ernie55GroupedMLP` carries a copy of that method, so any change to its code changes the fingerprint and
+    makes :func:`use_ernie55_fused_situ_prob` raise until the copy is checked against the new source.
+
+    Returns:
+        The hex digest; ``"unavailable"`` if the source cannot be read.
+    """
+    try:
+        return _source_fingerprint(TEGroupedMLP._unfused_forward)
+    except (AttributeError, OSError, TypeError):
+        return "unavailable"
+
+
+class Ernie55GroupedMLP(TEGroupedMLP):
+    """Megatron-Core's ``TEGroupedMLP`` with the routed SiTU-GLU and probability multiply fused into one kernel.
+
+    :class:`Ernie55MoELayer` switches its routed experts to this class with ``ernie_fused_situ_prob``
+    (:func:`use_ernie55_fused_situ_prob`); no parameter, buffer, hook or checkpoint key changes.
+
+    :meth:`forward` is Megatron-Core's own. :meth:`_unfused_forward` is Megatron-Core's
+    ``TEGroupedMLP._unfused_forward`` (:data:`TE_GROUPED_MLP_FORWARD_FINGERPRINTS`) with one change: the activation,
+    Megatron-Core's ``bias_act_func`` closure, is :meth:`_situ_glu_prob`. For the ERNIE 5.5 configuration that
+    closure computes ``(situ_glu(fc1_output) * probs).to(dtype)``; :meth:`_situ_glu_prob` hands the same computation
+    to one fused kernel per direction. Everything around it is Megatron-Core's code: the fine-grained offloading
+    groups, ``moe_act`` recompute, fc1, fc2 and the bias; padding, paged stashing and the op-fuser path
+    (``_with_fused_impl``, FP8 and FP4 only) stay in Megatron-Core's ``forward``. Probabilities applied on the input
+    (``moe_apply_probs_on_input``) run Megatron-Core's ``_unfused_forward``.
+    """
+
+    def _unfused_forward(
+        self,
+        permuted_local_hidden_states: Tensor,
+        tokens_per_expert: Tensor | list[int],
+        permuted_probs: Tensor,
+    ) -> Tensor:
+        """Megatron-Core's ``TEGroupedMLP._unfused_forward`` with :meth:`_situ_glu_prob` as the activation.
+
+        Args:
+            permuted_local_hidden_states: The permuted (and padded) input rows of the local experts.
+            tokens_per_expert: Rows per local expert.
+            permuted_probs: The routing probability of every row, ``[rows, 1]``.
+
+        Returns:
+            The local experts' output.
+        """
+        if self.config.moe_apply_probs_on_input:
+            return super()._unfused_forward(permuted_local_hidden_states, tokens_per_expert, permuted_probs)
+
+        # From here on Megatron-Core's TEGroupedMLP._unfused_forward, statement for statement, except the activation.
+        off_interface = mcore_experts.off_interface
+        apply_module = mcore_experts.apply_module
+        setup_activation_checkpoint = self.activation_recompute and torch.is_grad_enabled()
+        offload_group_mlp = self.offload_expert_fc1 and self.offload_moe_act
+        group_includes_fc1 = offload_group_mlp and not self._use_grouped_tensor
+        offload_expert_fc1 = self.offload_expert_fc1 and not offload_group_mlp
+        offload_moe_act = (self.offload_moe_act and not offload_group_mlp) or (
+            offload_group_mlp and not group_includes_fc1
+        )
+        moe_act_group_name = "fused_group_mlp" if offload_group_mlp else "moe_act"
+        group_mlp_manager = off_interface(group_includes_fc1, permuted_local_hidden_states, "fused_group_mlp")
+        with group_mlp_manager as permuted_local_hidden_states:
+            expert_fc1_manager = off_interface(offload_expert_fc1, permuted_local_hidden_states, "expert_fc1")
+            with expert_fc1_manager as permuted_local_hidden_states:
+                fc1_output, bias_parallel = apply_module(self.linear_fc1)(
+                    permuted_local_hidden_states, tokens_per_expert
+                )
+            fc1_output = expert_fc1_manager.group_offload(
+                fc1_output,
+                forced_released_tensors=[permuted_local_hidden_states],
+                delay_offload=self.config.delay_offload_until_cuda_graph,
+            )
+
+            moe_act_manager = off_interface(offload_moe_act, fc1_output, moe_act_group_name)
+
+            if setup_activation_checkpoint:
+                self.activation_checkpoint = mcore_experts.tensor_parallel.CheckpointWithoutOutput()
+                with moe_act_manager as fc1_output:
+                    bias_act_output = self.activation_checkpoint.checkpoint(
+                        self._situ_glu_prob, fc1_output, bias_parallel, permuted_probs
+                    )
+            else:
+                with moe_act_manager as fc1_output:
+                    bias_act_output = self._situ_glu_prob(fc1_output, bias_parallel, permuted_probs)
+        output, output_bias = apply_module(self.linear_fc2)(bias_act_output, tokens_per_expert)
+        if setup_activation_checkpoint:
+            self.activation_checkpoint.discard_output_and_register_recompute(output)
+
+        output = moe_act_manager.group_offload(
+            output,
+            forced_released_tensors=[fc1_output],
+            delay_offload=self.config.delay_offload_until_cuda_graph,
+        )
+        output = group_mlp_manager.group_offload(
+            output,
+            forced_released_tensors=[permuted_local_hidden_states, fc1_output],
+            delay_offload=self.config.delay_offload_until_cuda_graph,
+        )
+        return self._apply_bias(output, output_bias, tokens_per_expert, permuted_probs)
+
+    def _situ_glu_prob(self, fc1_output: Tensor, bias_parallel: Tensor | None, permuted_probs: Tensor) -> Tensor:
+        """The routed activation ``(situ_glu(fc1_output) * permuted_probs).to(dtype)``, fused where it can be.
+
+        Takes the place of Megatron-Core's ``bias_act_func(intermediate_parallel, bias_parallel, permuted_probs)``,
+        whose SiTU-GLU branch it reproduces. The fused kernel runs for the calls that
+        :func:`~megatron.bridge.models.ernie.modeling_ernie55.fused_dispatch.situ_glu_prob_unfit_reason` accepts:
+        those whose SiTU-GLU Megatron-Core's ``situ_glu`` binding would hand to Bridge's SiTU-GLU kernel, with fp32
+        probabilities. Every other call runs Megatron-Core's operations; a CUDA call among them logs its reason once
+        per process on its rank.
+
+        Args:
+            fc1_output: The fc1 output ``[rows, 2 * moe_ffn_hidden_size]``.
+            bias_parallel: The fc1 bias, always ``None`` for ERNIE 5.5 (``add_bias_linear=False``).
+            permuted_probs: The probabilities ``[rows, 1]``.
+
+        Returns:
+            The activation ``[rows, moe_ffn_hidden_size]`` in the dtype of ``fc1_output``.
+        """
+        if bias_parallel is not None:
+            raise RuntimeError("ERNIE 5.5 routed experts have no fc1 bias; add_bias_linear must be False.")
+        if self.config.moe_paged_stash:
+            mcore_experts._mark_te_grouped_tensor(fc1_output, permuted_probs)
+        gate_scale = self.config.activation_func_tanh_clamp_scale
+        linear_scale = self.config.activation_func_tanh_clamp_scale_linear
+        linear_offset = self.config.glu_linear_offset
+        reason = fused_dispatch.situ_glu_prob_unfit_reason(
+            fc1_output, permuted_probs, gate_scale, linear_scale, linear_offset
+        )
+        if reason is None:
+            return fused_dispatch.fused_situ_glu_prob(fc1_output, permuted_probs, gate_scale, linear_scale)
+        if fc1_output.is_cuda:
+            fused_dispatch.log_once(
+                f"situ_glu_prob_fallback:{reason}",
+                "ERNIE 5.5 fused SiTU x prob (rank %d): ernie_fused_situ_prob=True, but the routed activation runs "
+                "unfused: %s.",
+                torch.distributed.get_rank() if torch.distributed.is_initialized() else 0,
+                reason,
+                level=logging.WARNING,
+                all_ranks=True,
+            )
+        # Megatron-Core's bias_act_func on this path: situ_glu through the module's binding, then the probabilities.
+        intermediate_parallel = mcore_experts.situ_glu(fc1_output, gate_scale, linear_scale, linear_offset)
+        original_dtype = intermediate_parallel.dtype
+        intermediate_parallel = intermediate_parallel * permuted_probs
+        return intermediate_parallel.to(original_dtype)
+
+
+def use_ernie55_fused_situ_prob(moe_layer: torch.nn.Module) -> bool:
+    """Switch ``moe_layer.experts`` from Megatron-Core's ``TEGroupedMLP`` to :class:`Ernie55GroupedMLP` (in place).
+
+    Only the class changes; no parameter, buffer, hook or checkpoint key does. Idempotent. Experts that are not a
+    ``TEGroupedMLP`` (``SequentialMLP`` without Transformer Engine or grouped GEMMs) keep their class and the unfused
+    activation, and every rank that holds them logs one warning.
+
+    Args:
+        moe_layer: An MoE layer (anything with an ``experts`` module).
+
+    Returns:
+        Whether the experts are an :class:`Ernie55GroupedMLP` afterwards.
+
+    Raises:
+        TypeError: If the experts are a ``TEGroupedMLP`` subclass this function does not know.
+        RuntimeError: If Megatron-Core's ``TEGroupedMLP._unfused_forward`` is not a version
+            :class:`Ernie55GroupedMLP` copies (its fingerprint is not in :data:`TE_GROUPED_MLP_FORWARD_FINGERPRINTS`).
+    """
+    experts = moe_layer.experts
+    if type(experts) is Ernie55GroupedMLP:
+        return True
+    if not isinstance(experts, TEGroupedMLP):
+        fused_dispatch.log_once(
+            f"situ_glu_prob_experts:{type(experts).__name__}",
+            "ERNIE 5.5 fused SiTU x prob (rank %d): ernie_fused_situ_prob=True, but the routed experts are %s; only "
+            "Megatron-Core's TEGroupedMLP takes the fused kernel, so they run the unfused activation.",
+            torch.distributed.get_rank() if torch.distributed.is_initialized() else 0,
+            type(experts).__name__,
+            level=logging.WARNING,
+            all_ranks=True,
+        )
+        return False
+    if type(experts) is not TEGroupedMLP:
+        raise TypeError(
+            f"ERNIE 5.5 cannot fuse the routed SiTU-GLU of {type(experts).__name__}; ernie_fused_situ_prob converts "
+            "Megatron-Core's TEGroupedMLP only."
+        )
+    fingerprint = te_grouped_mlp_forward_fingerprint()
+    if fingerprint not in TE_GROUPED_MLP_FORWARD_FINGERPRINTS:
+        raise RuntimeError(
+            "ernie_fused_situ_prob=True: Megatron-Core's TEGroupedMLP._unfused_forward is not a version that "
+            f"Ernie55GroupedMLP._unfused_forward copies (fingerprint {fingerprint}; known: "
+            f"{TE_GROUPED_MLP_FORWARD_FINGERPRINTS}). Compare the copy in modeling_ernie55/moe.py with this "
+            "Megatron-Core's method and add the fingerprint, or set ernie_fused_situ_prob=False."
+        )
+    experts.__class__ = Ernie55GroupedMLP
+    fused_dispatch.log_once(
+        "situ_glu_prob_on",
+        "ERNIE 5.5 fused SiTU x prob: on (ernie_fused_situ_prob=True); the routed experts run SiTU-GLU and the "
+        "probability multiply as one Triton kernel per direction on CUDA.",
+    )
+    if experts._with_fused_impl:
+        fused_dispatch.log_once(
+            "situ_glu_prob_op_fuser",
+            "ERNIE 5.5 fused SiTU x prob (rank %d): these routed experts run Megatron-Core's op-fuser path "
+            "(use_transformer_engine_op_fuser with FP8 or FP4), which keeps its own activation.",
+            torch.distributed.get_rank() if torch.distributed.is_initialized() else 0,
+            level=logging.WARNING,
+            all_ranks=True,
+        )
+    return True
+
+
 class Ernie55MoELayer(MoELayer):
     """Megatron-Core ``MoELayer`` with the ERNIE 5.5 router and fp32 latent projections.
 
@@ -398,7 +709,8 @@ class Ernie55MoELayer(MoELayer):
     checks that the spec installed :class:`Ernie55SplitFeatureRouter` and, for latent MoE, replaces
     ``fc1_latent_proj`` (``init_method``) and ``fc2_latent_proj`` (``output_layer_init_method``) with
     :class:`Ernie55LatentProjection`. ``fc2_norm`` (``moe_use_norm_before_up_proj``) stays
-    Megatron-Core's ``TENorm``.
+    Megatron-Core's ``TENorm``. With ``ernie_fused_situ_prob`` the routed ``TEGroupedMLP`` becomes
+    :class:`Ernie55GroupedMLP` (:func:`use_ernie55_fused_situ_prob`).
 
     Arguments after ``config`` are passed through to ``MoELayer``.
     """
@@ -418,3 +730,5 @@ class Ernie55MoELayer(MoELayer):
             self.fc2_latent_proj = Ernie55LatentProjection(
                 self.config, latent_size, self.config.hidden_size, init_method=self.config.output_layer_init_method
             )
+        if getattr(self.config, "ernie_fused_situ_prob", False):
+            use_ernie55_fused_situ_prob(self)

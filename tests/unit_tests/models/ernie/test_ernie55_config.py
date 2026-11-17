@@ -84,6 +84,7 @@ ERNIE_FIELDS = {
     "ernie_d_rotary_base": None,
     "ernie_per_row_loss": False,
     "ernie_fused_ops": True,
+    "ernie_fused_situ_prob": False,
     "ernie_fused_mhc": False,
     "ernie_muon_ns_batch_size": 1,
     "ernie_cp_key_gather_inverse_grad": False,
@@ -133,7 +134,7 @@ class TestErnie55TransformerConfig:
             _config(ernie_vha_rank=None)
 
     @pytest.mark.parametrize("value", ["false", 0, None])
-    @pytest.mark.parametrize("flag", ["ernie_fused_ops", "ernie_fused_mhc"])
+    @pytest.mark.parametrize("flag", ["ernie_fused_ops", "ernie_fused_situ_prob", "ernie_fused_mhc"])
     def test_finalize_rejects_a_fused_flag_that_is_not_a_bool(self, flag, value):
         with pytest.raises(ValueError, match=f"{flag} must be a bool"):
             _config(**{flag: value})

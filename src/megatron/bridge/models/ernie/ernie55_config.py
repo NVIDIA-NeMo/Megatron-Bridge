@@ -220,6 +220,18 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     :mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_dispatch`. The reference has no switch and always
     runs them on CUDA. There is no Hugging Face key; on the command line, ``model.ernie_fused_ops=false``."""
 
+    ernie_fused_situ_prob: bool = False
+    """Run the routed experts' SiTU-GLU and their routing-probability multiply as one Bridge Triton kernel per
+    direction (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_situ_prob`) instead of the SiTU-GLU kernel
+    followed by Megatron-Core's multiply and cast: the MoE layers turn their ``TEGroupedMLP`` into
+    :class:`~megatron.bridge.models.ernie.modeling_ernie55.moe.Ernie55GroupedMLP`. The kernel keeps the reference's
+    two roundings (the activation to bf16, then its product with the fp32 probability to bf16), so the output and the
+    input gradient are bitwise those of the unfused path; the probability gradient sums each row in the kernel's
+    order (fp32 summation order only). Needs ``ernie_fused_ops=True``, SiTU-GLU and ``bias_activation_fusion=False``
+    (:func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_moe_config`). CPU tensors and inputs the
+    kernel does not take run the unfused path. Off by default; no recipe turns it on. There is no Hugging Face key; on
+    the command line, ``model.ernie_fused_situ_prob=true``."""
+
     ernie_fused_mhc: bool = False
     """Run the hyper-connections (mHC) through Bridge's fused fp32 Triton kernels
     (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_mhc`) instead of the eager fp32 operations:
@@ -279,18 +291,20 @@ class Ernie55TransformerConfig(MLATransformerConfig):
         envelope is checked only when ``num_moe_experts`` is set.
 
         Raises:
-            ValueError: If ``ernie_fused_ops``, ``ernie_fused_mhc``, ``ernie_cp_key_gather_inverse_grad``,
-                ``ernie_reference_rmsnorm`` or ``ernie_vha_batched_mix`` is not a bool, if ``ernie_vha_batched_mix``
-                is set without ``ernie_vha_bf16_mix``, if ``ernie_muon_ns_batch_size`` is not an int of at least 1,
-                if ``ernie_per_row_loss`` is combined with ``calculate_per_token_loss`` or (with MTP)
-                ``mtp_loss_early_backward`` or an MTP loss other than cross entropy, or if a layer envelope is
-                violated.
+            ValueError: If ``ernie_fused_ops``, ``ernie_fused_situ_prob``, ``ernie_fused_mhc``,
+                ``ernie_cp_key_gather_inverse_grad``, ``ernie_reference_rmsnorm`` or ``ernie_vha_batched_mix`` is not
+                a bool, if ``ernie_vha_batched_mix`` is set without ``ernie_vha_bf16_mix``, if
+                ``ernie_muon_ns_batch_size`` is not an int of at least 1, if ``ernie_per_row_loss`` is combined with
+                ``calculate_per_token_loss`` or (with MTP) ``mtp_loss_early_backward`` or an MTP loss other than cross
+                entropy, or if a layer envelope is violated.
             RuntimeError: If Megatron-Core lacks a piece the configured context parallelism needs (see
                 :func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_context_parallel_config`).
         """
         super().finalize()
         if not isinstance(self.ernie_fused_ops, bool):
             raise ValueError(f"ernie_fused_ops must be a bool, got {self.ernie_fused_ops!r}.")
+        if not isinstance(self.ernie_fused_situ_prob, bool):
+            raise ValueError(f"ernie_fused_situ_prob must be a bool, got {self.ernie_fused_situ_prob!r}.")
         if not isinstance(self.ernie_fused_mhc, bool):
             raise ValueError(f"ernie_fused_mhc must be a bool, got {self.ernie_fused_mhc!r}.")
         if not isinstance(self.ernie_cp_key_gather_inverse_grad, bool):

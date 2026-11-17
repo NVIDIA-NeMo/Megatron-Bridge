@@ -62,6 +62,14 @@ own flag, ``ernie_fused_mhc`` (default ``False``), which the hyper-connection mo
 (:class:`~megatron.bridge.models.ernie.modeling_ernie55.hyper_connection.Ernie55HyperConnectionModule`); they
 count and log their launches here as well.
 
+Bridge's own kernel for the routed experts' SiTU-GLU times the routing probability
+(:mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_situ_prob`) has the flag ``ernie_fused_situ_prob``
+(default ``False``, which needs ``ernie_fused_ops``). With it the routed experts are
+:class:`~megatron.bridge.models.ernie.modeling_ernie55.moe.Ernie55GroupedMLP`, which calls
+:func:`fused_situ_glu_prob` for exactly the calls whose SiTU-GLU the ``situ_glu`` dispatcher would hand to the
+SiTU-GLU kernel and whose probabilities are fp32, one per row (:func:`situ_glu_prob_unfit_reason`); every other
+call keeps the unfused path.
+
 Proof of use: every fused launch counts in :data:`FUSED_OP_CALLS` under ``"<op>@<site>"``, and the first launch at
 each site logs one INFO line on global rank 0.
 """
@@ -72,6 +80,7 @@ import collections
 import functools
 import importlib
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -79,7 +88,7 @@ import torch
 from megatron.core.utils import log_single_rank
 from torch import Tensor
 
-from megatron.bridge.models.ernie.modeling_ernie55 import fused_ops
+from megatron.bridge.models.ernie.modeling_ernie55 import fused_ops, fused_situ_prob
 
 
 logger = logging.getLogger(__name__)
@@ -87,24 +96,30 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CP_UTILS_MODULE",
     "FUSED_OP_CALLS",
+    "ROUTED_EXPERTS_SITE",
     "SITU_GLU_SITES",
     "ernie55_fused_ops_enabled",
     "fused_kernels_support",
     "fused_multimax",
     "fused_situ_glu",
+    "fused_situ_glu_prob",
     "fused_thd_cp_local_rope",
     "install_ernie55_fused_ops",
     "log_once",
     "record_fused_launch",
+    "situ_glu_prob_unfit_reason",
     "thd_cp_rope_layout_fits",
     "triton_available",
 ]
 
 FUSED_OP_CALLS: collections.Counter[str] = collections.Counter()
 """Fused forward launches per ``"<op>@<site>"``: ``situ_glu@<Megatron-Core module>`` (see :data:`SITU_GLU_SITES`),
-``multimax@output_layer``, ``thd_cp_local_rope@forward`` / ``thd_cp_local_rope@inverse``, and, with
-``ernie_fused_mhc``, ``mhc_mappings@hyper_connection``, ``mhc_aggregate@hyper_connection`` and
-``mhc_post_bda@hyper_connection``."""
+``multimax@output_layer``, ``thd_cp_local_rope@forward`` / ``thd_cp_local_rope@inverse``, with ``ernie_fused_mhc``
+``mhc_mappings@hyper_connection``, ``mhc_aggregate@hyper_connection`` and ``mhc_post_bda@hyper_connection``, and with
+``ernie_fused_situ_prob`` ``situ_glu_prob@routed_experts`` (:data:`ROUTED_EXPERTS_SITE`)."""
+
+ROUTED_EXPERTS_SITE = "routed_experts"
+"""Call-site label of the fused SiTU-GLU x probability kernel in the routed experts."""
 
 SITU_GLU_SITES = (
     "megatron.core.transformer.mlp",
@@ -310,20 +325,91 @@ def fused_thd_cp_local_rope(
     )
 
 
+def fused_situ_glu_prob(
+    x: Tensor,
+    probs: Tensor,
+    gate_scale: float,
+    linear_scale: float | None = None,
+    *,
+    site: str = ROUTED_EXPERTS_SITE,
+) -> Tensor:
+    """Count, log and run the fused SiTU-GLU x probability kernel (:func:`fused_situ_prob.fused_situ_glu_prob`).
+
+    Args:
+        x: Contiguous CUDA fc1 output ``[..., 2 * n]``: the gate half, then the up half.
+        probs: Contiguous fp32 probabilities on the device of ``x``, one per row of ``x``.
+        gate_scale: ``activation_func_tanh_clamp_scale`` (the reference's ``beta``).
+        linear_scale: ``activation_func_tanh_clamp_scale_linear`` (``linear_beta``); ``None`` for a linear up half.
+        site: Call-site label for :data:`FUSED_OP_CALLS`.
+
+    Returns:
+        ``[..., n]`` in the dtype of ``x``: ``(situ_glu(x) * probs).to(x.dtype)``.
+    """
+    _record("situ_glu_prob", site, x)
+    return fused_situ_prob.fused_situ_glu_prob(x, probs, gate_scale, linear_scale)
+
+
+def _situ_glu_kernel_unfit_reason(
+    x: Tensor, gate_scale: float, linear_scale: float | None, linear_offset: float
+) -> str | None:
+    """Why the ``situ_glu`` dispatchers keep Megatron-Core's ``situ_glu`` for this call; ``None`` runs the kernel.
+
+    The reasons name no shapes, so that one log line per reason stays one line.
+    """
+    if (gate_scale, linear_scale) not in _STATE.situ_glu_scales:
+        return f"no model built with ernie_fused_ops=True has the SiTU-GLU scales {(gate_scale, linear_scale)}"
+    if linear_offset != 0.0:
+        return "glu_linear_offset is not 0"
+    if x.ndim < 1 or x.shape[-1] % 2:
+        return "the input has no even last dimension"
+    if not x.is_contiguous():
+        return "the input is not contiguous"
+    if not fused_kernels_support(x):
+        return "the input is not a CUDA bf16, fp16 or fp32 tensor, or Triton does not import"
+    return None
+
+
+def situ_glu_prob_unfit_reason(
+    x: Tensor, probs: Tensor, gate_scale: float, linear_scale: float | None = None, linear_offset: float = 0.0
+) -> str | None:
+    """Why :func:`fused_situ_glu_prob` cannot replace ``(situ_glu(x) * probs).to(x.dtype)``; ``None`` if it can.
+
+    The fused kernel computes SiTU-GLU with the arithmetic of Bridge's SiTU-GLU kernel, so it takes exactly the calls
+    for which the ``situ_glu`` dispatchers would run that kernel (the model's scales recorded with
+    ``ernie_fused_ops=True``, no linear offset, a contiguous CUDA input, Triton), with fp32 probabilities on the same
+    device, contiguous and one per row of ``x``. Megatron-Core's routed experts pass ``[rows, 1]``.
+
+    Args:
+        x: The fc1 output ``[..., 2 * n]``.
+        probs: The routing probabilities of its rows.
+        gate_scale: ``activation_func_tanh_clamp_scale``.
+        linear_scale: ``activation_func_tanh_clamp_scale_linear``.
+        linear_offset: ``glu_linear_offset``.
+
+    Returns:
+        ``None`` if the fused kernel applies, else the reason, for logging.
+    """
+    reason = _situ_glu_kernel_unfit_reason(x, gate_scale, linear_scale, linear_offset)
+    if reason is not None:
+        return reason
+    if probs.dtype != torch.float32:
+        return f"the probabilities are {str(probs.dtype).removeprefix('torch.')}, not float32"
+    if probs.device != x.device:
+        return "the probabilities are not on the input's device"
+    if not probs.is_contiguous():
+        return "the probabilities are not contiguous"
+    if probs.numel() != math.prod(x.shape[:-1]):
+        return "the probabilities do not hold one value per row of the input"
+    return None
+
+
 def _situ_glu_dispatcher(eager: Callable[..., Tensor], site: str) -> Callable[..., Tensor]:
     """Wrap Megatron-Core's ``situ_glu`` as bound in ``site``: the Triton kernel when it applies, else ``eager``."""
 
     def situ_glu(
         x: Tensor, gate_scale: float, linear_scale: float | None = None, linear_offset: float = 0.0
     ) -> Tensor:
-        if (
-            (gate_scale, linear_scale) in _STATE.situ_glu_scales
-            and linear_offset == 0.0
-            and x.ndim >= 1
-            and x.shape[-1] % 2 == 0
-            and x.is_contiguous()
-            and fused_kernels_support(x)
-        ):
+        if _situ_glu_kernel_unfit_reason(x, gate_scale, linear_scale, linear_offset) is None:
             return fused_situ_glu(x, gate_scale, linear_scale, site=site)
         return eager(x, gate_scale, linear_scale, linear_offset)
 

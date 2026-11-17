@@ -135,6 +135,49 @@ def mtp_tracked_losses() -> torch.Tensor | None:
     return tracker.get("loss_sums", tracker.get("loss_values"))
 
 
+# Rows of the routed SiTU-GLU x probability (fused_situ_prob) whose products are fp32 subnormals: they tell PyTorch's
+# IEEE multiply from libdevice's flush-to-zero mul_rn. (gate, up, probability, output gradient; None = a spread of
+# O(1) values.) a = round(situ(gate, up)) at beta 4 (beta 1 in brackets), with any linear beta:
+SITU_PROB_SUBNORMAL_ROWS: tuple[tuple[float, float, float, float | None], ...] = (
+    # a ~ -1.8e-37 (-4.5e-38), normal; a * p ~ -9e-39 (-2e-39), subnormal: the forward product.
+    (-86.0, 1.0, 0.05, None),
+    # a ~ -1.1e-38 (-2.7e-39), a bf16 subnormal; a * p ~ -2.7e-38 (-6.7e-39): a subnormal factor.
+    (-86.0, 0.06, 2.5, None),
+    # dy * p = 2^-126 - 2^-135, subnormal, whose bf16 rounding is the normal 2^-126: the activation gradient. It
+    # reaches the input gradient at beta 4.
+    (2.0, 4.0, (1 - 2**-9) * 2**-6, 2.0**-120),
+    # The same activation gradient, negative, at a gate and up whose input gradient stays normal at every beta and
+    # linear beta.
+    (0.25, 8.0, (1 - 2**-9) * 2**-6, -(2.0**-120)),
+)
+
+
+def situ_prob_subnormal_rows(
+    width: int, *, dtype: torch.dtype = torch.bfloat16, device: str | torch.device = "cpu"
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """The rows of :data:`SITU_PROB_SUBNORMAL_ROWS` as inputs of the routed activation.
+
+    Args:
+        width: Columns of the activation (half the fc1 output).
+        dtype: Dtype of the fc1 output and the output gradient.
+        device: Device of the tensors.
+
+    Returns:
+        ``x`` ``[rows, 2 * width]`` (gate half, then up half), fp32 ``probs`` ``[rows, 1]`` and the output gradient
+        ``[rows, width]``. Rows without a gradient value get ``linspace(-0.5, 2, width)``: small values give subnormal
+        probability-gradient products, and the asymmetric spread keeps their sum from cancelling.
+    """
+    gate = torch.tensor([row[0] for row in SITU_PROB_SUBNORMAL_ROWS]).unsqueeze(-1).expand(-1, width)
+    up = torch.tensor([row[1] for row in SITU_PROB_SUBNORMAL_ROWS]).unsqueeze(-1).expand(-1, width)
+    probs = torch.tensor([[row[2]] for row in SITU_PROB_SUBNORMAL_ROWS], dtype=torch.float32)
+    spread = torch.linspace(-0.5, 2.0, width)
+    out_grad = torch.stack(
+        [spread if row[3] is None else torch.full((width,), row[3]) for row in SITU_PROB_SUBNORMAL_ROWS]
+    )
+    x = torch.cat([gate, up], dim=-1)
+    return x.to(device=device, dtype=dtype), probs.to(device), out_grad.to(device=device, dtype=dtype)
+
+
 class CallRecorder:
     """Stand-in for a kernel entry point: records every call and returns ``result(*args, **kwargs)``."""
 

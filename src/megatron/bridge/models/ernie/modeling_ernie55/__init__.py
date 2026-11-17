@@ -18,7 +18,8 @@
 * H layer: Megatron-Core's DSv4 hybrid attention at compress ratio 128 with the ERNIE output gate,
   VHA head mix, plain RoPE or YaRN and sink seeding (``hca_attention``).
 * MoE layer: Megatron-Core's ``MoELayer`` with the split-feature router and fp32 latent projections
-  (``moe``).
+  (``moe``). Behind ``ernie_fused_situ_prob`` (off by default), the routed experts run SiTU-GLU and the
+  routing-probability multiply as one Triton kernel per direction (``fused_situ_prob``).
 * Context parallelism: D layers run zigzag inside the contiguous DSv4 stack
   (``context_parallel``).
 * Hyper-connections with fp32 decoder streams: the eager fp32 mapping and mixing
@@ -36,7 +37,8 @@
 * The model, which applies all of the above after Megatron-Core builds it (``model``).
 
 FlashMLA and the cuDNN DSA kernels are imported lazily by Megatron-Core, and Triton by
-``fused_ops`` and ``fused_mhc`` on their first kernel launch, so importing this package needs none of them.
+``fused_ops``, ``fused_situ_prob`` and ``fused_mhc`` on their first kernel launch, so importing this package needs
+none of them.
 """
 
 from megatron.bridge.models.ernie.modeling_ernie55.context_parallel import validate_ernie55_context_parallel_config
@@ -80,9 +82,11 @@ from megatron.bridge.models.ernie.modeling_ernie55.latent_mqa_core import (
 )
 from megatron.bridge.models.ernie.modeling_ernie55.model import Ernie55HybridModel
 from megatron.bridge.models.ernie.modeling_ernie55.moe import (
+    Ernie55GroupedMLP,
     Ernie55LatentProjection,
     Ernie55MoELayer,
     Ernie55SplitFeatureRouter,
+    use_ernie55_fused_situ_prob,
     validate_ernie55_moe_config,
 )
 from megatron.bridge.models.ernie.modeling_ernie55.mtp import (
@@ -127,6 +131,7 @@ __all__ = [
     "PER_ROW_MTP_LOSS_SUPPORTED",
     "REFERENCE_FALLBACK_MAX_TOKENS",
     "Ernie55BatchedMuon",
+    "Ernie55GroupedMLP",
     "Ernie55HCACoreAttention",
     "Ernie55HCAHyperConnectionHybridLayer",
     "Ernie55HCASelfAttention",
@@ -162,6 +167,7 @@ __all__ = [
     "share_mtp_body_with_last_layer",
     "tag_ernie55_muon_params",
     "use_ernie55_attention_cuda_graphs",
+    "use_ernie55_fused_situ_prob",
     "use_ernie55_hyper_connections",
     "validate_ernie55_config",
     "validate_ernie55_context_parallel_config",
