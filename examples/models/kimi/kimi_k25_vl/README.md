@@ -78,7 +78,7 @@ See [slurm_inference.sh](slurm_inference.sh) for configuration details.
 
 Note:
 - `--trust_remote_code` is required for Kimi-K2.5 models.
-- Bridge-created Kimi-K2.5 providers use the HybridEP dispatcher with 16
+- Bridge-created Kimi-K2.5 model configs use the HybridEP dispatcher with 16
   communication SMs and unfused HybridEP permutation. On 8-GPU H100 nodes, set
   `NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=8`, `NVLINK_DOMAIN_SIZE=8`, and
   `USE_MNNVL=0`. A native Megatron checkpoint can retain the dispatcher

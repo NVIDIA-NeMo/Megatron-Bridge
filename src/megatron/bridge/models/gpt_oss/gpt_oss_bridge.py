@@ -277,6 +277,8 @@ class GPTOSSMLPDownProjMapping(AutoMapping):
     """MLPDownProj for expert weights in GPT-OSS models."""
 
     is_grouped_export = True
+    # ModelOpt MXFP4 exports write OpenAI's ``*_blocks`` / ``*_scales`` layout.
+    oai_mxfp4_export = True
 
     def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
         super().__init__(megatron_param, hf_param, permute_dims)
@@ -312,6 +314,8 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
     """
 
     is_grouped_export = True
+    # ModelOpt MXFP4 exports write OpenAI's ``*_blocks`` / ``*_scales`` layout.
+    oai_mxfp4_export = True
 
     def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
         super().__init__(megatron_param, hf_param, permute_dims)

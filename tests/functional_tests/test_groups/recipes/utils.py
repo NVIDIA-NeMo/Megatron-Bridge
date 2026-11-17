@@ -101,7 +101,8 @@ def run_pretrain_recipe_test(
         valid_split = eval_samples_needed / total_samples
         test_split = test_samples_needed / total_samples
 
-        config.dataset.split = [train_split, valid_split, test_split]
+        # Megatron Core parses ``split`` as a comma-separated string of weights.
+        config.dataset.split = f"{train_split},{valid_split},{test_split}"
 
         if tensor_model_parallel_size is not None:
             if hasattr(config.model, "tensor_model_parallel_size"):

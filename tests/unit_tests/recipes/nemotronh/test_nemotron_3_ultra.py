@@ -105,7 +105,6 @@ def test_h100_large_scale_pretrain_preserves_functional_policy() -> None:
     assert cfg.train.global_batch_size == 512
     assert cfg.train.micro_batch_size == 1
 
-    assert cfg.dist.use_megatron_fsdp is True
     assert cfg.ddp.use_megatron_fsdp is True
     assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
     assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.float32
@@ -130,7 +129,7 @@ def test_gb200_ep16_pretrain_preserves_functional_policy() -> None:
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 16
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
@@ -140,7 +139,6 @@ def test_gb200_ep16_pretrain_preserves_functional_policy() -> None:
     assert cfg.train.global_batch_size == 256
     assert cfg.train.micro_batch_size == 1
 
-    assert cfg.dist.use_megatron_fsdp is False
     assert cfg.ddp.use_megatron_fsdp is False
     assert cfg.ddp.use_distributed_optimizer is True
     assert cfg.optimizer.use_precision_aware_optimizer is True
@@ -148,8 +146,9 @@ def test_gb200_ep16_pretrain_preserves_functional_policy() -> None:
     assert cfg.ddp.check_for_nan_in_grad is True
     assert cfg.ddp.check_for_large_grads is True
     assert cfg.rerun_state_machine.check_for_nan_in_loss is True
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 16
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
 
 
 @pytest.mark.unit
@@ -166,7 +165,8 @@ def test_gb200_ep16_deterministic_pretrain_applies_determinism() -> None:
     assert cfg.model.expert_model_parallel_size == base.model.expert_model_parallel_size
     for key, value in DETERMINISM_ENV_VARS.items():
         assert cfg.env_vars[key] == value
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
 
 
 @pytest.mark.unit
@@ -234,7 +234,6 @@ def test_vrnvl72_nvfp4_perf_recipe_uses_nvl72_ultra_topology() -> None:
     assert cfg.mixed_precision.fp4_param_gather is True
     assert cfg.train.global_batch_size == 256
     assert cfg.train.micro_batch_size == 1
-    assert cfg.dist.use_megatron_fsdp is False
     assert cfg.ddp.use_megatron_fsdp is False
     assert cfg.model.tensor_parallel_num_weight_shards == 64
     assert cfg.model.expert_tensor_parallel_num_weight_shards == 1
@@ -270,7 +269,6 @@ def test_nvfp4_perf_recipes_use_gtp_partial_cuda_graphs_and_nccl_ep(
     assert cfg.mixed_precision.fp4 == "e2m1"
     assert cfg.mixed_precision.fp4_param_gather is True
 
-    assert cfg.dist.use_megatron_fsdp is False
     assert cfg.ddp.use_megatron_fsdp is False
     assert cfg.model.tensor_parallel_num_weight_shards == 64
     assert cfg.model.expert_tensor_parallel_num_weight_shards == 1

@@ -6,7 +6,7 @@ Megatron Bridge provides checkpoint conversion and pretraining, SFT, and PEFT re
 
 Python recipes live in `megatron.bridge.recipes.nemotronh_multimodal`, the shared recipe package for Nemotron Omni and Super VL. Existing imports through `megatron.bridge.recipes.nemotron_omni` remain compatible aliases; CLI recipe names such as `nemotron_35_super_vl_sft_config` are unchanged.
 
-The `freeze_vision_model`, `freeze_vision_projection`, and `freeze_language_model` provider options independently control which model components are trained. The Super-VL SFT recipes freeze the vision encoder while keeping the projection and language model trainable.
+The `freeze_vision_model`, `freeze_vision_projection`, and `freeze_language_model` model config options independently control which model components are trained. The Super-VL SFT recipes freeze the vision encoder while keeping the projection and language model trainable.
 
 The records below contain refreshed conversion, inference, and training verification with the corrected training callbacks and shared-MTP objective. Verification is scoped to each recorded workflow and hardware configuration; the GB200 pretrain/resume comparison and stronger visual diagnostics are not all passing. The public checkpoint revision remains unbound, and functional throughput measurements are not optimized-performance claims.
 
@@ -14,16 +14,16 @@ For language-only conversion and training without media components, see [the tex
 
 ## Native Hugging Face processor compatibility
 
-With Transformers 5.18.0, 5.19.0, 5.20.0, 5.20.1, or 5.20.2, `AutoBridge.from_hf_pretrained(..., trust_remote_code=False)`
+With every supported Transformers release (5.21.1 through 5.23.0), `AutoBridge.from_hf_pretrained(..., trust_remote_code=False)`
 uses a Bridge-local processor loading adapter for Super VL. It removes a legacy
 read-only video configuration field in memory and does not require an audio feature
 extractor for this audio-free model. The source checkpoint and installed Transformers
 code are not modified; image/video processing and token expansion use the native HF
-implementation. Remote-code loading remains available on older supported HF versions.
+implementation. Checkpoints that ship remote code still load through it with `trust_remote_code=True`.
 
-The adapter is version-guarded to Transformers 5.18.0, 5.19.0, 5.20.0, 5.20.1, and 5.20.2. Processor artifacts can be saved
+The adapter is version-guarded to the Transformers releases from 5.21.1 through 5.23.0. Processor artifacts can be saved
 and reloaded through Bridge, but ordinary `AutoProcessor.from_pretrained` outside
-Bridge still encounters the native 5.18.0-5.20.2 audio-component requirement. This workaround
+Bridge still encounters the native 5.21.1-5.23.0 audio-component requirement. This workaround
 does not imply standalone HF processor compatibility or full model forward parity.
 The wrapper's `hf_pretrained.model` accessor selects `AutoModelForImageTextToText`
 for native Super VL and retains `AutoModelForCausalLM` for legacy remote-code
@@ -32,7 +32,7 @@ Filtered text-only conversion views are not directly loadable for HF inference;
 load their standalone text exports instead. Full native forward parity remains
 a separate verification requirement.
 
-Known native HF 5.19.0 runtime limitations for this checkpoint:
+Known native HF runtime limitations for this checkpoint, as observed with Transformers 5.19.0:
 
 - The installed `mamba-ssm` execution path produced non-finite text logits in
   verification. With that package unavailable to the HF process, the native

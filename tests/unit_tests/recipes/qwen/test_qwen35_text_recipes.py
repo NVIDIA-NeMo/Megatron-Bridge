@@ -23,7 +23,7 @@ import pytest
 from transformers import Qwen3_5Config, Qwen3_5MoeConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.hybrid.model_config import BridgeHybridModelConfig
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35MoEBridge
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.recipes.qwen.gb200 import qwen35
@@ -57,7 +57,7 @@ class _DynamicCPTransformerConfig(TransformerConfig):
 
 
 @dataclass(kw_only=True)
-class _DynamicCPModelConfig(BridgeGPTModelConfig):
+class _DynamicCPModelConfig(BridgeHybridModelConfig):
     transformer_config_class: ClassVar[type[TransformerConfig]] = _DynamicCPTransformerConfig
 
 
@@ -83,7 +83,7 @@ def test_each_qwen35_text_recipe_uses_strict_builder_config(recipe_func: Callabl
     """Recipes only set fields that the builder-backed model config declares."""
     cfg = recipe_func()
 
-    assert isinstance(cfg.model, BridgeGPTModelConfig)
+    assert isinstance(cfg.model, BridgeHybridModelConfig)
     assert cfg.model.experimental_attention_variant == "gdn"
     assert cfg.model.mtp_num_layers == 1
     assert cfg.model.share_embeddings_and_output_weights is False
@@ -95,7 +95,7 @@ def test_dynamic_cp_recipe_uses_strict_builder_config(builder_only: None, monkey
 
     cfg = _DYNAMIC_CP_RECIPE()
 
-    assert isinstance(cfg.model, BridgeGPTModelConfig)
+    assert isinstance(cfg.model, BridgeHybridModelConfig)
     assert cfg.model.dynamic_context_parallel is True
     assert cfg.model.min_dynamic_context_parallel_size == 1
     assert cfg.model.num_moe_experts == 256
@@ -108,3 +108,35 @@ def test_dynamic_cp_recipe_rejects_model_config_without_dynamic_cp(builder_only:
 
     with pytest.raises(AttributeError, match="dynamic_context_parallel"):
         _DYNAMIC_CP_RECIPE()
+
+
+def test_pretrain_recipes_pin_base_model_revisions(builder_only: None, monkeypatch: pytest.MonkeyPatch):
+    """The pretrain recipes read the Base config and tokenizer at a fixed revision, not Hub main."""
+    calls = []
+
+    def load(path, **kwargs):
+        calls.append((path, kwargs))
+        return _HF_CONFIGS[path]()
+
+    monkeypatch.setattr(qwen35.AutoConfig, "from_pretrained", load)
+
+    dense = qwen35.qwen35_text_9b_pretrain_8gpu_gb200_bf16_config()
+    moe = qwen35.qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config()
+
+    assert calls == [
+        ("Qwen/Qwen3.5-9B-Base", {"revision": qwen35._QWEN35_9B_BASE_REVISION}),
+        ("Qwen/Qwen3.5-35B-A3B-Base", {"revision": qwen35._QWEN35_35B_A3B_BASE_REVISION}),
+    ]
+    assert dense.tokenizer.hf_tokenizer_kwargs == {"revision": qwen35._QWEN35_9B_BASE_REVISION}
+    assert moe.tokenizer.hf_tokenizer_kwargs == {"revision": qwen35._QWEN35_35B_A3B_BASE_REVISION}
+
+
+def test_35b_a3b_pretrain_uses_ncclep_on_one_nvlink_domain(builder_only: None):
+    """EP8 over two four-GPU GB200 nodes runs NCCL EP across one multi-node NVLink domain."""
+    cfg = qwen35.qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config()
+
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_use_grouped_tensor is True
+    # NCCL EP needs no HybridEP NVLink-domain variables; only its dispatcher mode is declared.
+    assert cfg.env_vars == {"NCCL_EP_HT_EM_PULL_PUSH": 1}

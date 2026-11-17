@@ -198,9 +198,7 @@ class ErnieMultimodalRotaryEmbedding(MultimodalRotaryEmbedding):
 
         # Compute freqs for each axis: freqs[axis, bs, seq_len, num_freqs]
         # Each axis independently: theta_f = inv_freq[f] * pos[axis]
-        inv_freq_exp = self.inv_freq[None, None, :, None].expand(3, bs, -1, 1)
-        seq_exp = seq[:, :, None, :].float()
-        freqs = (inv_freq_exp @ seq_exp).transpose(2, 3)
+        freqs = seq[..., None].float() * self.inv_freq
         # freqs: [3, bs, seq_len, num_freqs=64]
 
         # ERNIE interleaved layout:

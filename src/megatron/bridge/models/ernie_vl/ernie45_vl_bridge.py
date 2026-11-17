@@ -485,12 +485,13 @@ class Ernie45VLBridge(MegatronModelBridge):
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_router_load_balancing_type = "aux_loss"
         provider.moe_aux_loss_coeff = getattr(text_config, "router_aux_loss_coef", 0.001)
-        # ERNIE 4.5 MoE uses sigmoid gating with expert bias for
+        # ERNIE 4.5 MoE uses softmax gating with expert bias for
         # aux-free load balancing:
-        #   1. scores = sigmoid(logits)  -- per-expert independent scores
-        #   2. scores_ = scores + e_score_correction_bias  -- biased for top-k selection
-        #   3. weights = gather(scores, topk_indices)  -- unbiased sigmoid scores
-        #   4. weights = weights / sum(weights)  -- normalize to sum=1
+        #   1. scores = softmax(logits)
+        #   2. topk_indices = topk(scores + e_score_correction_bias)  -- biased selection
+        #   3. weights = gather(scores, topk_indices) / sum  -- renormalized softmax scores
+        # Megatron Core applies expert_bias only on the sigmoid path, so the pools use
+        # Ernie45TopKRouter, whose gate returns softmax log-odds (sigmoid(log-odds) == softmax).
         provider.moe_router_score_function = "sigmoid"
         provider.moe_router_enable_expert_bias = True
         provider.moe_router_dtype = "fp32"

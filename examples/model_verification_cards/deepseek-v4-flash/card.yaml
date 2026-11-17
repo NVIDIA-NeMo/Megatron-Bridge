@@ -8,10 +8,11 @@ summary: >
   from functional training items are sanity checks rather than optimized
   performance results.
 
-  The Megatron-backed DeepSeek V4 workflows in this card require the
-  Megatron-Core dev branch; the default MCore submodule revision in Megatron
-  Bridge r0.6.0 is insufficient. Follow the public setup instructions in
-  examples/models/deepseek_v4/README.md.
+  Historical verified Megatron-backed workflows below use their item-pinned
+  Bridge revisions and the Megatron-Core dev branch. The migrated native-main
+  long-context command is unverified and requires native DSv4 packed-CP support
+  from Megatron-Core PR #7469. Follow examples/models/deepseek_v4/README.md for
+  model setup.
 
   DeepSeek-V4-Flash verification covers GPU import at the item-pinned Bridge revision.
   The verified 64-GPU GB200 MXFP8 library pretraining run uses PP4/VPP4/EP16 with
@@ -34,8 +35,8 @@ summary: >
   imported model and the step-100 SFT checkpoint produced exact BF16 inventories
   and passed independent strict GPU-only HF reloads. The public post-SFT workflow
   also produced identical bounded greedy completions from two independent reloads.
-  A separate 100-step CP2 run verifies offline packing with contiguous context
-  parallelism.
+  A historical 100-step CP2 run used the older dev API; it does not verify the
+  migrated native-main long-context command below.
 
   The GB200 packed PEFT recipe applies rank-32 LoRA to the DeepSeek MLA projections
   and to separate routed/shared expert FC1/FC2 projections. Its execution path uses
@@ -55,7 +56,8 @@ verification_index:
       - megatron_to_hf_cpu
   training:
     GB200:
-      verified: [pretrain, sft, sft_long_context, sft_export_inference, peft, checkpoint_resume]
+      verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
+      unverified: [sft_long_context]
   performance:
     GB200: verified
     GB300: verified
@@ -316,9 +318,8 @@ items:
 
   sft_long_context:
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 3ecb452af619bef88083e10a7738362df8f5d0bf  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 2
@@ -330,8 +331,8 @@ items:
         --save_dir work/model-verification/dsv4-flash/sft-long-context-ref
         --save_interval 100 --max_steps 100
         model.pipeline_model_parallel_size=4
-        'model.pipeline_model_parallel_layout=Et*11|t*11|t*11|t*10mL'
-        model.context_parallel_size=2 model.cp_partition_mode=contiguous
+        model.context_parallel_size=2
+        model.attention_cp_layout=contiguous model.linear_cp_layout=contiguous
         model.expert_model_parallel_size=8
         model.moe_grouped_gemm=false
         model.recompute_granularity=full model.recompute_method=uniform
@@ -346,18 +347,23 @@ items:
         ddp.overlap_grad_reduce=false
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=180
-      last_verified: 2026-08-07
+      last_verified: null
       metrics:
-        initial_loss: 0.94383
-        final_loss: 0.28370
-        last_10_steps_step_time_ms_avg: 13806.500
-        last_10_steps_model_tflops_per_gpu_avg: 13.620
-        last_10_steps_tokens_per_second_per_gpu_avg: 148.336
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        CP=2 with contiguous partitioning and offline-packed OpenMathInstruct-2
-        at seq_length=1024 demonstrates sequence packing and context parallelism
-        working together over 100 training steps with finite loss and no skipped
-        or NaN iterations.
+        Pending verification on the native main API with Megatron-Core PR #7469.
+        CP=2 requires packed THD metadata and both attention_cp_layout and
+        linear_cp_layout set to contiguous. The packed token count must be
+        divisible by CP size. The command no longer passes the dev-API explicit
+        pipeline layout, which counted logical blocks rather than physical
+        attention/MoE layers; the recipe's native PP4 segments apply. Require 100
+        finite steps with no skipped or NaN iterations. Historical dev-API metrics
+        do not verify this migrated command and remain available in the card's git
+        history.
 
   peft:
     GB200:

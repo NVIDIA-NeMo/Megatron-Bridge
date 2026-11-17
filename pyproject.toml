@@ -71,7 +71,8 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "transformers>=5.15,<5.21",
+    # 5.21.1, not 5.21.0: 5.21.0 breaks Step-3.5's config (fixed by huggingface/transformers#50080).
+    "transformers>=5.21.1,<5.24",
     "mistral-common>=1.10.0",
     "peft>=0.20.0,<=0.21.0",
     "datasets>=2.20.0",
@@ -97,8 +98,8 @@ dependencies = [
     "mlflow>=3.16.0",   # CVE-2025-15031, CVE-2026-71211
     "comet-ml>=3.50.0",
     "torch>=2.6.0",
-    "flashinfer-python==0.7.2",  # keep flashinfer-python and flashinfer-cubin in lockstep:
-    "flashinfer-cubin==0.7.2",   # the runtime version-match check fails otherwise
+    "flashinfer-python==0.7.2.post1",   # keep flashinfer-python and flashinfer-cubin in lockstep:
+    "flashinfer-cubin==0.7.2.post1",    # the runtime version-match check fails otherwise
     "fast-hadamard-transform>=1.1.0",
 ]
 
@@ -123,7 +124,12 @@ no-build-isolation-package = [
 ]
 prerelease = "allow"
 # Transformers 5.15 still passes cls= to RobertaProcessing; this prerelease renamed it.
-constraint-dependencies = ["tokenizers!=0.23.0rc0"]
+# pyarrow 26 requires NumPy>=2 at import time but declares no numpy dependency, while
+# nvdlfw-inspect==0.2.1 ([tensor-inspect]) pins numpy==1.26.4.
+# Keep httpx on the stable 0.28 line on every platform. With prerelease = "allow", uv otherwise
+# picks httpx 1.0.devN (with an older wandb) in whichever platform fork it resolves first, which
+# can be linux/aarch64.
+constraint-dependencies = ["tokenizers!=0.23.0rc0", "pyarrow<26", "httpx<1"]
 override-dependencies = [
     "av; sys_platform == 'never'",                          # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
     "imageio; sys_platform == 'never'",                     # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
@@ -131,6 +137,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
+    "filelock>=4.2.1",  # CVE-2026-112940; multi-storage-client 0.51 caps filelock below 4
     "wandb>=0.29.0",
     "mlflow>=3.16.0",                                       # CVE-2025-15031, CVE-2026-71211
     # BDSA-2026-31388, CVE-2026-78676, CVE-2026-78677, CVE-2026-114145
@@ -138,13 +145,13 @@ override-dependencies = [
     "sqlparse>=0.6.0,<1",                                   # CVE-2026-59894
     "cachetools>=5.0.0",
     "cryptography>=50.0.0,<51",
-    "nvidia-modelopt==0.48.0rc1",
+    "nvidia-modelopt==0.48.0",
     "urllib3>=2.6.3",                                       # To address CVE-2026-21441
     "langchain>=0.3.28",                                    # To address CVE-2025-65106
     "langchain-core>=0.3.80",                               # To address CVE-2025-65106
     "onnx>=1.21.0; python_version < '3.13'",                # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
-    "nvidia-cudnn-frontend==1.32.0",
-    # Match the selected MCore revision and its TileLang/TVM FFI family.
+    "nvidia-cudnn-frontend==1.32.0",                       # Match MCore main (paired with flashinfer 0.7.2)
+    # Match MCore main: cuDNN Frontend 1.29 needs the newer TileLang/TVM FFI family.
     "tilelang==0.1.12",
     "apache-tvm-ffi==0.1.11",
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'",    # Rely on system site packages install
@@ -159,6 +166,14 @@ url = "https://pypi.nvidia.com"
 [[tool.uv.index]]
 name = "flashinfer"
 url = "https://flashinfer.ai/whl/"
+explicit = true
+
+# MCore routes flashinfer-jit-cache and its per-arch wheels to this index from its own
+# [tool.uv.sources]. uv only validates an existing lock against indexes declared here, so mirror it
+# to keep `uv lock --check` / `uv sync --locked` from re-resolving.
+[[tool.uv.index]]
+name = "flashinfer-cu130"
+url = "https://flashinfer.ai/whl/cu130"
 explicit = true
 
 # flash-mla ships no PyPI wheel and builds against torch/CUDA; provide its metadata so the
@@ -194,6 +209,23 @@ requires-dist = ["torch", "packaging", "ninja"]
 name = "torch-memory-saver"
 version = "0.0.10b1"
 requires-dist = []
+
+# Mirror the selected MCore pin's flashinfer-jit-cache metadata. The aarch64 wheel also requires
+# the aarch64-only sm110a/sm121a wheels, but uv locks one wheel's metadata for every platform,
+# which breaks x86_64 installs. Keep in sync with 3rdparty/Megatron-LM/pyproject.toml.
+[[tool.uv.dependency-metadata]]
+name = "flashinfer-jit-cache"
+version = "0.7.2.post1+cu130"
+requires-dist = [
+    "flashinfer-jit-cache-sm80==0.7.2.post1",
+    "flashinfer-jit-cache-sm89==0.7.2.post1",
+    "flashinfer-jit-cache-sm90a==0.7.2.post1",
+    "flashinfer-jit-cache-sm100a==0.7.2.post1",
+    "flashinfer-jit-cache-sm103a==0.7.2.post1",
+    "flashinfer-jit-cache-sm110a==0.7.2.post1; platform_machine == 'aarch64'",
+    "flashinfer-jit-cache-sm120f==0.7.2.post1",
+    "flashinfer-jit-cache-sm121a==0.7.2.post1; platform_machine == 'aarch64'",
+]
 
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }

@@ -16,6 +16,7 @@ import os
 import tempfile
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -28,6 +29,7 @@ from megatron.bridge.training.config import DistributedInitConfig
 from megatron.bridge.training.initialize import (
     _initialize_tp_communicators,
     _setup_flight_recorder_env,
+    destroy_global_state,
     initialize_megatron,
     set_jit_fusion_options,
 )
@@ -42,6 +44,28 @@ _FR_ENV_VARS = [
     "TORCH_INCLUDE_ONLY_ACTIVE",
     "TORCH_NCCL_EXTRA_DUMP_ON_EXEC",
 ]
+
+
+@pytest.mark.parametrize("has_initializer", [False, True])
+def test_destroy_global_state_resets_fixed_dsa_tracker(has_initializer):
+    tracker = {"agreed_size": 8, "values": object(), "pp_group": object()}
+    module = SimpleNamespace(DSAIndexerLossLoggingHelper=SimpleNamespace(tracker=tracker))
+    if has_initializer:
+        module.initialize_dsa_metric_tracker = Mock()
+    with (
+        patch("megatron.core.transformer.experimental_attention_variant.dsa_logging", module, create=True),
+        patch("megatron.bridge.training.initialize.destroy_num_microbatches_calculator"),
+        patch("megatron.bridge.training.initialize.parallel_state"),
+        patch("megatron.core.rerun_state_machine.destroy_rerun_state_machine"),
+    ):
+        destroy_global_state()
+        if has_initializer:
+            assert tracker == {}
+            tracker.update(agreed_size=16, values=object(), pp_group=object())
+            destroy_global_state()
+            assert tracker == {}
+        else:
+            assert tracker["agreed_size"] == 8
 
 
 def test_set_jit_fusion_options_preserves_builder_config_for_warmup() -> None:

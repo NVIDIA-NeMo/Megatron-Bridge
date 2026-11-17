@@ -19,7 +19,8 @@ own it: GPU conversion topologies must decompose over the published world size,
 an inference command must not carry a flag that belongs to the conversion
 launcher's namespace, and a checkpoint a command loads (``checkpoint.load=``,
 ``dataset.dataloader_load=`` or ``--load_dir``) must be written by a command in the
-same card.
+same card, and a GB200 HybridEP command that reuses an H100 recipe must set the
+GB200 NVLink-domain environment.
 
 Uses only pytest, PyYAML and the standard library (no torch / megatron import) so it
 scans source files directly and runs anywhere, including without the GPU stack.
@@ -280,6 +281,46 @@ def test_published_load_dirs_come_from_the_same_card() -> None:
     )
 
 
+def _expert_parallel_size(tokens: list[str], overrides: dict[str, str]) -> int | None:
+    """Return the EP size a training command sets, or None when it inherits the recipe default."""
+    if "model.expert_model_parallel_size" in overrides:
+        return int(overrides["model.expert_model_parallel_size"])
+    value = None
+    for index, token in enumerate(tokens):
+        flag, _, inline = token.partition("=")
+        if flag in ("-ep", "--expert_model_parallel_size"):
+            value = int(inline if inline else tokens[index + 1])
+    return value
+
+
+def test_published_gb200_hybridep_commands_on_h100_recipes_set_the_nvlink_domain() -> None:
+    """GB200 HybridEP commands that reuse an H100 recipe override its eight-GPU NVLink-domain environment."""
+    offenders = []
+    for leaf, tokens in _published_commands():
+        if "/GB200/" not in leaf or "--recipe" not in tokens or "_h100_" not in tokens[tokens.index("--recipe") + 1]:
+            continue
+        overrides = dict(token.lstrip("+").partition("=")[::2] for token in tokens if "=" in token)
+        if overrides.get("model.moe_token_dispatcher_type") != "flex":
+            continue
+        if overrides.get("model.moe_flex_dispatcher_backend", "hybridep") != "hybridep":
+            continue
+        env = {
+            name.removeprefix("env_vars."): value for name, value in overrides.items() if name.startswith("env_vars.")
+        }
+        expert_parallel_size = _expert_parallel_size(tokens, overrides)
+        ranks = env.get("NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN")
+        if (
+            env.get("NVLINK_DOMAIN_SIZE") != "72"
+            or env.get("USE_MNNVL") != "1"
+            or ranks is None
+            or (expert_parallel_size is not None and ranks != str(min(expert_parallel_size, 72)))
+        ):
+            offenders.append(f"{leaf}: {tokens[tokens.index('--recipe') + 1]}")
+    assert not offenders, "GB200 HybridEP commands keep an H100 recipe's NVLink-domain environment: " + "; ".join(
+        offenders
+    )
+
+
 def test_declared_options_follow_only_called_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
     helper = tmp_path / "src/megatron/bridge/arguments.py"
@@ -451,3 +492,96 @@ def test_checkpoint_load_honors_checkpoint_save_override(monkeypatch: pytest.Mon
             ("card/train", "./scripts/training/train.sh --save_dir work/unwritten checkpoint.save=work/actual"),
             ("card/resume", "./scripts/training/train.sh checkpoint.load=work/unwritten"),
         )
+
+
+HYBRIDEP_ON_H100_RECIPE = (
+    "./scripts/training/train.sh --recipe a_h100_bf16_config model.expert_model_parallel_size=16 "
+    "model.moe_token_dispatcher_type=flex"
+)
+
+
+@pytest.mark.parametrize(
+    ("item", "recipe"),
+    [
+        ("sft", "nemotron_3_super_sft_64gpu_gb200_bf16_config"),
+        ("peft", "nemotron_3_super_peft_16gpu_gb200_bf16_config"),
+    ],
+)
+def test_text_only_gb200_commands_use_recipe_execution_defaults(item: str, recipe: str) -> None:
+    card = yaml.safe_load((CARDS_DIR / "nemotron-3.5-super-vl-120b-a12b-text-only" / "card.yaml").read_text())
+    tokens = shlex.split(card["items"][item]["GB200"]["command"])
+    assert tokens[tokens.index("--recipe") + 1] == recipe
+    recipe_owned = (
+        "env_vars.",
+        "optimizer.",
+        "mixed_precision.",
+        "ddp.",
+        "rerun_state_machine.",
+        "model.moe_",
+        "model.expert_model_parallel_size=",
+        "checkpoint.async_save=",
+        "checkpoint.exit_on_missing_checkpoint=",
+    )
+    assert not [token for token in tokens if token.lstrip("+").startswith(recipe_owned)]
+
+
+TOPOLOGY = (
+    "env_vars.NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN={ranks} env_vars.NVLINK_DOMAIN_SIZE=72 env_vars.USE_MNNVL=1"
+)
+
+
+@pytest.mark.parametrize(
+    ("leaf", "overrides", "rejected"),
+    [
+        ("card/items/peft/GB200/command", "", True),
+        ("card/items/peft/GB200/command", " env_vars.NVLINK_DOMAIN_SIZE=72 env_vars.USE_MNNVL=1", True),
+        ("card/items/peft/GB200/command", f" {TOPOLOGY.format(ranks=8)}", True),
+        ("card/items/peft/GB200/command", f" {TOPOLOGY.format(ranks=16).replace('env_vars.', '')}", True),
+        ("card/items/peft/GB200/command", f" {TOPOLOGY.format(ranks=16)}", False),
+        ("card/items/peft/H100/command", "", False),
+        ("card/items/peft/GB200/command", " ++model.moe_flex_dispatcher_backend=deepep", False),
+        ("card/items/peft/GB200/command", f" {TOPOLOGY.format(ranks=16).replace('env_vars.', '+env_vars.')}", False),
+        ("card/items/peft/GB200/command", " model.moe_flex_dispatcher_backend=deepep", False),
+        ("card/items/peft/GB200/command", f" model.expert_model_parallel_size=32 {TOPOLOGY.format(ranks=32)}", False),
+        ("card/items/peft/GB200/command", f" model.expert_model_parallel_size=32 {TOPOLOGY.format(ranks=16)}", True),
+    ],
+)
+def test_gb200_hybridep_topology_check(
+    leaf: str, overrides: str, rejected: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = sys.modules[__name__]
+    command = HYBRIDEP_ON_H100_RECIPE + overrides
+    monkeypatch.setattr(module, "_published_commands", lambda: iter([(leaf, shlex.split(command))]))
+    if rejected:
+        with pytest.raises(AssertionError, match="a_h100_bf16_config"):
+            module.test_published_gb200_hybridep_commands_on_h100_recipes_set_the_nvlink_domain()
+    else:
+        module.test_published_gb200_hybridep_commands_on_h100_recipes_set_the_nvlink_domain()
+
+
+@pytest.mark.parametrize(
+    ("expert_parallel", "ranks", "rejected"),
+    [
+        ("-ep 16", 16, False),
+        ("--expert_model_parallel_size 16", 16, False),
+        ("--expert_model_parallel_size=16", 16, False),
+        ("-ep 16", 8, True),
+        ("-ep 16 model.expert_model_parallel_size=32", 32, False),
+        ("-ep 16 model.expert_model_parallel_size=32", 16, True),
+        ("", 16, False),
+        ("", None, True),
+    ],
+)
+def test_gb200_hybridep_topology_check_resolves_expert_parallel_size(
+    expert_parallel: str, ranks: int | None, rejected: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = sys.modules[__name__]
+    topology = TOPOLOGY.format(ranks=ranks) if ranks else "env_vars.NVLINK_DOMAIN_SIZE=72 env_vars.USE_MNNVL=1"
+    command = f"./scripts/training/train.sh --recipe a_h100_bf16_config {expert_parallel} model.moe_token_dispatcher_type=flex {topology}"
+    leaf = "card/items/peft/GB200/command"
+    monkeypatch.setattr(module, "_published_commands", lambda: iter([(leaf, shlex.split(command))]))
+    if rejected:
+        with pytest.raises(AssertionError, match="a_h100_bf16_config"):
+            module.test_published_gb200_hybridep_commands_on_h100_recipes_set_the_nvlink_domain()
+    else:
+        module.test_published_gb200_hybridep_commands_on_h100_recipes_set_the_nvlink_domain()

@@ -72,7 +72,7 @@ def _set_optimizer_precision(cfg: ConfigContainer) -> None:
 
 
 def _apply_exaone_moe_common(cfg: ConfigContainer, *, hf_path: str = _HF_PATH) -> None:
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.tokenizer.tokenizer_model = hf_path
 
     cfg.model.pipeline_model_parallel_layout = None

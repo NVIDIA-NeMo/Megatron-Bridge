@@ -188,7 +188,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         # providers whose ``build_language_model_spec`` actually wires the MTP
         # block advertise ``mimo_supports_mtp``. Others keep MTP disabled so the
         # constructed model and the HF export agree on the absence of MTP weights.
-        if hasattr(standard_provider, "mtp_num_layers") and not getattr(standard_provider, "mimo_supports_mtp", False):
+        # A zero layer count also becomes None, so "no MTP" has a single spelling.
+        if hasattr(standard_provider, "mtp_num_layers") and (
+            not getattr(standard_provider, "mimo_supports_mtp", False) or not standard_provider.mtp_num_layers
+        ):
             setattr(standard_provider, "mtp_num_layers", None)
 
         if self.language_model_spec is None:

@@ -209,7 +209,6 @@ def _apply_nemotron_3_ultra_gtp(cfg: ConfigContainer) -> None:
     weights remain unsharded by GTP because EP64 already spans that domain;
     this avoids expert-weight all-gathers across racks.
     """
-    cfg.dist.use_megatron_fsdp = False
     cfg.ddp.use_megatron_fsdp = False
 
     # GTP is controlled through the user-facing total weight-shard counts.

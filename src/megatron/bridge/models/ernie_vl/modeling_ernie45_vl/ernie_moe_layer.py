@@ -28,11 +28,11 @@ respective pool based on modality (token_type_ids: 0=text, 1=vision).
 Module hierarchy (MoE layers):
     decoder.layers.{i}.mlp = ErnieMultiTypeMoE
         .text_moe_layer = MoELayer (standard Megatron)
-            .router = TopKRouter
+            .router = Ernie45TopKRouter
             .experts = SequentialMLP
                 .local_experts.{j} = MLP (with linear_fc1, linear_fc2)
         .vision_moe_layer = MoELayer (standard Megatron)
-            .router = TopKRouter
+            .router = Ernie45TopKRouter
             .experts = SequentialMLP
                 .local_experts.{j} = MLP (with linear_fc1, linear_fc2)
         .shared_experts = SharedExpertMLP

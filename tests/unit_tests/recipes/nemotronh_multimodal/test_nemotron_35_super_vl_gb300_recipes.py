@@ -28,7 +28,7 @@ from unittest.mock import patch
 import pytest
 
 from megatron.bridge import recipes
-from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import NemotronOmniModelProvider
+from megatron.bridge.models.nemotron_omni.nemotron_omni_config import NemotronOmniModelConfig
 from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes import nemotronh_multimodal
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
@@ -264,12 +264,13 @@ def test_environment_is_exported_by_the_runtime_hook_without_overriding_the_laun
     assert os.environ["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == "0"
 
 
-def test_every_changed_model_field_is_declared_by_the_real_provider() -> None:
-    """The offline provider accepts any attribute, so a typo or an older Megatron Core would pass silently.
+def test_every_changed_model_field_is_declared_by_the_real_model_config() -> None:
+    """The offline model config accepts any attribute, so a typo or an older Megatron Core would pass silently.
 
-    Assigning a field the dataclass does not declare creates a phantom attribute: the recipe then looks tuned while the
-    runtime never reads it. Check the names against the provider class that ``AutoBridge`` builds for this model.
+    The real config rejects a field that neither it nor its transformer config declares. Check the names against the
+    model config that ``AutoBridge`` builds for this model.
     """
-    declared = {field.name for field in dataclasses.fields(NemotronOmniModelProvider)}
+    declared = {field.name for field in dataclasses.fields(NemotronOmniModelConfig)}
+    declared |= {field.name for field in dataclasses.fields(NemotronOmniModelConfig.transformer_config_class)}
 
     assert _CHANGED_MODEL_FIELDS - declared == set()

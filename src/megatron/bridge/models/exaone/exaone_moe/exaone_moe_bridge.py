@@ -13,9 +13,12 @@
 # limitations under the License.
 
 
+from typing import Any
+
 import torch
+import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import ExaoneMoeForCausalLM
+from transformers import ExaoneMoeForCausalLM, PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, register_bridge_implementation
@@ -24,8 +27,11 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.exaone.exaone_moe.exaone_moe_provider import ExaoneMoeModelProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.exaone.exaone_moe.exaone_moe_config import ExaoneMoeModelConfig
+from megatron.bridge.models.exaone.exaone_moe.exaone_moe_provider import (
+    ExaoneMoeModelProvider,
+    build_exaone_moe_layer_spec,
+)
 
 
 @MegatronModelBridge.register_bridge(
@@ -35,10 +41,19 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
     model_type="exaone_moe",
 )
 class ExaoneMoeBridge(MegatronModelBridge):
-    """Megatron Bridge for Hugging Face EXAONE MoE causal language models."""
+    """Megatron Bridge for Hugging Face EXAONE MoE causal language models.
+
+    Example:
+        >>> from megatron.bridge import AutoBridge
+        >>> bridge = AutoBridge.from_hf_pretrained("LGAI-EXAONE/K-EXAONE-236B-A23B")
+        >>> model_config = bridge.get_model_config()
+    """
+
+    MODEL_CONFIG_CLASS = ExaoneMoeModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     @classmethod
-    def megatron_to_hf_config(cls, provider: ExaoneMoeModelProvider) -> dict:
+    def megatron_to_hf_config(cls, provider: ExaoneMoeModelProvider | ExaoneMoeModelConfig) -> dict:
         """Preserve EXAONE's distinction between physical and repeated MTP layers."""
         hf_config = super().megatron_to_hf_config(provider)
         mtp_num_speculative_steps = int(getattr(provider, "mtp_num_layers", 0) or 0)
@@ -53,9 +68,24 @@ class ExaoneMoeBridge(MegatronModelBridge):
         hf_config["mtp_num_speculative_steps"] = mtp_num_speculative_steps
         return hf_config
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> ExaoneMoeModelProvider:
-        hf_config = hf_pretrained.config
-        self.hf_config = hf_config
+    def dtype_from_hf(self, config: PretrainedConfig, default: torch.dtype | None = None) -> torch.dtype:
+        """Read the model dtype from ``torch_dtype``, or from ``dtype`` when the config has no ``torch_dtype``."""
+        if hasattr(config, "torch_dtype"):
+            return super().dtype_from_hf(config, default=default)
+        hf_dtype = getattr(config, "dtype", None)
+        if isinstance(hf_dtype, torch.dtype):
+            return hf_dtype
+        if isinstance(hf_dtype, str):
+            return self.dtype_from_str(hf_dtype)
+        return torch.float32
+
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face K-EXAONE config to builder config kwargs.
+
+        Translates EXAONE's per-layer MLP, attention-window, SwiGLU-limit and MTP
+        schedules and validates them against the decoder depth.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
 
         rope_parameters = hf_config.rope_parameters
         rope_theta = rope_parameters["rope_theta"]
@@ -183,19 +213,9 @@ class ExaoneMoeBridge(MegatronModelBridge):
         mtp_num_layers = mtp_num_speculative_steps if mtp_use_repeated_layer else physical_mtp_layers
 
         topk_method = getattr(hf_config, "topk_method", None)
+        model_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
 
-        if hasattr(hf_config, "torch_dtype"):
-            model_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
-        else:
-            hf_dtype = getattr(hf_config, "dtype", None)
-            if isinstance(hf_dtype, torch.dtype):
-                model_dtype = hf_dtype
-            elif isinstance(hf_dtype, str):
-                model_dtype = self.dtype_from_str(hf_dtype)
-            else:
-                model_dtype = torch.float32
-
-        provider = ExaoneMoeModelProvider(
+        config_kwargs.update(
             num_layers=hf_config.num_hidden_layers,
             hidden_size=hf_config.hidden_size,
             ffn_hidden_size=hf_config.intermediate_size,
@@ -239,12 +259,36 @@ class ExaoneMoeBridge(MegatronModelBridge):
             mtp_use_repeated_layer=mtp_use_repeated_layer,
             mtp_layer_types=mtp_layer_types,
             mtp_sliding_windows=mtp_sliding_windows,
+            # EXAONE settings that differ from the builder config's defaults
+            transformer_layer_spec=build_exaone_moe_layer_spec,
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            position_embedding_type="rope",
+            add_bias_linear=False,
+            hidden_dropout=0.0,
+            persist_layer_norm=True,
+            attention_softmax_in_fp32=True,
+            masked_softmax_fusion=False,
+            gradient_accumulation_fusion=False,
+            fp8_recipe="tensorwise",
+            moe_router_pre_softmax=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_router_load_balancing_type="global_aux_loss",
+            moe_shared_expert_overlap=True,
+            moe_router_dtype="fp32",
+            moe_aux_loss_coeff=1e-2,
+            moe_z_loss_coeff=1e-3,
+            moe_permute_fusion=True,
+            moe_router_enable_expert_bias=True,
         )
         if topk_method == "noaux_tc":
-            provider.moe_router_load_balancing_type = "none"
-            provider.moe_aux_loss_coeff = 0.0
+            config_kwargs.update(moe_router_load_balancing_type="none", moe_aux_loss_coeff=0.0)
 
-        return provider
+        return config_kwargs
+
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from HF to Megatron format

@@ -45,7 +45,7 @@ def _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config() -> ConfigContaine
     cfg.train.global_batch_size = 256
 
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
     cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
     cfg.model.moe_hybridep_num_sms = None
     cfg.model.moe_flex_dispatcher_num_sms = 32
@@ -62,7 +62,6 @@ def _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config() -> ConfigContaine
     cfg.model.recompute_num_layers = None
     cfg.model.recompute_modules = ["core_attn", "layernorm"]
 
-    cfg.dist.use_megatron_fsdp = False
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.num_distributed_optimizer_instances = 1
@@ -75,10 +74,8 @@ def _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config() -> ConfigContaine
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
@@ -118,10 +115,8 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config() -> C
         **COMMON_RECIPE_ENV_VARS,
         **DETERMINISM_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,

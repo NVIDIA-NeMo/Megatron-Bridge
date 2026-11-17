@@ -247,6 +247,7 @@ PYTHONPATH=$PWD/src:${MEGATRON_LM_ROOT}:${PYTHONPATH:-} uv run --no-sync python 
     tests/unit_tests/models/gemma/test_gemma4_provider.py \
     tests/unit_tests/models/gemma_vl/test_gemma4_vl_provider.py \
     tests/unit_tests/models/gemma_vl/test_gemma4_vl_bridge.py \
+    tests/unit_tests/models/gemma_vl/test_gemma4_vl_builder.py \
     tests/unit_tests/models/gemma_vl/test_gemma4_vl_modeling.py \
     tests/unit_tests/recipes/test_gemma4_recipe.py \
     -v
@@ -294,8 +295,13 @@ The VL implementation lives in `megatron.bridge.models.gemma_vl`:
 
 - `modeling_gemma4_vl.py` contains only `Gemma4VLModel` and VL/audio forward
   helpers.
-- `gemma4_vl_provider.py` contains `Gemma4DenseVLProvider` and
-  `Gemma4VLModelProvider`.
+- `gemma4_vl_config.py` and `gemma4_vl_builder.py` contain the builder-backed
+  `Gemma4DenseVLModelConfig` and `Gemma4VLModelConfig` and their builders, which
+  combine the Hugging Face vision (and audio) encoders with the Gemma 4 text
+  builders' language model. `AutoBridge.get_model_config()` returns them for the
+  VL checkpoints outside `GEMMA4_CONVERSION_MODE=text`.
+- `gemma4_vl_provider.py` contains the legacy `Gemma4DenseVLProvider` and
+  `Gemma4VLModelProvider`, built from the same settings.
 - `gemma4_vl_bridge.py` registers `Gemma4ForConditionalGeneration` and adds
   vision/audio mappings on top of the text mappings.
 

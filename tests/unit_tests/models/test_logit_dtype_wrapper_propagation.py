@@ -186,6 +186,37 @@ def test_nemotron_omni_wrapper_forwards_logit_dtype() -> None:
     assert captured["logit_dtype"] is torch.float32
 
 
+def test_nemotron_omni_wrapper_reads_logit_dtype_from_builder_model_config() -> None:
+    captured: dict[str, torch.dtype] = {}
+    # A builder-backed config keeps logit_dtype on the outer config, not on the transformer config.
+    language_config = _language_config()
+    del language_config.logit_dtype
+    with (
+        patch("megatron.core.transformer.module.MegatronModule.__init__", new=_fake_megatron_init),
+        patch(
+            "megatron.bridge.models.nemotron_omni.modeling_nemotron_omni.HybridModel",
+            new=_fake_language_model(captured),
+        ),
+    ):
+        NemotronOmniModel(
+            language_transformer_config=language_config,
+            language_transformer_layer_spec=object(),
+            language_vocab_size=32,
+            language_max_sequence_length=16,
+            vision_transformer_config=object(),
+            vision_transformer_layer_spec=object(),
+            vision_projection_config=object(),
+            vision_projection_layer_spec=object(),
+            image_token_index=1,
+            pre_process=False,
+            add_encoder=False,
+            pg_collection=_pg_collection(),
+            model_config=SimpleNamespace(logit_dtype=torch.float32),
+        )
+
+    assert captured["logit_dtype"] is torch.float32
+
+
 class LegacyLLaVAModel:
     """Exercise the unsupported interface still present in pinned MCore dev."""
 

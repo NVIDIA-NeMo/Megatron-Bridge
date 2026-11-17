@@ -41,7 +41,6 @@ def wan_14b_pretrain_16gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.recompute_method = "block"
     cfg.model.recompute_num_layers = 1
 
-    cfg.dist.use_megatron_fsdp = True
     cfg.ddp.use_megatron_fsdp = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.keep_fp8_transpose_cache = False

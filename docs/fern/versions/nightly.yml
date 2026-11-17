@@ -86,6 +86,10 @@ navigation:
       path: ./nightly/pages/models/gpt_oss/gpt-oss-120b.mdx
     section: GPT-OSS
   - contents:
+    - page: Inkling 2
+      path: ./nightly/pages/models/inkling/inkling2.mdx
+    section: Inkling
+  - contents:
     - page: Kimi K2
       path: ./nightly/pages/models/kimi/kimi-k2.mdx
     - page: Kimi-K2.5-VL
