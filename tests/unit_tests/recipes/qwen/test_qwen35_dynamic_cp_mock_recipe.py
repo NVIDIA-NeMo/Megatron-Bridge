@@ -92,7 +92,10 @@ def test_model_comes_from_the_pinned_hf_config_through_the_qwen35_bridge(recipe)
     assert requested == {"path": "Qwen/Qwen3.5-35B-A3B", "revision": qwen35._QWEN35_35B_A3B_INSTRUCT_REVISION}
     model = cfg.model
     expected = {
-        "num_layers": 40,
+        # Megatron-Core's hybrid stack: each of the 40 HF blocks is a mixer position followed by its MoE.
+        "num_layers": 80,
+        "is_hybrid_model": True,
+        "hybrid_layer_pattern": "GEGEGE*E" * 10,
         "hidden_size": 2048,
         "num_attention_heads": 16,
         "num_query_groups": 2,
@@ -129,7 +132,7 @@ def test_model_comes_from_the_pinned_hf_config_through_the_qwen35_bridge(recipe)
         "mtp_loss_scaling_factor": 0.1,
     }
     assert {name: getattr(model, name) for name in expected} == expected
-    assert model.linear_attention_freq == [1, 1, 1, 0] * 10
+    assert model.linear_attention_freq == [1, 0, 1, 0, 1, 0, 0, 0] * 10
 
 
 def test_parallelism_and_dynamic_context_parallelism(recipe):

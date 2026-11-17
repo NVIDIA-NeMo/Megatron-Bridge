@@ -60,7 +60,9 @@ def test_model_and_tokenizer_share_the_pinned_revision(online, requested):
     assert requested == {"path": "Qwen/Qwen3.5-35B-A3B", "revision": revision}
     assert online.tokenizer.tokenizer_model == "Qwen/Qwen3.5-35B-A3B"
     assert online.tokenizer.hf_tokenizer_kwargs == {"revision": revision}
-    assert (online.model.num_layers, online.model.num_moe_experts, online.model.mtp_num_layers) == (40, 256, 1)
+    # 40 HF blocks, each a mixer position followed by its MoE in Megatron-Core's hybrid stack.
+    assert online.model.hybrid_layer_pattern == "GEGEGE*E" * 10
+    assert (online.model.num_layers, online.model.num_moe_experts, online.model.mtp_num_layers) == (80, 256, 1)
 
 
 def test_128k_context_runs_on_a_cp8_pool_with_16k_tokens_per_rank(online):
