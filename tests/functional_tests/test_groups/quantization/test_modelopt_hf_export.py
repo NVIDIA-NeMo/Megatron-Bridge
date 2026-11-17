@@ -174,9 +174,12 @@ def test_quantized_export_is_independent_of_parallelism(toy_models, tmp_path, mo
         assert offline_config["quantization_config"] == quantization
         assert offline_weights.keys() == weights.keys()
         for name, tensor in weights.items():
-            assert offline_weights[name].dtype == tensor.dtype, name
+            other = offline_weights[name]
             # ModelOpt's exporter stores FP8 input scales with shape (1,).
-            assert torch.equal(_bits(offline_weights[name]).flatten(), _bits(tensor).flatten()), name
+            if config == "fp8" and name.endswith(".input_scale") and other.shape == (1,):
+                other = other.reshape(())
+            assert (other.dtype, other.shape) == (tensor.dtype, tensor.shape), name
+            assert torch.equal(_bits(other), _bits(tensor)), name
 
     _assert_same_export_at(parallelisms, toy_models(model), tmp_path, config, weights, hf_config)
 
