@@ -283,6 +283,35 @@ class TestSFTData:
         assert [len(tokens) for tokens, _ in documents] == [9, 5, 9, 5]
 
 
+class _StepTorch:
+    """``torch`` as ``ernie55_step`` sees it in these CPU tests: ``torch.cuda.current_device()`` answers ``"cpu"``."""
+
+    class _Cuda:
+        @staticmethod
+        def current_device():
+            return "cpu"
+
+        def __getattr__(self, name):
+            return getattr(torch.cuda, name)
+
+    cuda = _Cuda()
+
+    def __getattr__(self, name):
+        return getattr(torch, name)
+
+
+def _run_the_step_on_the_cpu(monkeypatch):
+    """Run ``forward_step`` with the CPU model of these tests as on a machine without CUDA.
+
+    ``forward_step`` asks ``torch.cuda.current_device()`` for the batch's device, so the step module's view of
+    ``torch`` answers ``"cpu"``; ``torch.cuda.current_device`` itself is left alone, because with a GPU present
+    ``torch.compile`` asks it for a device index. CUDA is reported unavailable, so code that checks
+    takes the CPU path it takes on a machine without CUDA (e.g. ``torch.compile``'s Triton probe).
+    """
+    monkeypatch.setattr(ernie55_step, "torch", _StepTorch())
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+
 @needs_hook
 def test_forward_step_numbers_micro_batches_for_the_expert_load_diagnostic(pg_collection, monkeypatch, tmp_path):
     """With ERNIE55_LOG_EXPERT_LOAD=1, the step labels every MoE layer's record with its step and micro-batch.
@@ -303,7 +332,7 @@ def test_forward_step_numbers_micro_batches_for_the_expert_load_diagnostic(pg_co
     atexit.unregister(recorder._dump_at_exit)
     _randomize_(model, seed=6)
     monkeypatch.setattr(flop_utils, "accumulate_flops_metadata", lambda state, tokens, **kwargs: None)
-    monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+    _run_the_step_on_the_cpu(monkeypatch)
     rows = [[([3, 4, 5, 6, 7, 8], [4, 5, 6, 7, 8, IGNORE_LABEL]), ([9, 10, 11, 12], [10, 11, 12, IGNORE_LABEL])]]
     collated = collate_ernie55_rows(rows, pad_token_id=0)
 

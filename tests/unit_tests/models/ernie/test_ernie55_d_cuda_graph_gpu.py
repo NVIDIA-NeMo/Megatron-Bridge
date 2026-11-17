@@ -274,7 +274,7 @@ class _Setup:
 
 @pytest.fixture(scope="module")
 def distributed():
-    """The NCCL default process group over the four ranks, created once for the module."""
+    """The NCCL default process group over the four ranks, created once for the module, and a non-default stream."""
     missing = _missing_dependencies()
     if missing:
         _skip("the ERNIE 5.5 D-layer CUDA graph GPU tests need " + "; ".join(missing))
@@ -285,7 +285,14 @@ def distributed():
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
         dist.init_process_group(backend="nccl")
         created_group = True
+    # Bridge's initialization runs Transformer Engine graph training on a non-default current stream. Do the same:
+    # a layer run eagerly before its capture keeps AccumulateGrad nodes (and graph pieces such as its attn_norm
+    # offload manager's input) alive on the stream they were created on, and on the legacy default stream the
+    # capture's backward would make that stream wait on the capturing one (cudaErrorStreamCaptureImplicit).
+    previous_stream = torch.cuda.current_stream()
+    torch.cuda.set_stream(torch.cuda.Stream())
     yield
+    torch.cuda.set_stream(previous_stream)
     if created_group:
         dist.destroy_process_group()
 
@@ -811,18 +818,32 @@ def test_mtp_shared_gradients(cp_setup, mtp_graphs):
             if len(record.replays) != 1:
                 failures.append(f"layer {wrapper.layer_number}: {len(record.replays)} replays, expected one")
         # The mechanism: each shared gradient is exactly what the graphs returned, summed (none overwritten).
+        # Without the indexer loss no loss reaches the indexer's parameters: they get no gradient, eagerly or from the
+        # graphs, and have nothing to sum.
         params = dict(model.named_parameters())
         expected_users = 2 if mtp_graphs else 1
+        trained = sorted(name for name in shared.values() if name in eager)
+        if not trained:
+            failures.append("no shared parameter gets a gradient")
         for name in sorted(shared.values()):
             contributions = store.get(name, [])
+            if name not in eager:
+                if contributions or name in graph:
+                    failures.append(f"{name}: no eager gradient, yet {len(contributions)} graph contributions")
+                continue
             if len(contributions) != expected_users:
                 failures.append(f"{name}: {len(contributions)} graph contributions, expected {expected_users}")
                 continue
             if mtp_graphs and not torch.equal(params[name].grad, contributions[0] + contributions[1]):
                 failures.append(f"{name}: the gradient is not the sum of the two graphs' returned contributions")
         failures += _compare(graph, eager, rerun, label, bitwise=tuple(graph))
-        reproducible = [name for name in shared.values() if torch.equal(eager[name], rerun[name])]
-        _report(label, shared=len(shared), shared_bitwise_reproducible=len(reproducible))
+        reproducible = [name for name in trained if torch.equal(eager[name], rerun[name])]
+        _report(
+            label,
+            shared=len(shared),
+            shared_with_gradient=len(trained),
+            shared_bitwise_reproducible=len(reproducible),
+        )
         if not reproducible:
             logger.warning("%s: no shared gradient is bitwise reproducible eagerly; only the gate applies", label)
     finally:

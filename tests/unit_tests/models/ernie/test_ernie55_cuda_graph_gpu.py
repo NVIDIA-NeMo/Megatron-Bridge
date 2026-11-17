@@ -234,7 +234,7 @@ class _Setup:
 
 @pytest.fixture(scope="module")
 def distributed():
-    """The NCCL default process group over the four ranks, created once for the module."""
+    """The NCCL default process group over the four ranks, created once for the module, and a non-default stream."""
     missing = _missing_dependencies()
     if missing:
         _skip("the ERNIE 5.5 CUDA graph GPU tests need " + "; ".join(missing))
@@ -245,7 +245,14 @@ def distributed():
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
         dist.init_process_group(backend="nccl")
         created_group = True
+    # Bridge's initialization runs Transformer Engine graph training on a non-default current stream. Do the same:
+    # a layer run eagerly before its capture keeps AccumulateGrad nodes (and graph pieces such as its attn_norm
+    # offload manager's input) alive on the stream they were created on, and on the legacy default stream the
+    # capture's backward would make that stream wait on the capturing one (cudaErrorStreamCaptureImplicit).
+    previous_stream = torch.cuda.current_stream()
+    torch.cuda.set_stream(torch.cuda.Stream())
     yield
+    torch.cuda.set_stream(previous_stream)
     if created_group:
         dist.destroy_process_group()
 

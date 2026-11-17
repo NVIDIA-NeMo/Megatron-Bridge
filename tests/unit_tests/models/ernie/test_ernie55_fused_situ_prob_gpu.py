@@ -32,15 +32,20 @@
 * The ERNIE 5.5 MoE layer from ``ernie55_hybrid_stack_spec`` with ``ernie_fused_situ_prob`` off and on, plain and with
   ``"moe"`` in ``recompute_modules`` (selective MoE recompute, where the kernel runs in the forward and again in the
   recompute): output, routed and shared expert gradients bitwise; the router and input gradients, which receive the
-  probability gradient, within fp32 summation-order rounding.
+  probability gradient, within fp32 summation-order rounding. These runs use ``torch.use_deterministic_algorithms``
+  (warnings only), so that Megatron-Core's unfused unpermute adds with ``index_add_`` instead of the atomic
+  ``scatter_add_``, whose bf16 sums depend on arrival order; two flag-off runs must then agree bitwise, which the test
+  checks before it compares the flag's runs.
 
 Needs CUDA and Triton; the module tests also need Transformer Engine with grouped linear layers. Without them the
 tests skip; with ``ERNIE55_GPU_STRICT=1`` (GPU acceptance runs) they fail instead. Runs on one GPU, or on every rank
 of a ``torch.distributed.run`` launch (each rank tests its own GPU; the module tests use expert parallelism over all
 ranks)::
 
-    python -m torch.distributed.run --nproc-per-node 4 -m pytest -rA -o log_cli=true -o log_cli_level=INFO \\
-        tests/unit_tests/models/ernie/test_ernie55_fused_situ_prob_gpu.py
+    CUBLAS_WORKSPACE_CONFIG=:4096:8 python -m torch.distributed.run --nproc-per-node 4 -m pytest -rA \\
+        -o log_cli=true -o log_cli_level=INFO tests/unit_tests/models/ernie/test_ernie55_fused_situ_prob_gpu.py
+
+(``CUBLAS_WORKSPACE_CONFIG`` makes cuBLAS reproducible for the MoE-layer tests' deterministic algorithms.)
 """
 
 from __future__ import annotations
@@ -320,6 +325,24 @@ def expert_parallel(tmp_path_factory):
     parallel_state.destroy_model_parallel()
 
 
+@pytest.fixture
+def deterministic_algorithms():
+    """``torch.use_deterministic_algorithms(True, warn_only=True)`` for one test, then the previous mode.
+
+    Uninitialized memory is not filled: the runs compare the layer as training runs it.
+    """
+    previous = (
+        torch.are_deterministic_algorithms_enabled(),
+        torch.is_deterministic_algorithms_warn_only_enabled(),
+        torch.utils.deterministic.fill_uninitialized_memory,
+    )
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.utils.deterministic.fill_uninitialized_memory = False
+    yield
+    torch.use_deterministic_algorithms(previous[0], warn_only=previous[1])
+    torch.utils.deterministic.fill_uninitialized_memory = previous[2]
+
+
 @pytest.fixture(autouse=True)
 def _fresh_moe_metrics():
     from megatron.core.transformer.moe import moe_logging
@@ -419,8 +442,11 @@ def test_routed_experts_match_megatron_core(expert_parallel, monkeypatch, recomp
 
 
 @pytest.mark.parametrize("recompute", [False, True], ids=["plain", "moe-recompute"])
-def test_moe_layer_with_and_without_the_flag(expert_parallel, monkeypatch, recompute):
-    """The ERNIE 5.5 MoE layer, ``ernie_fused_situ_prob`` off and on, on the same parameters and input."""
+def test_moe_layer_with_and_without_the_flag(expert_parallel, monkeypatch, recompute, deterministic_algorithms):
+    """The ERNIE 5.5 MoE layer, ``ernie_fused_situ_prob`` off and on, on the same parameters and input.
+
+    With deterministic algorithms (see the module docstring), after checking that two flag-off runs agree bitwise.
+    """
     import torch.distributed as dist
     from megatron.core.transformer.moe.experts import TEGroupedMLP
 
@@ -450,6 +476,12 @@ def test_moe_layer_with_and_without_the_flag(expert_parallel, monkeypatch, recom
     expected = run(False)
     assert dispatch.FUSED_OP_CALLS[f"situ_glu@{EXPERTS_SITE}"] == passes
     shared = dispatch.FUSED_OP_CALLS[f"situ_glu@{MLP_SITE}"]
+    dispatch.FUSED_OP_CALLS.clear()
+    # Precondition: the flag-off layer reproduces itself bitwise, so a difference below is the flag's.
+    repeat = run(False)
+    assert repeat.keys() == expected.keys()
+    unreproducible = [name for name, value in expected.items() if not _bitwise(repeat[name], value)]
+    assert not unreproducible, f"two flag-off runs differ in {unreproducible}"
     dispatch.FUSED_OP_CALLS.clear()
     actual = run(True)
     assert dispatch.FUSED_OP_CALLS == {ROUTED_SITE: passes, f"situ_glu@{MLP_SITE}": shared}
