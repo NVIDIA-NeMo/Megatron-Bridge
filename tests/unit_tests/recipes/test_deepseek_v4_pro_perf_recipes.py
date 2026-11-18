@@ -45,7 +45,11 @@ from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import (
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
     _deepseek_v4_pro_pretrain_256gpu_gb300_common,
 )
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import (
+    ConfigContainer,
+    DistributedDataParallelConfig,
+    _validate_and_sync_distributed_optimizer_settings,
+)
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
 from tests.unit_tests.recipes.recipe_test_utils import (
     DeepSeekV4BuilderOnlyBridge,
@@ -57,10 +61,7 @@ pytestmark = pytest.mark.unit
 
 
 def _required_capabilities(*, attention_graphs: bool) -> set[str]:
-    required = set(_MCORE_CAPABILITIES) - {"mhc_recompute_attn_cuda_graph_split"}
-    if attention_graphs:
-        required.add("mhc_recompute_attn_cuda_graph_split")
-    return required
+    return set(_MCORE_CAPABILITIES)
 
 
 def _build_recipe(recipe_factory: Callable[[], ConfigContainer], *, attention_graphs: bool = True) -> ConfigContainer:
@@ -69,6 +70,8 @@ def _build_recipe(recipe_factory: Callable[[], ConfigContainer], *, attention_gr
     missing = sorted((_required_capabilities(attention_graphs=attention_graphs) | set(api_fields)) - available)
     if missing:
         pytest.skip(f"DSv4 runtime support required; missing declared fields: {', '.join(missing)}")
+    if "use_layer_wise_param_layout" not in {item.name for item in fields(DistributedDataParallelConfig)}:
+        pytest.skip("DSv4 runtime requires compact Muon with sharded fallback Adam (MCore #5479).")
     return recipe_factory()
 
 
@@ -214,7 +217,19 @@ def test_pro_log_optimizer_and_execution_contract(
     assert cfg.optimizer.optimizer == "muon"
     assert cfg.optimizer.muon_coefficient_type == "deepseekv4"
     assert cfg.optimizer.muon_num_ns_steps == 10
-    assert cfg.optimizer.use_distributed_optimizer is False
+    # Configuration normalization must preserve the reference settings, including
+    # compact Muon ownership and ordinary distributed fallback Adam buffers.
+    for _ in range(2):
+        _validate_and_sync_distributed_optimizer_settings(cfg)
+        assert cfg.optimizer.use_distributed_optimizer is False
+        assert cfg.optimizer.use_layer_wise_distributed_optimizer is True
+        assert cfg.optimizer.use_layer_wise_param_layout is cfg.ddp.use_layer_wise_param_layout is False
+        assert cfg.ddp.use_distributed_optimizer is True
+        assert cfg.ddp.overlap_param_gather is cfg.optimizer.overlap_param_gather is True
+    assert cfg.model.dsa_indexer_precision == "mxfp8"
+    assert cfg.comm_overlap.overlap_param_gather is True
+    assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is False
+    assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
     assert cfg.optimizer.lr == 2e-4
     assert cfg.optimizer.min_lr == 2e-5
     assert cfg.optimizer.main_grads_dtype == torch.float32
@@ -239,11 +254,8 @@ def test_pro_log_optimizer_and_execution_contract(
         assert cuda_graph_module_names(cfg.model) == []
         assert getattr(cfg.model, "mhc_recompute_attn_cuda_graph_split", False) is False
         assert cfg.model.use_te_rng_tracker is cfg.rng.te_rng_tracker is False
-        assert cfg.comm_overlap.overlap_param_gather is cfg.comm_overlap.align_param_gather is False
-        assert cfg.ddp.overlap_param_gather is cfg.ddp.align_param_gather is False
-        assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is False
-        assert cfg.optimizer.overlap_param_gather is False
-        assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
+        assert cfg.comm_overlap.align_param_gather is False
+        assert cfg.ddp.align_param_gather is False
     assert not is_full_iteration_cuda_graph(cfg.model)
     declared = {item.name for item in fields(cfg.model)}
     if "o_groups" in declared:
@@ -364,15 +376,14 @@ def _model_api_fixture(*, development: bool, omit: str | None = None) -> type:
 
 
 @pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
-def test_api_mapping_preserves_geometry_and_compression_ratios(
-    development: bool, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_api_mapping_preserves_geometry_and_compression_ratios(development: bool) -> None:
     model = _model_api_fixture(development=development)()
     configure_dsv4_perf_model(model)
     assert model.is_hybrid_model is True
     assert model.csa_compress_ratios == [128, 0, 128, 0, 4, 0, 128, 0, 0, 0]
     assert model.attention_cp_layout == model.linear_cp_layout == "contiguous"
     assert callable(model.hybrid_stack_spec)
+    assert model.dsa_indexer_precision == "mxfp8"
     assert set(vars(model)) == {item.name for item in fields(model)}
     if development:
         assert model.o_groups == 16
@@ -395,7 +406,6 @@ def test_api_mapping_preserves_geometry_and_compression_ratios(
         assert model.mhc_num_residual_streams == 4
         assert model.cuda_graph_thd_max_packed_sequences == 8
         assert not set(_DEV_MCORE_CAPABILITIES) & vars(model).keys()
-        assert "indexer scoring uses BF16" in caplog.text
 
 
 @pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
@@ -408,21 +418,14 @@ def test_missing_mhc_graph_split_is_rejected_before_configuration(development: b
 
 
 @pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
-def test_eager_api_mapping_accepts_missing_graph_split_without_phantom_field(development: bool) -> None:
-    model = _model_api_fixture(development=development, omit="mhc_recompute_attn_cuda_graph_split")()
-
-    configure_dsv4_perf_model(model, attention_graphs=False)
-
-    assert "mhc_recompute_attn_cuda_graph_split" not in vars(model)
-    assert set(vars(model)) == {item.name for item in fields(model)}
-    assert model.csa_compress_ratios == [128, 0, 128, 0, 4, 0, 128, 0, 0, 0]
-    assert model.attention_cp_layout == model.linear_cp_layout == "contiguous"
-    if development:
-        assert model.cuda_graph_dynamic_microbatches is False
-    else:
-        assert model.cuda_graph_thd_max_packed_sequences == 8
-        assert model.output_projection_groups == 16
-        assert model.hash_moe_vocab_size == 129280
+@pytest.mark.parametrize("attention_graphs", [False, True], ids=["eager", "graph"])
+@pytest.mark.parametrize("missing", ["mhc_recompute_attn_cuda_graph_split", "dsa_indexer_precision"])
+def test_reference_runtime_rejects_missing_support_before_mutation(development, attention_graphs, missing):
+    model = _model_api_fixture(development=development, omit=missing)()
+    original = vars(model).copy()
+    with pytest.raises(RuntimeError, match=missing):
+        configure_dsv4_perf_model(model, attention_graphs=attention_graphs)
+    assert vars(model) == original
 
 
 @pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])

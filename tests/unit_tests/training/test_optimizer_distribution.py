@@ -2,6 +2,7 @@
 
 """Regression tests for optimizer selection, DDP layout and checkpoint state."""
 
+from dataclasses import fields
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -42,7 +43,9 @@ def test_distributed_emerging_optimizer_normalization(name, source):
         assert cfg.optimizer.optimizer == name.removeprefix("dist_")
         assert cfg.optimizer.use_layer_wise_distributed_optimizer
         assert not cfg.optimizer.use_distributed_optimizer
-        assert not cfg.ddp.use_distributed_optimizer
+        assert cfg.ddp.use_distributed_optimizer is (
+            "use_layer_wise_param_layout" in {item.name for item in fields(cfg.ddp)}
+        )
         assert uses_distributed_optimizer(cfg.optimizer)
 
 
@@ -176,7 +179,7 @@ def test_model_setup_forwards_layerwise_layout(builder, name, layerwise, param_l
             _build_distributed_model(cfg, Mock())
             kwargs = model.provide_distributed_model.call_args.kwargs
     assert kwargs["use_layer_wise_distributed_optimizer"] is (name not in ("adam", "sgd"))
-    assert kwargs["use_layer_wise_param_layout"] is (True if param_layout is None else param_layout)
+    assert kwargs["use_layer_wise_param_layout"] is optimizer.use_layer_wise_param_layout
 
 
 @pytest.mark.parametrize("name,layerwise", [("adam", False), ("muon", True)])
@@ -213,9 +216,7 @@ def test_mimo_setup_preserves_layout_override_with_core_optimizer_config(
     ):
         setup_megatron_mimo(SimpleNamespace(cfg=cfg), use_layer_wise_param_layout=layout_override)
 
-    expected_layout = (
-        layout_override if layout_override is not None else (True if param_layout is None else param_layout)
-    )
+    expected_layout = layout_override if layout_override is not None else optimizer.use_layer_wise_param_layout
     assert build.call_args.kwargs["use_layer_wise_param_layout"] is expected_layout
     assert build.call_args.kwargs["use_layer_wise_distributed_optimizer"] is layerwise
 
@@ -245,7 +246,9 @@ def test_layerwise_layout_defaults_to_compact_after_normalization(name: str) -> 
     cfg.optimizer.finalize()
     assert cfg.optimizer.use_layer_wise_distributed_optimizer
     assert not cfg.optimizer.use_layer_wise_param_layout
-    assert not cfg.ddp.use_distributed_optimizer
+    assert cfg.ddp.use_distributed_optimizer is (
+        "use_layer_wise_param_layout" in {item.name for item in fields(cfg.ddp)}
+    )
 
 
 @pytest.mark.parametrize(
@@ -328,7 +331,9 @@ def test_runtime_overlap_override_precedes_layerwise_validation(name, source, ov
     assert cfg.optimizer.optimizer == name.removeprefix("dist_")
     assert cfg.optimizer.use_layer_wise_distributed_optimizer is layerwise
     assert cfg.optimizer.use_distributed_optimizer is not layerwise
-    assert cfg.ddp.use_distributed_optimizer is not layerwise
+    assert cfg.ddp.use_distributed_optimizer is (
+        not layerwise or "use_layer_wise_param_layout" in {item.name for item in fields(cfg.ddp)}
+    )
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is (override is not False)
 
 

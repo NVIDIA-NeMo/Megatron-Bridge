@@ -19,7 +19,6 @@ fixed-length mock runs. It does not implement MCore's general variable-length
 ``dp_balanced`` data scheduler or reproduce its random token stream.
 """
 
-import logging
 from dataclasses import dataclass, field, fields
 
 import torch
@@ -30,8 +29,6 @@ from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.data.packing.config import PackedSequenceSpecs
 from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
 
-
-logger = logging.getLogger(__name__)
 
 _MCORE_CAPABILITIES = (
     "is_hybrid_model",
@@ -45,13 +42,13 @@ _MCORE_CAPABILITIES = (
     "pad_packed_seq_alignment",
     "attention_cp_layout",
     "linear_cp_layout",
+    "dsa_indexer_precision",
 )
 _DEV_MCORE_CAPABILITIES = (
     "cuda_graph_dynamic_microbatches",
     "pipeline_p2p_fixed_shape",
     "thd_max_packed_sequences",
     "cp_partition_mode",
-    "dsa_indexer_precision",
     "o_groups",
     "o_lora_rank",
     "moe_n_hash_layers",
@@ -76,28 +73,23 @@ def dsv4_hybrid_stack_spec(config: DeepSeekV4HybridModelProvider) -> ModuleSpec:
 
 
 def configure_dsv4_perf_model(model: DeepSeekV4HybridModelProvider, *, attention_graphs: bool = True) -> None:
-    """Configure declared main/dev APIs without weakening the graph requirements.
+    """Configure declared main/dev APIs with the reference MXFP8 indexer.
 
-    Native main uses BF16 packed indexer scoring; development MCore retains the
-    measured compact MXFP8 indexer. Attention graphs require MCore #7337 on main;
-    the explicit eager variant retains mHC recompute without that capability.
-    Call after choosing the main and MTP patterns.
+    Both execution modes require mHC parameter readiness from MCore #7337 for
+    overlapped gathering. Call after choosing the main and MTP patterns.
     """
     declared_fields = {item.name for item in fields(model)}
     development_api = "o_groups" in declared_fields
     api_fields = _DEV_MCORE_CAPABILITIES if development_api else _MAIN_MCORE_CAPABILITIES
     required_fields = set(_MCORE_CAPABILITIES + api_fields)
-    if not attention_graphs:
-        required_fields.remove("mhc_recompute_attn_cuda_graph_split")
     missing = sorted(required_fields - declared_fields)
     if missing:
         raise RuntimeError(
-            "The DSv4 performance recipes require MCore with DSv4 THD, MoK, and "
-            "mHC recompute. Attention-graph variants also require the mHC graph "
-            "support from https://github.com/NVIDIA/Megatron-LM/pull/7337. "
-            "Use an explicit eager variant for main without that PR. "
-            "See examples/models/deepseek_v4/README.md for exact runtime revisions "
-            "and the native BF16 indexer difference. "
+            "The DSv4 performance recipes require MCore with DSv4 THD, MoK, "
+            "compact MXFP8 CSA indexing, and mHC recompute/parameter readiness "
+            "from https://github.com/NVIDIA/Megatron-LM/pull/7337 in both eager "
+            "and attention-graph modes. See examples/models/deepseek_v4/README.md "
+            "for the required native-main runtime; BF16 indexing is not a fallback. "
             f"The installed MCore is missing configuration fields: {', '.join(missing)}."
         )
 
@@ -119,8 +111,8 @@ def configure_dsv4_perf_model(model: DeepSeekV4HybridModelProvider, *, attention
     model.attention_cp_layout = "contiguous"
     model.linear_cp_layout = "contiguous"
     model.hybrid_stack_spec = dsv4_hybrid_stack_spec
-    if "mhc_recompute_attn_cuda_graph_split" in declared_fields:
-        model.mhc_recompute_attn_cuda_graph_split = attention_graphs
+    model.mhc_recompute_attn_cuda_graph_split = attention_graphs
+    model.dsa_indexer_precision = "mxfp8"
     if development_api:
         model.o_groups = 16
         model.o_lora_rank = 1024
@@ -130,20 +122,13 @@ def configure_dsv4_perf_model(model: DeepSeekV4HybridModelProvider, *, attention
         model.pipeline_p2p_fixed_shape = True
         model.thd_max_packed_sequences = 8
         model.cuda_graph_dynamic_microbatches = attention_graphs
-        model.dsa_indexer_precision = "mxfp8"
     else:
         model.output_projection_groups = 16
         model.output_projection_lora_rank = 1024
         model.moe_num_hash_layers = 3
         model.hash_moe_vocab_size = 129280
         model.cuda_graph_thd_max_packed_sequences = 8
-        # Main infers the fixed microbatch graph count and uses native PP shape
-        # exchange. It has no compact MXFP8 CSA indexer precision selector.
-        logger.warning(
-            "DSv4 native-main functional variant: packed indexer scoring uses BF16; "
-            "model training remains MXFP8. This differs from the reference compact "
-            "MXFP8 indexer. See examples/models/deepseek_v4/README.md."
-        )
+        # Main infers the fixed microbatch graph count and uses native PP shape exchange.
     if model.hybrid_layer_pattern is None:
         raise ValueError("Set the DSv4 main hybrid pattern before configuring its stack.")
     main_pattern = model.hybrid_layer_pattern.split("/", 1)[0].replace("|", "")

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -41,10 +41,45 @@ def test_layer_wise_keeps_optimizer_separate_from_ddp(optimizer_name, layer_wise
 
     _validate_and_sync_distributed_optimizer_settings(cfg)
 
-    assert cfg.ddp.use_distributed_optimizer is False
+    assert cfg.ddp.use_distributed_optimizer is (
+        "use_layer_wise_param_layout" in {item.name for item in fields(cfg.ddp)}
+    )
     assert cfg.optimizer.use_distributed_optimizer is False
     assert cfg.ddp.overlap_param_gather is True
     assert cfg.optimizer.overlap_param_gather is True
+
+
+@pytest.mark.parametrize("supports_compact_adam", [False, True], ids=["legacy-main", "compact-adam"])
+@pytest.mark.parametrize("param_layout", [False, True], ids=["compact", "padded"])
+def test_normalization_selects_declared_ddp_layout(supports_compact_adam, param_layout):
+    @dataclass
+    class LegacyDDP:
+        use_distributed_optimizer: bool = True
+        num_distributed_optimizer_instances: int = 1
+        overlap_param_gather: bool = False
+
+    @dataclass
+    class CompactAdamDDP(LegacyDDP):
+        use_layer_wise_param_layout: bool = not param_layout
+
+    cfg = SimpleNamespace(
+        optimizer=OptimizerConfig(
+            optimizer="muon",
+            use_layer_wise_distributed_optimizer=True,
+            use_layer_wise_param_layout=param_layout,
+            overlap_param_gather=True,
+        ),
+        ddp=(CompactAdamDDP if supports_compact_adam else LegacyDDP)(),
+    )
+    for _ in range(2):
+        _validate_and_sync_distributed_optimizer_settings(cfg)
+        assert cfg.ddp.use_distributed_optimizer is supports_compact_adam
+        assert cfg.optimizer.use_distributed_optimizer is False
+        assert cfg.optimizer.use_layer_wise_distributed_optimizer is True
+        assert cfg.ddp.overlap_param_gather is cfg.optimizer.overlap_param_gather is True
+        assert set(vars(cfg.ddp)) == {item.name for item in fields(cfg.ddp)}
+        if supports_compact_adam:
+            assert cfg.ddp.use_layer_wise_param_layout is param_layout
 
 
 @pytest.mark.parametrize("optimizer_name, layer_wise", [("muon", True), ("dist_muon", False), ("adam", False)])
@@ -57,7 +92,7 @@ def test_training_setup_forwards_layer_wise_layout(monkeypatch, optimizer_name, 
             use_layer_wise_distributed_optimizer=layer_wise,
             overlap_param_gather_with_optimizer_step=False,
         ),
-        ddp=object(),
+        ddp=DistributedDataParallelConfig(),
         dist=SimpleNamespace(
             use_megatron_fsdp=False,
             use_torch_fsdp2=False,

@@ -65,7 +65,7 @@ def test_all_perf_recipe_factories_are_exported() -> None:
 
 
 def _reject_unsupported_dsv4_recipe(recipe_factory: Callable[..., object]) -> bool:
-    """Keep graph guards strict while allowing the eager DSv4 factories on main."""
+    """Require the reference runtime for eager and graph DSv4 factories."""
     if recipe_factory.__name__ not in {
         "deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config",
         "deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config",
@@ -84,13 +84,14 @@ def _reject_unsupported_dsv4_recipe(recipe_factory: Callable[..., object]) -> bo
     )
 
     declared_fields = {field.name for field in fields(DeepSeekV4HybridModelProvider)}
-    required = set(_MCORE_CAPABILITIES) - {"mhc_recompute_attn_cuda_graph_split"}
-    if not recipe_factory.__name__.endswith("_eager_config"):
-        required.add("mhc_recompute_attn_cuda_graph_split")
+    required = set(_MCORE_CAPABILITIES)
     required.update(_DEV_MCORE_CAPABILITIES if "o_groups" in declared_fields else _MAIN_MCORE_CAPABILITIES)
-    if required <= declared_fields:
+    from megatron.bridge.training.config import DistributedDataParallelConfig
+
+    ddp_fields = {field.name for field in fields(DistributedDataParallelConfig)}
+    if required <= declared_fields and "use_layer_wise_param_layout" in ddp_fields:
         return False
-    with pytest.raises(RuntimeError, match="require MCore"):
+    with pytest.raises(RuntimeError, match="require.*(MCore|compact Muon)"):
         recipe_factory()
     return True
 

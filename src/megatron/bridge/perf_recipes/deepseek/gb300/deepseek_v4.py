@@ -13,6 +13,8 @@
 # limitations under the License.
 """GB300 performance recipes for DeepSeek V4."""
 
+from dataclasses import fields
+
 import torch
 
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
@@ -70,8 +72,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Configure the 61-block + MTP, 256-GPU Pro benchmark.
 
-    Supports development MCore or main plus mHC graph support (#7337). Native
-    main uses BF16 indexer scoring; see the example for runtime differences.
+    Requires the native-main runtime with compact MXFP8 indexing, compact
+    Muon/sharded Adam, and mHC parameter readiness; see the example runtime pins.
     Uses forced load balancing and fixed synthetic THD packs for performance
     correlation, not convergence validation. No Hugging Face download is needed.
     """
@@ -79,10 +81,10 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config() -> ConfigContainer:
-    """Run full Pro on native main with mHC recompute and synchronous gathers.
+    """Run full Pro eagerly with mHC recompute and overlapped parameter gathering.
 
-    Keeps the 61-block + MTP model and batch contract, disables CUDA graphs and
-    parameter-gather overlap, and does not require MCore's mHC graph PR #7337.
+    Keeps the 61-block + MTP model and batch contract, compact MXFP8 indexer,
+    and optimizer layout. Requires the same native-main runtime as graph mode.
     """
     return _deepseek_v4_pro_benchmark_config(attention_graphs=False)
 
@@ -212,6 +214,14 @@ def _deepseek_v4_pro_benchmark_config(*, attention_graphs: bool) -> ConfigContai
     cfg.optimizer.optimizer = "muon"
     cfg.optimizer.use_distributed_optimizer = False
     cfg.optimizer.use_layer_wise_distributed_optimizer = True
+    cfg.optimizer.use_layer_wise_param_layout = False
+    if "use_layer_wise_param_layout" not in {item.name for item in fields(cfg.ddp)}:
+        raise RuntimeError(
+            "The DSv4 performance recipes require the compact Muon/Adam DDP layout "
+            "support from https://github.com/NVIDIA/Megatron-LM/pull/5479. "
+            "See examples/models/deepseek_v4/README.md for the native-main runtime."
+        )
+    cfg.ddp.use_layer_wise_param_layout = False
     cfg.optimizer.muon_coefficient_type = "deepseekv4"
     cfg.optimizer.muon_split_qkv = True
     cfg.optimizer.adam_beta1 = 0.9
@@ -224,15 +234,18 @@ def _deepseek_v4_pro_benchmark_config(*, attention_graphs: bool) -> ConfigContai
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
     cfg.scheduler.lr_warmup_init = 2e-5
     cfg.scheduler.start_weight_decay = cfg.scheduler.end_weight_decay = 0.1
+    # Compact Muon buffers use all-reduce; fallback Adam retains distributed sharding.
     cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.overlap_param_gather = cfg.optimizer.overlap_param_gather = True
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
     cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.average_in_collective = False
     cfg.ddp.bucket_size = 64000000
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=False,
         overlap_grad_reduce=True,
-        overlap_param_gather=attention_graphs,
-        overlap_param_gather_with_optimizer_step=None if attention_graphs else False,
+        overlap_param_gather=True,
+        overlap_param_gather_with_optimizer_step=False,
         overlap_p2p_comm=True,
         batch_p2p_comm=False,
         align_param_gather=attention_graphs,
@@ -241,12 +254,8 @@ def _deepseek_v4_pro_benchmark_config(*, attention_graphs: bool) -> ConfigContai
         delay_wgrad_compute=False,
     )
     if not attention_graphs:
-        # Bare main lacks the mHC projection readiness hook from #7337. Keep
-        # parameter gathering synchronous, and avoid graph-safe RNG tracking.
-        cfg.ddp.overlap_param_gather = False
+        # Eager execution retains parameter-gather overlap without graph-safe RNG tracking.
         cfg.ddp.align_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather_with_optimizer_step = False
         clear_cuda_graph_modules(cfg.model)
         cfg.model.use_te_rng_tracker = False
         cfg.rng.te_rng_tracker = False

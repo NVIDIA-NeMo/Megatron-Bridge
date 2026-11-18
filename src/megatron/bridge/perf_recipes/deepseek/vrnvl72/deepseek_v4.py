@@ -58,8 +58,8 @@ def deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 def deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
     """DeepSeek V4 Pro proxy: 16 main blocks + MTP on 64 Rubin GPUs.
 
-    Requires MCore main plus mHC graph support (#7337), or compatible development
-    MCore, and a Rubin-capable MoK container. Native main uses BF16 indexer scoring.
+    Requires the integrated native-main runtime or compatible development MCore,
+    and a Rubin-capable MoK container. Indexer scoring remains MXFP8.
     Retains the GB300 proxy's model and training settings, using
     the communication SM allocation from the Rubin benchmark.
     """
@@ -73,10 +73,10 @@ def deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContain
 
 
 def deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config() -> ConfigContainer:
-    """Run the 16-block + MTP Rubin proxy eagerly without MCore's mHC graph PR.
+    """Run the 16-block + MTP Rubin proxy eagerly with overlapped parameter gathering.
 
     Retains the full model widths, 65K sequence, CP16, Muon, MXFP8 and mHC group
-    two. Parameter gathers are synchronous; native main uses BF16 indexer scoring.
+    two. Uses the same integrated runtime and MXFP8 indexer as graph mode.
     """
     cfg = deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config()
     cfg.model.moe_megakernel_backend_config = {

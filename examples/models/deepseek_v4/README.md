@@ -162,23 +162,32 @@ performance references, not substitutes for the library recipes.
 These benchmark recipes retain the model geometry, parallelism, batch sizes,
 Muon optimizer, model MXFP8, MoK/HybridEP, and mHC attention-graph settings from
 the supplied full and proxy MCore logs. Runtime-specific differences are listed
-below; native main is a functional-test variant, not an identical reproduction.
+below; matching these settings does not establish numerical or timing parity.
 The earlier 50-step GB300 runs used the private `dsv4` revision
 `d211e50e888fcb8640ddc9923e98940800afcfd3` and its compatible kernel container.
 They completed with finite reported losses and gradient norms and no skipped or
 NaN iterations; this is execution evidence, not convergence or numerical parity.
 
-The native-main attention-graph target is the immutable merge revision
-[`28c439772712240602a28123b462d8e374bec67f`](https://github.com/malay-nagda/Megatron-LM/commit/28c439772712240602a28123b462d8e374bec67f):
-main `c1ad819d07cb946620341a317b8d06e74207e0f1` plus
-[MCore #7337](https://github.com/NVIDIA/Megatron-LM/pull/7337) at
-`12880406160688146b19733996d0ede8bd3a2726`, with no additional source patches.
-Use this full merge SHA for nemo-ci's `--mcore-ref`. Unmodified main at the
-specified revision lacks graphable mHC wrappers: removing the capability guard
-would allow graph discovery to skip attention capture. The recipe therefore
-requires the declared mHC recompute/attention-graph split capability for its
-graph variants. The explicit eager variants below also support main without
-#7337.
+Both eager and attention-graph benchmarks require the native-main integration
+revision
+[`87d1b92bd1577825935941297bda7b72167aab76`](https://github.com/malay-nagda/Megatron-LM/commit/87d1b92bd1577825935941297bda7b72167aab76)
+(based on main
+`c1ad819d07cb946620341a317b8d06e74207e0f1`). It contains:
+
+- [MCore #7337](https://github.com/NVIDIA/Megatron-LM/pull/7337) at
+  `12880406160688146b19733996d0ede8bd3a2726`, including mHC projection parameter
+  readiness for overlapped gathering and attention graph support.
+- [MCore #5479](https://github.com/NVIDIA/Megatron-LM/pull/5479) at
+  `9dcc305d7d27282c52a384d8a80be62a5170db0a`, integrated with main's current DDP
+  and optimizer lifecycle to keep compact Muon buffers and sharded fallback Adam.
+- [MCore #9555](https://github.com/NVIDIA/Megatron-LM/pull/9555) at
+  `bbc36daae5d5f27c085b7b7dbaae2e6da56341ae`: the native-main compact MXFP8 CSA
+  indexer port, including packed THD/context parallelism, compact prediction
+  loss, and graph-compatible workspace reuse.
+
+Use the full integration SHA for nemo-ci's `--mcore-ref`. Bare main and the older
+main-plus-#7337 target are insufficient: the recipes reject missing support
+instead of silently using BF16 indexing or changing the optimizer layout.
 
 Use the MoK Rubin/Blackwell image built in pipeline 82972924:
 `nvcr.io/nvidian/nemo:dgxctestingtemp-nemofw-nightly.83236778`, whose immutable
@@ -192,11 +201,17 @@ emerging-optimizers implementations are required.
 The adapter also retains the development API used with MCore
 `264817a74075a0c4b003723054c3ae71020058ad`. It selects declared dataclass fields
 and resolves main's static hybrid spec or development's spec factory.
-The native-main functional variant has these explicit differences:
+Both runtimes select **MXFP8 indexer scoring**, model MXFP8 and FP8 parameter
+gathering, `optimizer.overlap_param_gather=True`,
+`ddp.overlap_param_gather=True`, and `ddp.use_distributed_optimizer=True`.
+Muon remains layer-wise (`optimizer.use_distributed_optimizer=False`,
+`use_layer_wise_distributed_optimizer=True`) with compact parameter layout;
+the shared DDP flag retains sharding for fallback Adam. It does not change Muon
+to the ordinary distributed Adam optimizer. Optimizer-step gather overlap stays
+disabled because it is incompatible with this LayerWise/MXFP8-buffer-reuse path.
 
-- Packed CSA indexer scoring uses the native **BF16** path. The reference's
-  compact **MXFP8** indexer is not available on this main revision. The adapter
-  logs this difference; model MXFP8 training and parameter gathering remain on.
+The native-main runtime still has these differences:
+
 - #7337 enables attention graphs with mHC recompute group two, but retains a
   copied attention aggregate in the static graph buffer. Its memory/performance
   behavior differs from development's aggregate recomputation implementation.
@@ -206,7 +221,7 @@ The native-main functional variant has these explicit differences:
 - Main uses native pipeline shape exchange. The development fixed-P2P-shape
   optimization is absent; this matters for full PP4/VPP4, not PP1 proxy traffic.
 - Grouped output projection uses main's existing implementation. The separate
-  BatchedLinear optimization and compact-Muon ports are not part of this pin.
+  BatchedLinear optimization is not part of this runtime.
 
 Configuration tests do not exercise GPU kernels. For a functional run, verify
 finite completed LM/MTP/auxiliary losses and gradient norms, no skipped/NaN
@@ -283,11 +298,11 @@ intermediate pipeline stages, with one full-length sequence per microbatch.
 It reproduces the fixed pack shape used in the logs, rather than their random
 token stream or the general variable-length `dp_balanced` data scheduler.
 
-### Eager Pro functional tests without the mHC graph PR
+### Eager Pro functional tests
 
-Use native main `c1ad819d07cb946620341a317b8d06e74207e0f1` for the following
-explicit variants. They do not require #7337 and also work with the documented
-main-plus-PR and development revisions.
+Use the same integrated native-main runtime as the graph benchmarks for these
+explicit variants. Eager execution also requires #7337's mHC projection
+readiness check so direct weight reads wait for overlapped parameter gathering.
 
 | Recipe | Performance selector variant |
 |--------|------------------------------|
@@ -305,35 +320,33 @@ source-mount arguments and use this model selection:
 
 Keep the flat performance recipe path (`--use_recipes` omitted). Remove explicit
 CUDA-graph or parameter-gather-overlap overrides from an earlier launch so they
-do not override the eager recipe policy. For the training launcher, select the
+do not override the recipe's restored policy. For the training launcher, select the
 full factory name from the table with `--recipe`.
 
 These variants retain all model layers for their respective full/proxy sizes,
 one MTP, sequence 65,536, CP16/EP64, GBS256/MBS1, Muon, model MXFP8 and parameter
 gather buffer reuse, and selective `mla_up_proj`/mHC recompute with
-`mhc_recompute_layer_num=2`. The native-main BF16 indexer difference still applies.
+`mhc_recompute_layer_num=2`. Indexer scoring remains MXFP8 in eager mode.
 Fixed THD metadata capacity remains eight in eager mode.
 
 The deliberate execution changes are:
 
 - `cuda_graph_impl="none"`, empty graph scopes/modules and zero graph warmup.
 - Both model and RNG TE-tracker flags are false.
-- Parameter-gather overlap, optimizer-step gather overlap and gather alignment
-  are disabled. Gradient-reduction overlap and the full model's PP overlap remain
-  as configured by the corresponding benchmark.
+- Gather alignment is disabled. Parameter-gather overlap remains enabled in
+  both DDP and the optimizer; optimizer-step gather overlap remains disabled.
+  Gradient-reduction overlap and the full model's PP overlap remain configured
+  by the corresponding benchmark.
 
-Synchronous parameter gathering is needed for this conservative main-only test:
-#7337 also adds a readiness check before mHC directly reads projection weights,
-which otherwise bypasses the child module's forward pre-hook. Its absence is
-relevant even with CUDA graphs disabled. The helper requires the split-graph
-capability only for graph variants and never creates that field on a main config
-that does not declare it. Selecting an eager variant happens before the guard;
-overriding `cuda_graph_impl` after constructing a graph recipe is insufficient.
+The helper requires the declared mHC readiness/graph-split capability in both
+modes and sets the split false for eager execution. The benchmark no longer
+supports bare main by disabling parameter-gather overlap. Select an explicit
+eager variant before construction rather than overriding a graph recipe later.
 
 The value two groups physical HybridStack layers for activation recomputation;
 in this attention/MoE pattern that is one logical block. It does not reduce model
-depth. Eager runs omit graph replay and communication overlap, so they are
-functional-test variants and their throughput is not directly comparable to the
+depth. Eager runs omit graph replay, so they are functional-test variants and
+their throughput is not directly comparable to the
 graph-enabled reference. GPU execution must still be validated on the target
 cluster.
 
