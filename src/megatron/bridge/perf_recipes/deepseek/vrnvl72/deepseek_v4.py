@@ -13,7 +13,7 @@
 # limitations under the License.
 """VRNVL72 performance recipes for DeepSeek V4."""
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
+from megatron.bridge.perf_recipes._common import _enable_ncclep, _enable_optimizer_cuda_graph
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
     _build_deepseek_v4_flash_gb300_fp8mx,
 )
@@ -24,6 +24,7 @@ from megatron.bridge.training.config import ConfigContainer
 def deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× VRNVL72, MXFP8, NCCL EP (alias of GB300)."""
     cfg = _build_deepseek_v4_flash_gb300_fp8mx()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
 
     # Rubin's grouped GLU kernel does not support DeepSeek V4's SwiGLU clamp parameters. This is a

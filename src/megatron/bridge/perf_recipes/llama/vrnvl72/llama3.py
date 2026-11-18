@@ -13,6 +13,7 @@
 # limitations under the License.
 """VRNVL72 performance recipes for Llama 3."""
 
+from megatron.bridge.perf_recipes._common import _enable_optimizer_cuda_graph
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.llama.common import (
     ConfigContainer,
@@ -73,6 +74,7 @@ def llama3_8b_pretrain_8gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
 def llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     """LLaMA 3 8B pretrain: 8× VRNVL72, FP8-MX (alias of GB300)."""
     cfg = llama3_8b_pretrain_8gpu_gb300_fp8mx_config()
+    _enable_optimizer_cuda_graph(cfg)
     cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.model.fused_single_qkv_rope = True
     # TE SwiGLU kernel; MCore requires bias_activation_fusion off with it.
@@ -100,6 +102,7 @@ def llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 def llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
     """LLaMA 3 8B pretrain: 8× VRNVL72, NVFP4 (alias of GB300)."""
     cfg = llama3_8b_pretrain_8gpu_gb300_nvfp4_config()
+    _enable_optimizer_cuda_graph(cfg)
     # NVFP4BlockScaling takes fp8_dpa from this field, so DPA runs in FP8 under the FP4 recipe.
     cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.model.fused_single_qkv_rope = True

@@ -13,7 +13,7 @@
 # limitations under the License.
 """VRNVL72 performance recipes for DeepSeek V3."""
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
+from megatron.bridge.perf_recipes._common import _enable_ncclep, _enable_optimizer_cuda_graph
 from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _benchmark_common,
@@ -470,6 +470,7 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
 def deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VRNVL72, NVFP4 with full-iteration CUDA graph, NCCL EP."""
     cfg = _build_deepseek_v3_gb300_nvfp4()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
@@ -581,6 +582,7 @@ def deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
     # Build from the shared MXFP8 base rather than the 256-GPU VRNVL72 recipe and its MLPerf
     # execution settings, so this proxy stays matched with the NVFP4 proxy.
     cfg = _build_deepseek_v3_gb300_fp8mx()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.

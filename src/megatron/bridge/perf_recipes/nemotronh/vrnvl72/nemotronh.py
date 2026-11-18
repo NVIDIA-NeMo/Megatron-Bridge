@@ -13,7 +13,7 @@
 # limitations under the License.
 """VRNVL72 performance recipes for Nemotron 3 and 3.5."""
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
+from megatron.bridge.perf_recipes._common import _enable_ncclep, _enable_optimizer_cuda_graph
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
     ConfigContainer,
@@ -157,6 +157,7 @@ def nemotron_3_super_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
 def nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VRNVL72, MXFP8 with full-iteration CUDA graph, NCCL EP."""
     cfg = _build_nemotron_3_super_gb300_mxfp8()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
@@ -189,6 +190,7 @@ def nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 def nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VRNVL72, NVFP4 with full-iteration CUDA graph, NCCL EP."""
     cfg = _build_nemotron_3_super_gb300_nvfp4()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
@@ -342,6 +344,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContain
     cfg.mixed_precision.fp8_dot_product_attention = True
     _enable_ncclep(cfg)
     _enable_nemotron_3_5_lightning_full_iteration(cfg)
+    _enable_optimizer_cuda_graph(cfg)
     # Expert dispatch/combine is exposed at 16 SMs on VRNVL72; 32 SMs shortens the step.
     cfg.model.moe_hybridep_num_sms = 32
     # Fused top-k/score routing further shortens the VRNVL72 step.

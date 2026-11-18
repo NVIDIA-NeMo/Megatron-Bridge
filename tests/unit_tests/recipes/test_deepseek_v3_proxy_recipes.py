@@ -181,14 +181,6 @@ def test_4gpu_proxy_only_resizes_its_parent(precision: str) -> None:
     else:
         parent = deepseek.deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config()
     proxy = getattr(deepseek, f"deepseek_v3_pretrain_4gpu_vrnvl72_{precision}_proxy_config")()
-    if precision == "fp8mx":
-        # The GB300 recipe also captures the optimizer step in a CUDA graph; the proxy builds on the
-        # shared base and keeps the optimizer step eager.
-        assert parent.optimizer.optimizer_cuda_graph is True
-        assert not proxy.optimizer.optimizer_cuda_graph
-        parent.optimizer.optimizer_cuda_graph = proxy.optimizer.optimizer_cuda_graph
-        parent.optimizer.store_param_remainders = proxy.optimizer.store_param_remainders
-        parent.model.cuda_graph_use_single_mempool = proxy.model.cuda_graph_use_single_mempool
 
     assert {key: value for key, value in vars(proxy.model).items() if key not in _4GPU_PROXY_MODEL_FIELDS} == {
         key: value for key, value in vars(parent.model).items() if key not in _4GPU_PROXY_MODEL_FIELDS

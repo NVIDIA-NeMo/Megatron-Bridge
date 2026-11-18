@@ -13,7 +13,7 @@
 # limitations under the License.
 """VRNVL72 performance recipes for GPT-OSS."""
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
+from megatron.bridge.perf_recipes._common import _enable_ncclep, _enable_optimizer_cuda_graph
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.gpt_oss.common import (
     ConfigContainer,
@@ -183,6 +183,7 @@ def gpt_oss_120b_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
 def gpt_oss_120b_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× VRNVL72, FP8-MX, NCCL EP (alias of GB300)."""
     cfg = _build_gpt_oss_120b_gb300_fp8mx()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.

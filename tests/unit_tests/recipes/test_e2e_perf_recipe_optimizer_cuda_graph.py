@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Optimizer CUDA graph policy for E2E-owned full-iteration performance tracker benchmarks."""
+"""Optimizer CUDA graph policy for the GB200, GB300 and VRNVL72 full-iteration tracker benchmarks."""
 
 import math
 from collections.abc import Callable
@@ -26,16 +26,31 @@ from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
     deepseek_v3_pretrain_256gpu_gb300_nvfp4_config,
+    deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config,
     deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config,
     deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config,
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
     deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config,
 )
+from megatron.bridge.perf_recipes.gpt_oss import gpt_oss_120b_pretrain_64gpu_vrnvl72_fp8mx_config
+from megatron.bridge.perf_recipes.llama import (
+    llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config,
+    llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config,
+)
+from megatron.bridge.perf_recipes.nemotronh import (
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
+    nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config,
+    nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config,
+    nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config,
+)
 from megatron.bridge.perf_recipes.qwen import (
+    qwen3_30b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
+    qwen3_235b_a22b_pretrain_256gpu_vrnvl72_fp8mx_config,
+    qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
@@ -57,13 +72,23 @@ _E2E_OPTIMIZER_CUDA_GRAPH_RECIPES = (
     qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
+    # VRNVL72 tracker rows that capture the full iteration.
+    llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config,
+    llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config,
+    deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config,
+    deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config,
+    gpt_oss_120b_pretrain_64gpu_vrnvl72_fp8mx_config,
+    nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config,
+    nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config,
+    nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config,
+    qwen3_30b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config,
+    qwen3_235b_a22b_pretrain_256gpu_vrnvl72_fp8mx_config,
+    qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config,
 )
 
-# Built on the GB300 DeepSeek V4 Flash base, but not E2E-owned tracker rows.
-_DERIVED_RECIPES_WITHOUT_OPTIMIZER_CUDA_GRAPH = (
-    deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config,
-    deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config,
-)
+# Built on the GB300 DeepSeek V4 Flash base, but not an E2E-owned tracker row.
+_DERIVED_RECIPES_WITHOUT_OPTIMIZER_CUDA_GRAPH = (deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config,)
 
 
 @pytest.fixture(autouse=True)
@@ -75,7 +100,7 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_e2e_full_iteration_recipes_capture_optimizer_step(
     recipe_factory: Callable[[], ConfigContainer],
 ) -> None:
-    """E2E full-iteration benchmarks capture the optimizer step with settings the capture supports."""
+    """Full-iteration tracker benchmarks capture the optimizer step with settings the capture supports."""
     cfg = recipe_factory()
 
     assert cfg.optimizer.optimizer_cuda_graph is True

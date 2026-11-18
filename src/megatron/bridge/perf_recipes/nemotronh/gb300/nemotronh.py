@@ -13,7 +13,7 @@
 # limitations under the License.
 """GB300 performance recipes for Nemotron 3 and 3.5."""
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
+from megatron.bridge.perf_recipes._common import _enable_ncclep, _enable_optimizer_cuda_graph
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
     _TE_QUANT_CFG_PATH,
@@ -650,6 +650,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer
     cfg.mixed_precision.fp8_dot_product_attention = True
     _enable_ncclep(cfg)
     _enable_nemotron_3_5_lightning_full_iteration(cfg)
+    _enable_optimizer_cuda_graph(cfg)
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
