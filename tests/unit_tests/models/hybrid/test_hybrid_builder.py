@@ -72,25 +72,16 @@ class TestHybridStackSpecs:
             "pre_mlp_layernorm.": "mlp.linear_fc1.layer_norm_",
         }
 
-    def test_default_spec_returns_te_spec(self):
+    @pytest.mark.parametrize("restore_modelopt_state", [False, True])
+    def test_default_spec_returns_te_spec(self, restore_modelopt_state):
         config = _make_hybrid_config()
+        config.restore_modelopt_state = restore_modelopt_state
         with patch(
             "megatron.bridge.models.hybrid.hybrid_builder.transformer_engine_hybrid_stack_spec",
             return_value=Mock(spec=ModuleSpec),
         ) as mock_fn:
             result = get_default_hybrid_stack_spec(config)
         mock_fn.assert_called_once()
-        assert result is mock_fn.return_value
-
-    def test_default_spec_returns_modelopt_spec(self):
-        config = _make_hybrid_config()
-        config.restore_modelopt_state = True
-        with patch(
-            "megatron.bridge.models.hybrid.hybrid_builder.modelopt_hybrid_stack_spec",
-            return_value=Mock(spec=ModuleSpec),
-        ) as mock_fn:
-            result = get_default_hybrid_stack_spec(config)
-        mock_fn.assert_called_once_with(config)
         assert result is mock_fn.return_value
 
 
