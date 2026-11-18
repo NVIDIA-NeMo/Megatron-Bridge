@@ -25,8 +25,13 @@ import pytest
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from megatron.bridge.models.common import ModelConfigOverrideMixin
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hybrid import BridgeHybridModelConfig
+from megatron.bridge.models.muse_glimmer.muse_glimmer_config import (
+    MuseGlimmerModelConfig,
+    MuseGlimmerTransformerConfig,
+)
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.utils.omegaconf_utils import (
     OverridesError,
@@ -1055,7 +1060,30 @@ class TestBuilderTransformerOverrides:
         else:
             assert not hasattr(config.model.transformer, "hybrid_layer_pattern")
 
-    @pytest.mark.parametrize("config_cls", [BridgeGPTModelConfig, BridgeHybridModelConfig])
+    @pytest.mark.parametrize("source", ["cli", "yaml"])
+    def test_muse_glimmer_pattern_overrides_reach_the_model_config(self, tmp_path, source):
+        config = ConfigWithBuilderModel()
+        config.model = MuseGlimmerModelConfig(
+            transformer=MuseGlimmerTransformerConfig(num_layers=4, hidden_size=64, num_attention_heads=4),
+            hybrid_layer_pattern="****",
+        )
+        has_nested_pattern = "hybrid_layer_pattern" in type(config.model.transformer).__dataclass_fields__
+        if has_nested_pattern:
+            assert config.model.transformer.hybrid_layer_pattern == "****"
+        if source == "cli":
+            process_config_with_overrides(config, cli_overrides=["model.hybrid_layer_pattern=**|**"])
+        else:
+            config_file = tmp_path / "muse.yaml"
+            config_file.write_text('model:\n  hybrid_layer_pattern: "**|**"\n')
+            process_config_with_overrides(config, config_filepath=str(config_file))
+        # MuseGlimmerModel reads the outer field when constructing its Hybrid model.
+        assert config.model.hybrid_layer_pattern == "**|**"
+        if has_nested_pattern:
+            assert config.model.transformer.hybrid_layer_pattern == "**|**"
+        else:
+            assert not hasattr(config.model.transformer, "hybrid_layer_pattern")
+
+    @pytest.mark.parametrize("config_cls", ModelConfigOverrideMixin.__subclasses__())
     def test_builder_configs_declare_each_field_once(self, config_cls):
         """Routing treats a key on both levels, or an HF source field, as a flat override."""
         outer = {field.name for field in dataclasses.fields(config_cls)}
