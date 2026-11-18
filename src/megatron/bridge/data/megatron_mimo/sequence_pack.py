@@ -138,8 +138,9 @@ def pack_language_shard(
     ``cu_seqlens`` block-diagonal boundaries. This removes the per-sample padding compute (the
     LM no longer processes ``S``-padded sequences) and makes attention cost ∝ real tokens.
 
-    The returned ``packing_kwargs`` feeds ``MimoModel.forward(packing_kwargs=...)``, which
-    builds a THD ``PackedSeqParams`` (``qkv_format='thd'``) and threads ``cu_seqlens`` to the
+    ``forward_step`` passes the returned ``packing_kwargs`` to ``MimoModel.forward`` as
+    ``cu_seqlens`` / ``cu_seqlens_padded`` / ``max_seqlen``; the model builds a THD
+    ``PackedSeqParams`` (``qkv_format='thd'``) and threads ``cu_seqlens`` to the
     GPT decoder for block-diagonal attention. Non-LM tensors (``modality_inputs``, etc.) are
     carried through unchanged.
 
