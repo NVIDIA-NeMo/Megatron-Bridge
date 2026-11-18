@@ -19,6 +19,7 @@ import torch
 
 from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v3_pretrain_256gpu_b300_fp8mx_config,
+    deepseek_v3_pretrain_256gpu_b300_nvfp4_config,
     deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config,
     deepseek_v3_pretrain_256gpu_gb200_nvfp4_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
@@ -220,6 +221,28 @@ def test_deepseek_v3_b300_mxfp8_preserves_r050_hybridep_settings() -> None:
     cfg = deepseek_v3_pretrain_256gpu_b300_fp8mx_config()
 
     _assert_full_iteration_hybridep_mxfp8(cfg)
+
+
+def test_deepseek_v3_b300_nvfp4_full_iteration_settings() -> None:
+    cfg = deepseek_v3_pretrain_256gpu_b300_nvfp4_config()
+
+    assert cfg.model.cuda_graph_impl == "full_iteration"
+    assert cfg.model.cuda_graph_scope == []
+    assert cfg.model.cuda_graph_use_single_mempool is True
+    assert cfg.optimizer.optimizer_cuda_graph is True
+    assert cfg.optimizer.store_param_remainders is False
+    assert cfg.mixed_precision.fp4 == "e2m1"
+    assert cfg.mixed_precision.fp4_param_gather is True
+    assert cfg.mixed_precision.fp8_dot_product_attention is True
+    assert cfg.model.fp8_output_proj is False
+    assert cfg.model.mla_down_proj_fusion is True
+    assert cfg.model.recompute_modules == []
+    assert cfg.model.moe_expert_rank_capacity_factor == 1.3
+    assert cfg.model.moe_paged_stash is True
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.delay_wgrad_compute is True
+    assert cfg.train.micro_batch_size == 1
 
 
 def test_deepseek_v4_pro_gb300_matches_r050_performance_config() -> None:
