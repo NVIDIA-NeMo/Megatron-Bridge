@@ -15,7 +15,7 @@
 
 import torch
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
+from megatron.bridge.perf_recipes._common import _enable_ncclep, _enable_optimizer_cuda_graph
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
@@ -478,6 +478,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_hybridep_full_iteration_mxfp8(cfg)
+    _enable_optimizer_cuda_graph(cfg)
     cfg.model.recompute_modules = []
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -595,6 +596,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap = False
     cfg.model.virtual_pipeline_model_parallel_size = 3
     _enable_hybridep_full_iteration_nvfp4(cfg)
+    _enable_optimizer_cuda_graph(cfg)
     cfg.model.recompute_modules = []
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {

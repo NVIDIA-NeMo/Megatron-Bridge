@@ -13,7 +13,7 @@
 # limitations under the License.
 """GB300 performance recipes for DeepSeek V3."""
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
+from megatron.bridge.perf_recipes._common import _enable_ncclep, _enable_optimizer_cuda_graph
 from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _apply_deepseek_v3_64gpu_gb300_fsdp_configs,
@@ -172,6 +172,7 @@ def _build_deepseek_v3_gb300_fp8mx() -> ConfigContainer:
 def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, MXFP8, NCCL EP."""
     cfg = _build_deepseek_v3_gb300_fp8mx()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
@@ -312,6 +313,7 @@ def _build_deepseek_v3_gb300_nvfp4() -> ConfigContainer:
 def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, NVFP4, NCCL EP."""
     cfg = _build_deepseek_v3_gb300_nvfp4()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.

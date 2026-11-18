@@ -163,6 +163,12 @@ def test_deepseek_v4_flash_128gpu_vrnvl72_fp8mx_disables_clamp_for_cutedsl() -> 
     gb300_cfg.model.use_transformer_engine_op_fuser = True
     gb300_cfg.model.moe_use_grouped_tensor = True
     gb300_cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # GB300 also captures the optimizer step in a CUDA graph; the VRNVL72 alias keeps it eager.
+    assert gb300_cfg.optimizer.optimizer_cuda_graph is True
+    assert not vrnvl72_cfg.optimizer.optimizer_cuda_graph
+    gb300_cfg.optimizer.optimizer_cuda_graph = vrnvl72_cfg.optimizer.optimizer_cuda_graph
+    gb300_cfg.optimizer.store_param_remainders = vrnvl72_cfg.optimizer.store_param_remainders
+    gb300_cfg.model.cuda_graph_use_single_mempool = vrnvl72_cfg.model.cuda_graph_use_single_mempool
     assert vars(vrnvl72_cfg.model) == vars(gb300_cfg.model)
     # The environments differ in dispatcher settings and Rubin's kernel policy.
     expected_env = {name: value for name, value in gb300_cfg.env_vars.items() if name not in HYBRID_EP_ENV_NAMES}

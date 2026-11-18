@@ -13,7 +13,7 @@
 # limitations under the License.
 """GB200 performance recipes for DeepSeek V3."""
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
+from megatron.bridge.perf_recipes._common import _enable_ncclep, _enable_optimizer_cuda_graph
 from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _benchmark_common,
@@ -169,6 +169,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_deepseek_full_iteration(cfg)
+    _enable_optimizer_cuda_graph(cfg)
     cfg.model.fp8_output_proj = True
     cfg.mixed_precision.fp8_dot_product_attention = False
     _enable_ncclep(cfg)
@@ -209,9 +210,7 @@ def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     _enable_deepseek_full_iteration(cfg)
     cfg.model.fp8_output_proj = False
     cfg.mixed_precision.fp8_dot_product_attention = True
-    cfg.model.cuda_graph_use_single_mempool = True
-    cfg.optimizer.optimizer_cuda_graph = True
-    cfg.optimizer.store_param_remainders = False
+    _enable_optimizer_cuda_graph(cfg)
     cfg.model.mla_down_proj_fusion = True
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.1
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]

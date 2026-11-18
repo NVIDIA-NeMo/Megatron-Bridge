@@ -18,7 +18,7 @@ import torch
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
-from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
+from megatron.bridge.perf_recipes._common import _benchmark_common, _enable_optimizer_cuda_graph, _perf_precision
 from megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v4 import (
     _build_deepseek_v4_flash_gb200_fp8mx,
 )
@@ -29,8 +29,8 @@ from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
 from megatron.bridge.training.config import ConfigContainer
 
 
-def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8."""
+def _build_deepseek_v4_flash_gb300_fp8mx() -> ConfigContainer:
+    """Shared MXFP8 base for the DeepSeek V4 Flash 128-GPU GB300 recipe and its B300 and VRNVL72 derivatives."""
     cfg = _build_deepseek_v4_flash_gb200_fp8mx()
 
     cfg.model.expert_model_parallel_size = 32
@@ -54,6 +54,13 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    return cfg
+
+
+def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8, optimizer CUDA graph."""
+    cfg = _build_deepseek_v4_flash_gb300_fp8mx()
+    _enable_optimizer_cuda_graph(cfg)
     return cfg
 
 
