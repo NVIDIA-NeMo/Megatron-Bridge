@@ -40,6 +40,10 @@ from megatron.bridge.perf_recipes.llama import (
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config,
+    nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config,
+    nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config,
+    nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config,
+    nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config,
     nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config,
     nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config,
 )
@@ -73,6 +77,10 @@ _E2E_OPTIMIZER_CUDA_GRAPH_RECIPES = (
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
+    nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config,
+    nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config,
+    nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config,
+    nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config,
     # VRNVL72 tracker rows that capture the full iteration.
     llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config,
     llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config,
