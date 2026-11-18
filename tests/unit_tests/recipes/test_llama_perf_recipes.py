@@ -26,6 +26,7 @@ from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
 from megatron.bridge.perf_recipes.llama.gb300.llama3 import (
     llama3_8b_pretrain_8gpu_gb300_fp8mx_config,
     llama3_8b_pretrain_8gpu_gb300_nvfp4_config,
+    llama3_70b_pretrain_64gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.perf_recipes.llama.h100.llama3 import (
     llama3_70b_pretrain_64gpu_h100_fp8cs_config,
@@ -33,6 +34,7 @@ from megatron.bridge.perf_recipes.llama.h100.llama3 import (
 from megatron.bridge.perf_recipes.llama.vrnvl72.llama3 import (
     llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config,
     llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config,
+    llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import (
@@ -178,7 +180,10 @@ def test_llama3_8b_gb200_nvfp4_runs_dpa_in_fp8_current_scaling(monkeypatch: pyte
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("vrnvl72_factory", "gb300_factory"),
-    ((llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config, llama3_8b_pretrain_8gpu_gb300_fp8mx_config),),
+    (
+        (llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config, llama3_8b_pretrain_8gpu_gb300_fp8mx_config),
+        (llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config, llama3_70b_pretrain_64gpu_gb300_fp8mx_config),
+    ),
     ids=lambda value: value.__name__,
 )
 def test_llama3_vrnvl72_fp8mx_perf_settings(
@@ -186,7 +191,7 @@ def test_llama3_vrnvl72_fp8mx_perf_settings(
     vrnvl72_factory: Callable[[], ConfigContainer],
     gb300_factory: Callable[[], ConfigContainer],
 ) -> None:
-    """The VRNVL72 MXFP8 recipe adds FP8 attention, fused QKV+RoPE, TE SwiGLU and no attention mask to GB300.
+    """The VRNVL72 MXFP8 recipes add FP8 attention, fused QKV+RoPE, TE SwiGLU and no attention mask to GB300.
 
     Apart from those settings, the mixed-precision settings and the parallel layout match GB300.
     """
