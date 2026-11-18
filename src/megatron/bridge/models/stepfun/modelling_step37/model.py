@@ -44,6 +44,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.stepfun.modelling_step37.image_insert_embedding import (
     ImageForInsert,
@@ -76,6 +77,10 @@ class Step37Model(MegatronModule):
         pg_collection: process-group bundle (uses MPU defaults if ``None``).
         mtp_block_spec: optional MTP block spec forwarded to GPTModel.
         vp_stage: optional virtual-PP stage index.
+        model_config: Builder-backed model config. It owns the construction
+            settings (image token ID, projector bias, vocabulary and RoPE
+            options) that a provider carries on ``language_transformer_config``.
+            Defaults to None, which reads them from ``language_transformer_config``.
     """
 
     def __init__(
@@ -91,8 +96,12 @@ class Step37Model(MegatronModule):
         pg_collection: Optional[ProcessGroupCollection] = None,
         mtp_block_spec: Optional[ModuleSpec] = None,
         vp_stage: Optional[int] = None,
+        model_config: Optional[ModelConfig] = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
+        # A builder-backed model config also exposes its nested transformer settings, so the
+        # construction settings below are read from it.
+        settings = language_transformer_config if model_config is None else model_config
 
         self.vision_transformer_config = vision_transformer_config
         self.pre_process = pre_process
@@ -104,7 +113,7 @@ class Step37Model(MegatronModule):
         self.vision_model = None
         self.language_model = None
         self.image_insert_embedding = None
-        self.image_token_id = language_transformer_config.image_token_id
+        self.image_token_id = settings.image_token_id
 
         # Step-3.5's text decoder runs the standard share-embeddings logic;
         # we surface it on the wrapper so finalize_model_grads can find it.
@@ -125,17 +134,17 @@ class Step37Model(MegatronModule):
             self.language_model = Step37GPTModel(
                 config=language_transformer_config,
                 transformer_layer_spec=language_transformer_layer_spec,
-                vocab_size=language_transformer_config.vocab_size,
-                max_sequence_length=language_transformer_config.language_max_sequence_length,
+                vocab_size=settings.vocab_size,
+                max_sequence_length=settings.language_max_sequence_length,
                 parallel_output=parallel_output,
                 position_embedding_type="rope",
-                rotary_percent=language_transformer_config.rotary_percent,
+                rotary_percent=settings.rotary_percent,
                 pre_process=self.pre_process,
                 post_process=self.post_process,
-                rotary_base=language_transformer_config.rotary_base,
-                fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
-                **logit_dtype_kwarg(Step37GPTModel, language_transformer_config.logit_dtype),
-                share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
+                rotary_base=settings.rotary_base,
+                fp16_lm_cross_entropy=settings.fp16_lm_cross_entropy,
+                **logit_dtype_kwarg(Step37GPTModel, settings.logit_dtype),
+                share_embeddings_and_output_weights=settings.share_embeddings_and_output_weights,
                 scatter_embedding_sequence_parallel=False,
                 mtp_block_spec=mtp_block_spec,
                 vp_stage=vp_stage,
@@ -153,7 +162,7 @@ class Step37Model(MegatronModule):
                 language_embedding=self.language_model.embedding,
                 encoder_output_dim=vision_transformer_config.width * 4,
                 hidden_size=language_transformer_config.hidden_size,
-                projector_bias=language_transformer_config.projector_bias,
+                projector_bias=settings.projector_bias,
             )
 
     def shared_embedding_or_output_weight(self):

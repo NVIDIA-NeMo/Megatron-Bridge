@@ -415,6 +415,8 @@ def megatron_generate_from_checkpoint(
         ep: Expert parallelism size override. (default: 1)
         etp: Expert tensor parallelism size override. (default: 1)
     """
+    from megatron.training.models.base import ModelConfig
+
     from megatron.bridge.training.model_load_save import build_and_load_model, load_model_config, load_tokenizer
 
     checkpoint_path = Path(megatron_path)
@@ -443,7 +445,10 @@ def megatron_generate_from_checkpoint(
 
     # Initialize parallel state
     model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
+    if isinstance(model_provider, ModelConfig):
+        AutoBridge._get_or_initialize_pg_collection(model_provider.transformer)
+    else:
+        model_provider.initialize_model_parallel(seed=0)
 
     # Initialize and load the model and tokenizer
     megatron_model = build_and_load_model(str(checkpoint_path), model_provider)

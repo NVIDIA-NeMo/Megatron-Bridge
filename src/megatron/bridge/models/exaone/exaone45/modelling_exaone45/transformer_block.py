@@ -106,7 +106,7 @@ class Exaone45VisionTransformerBlock(TransformerBlock):
                     )
                     with inner_fp8_context:
                         hidden_states, context = layer(
-                            hidden_states=hidden_states,
+                            hidden_states,
                             attention_mask=attention_mask,
                             context=context,
                             context_mask=context_mask,
@@ -303,7 +303,7 @@ class Exaone45VisionTransformerBlock(TransformerBlock):
                     assert l_no == layer.layer_number - 1
                     with self.offload_context, inner_fp8_context:
                         hidden_states, context = layer(
-                            hidden_states=hidden_states,
+                            hidden_states,
                             attention_mask=attention_mask,
                             context=context,
                             context_mask=context_mask,

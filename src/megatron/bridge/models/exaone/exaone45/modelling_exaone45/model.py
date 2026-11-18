@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 from megatron.core import InferenceParams, tensor_parallel
@@ -46,6 +46,10 @@ from megatron.bridge.models.exaone.exaone45.modelling_exaone45.utils import (
 from megatron.bridge.models.exaone.exaone45.modelling_exaone45.vision_model import Exaone45VisionModel
 
 
+if TYPE_CHECKING:
+    from megatron.bridge.models.exaone.exaone45.exaone45_config import Exaone45ModelConfig
+
+
 class Exaone45Model(MegatronModule):
     """Exaone45 multi-modal model.
 
@@ -67,6 +71,9 @@ class Exaone45Model(MegatronModule):
         add_decoder (bool): Construct the decoder module (used with pipeline parallelism). Defaults to True.
             When we use pipelining, the decoder
             will live on only a subset of the pipeline stages (specifically, every stage after the first one).
+        model_config (Exaone45ModelConfig, optional): Builder-backed model config. When given, the
+            token IDs and GPT construction settings are read from it instead of from
+            ``language_transformer_config``.
     """
 
     def __init__(
@@ -81,8 +88,12 @@ class Exaone45Model(MegatronModule):
         add_decoder: bool = True,
         pg_collection: ProcessGroupCollection = None,
         vp_stage: Optional[int] = None,
+        model_config: "Exaone45ModelConfig | None" = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
+
+        # Provider configs carry these settings on the language config itself.
+        settings = language_transformer_config if model_config is None else model_config
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -92,10 +103,10 @@ class Exaone45Model(MegatronModule):
         self.encoder_hidden_state = None
         self.vision_model = None
         self.language_model = None
-        self.image_token_id = language_transformer_config.image_token_id
-        self.video_token_id = language_transformer_config.video_token_id
-        self.vision_start_token_id = language_transformer_config.vision_start_token_id
-        self.position_embedding_type = language_transformer_config.position_embedding_type
+        self.image_token_id = settings.image_token_id
+        self.video_token_id = settings.video_token_id
+        self.vision_start_token_id = settings.vision_start_token_id
+        self.position_embedding_type = settings.position_embedding_type
         if self.position_embedding_type not in ("rope", "mrope"):
             raise ValueError(
                 "Exaone45Model only supports position_embedding_type='rope' or 'mrope', "
@@ -159,22 +170,27 @@ class Exaone45Model(MegatronModule):
             mtp_block_spec = None
             self.use_mtp_postprocess = False
 
+        if model_config is None:
+            max_sequence_length = language_transformer_config.hf_text_config.max_position_embeddings
+        else:
+            max_sequence_length = model_config.language_max_sequence_length
+
         self.language_model = Exaone45GPTModel(
             config=language_transformer_config,
             transformer_layer_spec=language_transformer_layer_spec,
-            vocab_size=language_transformer_config.vocab_size,
-            max_sequence_length=language_transformer_config.hf_text_config.max_position_embeddings,
+            vocab_size=settings.vocab_size,
+            max_sequence_length=max_sequence_length,
             parallel_output=parallel_output,
             position_embedding_type=self.position_embedding_type,
-            rotary_percent=language_transformer_config.rotary_percent,
+            rotary_percent=settings.rotary_percent,
             pre_process=self.pre_process,
             post_process=self.post_process,
-            rotary_base=language_transformer_config.rotary_base,
-            rope_scaling=language_transformer_config.rope_scaling,
-            rope_scaling_factor=language_transformer_config.rope_scaling_factor,
-            fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
-            logit_dtype=language_transformer_config.logit_dtype,
-            share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
+            rotary_base=settings.rotary_base,
+            rope_scaling=settings.rope_scaling,
+            rope_scaling_factor=settings.rope_scaling_factor,
+            fp16_lm_cross_entropy=settings.fp16_lm_cross_entropy,
+            logit_dtype=settings.logit_dtype,
+            share_embeddings_and_output_weights=settings.share_embeddings_and_output_weights,
             scatter_embedding_sequence_parallel=False,
             pg_collection=pg_collection,
             mtp_block_spec=mtp_block_spec,

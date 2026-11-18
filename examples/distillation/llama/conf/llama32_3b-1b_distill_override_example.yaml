@@ -55,7 +55,6 @@ checkpoint:
   save: "./llama32_3b-1b_distilled"
 
 dist:
-  use_megatron_fsdp: false
   use_torch_fsdp2: false
 
 logger:
@@ -68,4 +67,5 @@ rng:
   seed: 42
 
 ddp:
+  use_megatron_fsdp: false
   grad_reduce_in_fp32: true

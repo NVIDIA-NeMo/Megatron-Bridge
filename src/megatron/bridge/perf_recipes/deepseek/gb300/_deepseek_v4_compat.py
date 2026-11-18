@@ -44,6 +44,8 @@ _MCORE_CAPABILITIES = (
     "pad_packed_seq_alignment",
     "thd_max_packed_sequences",
     "cp_partition_mode",
+    "attention_cp_layout",
+    "linear_cp_layout",
     "dsa_indexer_precision",
     "o_groups",
     "o_lora_rank",
@@ -91,6 +93,9 @@ def configure_dsv4_dev_model(model: DeepSeekV4HybridModelProvider) -> None:
     # Match MCore's argument-to-config mapping for a hybrid layer pattern. This
     # controls hybrid layer counting, initialization, and hash-MoE validation.
     model.is_hybrid_model = True
+    # The native training step validates both layouts before slicing THD data.
+    model.attention_cp_layout = "contiguous"
+    model.linear_cp_layout = "contiguous"
     model.hybrid_stack_spec = dsv4_dev_hybrid_stack_spec
     # Development MCore uses different names from main's output_projection_groups,
     # output_projection_lora_rank, and moe_num_hash_layers. Assign its

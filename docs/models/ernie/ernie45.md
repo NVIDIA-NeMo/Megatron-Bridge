@@ -1,7 +1,7 @@
 # ERNIE 4.5
 
 Megatron Bridge registers Hugging Face conversion support for the text-only
-`baidu/ERNIE-4.5-0.3B-PT` MoE model and the
+`baidu/ERNIE-4.5-21B-A3B-PT` MoE model and the
 `baidu/ERNIE-4.5-VL-28B-A3B-Instruct` and `baidu/ERNIE-4.5-VL-28B-A3B-Thinking`
 vision-language MoE models.
 
@@ -9,8 +9,8 @@ Import a text checkpoint with the shared conversion CLI:
 
 ```bash
 ./scripts/conversion/convert.sh import \
-  --hf-model baidu/ERNIE-4.5-0.3B-PT \
-  --megatron-path /workspace/models/ernie-4.5-0.3b \
+  --hf-model baidu/ERNIE-4.5-21B-A3B-PT \
+  --megatron-path /workspace/models/ernie-4.5-21b-a3b \
   --trust-remote-code
 ```
 

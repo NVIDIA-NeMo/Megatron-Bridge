@@ -25,6 +25,7 @@ import re
 import modelopt.torch.quantization as mtq
 import torch
 from megatron.core.utils import unwrap_model
+from modelopt.torch.export.unified_export_megatron import export_mcore_gpt_to_hf
 from modelopt.torch.quantization.nn import TensorQuantizer
 
 from megatron.bridge import AutoBridge
@@ -40,6 +41,14 @@ UNQUANTIZED = [
     {"quantizer_name": "*router*", "enable": False},
     {"quantizer_name": "*output_layer*", "enable": False},
     {"quantizer_name": "*conv1d*", "enable": False},
+    # Kept in BF16 by deployments (vision towers, DSA indexers, DeepSeek-V4 compressors), or not
+    # linear layers in HF (hyper-connection mixers) or router-like (Kimi-K3 attention residuals).
+    {"quantizer_name": "*vision_model*", "enable": False},
+    {"quantizer_name": "*visual*", "enable": False},
+    {"quantizer_name": "*indexer*", "enable": False},
+    {"quantizer_name": "*compressor*", "enable": False},
+    {"quantizer_name": "*hyper_connection*", "enable": False},
+    {"quantizer_name": "*res_proj*", "enable": False},
 ]
 CONFIGS = {
     "nvfp4": [
@@ -58,7 +67,37 @@ CONFIGS = {
         {"quantizer_name": "*self_attention*input_quantizer", "cfg": FP8},
     ],
 }
-KIND_IDS = {"linear_qkv": 1, "linear_proj": 2, "linear_fc1": 3, "linear_fc2": 4, "in_proj": 5, "out_proj": 6}
+# Projections deployments fuse into one GEMM read the same input and share one per-tensor weight scale.
+FUSED_SIBLINGS = (
+    ("linear_q_down_proj", "linear_kv_down_proj"),
+    ("q_a_proj", "kv_a_proj_with_mqa"),
+    ("q_proj", "k_proj", "v_proj"),
+)
+KIND_IDS = {
+    "linear_qkv": 1,
+    "linear_proj": 2,
+    "linear_fc1": 3,
+    "linear_fc2": 4,
+    "in_proj": 5,
+    "out_proj": 6,
+    **dict.fromkeys(FUSED_SIBLINGS[0] + FUSED_SIBLINGS[1], 7),
+    **dict.fromkeys(FUSED_SIBLINGS[2], 8),
+    "linear_q_up_proj": 9,
+    "linear_kv_up_proj": 10,
+    "linear_kv_proj": 11,
+    "q_b_proj": 12,
+    "kv_b_proj": 13,
+    "o_proj": 14,
+    "g_proj": 15,
+    "b_proj": 16,
+    "beta_proj": 17,
+    "f_a_proj": 18,
+    "f_b_proj": 19,
+    "g_a_proj": 20,
+    "g_b_proj": 21,
+    "fc1_latent_proj": 22,
+    "fc2_latent_proj": 23,
+}
 
 
 def input_amax(layer: int, kind: str) -> float:
@@ -70,32 +109,60 @@ def _pin_input_ranges(chunk: torch.nn.Module) -> None:
     for name, quantizer in chunk.named_modules():
         if not (isinstance(quantizer, TensorQuantizer) and quantizer.is_enabled and name.endswith("input_quantizer")):
             continue
-        layer_prefix = re.match(r"^.*?decoder\.layers\.\d+", name).group(0)
-        layer = chunk.get_submodule(layer_prefix).layer_number - 1
+        layer = chunk.get_submodule(re.match(r"^.*?decoder\.layers\.\d+", name).group(0))
+        # Hyper-connection layers wrap the numbered layer.
+        layer = getattr(layer, "layer_number", None) or layer.inner_layer.layer_number
+        layer -= 1
         kind = re.search(r"(\w+)\.input_quantizer", name).group(1)
         quantizer.amax = torch.tensor(input_amax(layer, kind), device="cuda")
 
 
+def _tie_fused_sibling_weight_ranges(chunk: torch.nn.Module) -> None:
+    """Calibrate projections deployments fuse to their largest weight range, as a fused GEMM would."""
+    for parent in chunk.modules():
+        for siblings in FUSED_SIBLINGS:
+            quantizers = [getattr(getattr(parent, name, None), "weight_quantizer", None) for name in siblings]
+            quantizers = [quantizer for quantizer in quantizers if quantizer is not None and quantizer.is_enabled]
+            if len(quantizers) > 1:
+                amax = torch.stack([quantizer.amax.float().amax() for quantizer in quantizers]).amax()
+                for quantizer in quantizers:
+                    quantizer.amax = amax.to(quantizer.amax.dtype).expand_as(quantizer.amax).clone()
+
+
 @torchrun_main
-def main(hf_model_path: str, out: str, config: str, tp: int, pp: int, ep: int, etp: int) -> None:
-    bridge = AutoBridge.from_hf_pretrained(hf_model_path, torch_dtype=torch.bfloat16)
+def main(
+    hf_model_path: str, out: str, config: str, tp: int, pp: int, ep: int, etp: int, offline_out: str | None
+) -> None:
+    # Kimi-K3's config class ships with the checkpoint.
+    bridge = AutoBridge.from_hf_pretrained(hf_model_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
     provider = bridge.to_megatron_provider(load_weights=True)
-    provider.tensor_model_parallel_size = tp
-    provider.pipeline_model_parallel_size = pp
-    provider.expert_model_parallel_size = ep
-    provider.expert_tensor_parallel_size = etp
-    provider.moe_grouped_gemm = False
-    provider.pipeline_dtype = torch.bfloat16
-    provider.finalize()
+    # Also sets bridge-specific pipeline layouts, e.g. for DeepSeek-V4's hash-routed MoE layers.
+    provider.apply_overrides_and_finalize(
+        overrides={
+            "tensor_model_parallel_size": tp,
+            "pipeline_model_parallel_size": pp,
+            "expert_model_parallel_size": ep,
+            "expert_tensor_parallel_size": etp,
+            "moe_grouped_gemm": False,
+            "gradient_accumulation_fusion": False,
+            "pipeline_dtype": torch.bfloat16,
+        }
+    )
     provider.initialize_model_parallel(seed=0)
     model = provider.provide_distributed_model(wrap_with_ddp=False)
 
-    quant_cfg = {"quant_cfg": [*DISABLED, *CONFIGS[config], *UNQUANTIZED], "algorithm": "max"}
+    # Without TP every rank holds whole weights, so there is nothing to sync. Skipping it also avoids ModelOpt
+    # syncing MCore TELinear layers (e.g. MLA down-projections) over all ranks, which hangs under PP (OMNIML-6311).
+    algorithm = {"method": "max", "distributed_sync": tp > 1 or etp > 1}
+    quant_cfg = {"quant_cfg": [*DISABLED, *CONFIGS[config], *UNQUANTIZED], "algorithm": algorithm}
     for chunk in model:
         chunk = unwrap_model(chunk)
         mtq.quantize(chunk, quant_cfg)  # Without a forward loop, "max" calibrates the weights only.
         _pin_input_ranges(chunk)
+        _tie_fused_sibling_weight_ranges(chunk)
     bridge.save_hf_pretrained_modelopt(model, out)
+    if offline_out is not None:
+        export_mcore_gpt_to_hf(unwrap_model(model[0]), hf_model_path, export_dir=offline_out)
 
 
 if __name__ == "__main__":
@@ -103,9 +170,10 @@ if __name__ == "__main__":
     parser.add_argument("--hf-model-path", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--config", choices=sorted(CONFIGS), required=True)
+    parser.add_argument("--offline-out", default=None)
     parser.add_argument("--tp", type=int, default=1)
     parser.add_argument("--pp", type=int, default=1)
     parser.add_argument("--ep", type=int, default=1)
     parser.add_argument("--etp", type=int, default=1)
     args = parser.parse_args()
-    main(args.hf_model_path, args.out, args.config, args.tp, args.pp, args.ep, args.etp)
+    main(args.hf_model_path, args.out, args.config, args.tp, args.pp, args.ep, args.etp, args.offline_out)

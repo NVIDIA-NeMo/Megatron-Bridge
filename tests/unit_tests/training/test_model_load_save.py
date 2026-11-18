@@ -17,7 +17,7 @@ import tempfile
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 import torch
@@ -32,6 +32,7 @@ from megatron.training.models.base import ModelConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hybrid import BridgeHybridModelConfig
 from megatron.bridge.models.megatron_mimo.conversion.mimo_model_io import save_megatron_mimo_model
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig as BridgeTransformerConfig
@@ -667,6 +668,44 @@ class TestLoadMegatronModel:
         )
         assert loaded["model"]["transformer"]["hidden_size"] == 128
 
+    def test_load_model_config_preserves_finalized_hybrid_pipeline_layout(self, tmp_path):
+        """Verify builder-backed Hybrid checkpoints retain a finalized custom pipeline layout."""
+        model_config = BridgeHybridModelConfig(
+            transformer=BridgeTransformerConfig(
+                num_layers=4,
+                hidden_size=16,
+                num_attention_heads=2,
+                pipeline_model_parallel_size=2,
+                pipeline_model_parallel_layout=[["embedding", "decoder", "decoder"], ["decoder", "decoder", "loss"]],
+            ),
+            hybrid_layer_pattern="*-|*-",
+            vocab_size=128,
+        )
+        model_config.finalize()
+
+        assert isinstance(model_config.pipeline_model_parallel_layout, PipelineParallelLayerLayout)
+        expected_layout = model_config.pipeline_model_parallel_layout.input_data
+
+        config = ConfigContainer(
+            model=model_config,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=None,
+            checkpoint=None,
+        )
+        config.to_yaml(str(tmp_path / "run_config.yaml"))
+
+        loaded_model_config, _ = load_model_config(str(tmp_path))
+
+        assert isinstance(loaded_model_config, BridgeHybridModelConfig)
+        assert loaded_model_config.pipeline_model_parallel_layout == expected_layout
+        assert loaded_model_config.hybrid_layer_pattern == "*-|*-"
+        loaded_model_config.finalize()
+        assert loaded_model_config.pipeline_model_parallel_layout.input_data == expected_layout
+
     @pytest.mark.parametrize(
         "target",
         [
@@ -897,9 +936,11 @@ class TestLoadMegatronModel:
         mock_model_cfg.get_builder_cls.assert_called_once()
         mock_get_pg_collection.assert_called_once_with(mock_model_cfg)
         mock_builder_cls.assert_called_once_with(mock_model_cfg)
+        # The shared builder helper supplies the FP32-preserving mixed-precision wrapper.
         mock_builder.build_distributed_models.assert_called_once_with(
-            mock_mpu_pgs,
+            pg_collection=mock_mpu_pgs,
             wrap_with_ddp=False,
+            mixed_precision_wrapper=ANY,
         )
         mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
         assert mock_model_cfg.params_dtype == torch.bfloat16

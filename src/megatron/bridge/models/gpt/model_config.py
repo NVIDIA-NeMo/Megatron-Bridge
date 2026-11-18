@@ -19,7 +19,7 @@ from typing import Any, ClassVar
 
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
-from megatron.bridge.models.common.base import ModelConfig, ModelConfigOverrideMixin
+from megatron.bridge.models.common.base import MLAModelConfigMixin, ModelConfig, ModelConfigOverrideMixin
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
@@ -97,4 +97,17 @@ class BridgeGPTModelConfig(ModelConfigOverrideMixin, GPTModelConfig, ModelConfig
         return result
 
 
-__all__ = ["BridgeGPTModelConfig"]
+@dataclass(kw_only=True)
+class BridgeGPTMLAModelConfig(MLAModelConfigMixin, BridgeGPTModelConfig):
+    """GPT model config with Multi-Latent Attention (MLA), the builder counterpart of ``MLAModelProvider``.
+
+    The nested transformer config is an ``MLATransformerConfig``. It alone
+    stores and serializes ``rotary_base`` and ``rotary_percent``, because MLA
+    attention applies RoPE from them; on this config they are constructor
+    arguments and views of the nested values (see ``MLAModelConfigMixin``).
+    GPT MLA families such as Kimi K3 and Sarvam MLA use it, as their providers
+    combine ``GPTModelProvider`` with an MLA config.
+    """
+
+
+__all__ = ["BridgeGPTMLAModelConfig", "BridgeGPTModelConfig"]

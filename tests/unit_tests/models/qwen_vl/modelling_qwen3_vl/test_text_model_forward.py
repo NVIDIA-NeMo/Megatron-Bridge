@@ -27,6 +27,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import (
     Qwen3VLGPTModel,
     _get_mtp_packed_seq_params,
 )
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 
 
@@ -248,7 +249,10 @@ def test_process_mtp_loss_with_native_packing_metadata():
     def fake_output_layer(hidden, weight=None, runtime_gather_output=None):  # noqa: ARG001
         return hidden, None
 
-    config = SimpleNamespace(
+    config = TransformerConfig(
+        num_layers=1,
+        hidden_size=2,
+        num_attention_heads=1,
         mtp_num_layers=1,
         mtp_detach_heads=False,
         mtp_loss_scaling_factor=1.0,
@@ -257,6 +261,7 @@ def test_process_mtp_loss_with_native_packing_metadata():
         # process_mtp_loss reads the CP layout; mirror TransformerConfig's default.
         attention_cp_layout="zigzag",
     )
+    config.finalize()
     output = process_mtp_loss(
         hidden_states=hidden_states,
         labels=labels,

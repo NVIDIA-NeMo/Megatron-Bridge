@@ -11,6 +11,10 @@ on:
         type: string
         description: "The mcore branch to bump"
     secrets:
+      NGC_API_USER:
+        required: false
+      NGC_API_KEY:
+        required: false
       PAT:
         required: true
       AZURE_CLIENT_ID:
@@ -48,6 +52,14 @@ jobs:
           ref: ${{ env.TARGET_BRANCH }}
           token: ${{ secrets.PAT }}
           submodules: recursive
+
+      - name: Login to NGC
+        if: ${{ inputs.target-branch == 'main' }}
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: nvcr.io
+          username: ${{ secrets.NGC_API_USER }}
+          password: ${{ secrets.NGC_API_KEY }}
 
       - name: Build container
         env:

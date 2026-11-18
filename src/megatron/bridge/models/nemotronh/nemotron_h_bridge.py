@@ -483,6 +483,15 @@ class NemotronHBridge(MegatronModelBridge):
         hf_cfg["num_nextn_predict_layers"] = mtp_num_layers
         hf_cfg["n_group"] = hf_cfg.get("n_group") or 1
         hf_cfg["topk_group"] = hf_cfg.get("topk_group") or 1
+        # Dense checkpoints leave these MoE fields unset; let the reference HF config supply them.
+        for key in (
+            "n_routed_experts",
+            "moe_intermediate_size",
+            "moe_shared_expert_intermediate_size",
+            "routed_scaling_factor",
+        ):
+            if hf_cfg.get(key) is None:
+                hf_cfg.pop(key, None)
 
         return hf_cfg
 

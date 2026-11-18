@@ -42,10 +42,8 @@ from pathlib import Path
 from typing import Any
 
 import torch
-import transformers
 from megatron.core.activations import squared_relu
 from megatron.core.transformer.enums import AttnBackend
-from packaging.version import Version
 from safetensors.torch import save_file
 from transformers import PretrainedConfig
 
@@ -430,7 +428,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         return separate_video_embedder is True
 
     @torch.no_grad()
-    def stream_weights_megatron_to_hf(
+    def _stream_weight_events_megatron_to_hf(
         self,
         megatron_model: NemotronOmniModel | list[NemotronOmniModel],
         hf_pretrained: PreTrainedCausalLM,
@@ -441,10 +439,10 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         weight_dtype: torch.dtype | None = None,
         with_megatron_names: bool = False,
         current_pp_stage_only: bool = False,
-    ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple]:
-        """Export model weights, recovering the unused image-SFT video weight from HF."""
+    ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple | None]:
+        """Preserve task boundaries and recover source-only media weights."""
         video_exported = False
-        for weight in super().stream_weights_megatron_to_hf(
+        for weight in super()._stream_weight_events_megatron_to_hf(
             megatron_model,
             hf_pretrained,
             cpu=cpu,
@@ -455,7 +453,8 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             with_megatron_names=with_megatron_names,
             current_pp_stage_only=current_pp_stage_only,
         ):
-            video_exported |= weight.param_name == self._HF_VIDEO_EMBEDDER_KEY
+            if weight is not None:
+                video_exported |= weight.param_name == self._HF_VIDEO_EMBEDDER_KEY
             yield weight
         if not self._should_emit_hf_passthrough(megatron_model, current_pp_stage_only=current_pp_stage_only):
             return
@@ -527,6 +526,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             if not cpu and tensor.device.type == "cpu" and torch.cuda.is_available():
                 tensor = tensor.to(device=torch.cuda.current_device())
             yield from HFWeightTuple(name, tensor).iter_finalized(cpu=cpu, megatron_param_names=passthrough_sources)
+            yield None
 
 
 @MegatronModelBridge.register_bridge(
@@ -552,18 +552,12 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
 
     @staticmethod
     def _hf_language_config(hf_config):
-        # Remote-code checkpoints retain llm_config, including on older HF
-        # versions. Do not force those customers onto the native implementation.
+        # Remote-code checkpoints keep llm_config. Do not force those customers
+        # onto the native implementation.
         legacy_config = getattr(hf_config, "llm_config", None)
         if legacy_config is not None:
             return legacy_config
-        text_config = getattr(hf_config, "text_config", None)
-        if text_config is not None and Version(transformers.__version__) < Version("5.18.0"):
-            raise ValueError(
-                "Native Nemotron 3.5 Super VL conversion requires Transformers >=5.18.0; "
-                "use trust_remote_code=True with the original checkpoint on older versions."
-            )
-        return text_config
+        return getattr(hf_config, "text_config", None)
 
     @classmethod
     def _validate_shared_mtp_config(cls, llm_config) -> None:

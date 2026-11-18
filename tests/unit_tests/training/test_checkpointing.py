@@ -13,9 +13,11 @@
 # limitations under the License.
 """Unit tests for megatron.bridge.training.checkpointing module."""
 
+import gc
 import os
 import pickle
 import tempfile
+import weakref
 from contextlib import ExitStack, contextmanager
 from functools import partial
 from pathlib import Path
@@ -501,10 +503,10 @@ class TestCheckpointUtilities:
 
         # Verify that the parent directory is created
         with tempfile.TemporaryDirectory() as temp_dir:
-            ensure_directory_exists(f"msc://default{temp_dir}/checkpoints/iter_0000001", check_parent=True)
+            ensure_directory_exists(f"msc://__filesystem__{temp_dir}/checkpoints/iter_0000001", check_parent=True)
             assert os.path.exists(f"{temp_dir}/checkpoints")
 
-            ensure_directory_exists(f"msc://default{temp_dir}/checkpoints/iter_0000001", check_parent=False)
+            ensure_directory_exists(f"msc://__filesystem__{temp_dir}/checkpoints/iter_0000001", check_parent=False)
             assert os.path.exists(f"{temp_dir}/checkpoints/iter_0000001")
 
 
@@ -2961,7 +2963,7 @@ class TestCleanupNonPersistentCheckpoints:
         """Retention removes old checkpoints from an MSC-backed root."""
         MultiStorageClientFeature.enable()
         msc = MultiStorageClientFeature.import_package()
-        save_dir = f"msc://default{tmp_path}/checkpoints"
+        save_dir = f"msc://__filesystem__{tmp_path}/checkpoints"
         for name in ("iter_0001000", "iter_0002000", "iter_0003000"):
             msc.os.makedirs(os.path.join(save_dir, name), exist_ok=True)
 
@@ -3527,20 +3529,20 @@ class TestLoadBaseCheckpoint:
         mock_get_format.return_value = "torch_dist"
         mock_load_global.return_value = (
             {"model": "x"},
-            "msc://default/ckpt/iter_0001000",
+            "msc://__filesystem__/ckpt/iter_0001000",
             False,
             CheckpointType.GLOBAL,
         )
 
         ctx = {}
         _load_base_checkpoint(
-            "msc://default/ckpt/iter_0001000",
+            "msc://__filesystem__/ckpt/iter_0001000",
             base_config,
             checkpointing_context=ctx,
             pg_collection=mock_pg_collection,
         )
 
-        assert ctx["dataloader_state_dir"] == "msc://default/ckpt/energon"
+        assert ctx["dataloader_state_dir"] == "msc://__filesystem__/ckpt/energon"
 
     @patch("megatron.bridge.training.checkpointing.file_exists")
     @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
@@ -3819,6 +3821,67 @@ class TestLoadModelWeightsFromCheckpoint:
         )
 
         mock_delete_extra_state.assert_called_once_with(mock_full_state_dict)
+
+    @pytest.mark.parametrize("returns_tuple", [False, True])
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.checkpointing.unwrap_model")
+    @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
+    @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    def test_load_model_weights_releases_loaded_state_dict_before_gc(
+        self,
+        mock_strategy_cls,
+        mock_load_state_dict,
+        mock_generate_state_dict,
+        mock_unwrap_model,
+        mock_dist_ckpt,
+        returns_tuple,
+        mock_model,
+        mock_common_state_dict,
+        mock_metadata,
+    ):
+        """The loaded state dict is unreachable by the time gc.collect runs."""
+
+        class _LoadedStateDict(dict):
+            pass
+
+        loaded_ref = None
+
+        def _load(*args, **kwargs):
+            nonlocal loaded_ref
+            loaded = _LoadedStateDict(model={"weight": torch.randn(4, 4)})
+            loaded_ref = weakref.ref(loaded)
+            return (loaded, set(), set()) if returns_tuple else loaded
+
+        mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
+        mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
+        mock_dist_ckpt.load.side_effect = _load
+        mock_strategy_cls.return_value = Mock()
+        mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(4, 4)}}
+        mock_unwrap_model.return_value = mock_model
+
+        real_gc_collect = gc.collect
+        released_at_gc = []
+
+        def _collect(*args, **kwargs):
+            real_gc_collect()
+            released_at_gc.append(loaded_ref is not None and loaded_ref() is None)
+
+        from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
+
+        with (
+            patch("megatron.bridge.training.checkpointing.gc.collect", side_effect=_collect),
+            patch("megatron.bridge.training.checkpointing.torch.cuda.is_available", return_value=False),
+            patch("megatron.bridge.training.checkpointing.torch.distributed.is_initialized", return_value=False),
+        ):
+            _load_model_weights_from_checkpoint(
+                checkpoint_path="/ckpt",
+                model=mock_model,
+                dist_ckpt_strictness="return_all" if returns_tuple else "assume_ok_unexpected",
+            )
+
+        mock_load_state_dict.assert_called_once()
+        assert released_at_gc == [True]
 
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
@@ -6558,7 +6621,7 @@ class TestMaybeLoadDataloaderState:
         """An Energon state colocated with an MSC checkpoint restores through the remote adapter."""
         MultiStorageClientFeature.enable()
         msc = MultiStorageClientFeature.import_package()
-        state_root = f"msc://default{tmp_path}/energon"
+        state_root = f"msc://__filesystem__{tmp_path}/energon"
         iter_dir = get_checkpoint_name(state_root, 10)
         msc.os.makedirs(iter_dir, exist_ok=True)
         state_path = os.path.join(iter_dir, "train_dataloader_dprank000.pt")
@@ -6868,7 +6931,7 @@ class TestMaybeSaveDataloaderState:
         """An Energon state colocated with an MSC checkpoint is written through the remote adapter."""
         MultiStorageClientFeature.enable()
         msc = MultiStorageClientFeature.import_package()
-        state_root = f"msc://default{tmp_path}/energon"
+        state_root = f"msc://__filesystem__{tmp_path}/energon"
         train_iterator = self._iterator()
 
         with patch("megatron.bridge.training.checkpointing.torch.distributed.barrier"):
