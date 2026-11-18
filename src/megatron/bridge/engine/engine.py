@@ -304,9 +304,9 @@ class TrainingEngine:
             lora: Train LoRA adapters on a frozen base instead of the full model (``output_head="lm"``,
                 ``trainable=True`` and a ``checkpoint_path`` with the base weights are required). The base
                 is loaded and LoRA applied before DDP and the optimizer are built, so both hold the
-                adapters only. Routing stays the base model's: MoE router expert biases are frozen too,
-                and quantile-balanced routers are rejected. ``forward_only(disable_adapters=True)`` then
-                scores the base model (the usual RL reference, with no second engine), ``save_state``
+                adapters only. The config becomes Bridge's ``LoRA``, applied with Bridge's PEFT hook.
+                ``forward_only(disable_adapters=True)`` then scores the base model (the usual RL
+                reference, with no second engine; ``LoraConfig`` notes MoE expert biases), ``save_state``
                 saves the adapters and their settings, and ``export`` merges them into the base weights
                 unless ``adapter_only=True``.
             hooks: Extra pre-wrap hooks run after the Bridge-registered ones.

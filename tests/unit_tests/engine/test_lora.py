@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
 import os
 import re
 from contextlib import contextmanager
@@ -21,9 +20,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 import yaml
-from megatron.core.distributed.finalize_model_grads import _update_router_expert_bias
 from megatron.core.transformer.moe.moe_logging import MoEMetricsTracker
-from megatron.core.transformer.moe.router import TopKRouter
 
 from megatron.bridge.engine import LoraConfig, TrainingEngine
 from megatron.bridge.engine.checkpoint import _checkpoint_state, load_engine_state, save_engine_state
@@ -90,7 +87,6 @@ def test_build_lora_prefers_explicit_targets_and_copies_them():
         (LoraConfig(rank=8, alpha=0.0), "alpha must be positive"),
         (LoraConfig(rank=8, alpha=1.0, dropout=1.0), "dropout must be in"),
         (LoraConfig(rank=8, alpha=1.0, target_modules=[]), "target_modules is empty"),
-        (LoraConfig(rank=8, alpha=1.0, target_modules=["linear_qkv", "*.router"]), "router cannot be a LoRA target"),
         (LoraConfig(rank=8, alpha=1.0, expert_adapters="outer"), "expert_adapters must be one of"),
     ],
 )
@@ -116,17 +112,16 @@ def test_lora_hook_loads_the_base_into_the_bare_model_before_applying_lora(monke
         "megatron.bridge.engine.lora.load_pretrained_weights",
         lambda recipe, model, optimizer, path: calls.append(("load", model, optimizer, path)),
     )
-    wrapped = [_MoeLayer(_CpuRouter(expert_bias=True))]
-    # LoRA is applied by Bridge's own PEFT hook, built for this engine's LoRA.
+    wrapped = [_Block()]
+    # LoRA is applied by Bridge's own PEFT hook, built for this engine's LoRA, and nothing else runs.
     monkeypatch.setattr(
         "megatron.bridge.engine.lora.create_peft_hook",
         lambda peft: lambda model: calls.append(("lora", peft, model)) or wrapped,
     )
-    recipe, peft, bare = _recipe(), build_lora(LoraConfig(rank=2, alpha=4.0), _recipe()), [_MoeLayer(_CpuRouter())]
+    recipe, peft, bare = _recipe(), build_lora(LoraConfig(rank=2, alpha=4.0), _recipe()), [_Block()]
     assert make_lora_hook(recipe, peft, "/base")(bare) is wrapped
     # No optimizer exists yet: its fp32 masters are built later from the loaded (frozen) base and adapters.
     assert calls == [("load", bare, None, "/base"), ("lora", peft, bare)]
-    assert wrapped[0].mlp.router.frozen_expert_bias  # on the model LoRA returned
 
 
 class _Block(torch.nn.Module):
@@ -166,74 +161,10 @@ def test_bridge_lora_freezes_the_base_and_disable_adapter_scores_it():
     again, _ = wrapped[0](x)
     assert not torch.allclose(adapted, base_out)
     assert torch.equal(disabled, base_out) and torch.equal(again, adapted)
-    assert torch.equal(router_out, base_router)  # never a target
+    assert torch.equal(router_out, base_router)  # not a target
 
 
-# ---- routing stays the base model's -------------------------------------------------------------
-
-
-class _CpuRouter(TopKRouter):
-    """A Megatron-Core ``TopKRouter`` for ``isinstance`` and the finalize update, built without its CUDA
-    buffers and config; ``expert_bias`` and ``qb_beta`` are what the two balancing modes register."""
-
-    def __init__(self, *, expert_bias: bool = False, quantile_balancing: bool = False):
-        torch.nn.Module.__init__(self)
-        self.weight = torch.nn.Parameter(torch.zeros(2, 4))
-        self.frozen_expert_bias = False
-        self.expert_bias = torch.zeros(2) if expert_bias else None
-        self.local_tokens_per_expert = torch.tensor([3, 1]) if expert_bias else None
-        self.qb_beta = torch.zeros(2) if quantile_balancing else None
-
-
-class _MoeLayer(torch.nn.Module):
-    def __init__(self, router: _CpuRouter):
-        super().__init__()
-        self.self_attention = torch.nn.Module()
-        self.self_attention.linear_qkv = torch.nn.Linear(4, 6, bias=False)
-        self.mlp = torch.nn.Module()
-        self.mlp.router = router
-        self.mlp.linear_fc1 = torch.nn.Linear(4, 8, bias=False)
-
-
-@pytest.mark.parametrize("pattern", ["*.rout*", "mlp.r*", "*"])
-def test_lora_hook_rejects_target_patterns_that_resolve_to_a_router(monkeypatch, pattern):
-    monkeypatch.setattr("megatron.bridge.engine.lora.load_pretrained_weights", lambda *args: pytest.fail("loaded"))
-    peft = build_lora(LoraConfig(rank=2, alpha=4.0, target_modules=["linear_qkv", pattern]), _recipe())
-    with pytest.raises(ValueError, match=re.escape("matches 1 router(s), e.g. mlp.router")):
-        make_lora_hook(_recipe(), peft, "/base")([_MoeLayer(_CpuRouter())])
-
-
-def test_lora_hook_rejects_quantile_balanced_routing(monkeypatch):
-    monkeypatch.setattr("megatron.bridge.engine.lora.load_pretrained_weights", lambda *args: pytest.fail("loaded"))
-    peft = build_lora(LoraConfig(rank=2, alpha=4.0), _recipe())
-    with pytest.raises(NotImplementedError, match="quantile-balanced routing"):
-        make_lora_hook(_recipe(), peft, "/base")([_MoeLayer(_CpuRouter(quantile_balancing=True))])
-
-
-def test_lora_hook_freezes_the_router_expert_bias_against_megatrons_update(monkeypatch):
-    monkeypatch.setattr("megatron.bridge.engine.lora.load_pretrained_weights", lambda *args: None)
-    # Megatron-Core's update reduces the token counts across ranks; here every update adds 1. (The package
-    # re-exports the finalize function under its module's name, so patch the module object.)
-    monkeypatch.setattr(
-        importlib.import_module("megatron.core.distributed.finalize_model_grads"),
-        "get_updated_expert_bias",
-        lambda tokens, bias, rate, tp_dp_cp_group=None: bias + 1.0,
-    )
-    config = SimpleNamespace(moe_router_bias_update_rate=1e-3)
-    peft = build_lora(LoraConfig(rank=2, alpha=4.0, target_modules=["linear_qkv", "*.linear_fc1"]), _recipe())
-    router = _CpuRouter(expert_bias=True)
-    model = make_lora_hook(_recipe(), peft, "/base")([_MoeLayer(router)])
-    assert model[0].mlp.router is router and router.training and router.frozen_expert_bias
-    assert type(model[0].mlp.linear_fc1).__name__ == "LoRALinear"  # LoRA itself was applied
-    _update_router_expert_bias(model, config)
-    assert torch.equal(router.expert_bias, torch.zeros(2))
-    # Without the freeze, the same update moves the bias, and with it the routing of a "frozen" base.
-    unfrozen = [_MoeLayer(_CpuRouter(expert_bias=True))]
-    _update_router_expert_bias(unfrozen, config)
-    assert torch.equal(unfrozen[0].mlp.router.expert_bias, torch.ones(2))
-
-
-# ---- vision-language targets follow the recipe's freeze flags ------------------------------------
+# ---- vision-language targets match the way Bridge's LoRA matches them ----------------------------
 
 # Where Bridge's Qwen3-VL model keeps its LoRA-able linears (bare model, as the pre-wrap hook sees it).
 _LANGUAGE = (
@@ -271,60 +202,22 @@ def _vision_language_model() -> torch.nn.Module:
     return root
 
 
-def _wrapped_with_lora(monkeypatch, *, targets=None, **freeze) -> tuple[list[str], LoRA]:
-    """Run the LoRA hook on the toy vision-language model; return the wrapped linears and the LoRA."""
+def _wrapped_with_lora(monkeypatch, *, targets=None, **freeze) -> list[str]:
+    """Run the LoRA hook on the toy vision-language model; return the linears LoRA wrapped."""
     monkeypatch.setattr("megatron.bridge.engine.lora.load_pretrained_weights", lambda *args: None)
-    flags = {"freeze_language_model": False, "freeze_vision_model": False, "freeze_vision_projection": False}
-    recipe = _recipe(QWEN35_TARGETS, vision_config=object(), **{**flags, **freeze})
+    recipe = _recipe(QWEN35_TARGETS, vision_config=object(), **freeze)
     peft = build_lora(LoraConfig(rank=2, alpha=4.0, target_modules=targets), recipe)
     model = make_lora_hook(recipe, peft, "/base")([_vision_language_model()])
-    wrapped = sorted(name for name, module in model[0].named_modules() if type(module).__name__ == "LoRALinear")
-    return wrapped, peft
+    return sorted(name for name, module in model[0].named_modules() if type(module).__name__ == "LoRALinear")
 
 
-def test_vision_language_lora_covers_every_trained_part_when_nothing_is_frozen(monkeypatch):
-    wrapped, peft = _wrapped_with_lora(monkeypatch)
-    assert wrapped == sorted((*_LANGUAGE, *_VISION, *_PROJECTION))
-    assert peft.target_modules == QWEN35_TARGETS  # plain names, unchanged
-
-
-@pytest.mark.parametrize(
-    "freeze, trained",
-    [
-        ({"freeze_vision_model": True, "freeze_vision_projection": True}, _LANGUAGE),
-        ({"freeze_vision_model": True}, (*_LANGUAGE, *_PROJECTION)),
-        ({"freeze_language_model": True}, (*_VISION, *_PROJECTION)),
-    ],
-)
-def test_vision_language_lora_skips_the_parts_the_recipe_freezes(monkeypatch, freeze, trained):
-    wrapped, peft = _wrapped_with_lora(monkeypatch, **freeze)
-    assert wrapped == sorted(trained)
-    # One pattern per trained part that has the name, so no pattern goes unmatched (Bridge would warn).
-    if freeze.get("freeze_vision_model") and freeze.get("freeze_vision_projection"):
-        assert peft.target_modules == [f"language_model.*.{name}" for name in QWEN35_TARGETS]
-
-
-def test_vision_language_lora_keeps_explicit_patterns_as_given(monkeypatch):
-    wrapped, peft = _wrapped_with_lora(
-        monkeypatch,
-        targets=["vision_model.decoder.layers.*.linear_qkv", "linear_proj"],
-        freeze_vision_model=True,
-        freeze_vision_projection=True,
-    )
-    assert peft.target_modules == ["vision_model.decoder.layers.*.linear_qkv", "language_model.*.linear_proj"]
-    assert wrapped == sorted(
-        [
-            "vision_model.decoder.layers.0.self_attention.linear_qkv",
-            "language_model.decoder.layers.0.self_attention.linear_proj",
-        ]
-    )
-
-
-def test_vision_language_lora_rejects_a_recipe_that_freezes_everything(monkeypatch):
-    with pytest.raises(ValueError, match="freezes every part"):
-        _wrapped_with_lora(
-            monkeypatch, freeze_language_model=True, freeze_vision_model=True, freeze_vision_projection=True
-        )
+def test_vision_language_lora_matches_plain_names_everywhere_and_patterns_as_given(monkeypatch):
+    frozen_vision = {"freeze_vision_model": True, "freeze_vision_projection": True}
+    # The recipe's freeze flags do not steer the adapters: plain names reach every part ...
+    assert _wrapped_with_lora(monkeypatch, **frozen_vision) == sorted((*_LANGUAGE, *_VISION, *_PROJECTION))
+    # ... and patterns keep them on the language model.
+    language_only = [f"language_model.*.{name}" for name in QWEN35_TARGETS]
+    assert _wrapped_with_lora(monkeypatch, targets=language_only, **frozen_vision) == sorted(_LANGUAGE)
 
 
 # ---- engine construction ------------------------------------------------------------------------

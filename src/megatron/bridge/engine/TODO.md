@@ -111,9 +111,17 @@ the text recipe. Missing:
   `LoraConfig` does not expose it until then.
 - **LoRA+** (a per-group `max_lr` ratio on `lora_B`) is not reachable from the engine, and
   `apply_adam_params` scales by `lr_mult` only, so wiring it needs the ratio rule too.
-- **Not run on GPU yet:** LoRA on the vision-language recipe (its target scoping by the recipe's
-  `freeze_*` flags is unit-tested only), and the router checks and the expert-bias freeze on a model that
-  has an expert bias (Qwen3.5 has none).
+- **Routing state under LoRA**: as in Bridge's LoRA, MoE routing state outside the adapters keeps
+  training: a router's expert bias keeps updating (Bridge saves it with the adapters), and so does
+  quantile balancing's `qb_beta`, which Bridge's adapter checkpoint does not keep. On such models
+  `forward_only(disable_adapters=True)` scores the base weights with the moved state, and
+  `export(adapter_only=True)` leaves that state out. Qwen3.5 has neither. Holding routing at the base
+  needs an option in Bridge's LoRA.
+- **Vision-language freeze flags**: LoRA freezes every base weight whatever the recipe's `freeze_*`
+  flags say, and plain target names also reach the vision tower and the patch mergers. Bridge's
+  `VLMLoRA`, which leaves the unfrozen parts fully trainable instead, reads a `vision_projection`
+  module that Bridge's Qwen3-VL model does not have.
+- **Not run on GPU yet:** LoRA on the vision-language recipe.
 
 ## State, export and placement
 

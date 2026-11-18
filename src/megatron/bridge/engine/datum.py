@@ -296,21 +296,23 @@ class NormalizationPolicy(str, Enum):
 class LoraConfig:
     """LoRA adapter settings for a trainable language-model engine (``from_recipe(lora=...)``).
 
-    Lowered to Bridge's ``LoRA`` by ``megatron.bridge.engine.lora.build_lora``: ``rank`` becomes its
-    ``dim`` and the adapter output is scaled by ``alpha / rank``. The base model is frozen, MoE router
-    expert biases included, so the gradient buffers, the optimizer and ``save_state`` hold the adapters
+    Lowered to Bridge's ``LoRA`` by ``megatron.bridge.engine.lora.build_lora`` and applied with Bridge's
+    PEFT hook: ``rank`` becomes its ``dim`` and the adapter output is scaled by ``alpha / rank``. The
+    base model is frozen, so the gradient buffers, the optimizer and ``save_state`` hold the adapters
     only; ``forward_only(disable_adapters=True)`` scores the base model, and ``export`` merges the
-    adapters into the base weights unless ``adapter_only=True``. ``save_state`` records these settings
-    and ``load_state`` requires them to match.
+    adapters into the base weights unless ``adapter_only=True``. As in Bridge's LoRA, an MoE router's
+    expert bias keeps updating and is saved with the adapters, so on such models ``disable_adapters``
+    scores the base weights with the updated bias and an adapter-only export leaves the bias out.
+    ``save_state`` records these settings and ``load_state`` requires them to match.
 
     Attributes:
         rank: strict. Adapter rank.
         alpha: strict. Adapter scaling numerator; the adapter output is scaled by ``alpha / rank``.
-        target_modules: strict. Megatron module names or ``*`` wildcards the adapters attach to, or
-            ``None`` for the recipe's ``lora_target_modules``. No MoE router may match. On a
-            vision-language recipe that freezes part of the model (``freeze_language_model``,
-            ``freeze_vision_model``, ``freeze_vision_projection``), plain names attach only to the parts
-            it trains; names containing ``*`` or ``.`` are used as given.
+        target_modules: strict. Megatron module names or ``*`` wildcards the adapters attach to, matched
+            as Bridge's LoRA matches them, or ``None`` for the recipe's ``lora_target_modules``. A plain
+            name matches its module anywhere: on a vision-language model also in the vision tower and
+            the patch mergers, whatever the recipe freezes. Patterns such as
+            ``language_model.*.linear_qkv`` keep the adapters on the language model.
         dropout: strict. Adapter dropout probability, in ``[0, 1)``.
         expert_adapters: strict. Layout of the adapters on grouped MoE expert linears, one of Bridge's
             three (``LORA_EXPERT_ADAPTER_LAYOUTS``): ``"shared"`` (Bridge's default: one adapter used by
