@@ -168,6 +168,28 @@ def test_gpt_oss_20b_sft_32k_overrides_batch_and_sequence_length():
     assert cfg.train.micro_batch_size == 1
 
 
+def test_gpt_oss_120b_sft_48gpu_32k_keeps_nccl_communicators_lazy(monkeypatch):
+    """The 48-H100 32K SFT recipe keeps NCCL communicators lazy so its first pipeline stage fits in 80 GB."""
+    from megatron.bridge.recipes.gpt_oss.h100 import gpt_oss as h100_gpt_oss
+    from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
+
+    patch_recipe_construction_dependencies(monkeypatch)
+    monkeypatch.setattr(h100_gpt_oss, "AutoBridge", _BuilderOnlyBridge)
+
+    cfg = h100_gpt_oss.gpt_oss_120b_sft_48gpu_h100_bf16_32k_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 6
+    assert cfg.model.context_parallel_size == 4
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.dataset.seq_length == 32768
+    assert cfg.train.global_batch_size == 4
+    # Eager NCCL communicators leave the first pipeline stage too little memory.
+    assert cfg.env_vars["TORCH_DIST_USE_NCCL2"] == 0
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+
+
 def test_fp8_peft_inherits_base_peft_config():
     """gpt_oss_20b_peft_fp8_current_scaling_config should inherit base PEFT settings."""
     from megatron.bridge.recipes.gpt_oss import (

@@ -604,6 +604,12 @@ def gpt_oss_120b_sft_48gpu_h100_bf16_32k_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        # PyTorch builds that back the nccl backend with ProcessGroupNCCL2 (NeMo 26.12 images) create every
+        # process group's NCCL communicator eagerly: 10.4 GiB per GPU outside PyTorch at the step-2 peak instead of
+        # 7.3 GiB, so the first pipeline stage runs out of memory at step 2 of 32K SFT on 48 H100s (it peaks at
+        # 77.2 of 79.1 GiB with lazy communicators). 0 keeps the communicators lazy, as on earlier images; builds
+        # without the switch ignore it.
+        "TORCH_DIST_USE_NCCL2": 0,
     }
     return cfg
 
