@@ -185,8 +185,9 @@ def test_gpt_oss_120b_sft_48gpu_32k_keeps_nccl_communicators_lazy(monkeypatch):
     assert cfg.model.expert_model_parallel_size == 4
     assert cfg.dataset.seq_length == 32768
     assert cfg.train.global_batch_size == 4
-    # Eager NCCL communicators leave the first pipeline stage too little memory.
-    assert cfg.env_vars["TORCH_DIST_USE_NCCL2"] == 0
+    # Eager NCCL communicators leave the first pipeline stage too little memory. Bridge exports str(value) and
+    # PyTorch only honors the exact string "0", so False or 0.0 would silently keep the communicators eager.
+    assert str(cfg.env_vars["TORCH_DIST_USE_NCCL2"]) == "0"
     assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
 
 
