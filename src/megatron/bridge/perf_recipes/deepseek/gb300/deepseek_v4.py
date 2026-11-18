@@ -72,8 +72,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Configure the 61-block + MTP, 256-GPU Pro benchmark.
 
-    Requires the native-main runtime with compact MXFP8 indexing, compact
-    Muon/sharded Adam, and mHC parameter readiness; see the example runtime pins.
+    Requires the native-main runtime with compact Muon/sharded Adam and mHC
+    parameter readiness; see the example runtime pins. Native indexer scoring is BF16.
     Uses forced load balancing and fixed synthetic THD packs for performance
     correlation, not convergence validation. No Hugging Face download is needed.
     """
@@ -83,8 +83,8 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config() -> ConfigContainer:
     """Run full Pro eagerly with mHC recompute and overlapped parameter gathering.
 
-    Keeps the 61-block + MTP model and batch contract, compact MXFP8 indexer,
-    and optimizer layout. Requires the same native-main runtime as graph mode.
+    Keeps the 61-block + MTP model, batch contract and optimizer layout.
+    Requires the same native-main runtime and BF16 indexer as graph mode.
     """
     return _deepseek_v4_pro_benchmark_config(attention_graphs=False)
 

@@ -226,7 +226,6 @@ def test_pro_log_optimizer_and_execution_contract(
         assert cfg.optimizer.use_layer_wise_param_layout is cfg.ddp.use_layer_wise_param_layout is False
         assert cfg.ddp.use_distributed_optimizer is True
         assert cfg.ddp.overlap_param_gather is cfg.optimizer.overlap_param_gather is True
-    assert cfg.model.dsa_indexer_precision == "mxfp8"
     assert cfg.comm_overlap.overlap_param_gather is True
     assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is False
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
@@ -376,14 +375,15 @@ def _model_api_fixture(*, development: bool, omit: str | None = None) -> type:
 
 
 @pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
-def test_api_mapping_preserves_geometry_and_compression_ratios(development: bool) -> None:
+def test_api_mapping_preserves_geometry_and_compression_ratios(
+    development: bool, caplog: pytest.LogCaptureFixture
+) -> None:
     model = _model_api_fixture(development=development)()
     configure_dsv4_perf_model(model)
     assert model.is_hybrid_model is True
     assert model.csa_compress_ratios == [128, 0, 128, 0, 4, 0, 128, 0, 0, 0]
     assert model.attention_cp_layout == model.linear_cp_layout == "contiguous"
     assert callable(model.hybrid_stack_spec)
-    assert model.dsa_indexer_precision == "mxfp8"
     assert set(vars(model)) == {item.name for item in fields(model)}
     if development:
         assert model.o_groups == 16
@@ -406,6 +406,7 @@ def test_api_mapping_preserves_geometry_and_compression_ratios(development: bool
         assert model.mhc_num_residual_streams == 4
         assert model.cuda_graph_thd_max_packed_sequences == 8
         assert not set(_DEV_MCORE_CAPABILITIES) & vars(model).keys()
+        assert "indexer scoring uses BF16" in caplog.text
 
 
 @pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
@@ -417,9 +418,15 @@ def test_missing_mhc_graph_split_is_rejected_before_configuration(development: b
     assert vars(model) == original
 
 
-@pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
+@pytest.mark.parametrize(
+    ("development", "missing"),
+    [
+        (False, "mhc_recompute_attn_cuda_graph_split"),
+        (True, "mhc_recompute_attn_cuda_graph_split"),
+        (True, "dsa_indexer_precision"),
+    ],
+)
 @pytest.mark.parametrize("attention_graphs", [False, True], ids=["eager", "graph"])
-@pytest.mark.parametrize("missing", ["mhc_recompute_attn_cuda_graph_split", "dsa_indexer_precision"])
 def test_reference_runtime_rejects_missing_support_before_mutation(development, attention_graphs, missing):
     model = _model_api_fixture(development=development, omit=missing)()
     original = vars(model).copy()

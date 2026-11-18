@@ -170,7 +170,7 @@ NaN iterations; this is execution evidence, not convergence or numerical parity.
 
 Both eager and attention-graph benchmarks require the native-main integration
 revision
-[`90b4f87735c6b9f41897b40ade60ca920d47d6af`](https://github.com/malay-nagda/Megatron-LM/commit/90b4f87735c6b9f41897b40ade60ca920d47d6af)
+[`9f48284e46ecfbc06a574a800c491ee0c672c7c9`](https://github.com/malay-nagda/Megatron-LM/commit/9f48284e46ecfbc06a574a800c491ee0c672c7c9)
 (based on main
 `c1ad819d07cb946620341a317b8d06e74207e0f1`). It contains:
 
@@ -180,14 +180,10 @@ revision
 - [MCore #5479](https://github.com/NVIDIA/Megatron-LM/pull/5479) at
   `9dcc305d7d27282c52a384d8a80be62a5170db0a`, integrated with main's current DDP
   and optimizer lifecycle to keep compact Muon buffers and sharded fallback Adam.
-- [MCore #9555](https://github.com/NVIDIA/Megatron-LM/pull/9555) at
-  `bbc36daae5d5f27c085b7b7dbaae2e6da56341ae`: the native-main compact MXFP8 CSA
-  indexer port, including packed THD/context parallelism, compact prediction
-  loss, and graph-compatible workspace reuse.
 
 Use the full integration SHA for nemo-ci's `--mcore-ref`. Bare main and the older
 main-plus-#7337 target are insufficient: the recipes reject missing support
-instead of silently using BF16 indexing or changing the optimizer layout.
+rather than changing the optimizer layout. Native indexer scoring uses BF16.
 
 Use the MoK Rubin/Blackwell image built in pipeline 82972924:
 `nvcr.io/nvidian/nemo:dgxctestingtemp-nemofw-nightly.83236778`, whose immutable
@@ -201,8 +197,9 @@ emerging-optimizers implementations are required.
 The adapter also retains the development API used with MCore
 `264817a74075a0c4b003723054c3ae71020058ad`. It selects declared dataclass fields
 and resolves main's static hybrid spec or development's spec factory.
-Both runtimes select **MXFP8 indexer scoring**, model MXFP8 and FP8 parameter
-gathering, `optimizer.overlap_param_gather=True`,
+Native main uses **BF16 indexer scoring**; development retains its compact
+MXFP8 indexer. Both runtimes retain model MXFP8 and FP8 parameter gathering,
+`optimizer.overlap_param_gather=True`,
 `ddp.overlap_param_gather=True`, and `ddp.use_distributed_optimizer=True`.
 Muon remains layer-wise (`optimizer.use_distributed_optimizer=False`,
 `use_layer_wise_distributed_optimizer=True`) with compact parameter layout;
@@ -212,6 +209,8 @@ disabled because it is incompatible with this LayerWise/MXFP8-buffer-reuse path.
 
 The native-main runtime still has these differences:
 
+- Native CSA indexer scoring uses BF16 and has no indexer precision selector;
+  model training remains MXFP8. The development MXFP8 indexer port is not required.
 - #7337 enables attention graphs with mHC recompute group two, but retains a
   copied attention aggregate in the static graph buffer. Its memory/performance
   behavior differs from development's aggregate recomputation implementation.
@@ -326,7 +325,8 @@ full factory name from the table with `--recipe`.
 These variants retain all model layers for their respective full/proxy sizes,
 one MTP, sequence 65,536, CP16/EP64, GBS256/MBS1, Muon, model MXFP8 and parameter
 gather buffer reuse, and selective `mla_up_proj`/mHC recompute with
-`mhc_recompute_layer_num=2`. Indexer scoring remains MXFP8 in eager mode.
+`mhc_recompute_layer_num=2`. Eager mode retains native BF16 indexer scoring
+(or MXFP8 with the development runtime).
 Fixed THD metadata capacity remains eight in eager mode.
 
 The deliberate execution changes are:
