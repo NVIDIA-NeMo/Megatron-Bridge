@@ -82,10 +82,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-super-120b-a12b-pretrain-gb200" aria-controls="nemotron-3-super-120b-a12b-pretrain-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-super-120b-a12b-pretrain-gb200" aria-controls="nemotron-3-super-120b-a12b-pretrain-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Pretrain · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -312,35 +312,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-super-120b-a12b-pretrain-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-pretrain-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Pretrain · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-18</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>12.14941</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>5.635972</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>27,354.380 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>251.950 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>5,989.534 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -356,7 +356,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 64 GB200s in one NVL72 domain, the BF16 support run must complete exactly 100 bounded RP2 optimizer steps with the same convergence recipe and layout as the H100 item: TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural routing, and HybridEP flex dispatch with 1.10x fixed expert capacity, here with the NVL72 HybridEP environment (32 ranks per NVLink domain, domain size 72, MNNVL). Loss must stay finite with no skipped or NaN iteration, and complete iter_0000050 and iter_0000100 checkpoints must save.
+        <p>On 64 GB200s in one NVL72 domain at this item&#x27;s Bridge commit, the BF16 support run completed exactly 100 bounded RP2 optimizer steps with the same convergence recipe and layout as the H100 item: TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural routing, and HybridEP flex dispatch with 1.10x fixed expert capacity, here with the NVL72 HybridEP environment (32 ranks per NVLink domain, domain size 72, MNNVL). Loss stayed finite from 12.14941 to 5.635972 with zero skipped or NaN iterations, and complete iter_0000050 and iter_0000100 checkpoints saved. Metrics average steps 91-100; token throughput uses 8192 times GBS1280 per step. Run on a NeMo nightly base container (2026-11-18).
 </p>
       </section>
     </article>

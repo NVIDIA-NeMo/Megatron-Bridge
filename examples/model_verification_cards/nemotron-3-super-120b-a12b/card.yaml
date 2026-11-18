@@ -27,8 +27,8 @@ verification_index:
       verified: [pretrain, sft_long_context, checkpoint_resume]
       unverified: [sft, sft_export_inference, peft]
     GB200:
-      verified: [sft, sft_export_inference, peft]
-      unverified: [pretrain, sft_long_context, checkpoint_resume]
+      verified: [pretrain, sft, sft_export_inference, peft]
+      unverified: [sft_long_context, checkpoint_resume]
   performance:
     H100: verified
     GB200: verified
@@ -205,8 +205,9 @@ items:
         long first step (pytorch/pytorch#200848).
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: b54e844c7292488410e4ec3f9d7acee157e28053  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -226,22 +227,25 @@ items:
         --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-pretrain-reference
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true logger.tensorboard_dir=null
-      last_verified: null
+      last_verified: 2026-11-18
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 12.14941
+        final_loss: 5.635972
+        last_10_steps_step_time_ms_avg: 27354.380
+        last_10_steps_model_tflops_per_gpu_avg: 251.950
+        last_10_steps_tokens_per_second_per_gpu_avg: 5989.534
       expected_result: >
-        On 64 GB200s in one NVL72 domain, the BF16 support run must complete
-        exactly 100 bounded RP2 optimizer steps with the same convergence recipe
-        and layout as the H100 item: TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1,
-        natural routing, and HybridEP flex dispatch with 1.10x fixed expert
-        capacity, here with the NVL72 HybridEP environment (32 ranks per NVLink
-        domain, domain size 72, MNNVL). Loss must stay finite with no skipped or
-        NaN iteration, and complete iter_0000050 and iter_0000100 checkpoints
-        must save.
+        On 64 GB200s in one NVL72 domain at this item's Bridge commit, the BF16
+        support run completed exactly 100 bounded RP2 optimizer steps with the
+        same convergence recipe and layout as the H100 item:
+        TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural routing, and HybridEP
+        flex dispatch with 1.10x fixed expert capacity, here with the NVL72
+        HybridEP environment (32 ranks per NVLink domain, domain size 72,
+        MNNVL). Loss stayed finite from 12.14941 to 5.635972 with zero skipped
+        or NaN iterations, and complete iter_0000050 and iter_0000100
+        checkpoints saved. Metrics average steps 91-100; token throughput uses
+        8192 times GBS1280 per step. Run on a NeMo nightly base container
+        (2026-11-18).
 
   sft:
     H100:
