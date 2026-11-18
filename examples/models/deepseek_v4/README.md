@@ -159,21 +159,57 @@ performance references, not substitutes for the library recipes.
 
 ### GB300 Pro performance reproduction and debugging proxy
 
-These benchmark recipes reproduce the configuration of the supplied full and
-proxy MCore logs. The earlier 50-step GB300 runs used the private `dsv4` revision
+These benchmark recipes retain the model geometry, parallelism, batch sizes,
+Muon optimizer, model MXFP8, MoK/HybridEP, and mHC attention-graph settings from
+the supplied full and proxy MCore logs. Runtime-specific differences are listed
+below; native main is a functional-test variant, not an identical reproduction.
+The earlier 50-step GB300 runs used the private `dsv4` revision
 `d211e50e888fcb8640ddc9923e98940800afcfd3` and its compatible kernel container.
 They completed with finite reported losses and gradient norms and no skipped or
 NaN iterations; this is execution evidence, not convergence or numerical parity.
 
-The current public-development validation target is MCore
-`264817a74075a0c4b003723054c3ae71020058ad` from `dev`, with the MoK Rubin/Blackwell
-image built in pipeline 82972924:
+The native-main functional target is the immutable merge revision
+[`28c439772712240602a28123b462d8e374bec67f`](https://github.com/malay-nagda/Megatron-LM/commit/28c439772712240602a28123b462d8e374bec67f):
+main `c1ad819d07cb946620341a317b8d06e74207e0f1` plus
+[MCore #7337](https://github.com/NVIDIA/Megatron-LM/pull/7337) at
+`12880406160688146b19733996d0ede8bd3a2726`, with no additional source patches.
+Use this full merge SHA for nemo-ci's `--mcore-ref`. Unmodified main at the
+specified revision lacks graphable mHC wrappers: removing the capability guard
+would allow graph discovery to skip attention capture. The recipe therefore
+requires the declared mHC recompute/attention-graph split capability.
+
+Use the MoK Rubin/Blackwell image built in pipeline 82972924:
+`nvcr.io/nvidian/nemo:dgxctestingtemp-nemofw-nightly.83236778`, whose immutable
+image reference is
 `nvcr.io/nvidian/nemo@sha256:505040c980d2408d50a831056a76e3e3e4886f3a04c8b80a405c903bb2d5f73b`.
-Mount this Bridge revision and the pinned development MCore source explicitly;
-the image's baked-in main-branch MCore lacks required split-attention-graph and
-dynamic-microbatch capabilities. Runtime validation of this refreshed combination
-is pending. Compatible Transformer Engine, HybridEP/MoK, fused mHC, cuDNN DSA,
-and emerging-optimizers implementations are required.
+Mount this Bridge revision and the selected MCore source explicitly; changing
+the Bridge source alone does not replace the image's baked-in MCore.
+Compatible Transformer Engine, HybridEP/MoK, fused mHC, cuDNN DSA, and
+emerging-optimizers implementations are required.
+
+The adapter also retains the development API used with MCore
+`264817a74075a0c4b003723054c3ae71020058ad`. It selects declared dataclass fields
+and resolves main's static hybrid spec or development's spec factory.
+The native-main functional variant has these explicit differences:
+
+- Packed CSA indexer scoring uses the native **BF16** path. The reference's
+  compact **MXFP8** indexer is not available on this main revision. The adapter
+  logs this difference; model MXFP8 training and parameter gathering remain on.
+- #7337 enables attention graphs with mHC recompute group two, but retains a
+  copied attention aggregate in the static graph buffer. Its memory/performance
+  behavior differs from development's aggregate recomputation implementation.
+- Main infers the fixed microbatch graph count and uses
+  `cuda_graph_thd_max_packed_sequences=8`; the development-only dynamic graph
+  flag is unnecessary for these fixed 64-microbatch optimizer steps.
+- Main uses native pipeline shape exchange. The development fixed-P2P-shape
+  optimization is absent; this matters for full PP4/VPP4, not PP1 proxy traffic.
+- Grouped output projection uses main's existing implementation. The separate
+  BatchedLinear optimization and compact-Muon ports are not part of this pin.
+
+Configuration tests do not exercise GPU kernels. For a functional run, verify
+finite completed LM/MTP/auxiliary losses and gradient norms, no skipped/NaN
+iterations, actual Muon execution, graph capture and post-capture steps, and a
+clean training exit. Do not infer attention graph execution from config alone.
 
 The earlier public-development target was the immutable merge revision
 `159e66cd2491b1bf4fdb0fa0895dd58f4dd9e4ed` of MCore
@@ -181,8 +217,8 @@ The earlier public-development target was the immutable merge revision
 `nvcr.io/nvidian/nemo:nightly-2026-10-16`. Historical timing and memory results
 are not guarantees for the refreshed source and kernel combination.
 
-The recipes set both native CP layouts to `contiguous`, while retaining
-compatible development-MCore packed metadata and precomputed THD routes.
+The recipes set both native CP layouts to `contiguous` and retain fixed THD
+boundaries. Development-only route finalization is used only when available.
 Bridge's shared DSA initialization and logging own the metric lifecycle;
 training-attempt resets clear metric storage in place so captured graph
 addresses remain valid. The recipes explicitly set `is_hybrid_model=True`,
@@ -194,8 +230,9 @@ their initial weights are not reproduced by the updated recipes.
 |--------|------|---------------------|--------------|----------|-----------|
 | `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config` | 256 | 61 | 1 / 16 / 64 | 4 / 4 | 256 / 1 |
 | `deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config` | 64 | 16 | 1 / 16 / 64 | 1 / none | 256 / 1 |
+| `deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config` | 64 | 16 | 1 / 16 / 64 | 1 / none | 256 / 1 |
 
-Both retain the Pro widths, expert count, one MTP module, 65,536-token sequence
+All three retain the Pro widths, expert count, one MTP module, 65,536-token sequence
 length, MXFP8 parameter gathering, and Muon with the `deepseekv4` coefficients
 and ten Newton–Schulz iterations. Each main logical block contains one attention
 layer and one MoE layer, so MCore reports 122 and 32 main physical layers,
@@ -204,8 +241,8 @@ microbatches per optimizer step. The full model splits its logical blocks across
 the sixteen VPP chunks as `[3] + [4] * 14 + [2]`.
 
 Both use selective `mla_up_proj` and mHC recompute with mHC group size two,
-Transformer Engine attention CUDA graphs with one warmup step and dynamic
-microbatches, and no activation offload or paged stash. The proxy reduces the
+Transformer Engine attention CUDA graphs with one warmup step and support for
+the fixed microbatch count, and no activation offload or paged stash. The proxy reduces the
 allocation by four while retaining the long-context attention, MoE, mHC, MTP,
 and optimizer paths. Its PP1 schedule does not exercise the full recipe's
 pipeline communication or interleaved scheduling, and the smaller allocation
@@ -233,7 +270,12 @@ For a stricter diagnostic run, enable `ddp.check_for_nan_in_grad=true` and
 `rerun_state_machine.check_for_nan_in_loss=true`; record those overrides when
 comparing performance.
 
-The launchers select `dsv4_step` automatically for these two recipes. The
+For the Rubin proxy, select
+`deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config` instead. It uses the
+same model and training contract, with MoK communication SMs set to 40/40 from
+the Rubin reference, compared with GB300's 28/28.
+
+The launchers select `dsv4_step` automatically for these recipes. The
 synthetic dataset emits fixed THD packed metadata, including boundaries on
 intermediate pipeline stages, with one full-length sequence per microbatch.
 It reproduces the fixed pack shape used in the logs, rather than their random

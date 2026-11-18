@@ -31,10 +31,13 @@ from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import (
+    _DEV_MCORE_CAPABILITIES,
+    _MAIN_MCORE_CAPABILITIES,
     _MCORE_CAPABILITIES,
     FixedTHDMockDatasetConfig,
     _FixedTHDMockDataset,
-    configure_dsv4_dev_model,
+    configure_dsv4_perf_model,
+    dsv4_hybrid_stack_spec,
 )
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
     _deepseek_v4_pro_pretrain_256gpu_gb300_common,
@@ -54,7 +57,7 @@ def _build_recipe(recipe_factory: Callable[[], ConfigContainer]) -> ConfigContai
     available = {field.name for field in fields(DeepSeekV4HybridModelProvider)}
     missing = sorted(set(_MCORE_CAPABILITIES) - available)
     if missing:
-        pytest.skip(f"DSv4 development MCore required; missing declared fields: {', '.join(missing)}")
+        pytest.skip(f"DSv4 mHC graph support required; missing declared fields: {', '.join(missing)}")
     return recipe_factory()
 
 
@@ -90,7 +93,8 @@ def test_pro_log_model_and_batch_contract(
     assert (model.expert_model_parallel_size, model.expert_tensor_parallel_size) == (64, 1)
     assert (model.pipeline_model_parallel_size, model.virtual_pipeline_model_parallel_size) == (pp, vp)
     assert model.sequence_parallel is False
-    assert model.cp_partition_mode == "contiguous"
+    if "cp_partition_mode" in {item.name for item in fields(model)}:
+        assert model.cp_partition_mode == "contiguous"
     assert model.attention_cp_layout == model.linear_cp_layout == "contiguous"
     assert cfg.train.global_batch_size == 256
     assert cfg.train.micro_batch_size == 1
@@ -180,7 +184,22 @@ def test_pro_log_optimizer_and_execution_contract(recipe_factory: Callable[[], C
     assert cuda_graph_module_names(cfg.model) == ["attn"]
     assert not is_full_iteration_cuda_graph(cfg.model)
     assert cfg.model.cuda_graph_warmup_steps == 1
-    assert cfg.model.cuda_graph_dynamic_microbatches is True
+    declared = {item.name for item in fields(cfg.model)}
+    if "o_groups" in declared:
+        assert cfg.model.cuda_graph_dynamic_microbatches is True
+        assert cfg.model.thd_max_packed_sequences == cfg.dataset.metadata_capacity == 8
+        assert cfg.model.dsa_indexer_precision == "mxfp8"
+        assert cfg.model.o_groups == 16
+        assert cfg.model.o_lora_rank == 1024
+        assert cfg.model.moe_n_hash_layers == 3
+        assert cfg.model.actual_vocab_size == 129280
+    else:
+        assert cfg.model.cuda_graph_thd_max_packed_sequences == cfg.dataset.metadata_capacity == 8
+        assert cfg.model.output_projection_groups == 16
+        assert cfg.model.output_projection_lora_rank == 1024
+        assert cfg.model.moe_num_hash_layers == 3
+        assert cfg.model.hash_moe_vocab_size == 129280
+        assert not set(_DEV_MCORE_CAPABILITIES) & vars(cfg.model).keys()
     assert cfg.model.fine_grained_activation_offloading is False
     assert cfg.model.offload_modules is None
     assert cfg.model.moe_paged_stash is False
@@ -224,15 +243,15 @@ def test_proxy_is_available_through_performance_selector(monkeypatch: pytest.Mon
 def test_pro_recipes_reject_unsupported_mcore(recipe_factory: Callable[[], ConfigContainer]) -> None:
     available = {field.name for field in fields(DeepSeekV4HybridModelProvider)}
     if set(_MCORE_CAPABILITIES) <= available:
-        pytest.skip("Installed MCore declares the DSv4 development capabilities.")
+        pytest.skip("Installed MCore declares the DSv4 mHC graph capabilities.")
     with pytest.raises(
         RuntimeError,
-        match="require development MCore",
+        match="require MCore",
     ):
         recipe_factory()
 
 
-def test_development_capability_guard_requires_declared_dataclass_fields() -> None:
+def test_capability_guard_requires_declared_dataclass_fields() -> None:
     @dataclass
     class UnsupportedModel:
         num_layers: int = 32
@@ -243,16 +262,21 @@ def test_development_capability_guard_requires_declared_dataclass_fields() -> No
 
     # A readable property is insufficient: this setting must survive config serialization.
     with pytest.raises(RuntimeError, match="mhc_recompute_layer_num"):
-        configure_dsv4_dev_model(UnsupportedModel())
+        configure_dsv4_perf_model(UnsupportedModel())
 
 
-def test_development_compression_ratios_cover_attention_moe_and_mtp() -> None:
-    config_type = make_dataclass(
-        "DevelopmentModel",
-        [(name, object, None) for name in _MCORE_CAPABILITIES]
+def _model_api_fixture(*, development: bool, omit: str | None = None) -> type:
+    api_fields = _DEV_MCORE_CAPABILITIES if development else _MAIN_MCORE_CAPABILITIES
+    mhc_fields = (
+        [("enable_hyper_connections", bool, False), ("num_residual_streams", int, 1)]
+        if development
+        else [("enable_mhc_connections", bool, False), ("mhc_num_residual_streams", int, 1)]
+    )
+    return make_dataclass(
+        "DevelopmentModel" if development else "NativeMainModel",
+        [(name, object, None) for name in _MCORE_CAPABILITIES + api_fields if name != omit]
+        + mhc_fields
         + [
-            ("enable_hyper_connections", bool, False),
-            ("num_residual_streams", int, 1),
             ("hybrid_stack_spec", object, None),
             ("hybrid_layer_pattern", str, "HEHE|CEHE"),
             ("mtp_hybrid_override_pattern", str, "WE"),
@@ -260,17 +284,68 @@ def test_development_compression_ratios_cover_attention_moe_and_mtp() -> None:
             ("csa_compress_ratios", object, None),
         ],
     )
-    model = config_type()
-    configure_dsv4_dev_model(model)
+
+
+@pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
+def test_api_mapping_preserves_geometry_and_compression_ratios(
+    development: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    model = _model_api_fixture(development=development)()
+    configure_dsv4_perf_model(model)
     assert model.is_hybrid_model is True
     assert model.csa_compress_ratios == [128, 0, 128, 0, 4, 0, 128, 0, 0, 0]
-    assert model.o_groups == 16
-    assert model.o_lora_rank == 1024
-    assert model.moe_n_hash_layers == 3
-    assert model.actual_vocab_size == 129280
-    assert model.enable_hyper_connections is True
-    assert model.num_residual_streams == 4
+    assert model.attention_cp_layout == model.linear_cp_layout == "contiguous"
     assert callable(model.hybrid_stack_spec)
+    assert set(vars(model)) == {item.name for item in fields(model)}
+    if development:
+        assert model.o_groups == 16
+        assert model.o_lora_rank == 1024
+        assert model.moe_n_hash_layers == 3
+        assert model.actual_vocab_size == 129280
+        assert model.enable_hyper_connections is True
+        assert model.num_residual_streams == 4
+        assert model.dsa_indexer_precision == "mxfp8"
+        assert model.cp_partition_mode == "contiguous"
+        assert model.pipeline_p2p_fixed_shape is True
+        assert model.thd_max_packed_sequences == 8
+        assert model.cuda_graph_dynamic_microbatches is True
+    else:
+        assert model.output_projection_groups == 16
+        assert model.output_projection_lora_rank == 1024
+        assert model.moe_num_hash_layers == 3
+        assert model.hash_moe_vocab_size == 129280
+        assert model.enable_mhc_connections is True
+        assert model.mhc_num_residual_streams == 4
+        assert model.cuda_graph_thd_max_packed_sequences == 8
+        assert not set(_DEV_MCORE_CAPABILITIES) & vars(model).keys()
+        assert "indexer scoring uses BF16" in caplog.text
+
+
+@pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
+def test_missing_mhc_graph_split_is_rejected_before_configuration(development: bool) -> None:
+    model = _model_api_fixture(development=development, omit="mhc_recompute_attn_cuda_graph_split")()
+    original = vars(model).copy()
+    with pytest.raises(RuntimeError, match=r"pull/7337.*mhc_recompute_attn_cuda_graph_split"):
+        configure_dsv4_perf_model(model)
+    assert vars(model) == original
+
+
+@pytest.mark.parametrize("static_spec", [False, True], ids=["dev-factory", "main-static-spec"])
+def test_hybrid_stack_spec_resolves_both_mcore_apis(monkeypatch: pytest.MonkeyPatch, static_spec: bool) -> None:
+    from megatron.core.models.hybrid import hybrid_layer_specs
+    from megatron.core.transformer.spec_utils import ModuleSpec
+
+    model = _model_api_fixture(development=not static_spec)()
+    expected = ModuleSpec(module=torch.nn.Identity)
+    received = []
+
+    def factory(config):
+        received.append(config)
+        return expected
+
+    monkeypatch.setattr(hybrid_layer_specs, "hybrid_dsv4_stack_spec", expected if static_spec else factory)
+    assert dsv4_hybrid_stack_spec(model) is expected
+    assert received == ([] if static_spec else [model])
 
 
 def test_fixed_thd_samples_have_shifted_targets_and_static_packed_boundaries() -> None:

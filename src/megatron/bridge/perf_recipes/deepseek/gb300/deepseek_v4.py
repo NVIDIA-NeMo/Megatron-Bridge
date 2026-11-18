@@ -25,7 +25,7 @@ from megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v4 import (
 )
 from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import (
     FixedTHDMockDatasetConfig,
-    configure_dsv4_dev_model,
+    configure_dsv4_perf_model,
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.common import _pretrain_common
@@ -67,9 +67,10 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Match the 61-block + MTP, 256-GPU development-MCore Pro benchmark.
+    """Configure the 61-block + MTP, 256-GPU Pro benchmark.
 
-    Requires development MCore and compatible kernels documented in the example.
+    Supports development MCore or main plus mHC graph support (#7337). Native
+    main uses BF16 indexer scoring; see the example for runtime differences.
     Uses forced load balancing and fixed synthetic THD packs for performance
     correlation, not convergence validation. No Hugging Face download is needed.
     """
@@ -83,8 +84,8 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         mtp_hybrid_override_pattern="WE",
         vocab_size=129280,
     )
-    # Reject unsupported runtimes before assigning development-only fields.
-    configure_dsv4_dev_model(cfg.model)
+    # Validate and map the runtime API before assigning benchmark settings.
+    configure_dsv4_perf_model(cfg.model)
 
     cfg.model.experimental_attention_variant = "dsv4_hybrid"
     cfg.model.multi_latent_attention = True
@@ -105,7 +106,6 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.dsa_indexer_n_heads = 64
     cfg.model.dsa_indexer_head_dim = 128
     cfg.model.dsa_indexer_topk = 1024
-    cfg.model.dsa_indexer_precision = "mxfp8"
     cfg.model.dsa_indexer_loss_coeff = 0.01
     cfg.model.dsa_indexer_use_sparse_loss = True
     cfg.model.dsa_kernel_backend = "cudnn"
@@ -145,13 +145,10 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 64
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.model.cp_partition_mode = "contiguous"
     cfg.model.calculate_per_token_loss = True
     cfg.model.sequence_packing_scheduler = "dp_balanced"
     cfg.model.max_seqlen_per_dp_cp_rank = 4096
     cfg.model.pad_packed_seq_alignment = "max"
-    cfg.model.pipeline_p2p_fixed_shape = True
-    cfg.model.thd_max_packed_sequences = 8
     cfg.train.global_batch_size = 256
     cfg.train.micro_batch_size = 1
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
@@ -177,7 +174,6 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn"]
     cfg.model.cuda_graph_warmup_steps = 1
-    cfg.model.cuda_graph_dynamic_microbatches = True
     cfg.model.use_transformer_engine_op_fuser = False
 
     cfg.mixed_precision = bf16_with_mxfp8_mixed()
@@ -195,7 +191,7 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         weight_decay=0.1,
         clip_grad=1.0,
     )
-    # Development MCore routes "muon" through its emerging-optimizer factory.
+    # Use MCore's layerwise Muon path with the logged NS coefficients.
     cfg.optimizer.optimizer = "muon"
     cfg.optimizer.use_distributed_optimizer = False
     cfg.optimizer.use_layer_wise_distributed_optimizer = True
@@ -268,7 +264,7 @@ def deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config() -> ConfigContainer
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
-    configure_dsv4_dev_model(cfg.model)
+    configure_dsv4_perf_model(cfg.model)
     cfg.comm_overlap.overlap_p2p_comm = False
     cfg.comm_overlap.align_param_gather = False
     return cfg

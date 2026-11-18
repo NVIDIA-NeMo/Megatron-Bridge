@@ -5815,33 +5815,37 @@ def test_fsdp_v1_meta_initialization_checks_all_strategies(expert, monkeypatch):
 @pytest.mark.skipif(
     not all(
         hasattr(GPTModelProvider, name)
-        for name in (
-            "experimental_attention_variant",
-            "sequence_packing_scheduler",
-            "pipeline_p2p_fixed_shape",
-            "cp_partition_mode",
-            "pad_packed_seq_alignment",
-        )
+        for name in ("experimental_attention_variant", "sequence_packing_scheduler", "pad_packed_seq_alignment")
     ),
-    reason="Fixed-THD DSv4 requires the development Megatron-Core configuration fields",
+    reason="Fixed-THD DSv4 requires Megatron-Core packed-sequence configuration fields",
 )
 class TestFixedTHDDeepSeekV4PackingValidation:
-    @pytest.fixture
-    def fixed_thd_config(self, monkeypatch):
+    @pytest.fixture(params=["dev", "main"])
+    def fixed_thd_config(self, monkeypatch, request):
         from megatron.bridge.data.packing import PackedSequenceSpecs
 
+        if request.param == "main":
+            contract = {
+                "cuda_graph_thd_max_packed_sequences": 8,
+                "attention_cp_layout": "contiguous",
+                "linear_cp_layout": "contiguous",
+            }
+        else:
+            contract = {"pipeline_p2p_fixed_shape": True, "cp_partition_mode": "contiguous"}
+        declared_fields = {item.name for item in fields(GPTModelProvider)}
+        if not contract.keys() <= declared_fields:
+            pytest.skip(f"Installed Megatron-Core does not declare the {request.param} fixed-THD contract")
         model_cfg = create_test_gpt_config(
             num_layers=4,
             pipeline_model_parallel_size=2,
             context_parallel_size=2,
             experimental_attention_variant="dsv4_hybrid",
             sequence_packing_scheduler="dp_balanced",
-            pipeline_p2p_fixed_shape=True,
-            cp_partition_mode="contiguous",
             pad_packed_seq_alignment="max",
             cuda_graph_impl="transformer_engine",
             use_te_rng_tracker=True,
             calculate_per_token_loss=True,
+            **contract,
         )
         # These tests isolate Bridge's data routing contract; the tiny GPT
         # stand-in does not implement DSv4's model geometry or kernels.
@@ -5901,6 +5905,12 @@ class TestFixedTHDDeepSeekV4PackingValidation:
         else:
             dataset.dataset_kwargs = {"pad_to_max_length": False}
         with pytest.raises(ValueError, match="Fixed-THD DSv4 requires dataset.enable_offline_packing"):
+            fixed_thd_config.validate()
+
+    def test_invalid_fixed_thd_contract_does_not_bypass_dataset_validation(self, fixed_thd_config):
+        fixed_thd_config.model.pad_packed_seq_alignment = "cp"
+
+        with pytest.raises(ValueError, match="driven by the dataset"):
             fixed_thd_config.validate()
 
     def test_fixed_thd_requires_model_token_width(self, fixed_thd_config):

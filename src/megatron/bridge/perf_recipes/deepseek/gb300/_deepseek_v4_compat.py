@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compatibility helpers for the measured DSv4 development-MCore benchmark.
+"""Compatibility helpers for the DSv4 main and development-MCore benchmarks.
 
 The fixed THD dataset reproduces the one-sequence-per-pack shape of the supplied
 fixed-length mock runs. It does not implement MCore's general variable-length
 ``dp_balanced`` data scheduler or reproduce its random token stream.
 """
 
+import logging
 from dataclasses import dataclass, field, fields
 
 import torch
@@ -30,6 +31,8 @@ from megatron.bridge.data.packing.config import PackedSequenceSpecs
 from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
 
 
+logger = logging.getLogger(__name__)
+
 _MCORE_CAPABILITIES = (
     "is_hybrid_model",
     "moe_megakernel_backend",
@@ -37,43 +40,59 @@ _MCORE_CAPABILITIES = (
     "moe_hybridep_routing_map_mode",
     "mhc_recompute_layer_num",
     "mhc_recompute_attn_cuda_graph_split",
-    "cuda_graph_dynamic_microbatches",
-    "pipeline_p2p_fixed_shape",
     "sequence_packing_scheduler",
     "max_seqlen_per_dp_cp_rank",
     "pad_packed_seq_alignment",
-    "thd_max_packed_sequences",
-    "cp_partition_mode",
     "attention_cp_layout",
     "linear_cp_layout",
+)
+_DEV_MCORE_CAPABILITIES = (
+    "cuda_graph_dynamic_microbatches",
+    "pipeline_p2p_fixed_shape",
+    "thd_max_packed_sequences",
+    "cp_partition_mode",
     "dsa_indexer_precision",
     "o_groups",
     "o_lora_rank",
     "moe_n_hash_layers",
     "actual_vocab_size",
 )
+_MAIN_MCORE_CAPABILITIES = (
+    "cuda_graph_thd_max_packed_sequences",
+    "output_projection_groups",
+    "output_projection_lora_rank",
+    "moe_num_hash_layers",
+    "hash_moe_vocab_size",
+)
 
 
-def dsv4_dev_hybrid_stack_spec(config: DeepSeekV4HybridModelProvider) -> ModuleSpec:
-    """Build the config-aware CSA/HCA/MTP stack from development MCore."""
+def dsv4_hybrid_stack_spec(config: DeepSeekV4HybridModelProvider) -> ModuleSpec:
+    """Resolve native main's static spec or development MCore's spec factory."""
     from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_dsv4_stack_spec
 
+    if isinstance(hybrid_dsv4_stack_spec, ModuleSpec):
+        return hybrid_dsv4_stack_spec
     return hybrid_dsv4_stack_spec(config)
 
 
-def configure_dsv4_dev_model(model: DeepSeekV4HybridModelProvider) -> None:
-    """Select the logged development-MCore model API, rejecting missing features.
+def configure_dsv4_perf_model(model: DeepSeekV4HybridModelProvider) -> None:
+    """Configure declared main/dev APIs without weakening the graph requirements.
 
-    Call after choosing the main hybrid pattern and the MTP depth. Compression
-    ratios are expanded per hybrid symbol, including MTP attention and MoE.
+    Native main uses BF16 packed indexer scoring; development MCore retains the
+    measured compact MXFP8 indexer. Both require mHC recompute with attention
+    graphs (MCore #7337 on main). Call after choosing the main and MTP patterns.
     """
     declared_fields = {item.name for item in fields(model)}
-    missing = sorted(set(_MCORE_CAPABILITIES) - declared_fields)
+    development_api = "o_groups" in declared_fields
+    api_fields = _DEV_MCORE_CAPABILITIES if development_api else _MAIN_MCORE_CAPABILITIES
+    missing = sorted(set(_MCORE_CAPABILITIES + api_fields) - declared_fields)
     if missing:
         raise RuntimeError(
-            "The DSv4 GB300 performance recipes require development MCore with "
-            "DSv4 THD, MoK, and mHC attention-graph support and compatible kernels. "
-            "See examples/models/deepseek_v4/README.md for runtime revisions. "
+            "The DSv4 performance recipes require MCore with DSv4 THD, MoK, and "
+            "mHC recompute with attention CUDA graphs. Native main requires the "
+            "mHC graph support from https://github.com/NVIDIA/Megatron-LM/pull/7337. "
+            "See examples/models/deepseek_v4/README.md for exact runtime revisions "
+            "and the native BF16 indexer difference. "
             f"The installed MCore is missing configuration fields: {', '.join(missing)}."
         )
 
@@ -90,22 +109,36 @@ def configure_dsv4_dev_model(model: DeepSeekV4HybridModelProvider) -> None:
     else:
         raise RuntimeError("The installed MCore does not declare the DSv4 mHC configuration fields.")
 
-    # Match MCore's argument-to-config mapping for a hybrid layer pattern. This
-    # controls hybrid layer counting, initialization, and hash-MoE validation.
+    # Match native argument processing for initialization and hash-layer counting.
     model.is_hybrid_model = True
-    # The native training step validates both layouts before slicing THD data.
     model.attention_cp_layout = "contiguous"
     model.linear_cp_layout = "contiguous"
-    model.hybrid_stack_spec = dsv4_dev_hybrid_stack_spec
-    # Development MCore uses different names from main's output_projection_groups,
-    # output_projection_lora_rank, and moe_num_hash_layers. Assign its
-    # declared fields so these settings survive dataclass serialization.
-    model.o_groups = 16
-    model.o_lora_rank = 1024
-    model.moe_n_hash_layers = 3
-    model.actual_vocab_size = 129280
+    model.hybrid_stack_spec = dsv4_hybrid_stack_spec
+    if development_api:
+        model.o_groups = 16
+        model.o_lora_rank = 1024
+        model.moe_n_hash_layers = 3
+        model.actual_vocab_size = 129280
+        model.cp_partition_mode = "contiguous"
+        model.pipeline_p2p_fixed_shape = True
+        model.thd_max_packed_sequences = 8
+        model.cuda_graph_dynamic_microbatches = True
+        model.dsa_indexer_precision = "mxfp8"
+    else:
+        model.output_projection_groups = 16
+        model.output_projection_lora_rank = 1024
+        model.moe_num_hash_layers = 3
+        model.hash_moe_vocab_size = 129280
+        model.cuda_graph_thd_max_packed_sequences = 8
+        # Main infers the fixed microbatch graph count and uses native PP shape
+        # exchange. It has no compact MXFP8 CSA indexer precision selector.
+        logger.warning(
+            "DSv4 native-main functional variant: packed indexer scoring uses BF16; "
+            "model training remains MXFP8. This differs from the reference compact "
+            "MXFP8 indexer. See examples/models/deepseek_v4/README.md."
+        )
     if model.hybrid_layer_pattern is None:
-        raise ValueError("Set the DSv4 main hybrid pattern before configuring its development-MCore stack.")
+        raise ValueError("Set the DSv4 main hybrid pattern before configuring its stack.")
     main_pattern = model.hybrid_layer_pattern.split("/", 1)[0].replace("|", "")
     mtp_pattern = model.mtp_hybrid_override_pattern or ""
     symbols = main_pattern + mtp_pattern * (model.mtp_num_layers or 0)

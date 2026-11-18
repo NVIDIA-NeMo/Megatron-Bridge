@@ -81,7 +81,7 @@ def test_perf_recipe_factory_builds_config(recipe_factory: Callable[..., object]
         if not set(_MCORE_CAPABILITIES) <= declared_fields:
             with pytest.raises(
                 RuntimeError,
-                match="require development MCore",
+                match="require MCore",
             ):
                 recipe_factory()
             return
