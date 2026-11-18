@@ -1930,13 +1930,15 @@ def test_export_rejects_enabled_quantizers_it_would_drop():
     model.attention.k_bmm_quantizer.disable()
     modelopt_utils.check_exportable_quantizers([model])
 
+    # KV-cache quantizers are exported as k_scale / v_scale.
     model.attention.k_bmm_quantizer.enable()
+    modelopt_utils.check_exportable_quantizers([model])
+
     model.projection.output_quantizer.enable()
-    with pytest.raises(RuntimeError, match=r"attention\.k_bmm_quantizer.*projection\.output_quantizer"):
+    with pytest.raises(RuntimeError, match=r"\['projection\.output_quantizer'\]"):
         modelopt_utils.check_exportable_quantizers([model])
 
     # An activation-only layer would be exported unquantized.
-    model.attention.k_bmm_quantizer.disable()
     model.projection.output_quantizer.disable()
     model.projection.weight_quantizer.disable()
     with pytest.raises(RuntimeError, match=r"\['projection\.input_quantizer'\]"):
@@ -1979,7 +1981,7 @@ def _save_failure_worker(rank, world_size, init_file, out_dir, case):
             _StreamingBridge(case).save_hf_pretrained_modelopt(
                 [torch.nn.Linear(2, 2)],
                 out_dir,
-                export_plan=SimpleNamespace(quantization_config={"quant_method": "modelopt"}),
+                export_plan=modelopt_utils.ModelOptExportPlan([], {"quant_method": "modelopt"}, frozenset(), {}),
                 show_progress=False,
             )
 

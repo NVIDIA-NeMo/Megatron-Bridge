@@ -1218,6 +1218,17 @@ def prepare_modelopt_export_tasks(plan: ModelOptExportPlan) -> list[WeightConver
     return export_tasks
 
 
+def _checkpoint_export_plan(plan: ModelOptExportPlan) -> ModelOptExportPlan:
+    """Return ``plan`` writing KV-cache scales the way ModelOpt's checkpoint exporters do."""
+    tasks = [
+        replace(task, export_hook=replace(task.export_hook, checkpoint=True))
+        if isinstance(task.export_hook, _KVExportHook)
+        else task
+        for task in plan.conversion_tasks
+    ]
+    return plan._replace(conversion_tasks=tasks)
+
+
 def _kv_finalizer(hook: _KVExportHook) -> Callable[[Iterable[HFWeightTuple]], Iterable[HFWeightTuple]]:
     emitted = False
 
@@ -1242,7 +1253,7 @@ _FUSED_SIBLING_PROJECTIONS = (
     frozenset({"wq_a", "wkv"}),  # DeepSeek-V4's MLA
 )
 _SHARED_SIBLING_SCALES = ("weight_scale_2", "input_scale")
-_EXPORTED_QUANTIZER = re.compile(r"(?:^|\.)(?:\w*weight_quantizer|input_quantizer)(?:\.\d+)?$")
+_EXPORTED_QUANTIZER = re.compile(r"(?:^|\.)(?:\w*weight_quantizer|input_quantizer|[qkv]_bmm_quantizer)(?:\.\d+)?$")
 _WEIGHT_QUANTIZER = re.compile(r"(?:^|\.)\w*weight_quantizer(?:\.\d+)?$")
 
 
@@ -1276,9 +1287,9 @@ def check_fused_sibling_scales(tensors: Mapping[str, torch.Tensor]) -> None:
 def check_exportable_quantizers(model: list[torch.nn.Module]) -> None:
     """Fail on every rank when any rank holds an enabled quantizer the export would drop.
 
-    Only weight and input quantizers become checkpoint tensors; e.g. KV-cache (``k_bmm_quantizer``)
-    and output quantizers have no deployment format here yet, and an input quantizer is exported only
-    with its layer's weight quantizer.
+    Only weight, input and attention BMM (KV-cache) quantizers become checkpoint tensors; e.g. output
+    quantizers have no deployment format here yet, and an input quantizer is exported only with its
+    layer's weight quantizer.
     """
     from modelopt.torch.quantization.nn import TensorQuantizer
 
