@@ -491,12 +491,12 @@ items:
         --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-long-sft
         --save_interval 10 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-24
+      last_verified: null
       metrics:
-        initial_loss: 7.022207
-        final_loss: 6.406034
-        last_10_steps_step_time_ms_avg: 21544.740
-        last_10_steps_model_tflops_per_gpu_avg: 15.930
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         A dedicated GB200 run must complete at least ten packed 32K SFT steps

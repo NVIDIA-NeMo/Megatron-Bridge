@@ -5266,12 +5266,12 @@
           "entry_id": "nemotron-3-super-120b-a12b-sft-long-context-gb200",
           "expected_result": "A dedicated GB200 run must complete at least ten packed 32K SFT steps with CP2, finite loss, no skipped or NaN iterations, all five metrics, a persisted resolved configuration, and a reloadable final checkpoint.\n",
           "hardware": "GB200",
-          "last_verified": "2026-07-24",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 6.406034,
-            "initial_loss": 7.022207,
-            "last_10_steps_model_tflops_per_gpu_avg": 15.93,
-            "last_10_steps_step_time_ms_avg": 21544.74,
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
             "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
