@@ -170,7 +170,7 @@ NaN iterations; this is execution evidence, not convergence or numerical parity.
 
 Both eager and attention-graph benchmarks require the native-main integration
 revision
-[`87d1b92bd1577825935941297bda7b72167aab76`](https://github.com/malay-nagda/Megatron-LM/commit/87d1b92bd1577825935941297bda7b72167aab76)
+[`90b4f87735c6b9f41897b40ade60ca920d47d6af`](https://github.com/malay-nagda/Megatron-LM/commit/90b4f87735c6b9f41897b40ade60ca920d47d6af)
 (based on main
 `c1ad819d07cb946620341a317b8d06e74207e0f1`). It contains:
 
