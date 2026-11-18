@@ -387,6 +387,7 @@ items:
           --hf-model work/model-verification/nemotron-3-super-120b-a12b/gb200-sft-hf
           --prompt "Name the capital of France and explain its role in one sentence."
           --max-new-tokens 45 --chat-template --disable-thinking
+          --device cuda --device-map balanced --require-gpu-only
       last_verified: null
       expected_result: >
         The GB200 step-100 full-SFT checkpoint exports as 50 indexed BF16
