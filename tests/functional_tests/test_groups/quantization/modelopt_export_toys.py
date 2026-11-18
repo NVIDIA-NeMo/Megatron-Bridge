@@ -15,6 +15,7 @@
 """Tiny Hugging Face checkpoints of the models the ModelOpt export test covers."""
 
 import json
+import tempfile
 from pathlib import Path
 
 import torch
@@ -36,6 +37,7 @@ from transformers import (
 )
 
 from tests.functional_tests.test_groups.models.deepseek.test_deepseek_v4_conversion import _hf_to_bridge_state_dict
+from tests.functional_tests.test_groups.models.gpt_oss.test_gpt_oss_conversion import _build_toy_models
 
 
 TOY_CONFIG = {
@@ -384,6 +386,12 @@ def _save_kimi_k3(path: Path) -> None:
     save_file(state, path / "model.safetensors", metadata={"format": "pt"})
 
 
+def _save_gpt_oss(path: Path) -> None:
+    """Biased experts shipped as MXFP4 in OpenAI's format, as ``openai/gpt-oss-20b`` is."""
+    with tempfile.TemporaryDirectory() as bf16_path:
+        _build_toy_models(Path(bf16_path), path)
+
+
 TOY_MODELS = {
     "qwen3": _save_qwen3,
     "qwen3_5_vl_moe": _save_qwen3_5_vl_moe,
@@ -391,4 +399,5 @@ TOY_MODELS = {
     "glm5_next": _save_glm5_next,
     "deepseek_v4": _save_deepseek_v4,
     "kimi_k3": _save_kimi_k3,
+    "gpt_oss": _save_gpt_oss,
 }
