@@ -46,7 +46,7 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
 from megatron.core.utils import get_pg_size
 from megatron.training.models.base import ModelConfig
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
@@ -55,6 +55,7 @@ from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.common import ModelConfigOverrideMixin
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.fp8_export import (
     FP8ExportLayout,
     detect_fp8_export_layout,
@@ -573,9 +574,43 @@ class MegatronModelBridge(
     # changing how its checkpoints are constructed. Requires MODEL_CONFIG_CLASS to be set.
     USE_MODEL_CONFIG_FOR_CONVERSION: ClassVar[bool] = False
 
+    # Source modules intentionally absent from every target of this bridge.
+    # Strict export still requires all other source tensors. Prefixes must name
+    # complete modules (nonempty, ending in a dot), never a wildcard or all keys.
+    HF_EXPORT_IGNORED_SOURCE_PREFIXES: ClassVar[tuple[str, ...]] = ()
+
     # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
     # for example ``["*reasoning_parser.py"]``.
     ADDITIONAL_FILE_PATTERNS = None
+
+    # Source checkpoint key suffixes that import consumes and export never writes back, such as the
+    # ``*_scale_inv`` companions of FP8 weights a bridge dequantizes on import. Saved artifacts drop
+    # ``quantization_config``, so such a bridge exports plain weights; strict saving then ignores
+    # these source keys instead of reporting them as missing.
+    DEQUANTIZED_SOURCE_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = ()
+
+    # Source checkpoint key suffixes that only a plain export (an explicit ``weight_dtype``) leaves out:
+    # the scale companions of quantized source weights. A bridge that quantizes such weights back on its
+    # default export writes these keys there, so strict saving ignores them for plain exports only.
+    PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = ("_scale_inv",)
+
+    def hf_export_ignored_source_keys(self, hf_pretrained: Any, source_keys: Iterable[str]) -> Iterable[str]:
+        """Source checkpoint tensors that this bridge never writes back on export.
+
+        ``HF_EXPORT_IGNORED_SOURCE_PREFIXES`` names whole modules absent from every target; this hook covers
+        omissions that depend on the checkpoint, such as a checkpoint's copies of parameters the Megatron
+        model holds once (ERNIE 5.5's shared MTP body). Strict export treats the returned names as
+        intentionally absent instead of missing, so the shards that hold them are still written with their
+        other tensors. Never return a tensor the export does yield: strict saving rejects it as unknown.
+
+        Args:
+            hf_pretrained: The source checkpoint wrapper (``config`` and ``state.source``).
+            source_keys: Every tensor name of the source checkpoint.
+
+        Returns:
+            Tensor names to ignore; none by default.
+        """
+        return ()
 
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
         """Apply model-specific fixes after Hugging Face artifacts are saved.
@@ -594,6 +629,10 @@ class MegatronModelBridge(
     # HuggingFace PretrainedConfig, set by register_bridge_implementation dispatch.
     # Available in mapping_registry(), stream_weights_*(), and build_conversion_tasks().
     hf_config = None
+
+    # Whether the Hugging Face source may run code from its repository. AutoBridge sets it from its
+    # source, so a bridge whose model loads modules from the checkpoint can record it on the model config.
+    trust_remote_code: bool = False
 
     # Optional MIMO conversion metadata. Subclasses set this when the standard
     # bridge registry can be split into MIMO component routes.
@@ -753,17 +792,22 @@ class MegatronModelBridge(
         # HF configs use either "type" or "rope_type" key for the scaling type
         from megatron.bridge.models.mla_provider import MLAModelProvider
 
-        is_mla_provider = self.PROVIDER_CLASS is not None and issubclass(self.PROVIDER_CLASS, MLAModelProvider)
+        # MLA rope fields belong to an MLA provider or to a model config that nests an MLA transformer config.
+        model_transformer_config_class = getattr(self.MODEL_CONFIG_CLASS, "transformer_config_class", None)
+        is_mla = (self.PROVIDER_CLASS is not None and issubclass(self.PROVIDER_CLASS, MLAModelProvider)) or (
+            isinstance(model_transformer_config_class, type)
+            and issubclass(model_transformer_config_class, MLATransformerConfig)
+        )
         rope_scaling = getattr(hf_config, "rope_scaling", None)
 
         rope_type = None
         if rope_scaling is not None and isinstance(rope_scaling, dict) and rope_scaling != {}:
             rope_type = rope_scaling.get("type") or rope_scaling.get("rope_type")
 
-        if rope_type == "yarn":
-            # Check if this is an MLA provider (uses direct field names)
-            # or a GPT provider (uses yarn_ prefixed field names)
-            if is_mla_provider:
+        # MLA attention implements DeepSeek's YaRN, which some MLA checkpoints (Sarvam MLA) name "deepseek_yarn".
+        if rope_type == "yarn" or (is_mla and rope_type == "deepseek_yarn"):
+            # MLA configs use direct field names; GPT configs use yarn_ prefixed field names
+            if is_mla:
                 # MLA models: use direct field names (mscale, rotary_scaling_factor, etc.)
                 mla_params = {}
                 for hf_key, megatron_key in self.MLA_ROPE_SCALING_MAPPING:
@@ -785,7 +829,7 @@ class MegatronModelBridge(
                 # fields to YarnRotaryEmbedding explicitly, so None would override its defaults.
                 for megatron_key, default in self.YARN_HF_DEFAULTS:
                     provider_kwargs.setdefault(megatron_key, default)
-        elif is_mla_provider:
+        elif is_mla:
             if rope_type not in (None, "default"):
                 logger.warning(
                     f"Unsupported {rope_type=} for MLA model; "
@@ -826,6 +870,12 @@ class MegatronModelBridge(
         override hook.
         """
         config_kwargs = self._hf_config_to_megatron_kwargs(hf_config)
+        mla_rope_params = config_kwargs.pop("_mla_rope_params", None)
+        if mla_rope_params is not None:
+            # MLA transformer configs declare the rotary scaling fields, and MLA attention applies
+            # RoPE itself, so the model keeps "rope", as provider_bridge() sets for MLA providers.
+            config_kwargs.update(mla_rope_params)
+            config_kwargs["position_embedding_type"] = "rope"
         config_kwargs.update(
             attention_softmax_in_fp32=False,
             cross_entropy_loss_fusion=True,
@@ -1100,6 +1150,35 @@ class MegatronModelBridge(
         """
         raise NotImplementedError("Subclass must implement mapping_registry method")
 
+    @staticmethod
+    def _prefix_mapping_registry(
+        registry: MegatronMappingRegistry, megatron_prefix: str, *extra: MegatronParamMapping
+    ) -> MegatronMappingRegistry:
+        """Re-key a text-model mapping registry for a VLM wrapper.
+
+        VLM bridges typically reuse a text bridge's ``mapping_registry`` but must
+        re-prefix every Megatron parameter (e.g. ``embedding.*`` →
+        ``language_model.embedding.*``) because the language model is a submodule of
+        the VLM wrapper. Concatenation/delegation mappings that hold a nested
+        ``_tp_mapping`` keep it in sync with the parent ``megatron_param``.
+
+        Args:
+            registry: The text-model registry returned by ``super().mapping_registry()``.
+            megatron_prefix: Prefix prepended to each ``megatron_param``.
+            *extra: Additional mappings appended verbatim (e.g. replicated vision
+                weights); they are NOT prefixed.
+
+        Returns:
+            A new ``MegatronMappingRegistry`` with prefixed text mappings + extras.
+        """
+        mappings = list(registry.mappings)
+        for mapping in mappings:
+            mapping.megatron_param = megatron_prefix + mapping.megatron_param
+            nested = getattr(mapping, "_tp_mapping", None)
+            if nested is not None:
+                nested.megatron_param = mapping.megatron_param
+        return MegatronMappingRegistry(*mappings, *extra)
+
     def _megatron_global_param_names_all_pp_ranks(
         self,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
@@ -1291,6 +1370,25 @@ class MegatronModelBridge(
         else:
             hf_weights = {k: hf_state_dict[v] for k, v in hf_param.items()}
         return hf_weights
+
+    def _load_hf_weights(
+        self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
+        """Load one task's HF tensors through :meth:`maybe_modify_loaded_hf_weight`.
+
+        FP8 weights that the hook leaves quantized but that have a ``<name>_scale_inv`` companion
+        (fine-grained FP8 checkpoints, ``quantization_config.quant_method == "fp8"``) are then
+        dequantized with the checkpoint's ``weight_block_size``, so a bridge without its own FP8
+        handling imports the real weights instead of the raw FP8 codes. Bridges that dequantize
+        in their hook return no FP8 tensors, so their results are unchanged.
+        """
+        hf_weights = self.maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+        return quantization_utils.dequantize_fp8_scale_inv_weights(
+            hf_param,
+            hf_weights,
+            hf_state_dict,
+            block_size=quantization_utils.fp8_weight_block_size(getattr(self, "hf_config", None)),
+        )
 
     @staticmethod
     def get_hf_import_param_names(
@@ -1664,7 +1762,7 @@ class MegatronModelBridge(
             if is_grouped and hf_param_key in _hf_import_cache:
                 hf_weights = _hf_import_cache[hf_param_key]
             else:
-                hf_weights = self.maybe_modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
+                hf_weights = self._load_hf_weights(task.mapping.hf_param, hf_state_dict)
                 if is_grouped:
                     _hf_import_cache[hf_param_key] = hf_weights
 
@@ -1832,7 +1930,7 @@ class MegatronModelBridge(
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue
-            hf_weights = self.maybe_modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
+            hf_weights = self._load_hf_weights(task.mapping.hf_param, hf_state_dict)
             converted_weights = self._convert_loaded_hf_weight(task, hf_weights)
             if converted_weights is not None:
                 converted_weights = _slice_gtp_weight(converted_weights, task.param_weight)
@@ -2036,6 +2134,9 @@ class MegatronModelBridge(
                         adapter_weights,
                         model_config.num_moe_experts,
                     )
+                if cpu and task.export_hook is None:
+                    # Stage expert slices on CPU so the grouped buffer does not hold a full layer on device.
+                    converted_weights_dict = {name: weight.cpu() for name, weight in converted_weights_dict.items()}
                 merged_result = self._accumulate_grouped_export(
                     task,
                     converted_weights_dict,
@@ -2716,6 +2817,9 @@ class MegatronModelBridge(
         if not (hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")):
             raise ValueError("hf_pretrained.state.source is required for weight ordering")
 
+        # Some registries read the source checkpoint's names, so attach it first as build_conversion_tasks does.
+        self.hf_pretrained = hf_pretrained
+        self.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
         mapping_registry = self.mapping_registry()
         pg_collection = _get_pg_collection_from_model(megatron_model)
         mapping_registry.set_process_groups_from_pg_collection(pg_collection)

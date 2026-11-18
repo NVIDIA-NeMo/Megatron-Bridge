@@ -20,7 +20,7 @@ upstream checkpoint at
 ``trust_remote_code=True`` at inference time. This file exists so the
 Megatron-Bridge package can be self-describing — ``Step37Config`` /
 ``Step37TextConfig`` / ``Step37VisionConfig`` here surface the same fields
-the bridge reads in ``Step37Bridge.provider_bridge``, without requiring the
+the bridge reads in ``Step37Bridge.hf_config_to_model_config_kwargs``, without requiring the
 remote-code shim to be on ``sys.path``.
 
 When the upstream config ships on HF, ``Step37Bridge`` can be retargeted at

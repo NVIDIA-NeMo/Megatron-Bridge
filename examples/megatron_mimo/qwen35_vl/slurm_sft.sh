@@ -98,6 +98,8 @@ GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-32}"
 MICRO_BATCH_SIZE="${MICRO_BATCH_SIZE:-2}"
 LOG_INTERVAL="${LOG_INTERVAL:-1}"
 WANDB_PROJECT="${WANDB_PROJECT:-megatron-bridge-${DATASET_NAME}-mimo}"
+# Set to 1 to train the MTP layer; PRETRAINED_CHECKPOINT must then contain MTP weights.
+ENABLE_MTP="${ENABLE_MTP:-0}"
 
 # --- Advanced: MIMO non-colocated parallelism layout (27B validated) ----------
 # Changing these requires verifying convergence. Active ranks must fit in
@@ -171,7 +173,7 @@ export HTTPX_LOG_LEVEL=WARNING
 export PYTHONWARNINGS="ignore::FutureWarning:torch.cuda,ignore::UserWarning:modelopt.torch"
 
 export HF_MODEL DATASET_NAME SEQ_LENGTH TRAIN_ITERS GLOBAL_BATCH_SIZE MICRO_BATCH_SIZE
-export LOG_INTERVAL WANDB_PROJECT RUN_NAME RUN_DIR PRETRAINED_CHECKPOINT
+export LOG_INTERVAL WANDB_PROJECT RUN_NAME RUN_DIR PRETRAINED_CHECKPOINT ENABLE_MTP
 export MIMO_LANGUAGE_TP MIMO_LANGUAGE_PP MIMO_LANGUAGE_CP MIMO_LANGUAGE_DP MIMO_LANGUAGE_OFFSET
 export MIMO_IMAGES_TP MIMO_IMAGES_PP MIMO_IMAGES_CP MIMO_IMAGES_DP MIMO_IMAGES_OFFSET
 export MIMO_WORLD_SIZE GPUS_PER_NODE
@@ -197,6 +199,7 @@ echo "Dataset preset:  ${DATASET_NAME}"
 echo "Sequence length: ${SEQ_LENGTH}"
 echo "Train iters:     ${TRAIN_ITERS}"
 echo "Checkpoint:      ${PRETRAINED_CHECKPOINT}"
+echo "MTP:             ${ENABLE_MTP}"
 echo "======================================"
 
 # --- Per-task command ---------------------------------------------------------
@@ -232,6 +235,9 @@ cmd=(
     --component "language=tp=${MIMO_LANGUAGE_TP},pp=${MIMO_LANGUAGE_PP},cp=${MIMO_LANGUAGE_CP},dp=${MIMO_LANGUAGE_DP},rank_offset=${MIMO_LANGUAGE_OFFSET}"
     --component "images=tp=${MIMO_IMAGES_TP},pp=${MIMO_IMAGES_PP},cp=${MIMO_IMAGES_CP},dp=${MIMO_IMAGES_DP},rank_offset=${MIMO_IMAGES_OFFSET}"
 )
+if [[ "${ENABLE_MTP}" == "1" ]]; then
+    cmd+=(--enable-mtp)
+fi
 "${cmd[@]}"
 EOF
 )

@@ -26,6 +26,7 @@ from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
     deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config,
 )
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -55,7 +56,8 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.train.micro_batch_size == 1
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_use_grouped_tensor is True
     assert cfg.model.moe_router_force_load_balancing is True
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
@@ -70,6 +72,8 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.rng.te_rng_tracker is True
     assert cfg.rerun_state_machine.check_for_nan_in_loss is False
     assert cfg.ddp.check_for_nan_in_grad is False
+    assert cfg.train.manual_gc is True
+    assert cfg.train.manual_gc_interval == 500
 
     assert cfg.model.moe_expert_rank_capacity_factor == 1.5
     assert cfg.model.moe_pad_experts_for_cuda_graph_inference is True
@@ -115,9 +119,8 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
     assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
 
 
 def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
@@ -130,9 +133,13 @@ def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
     assert cfg.train.global_batch_size == 2048
     assert cfg.train.micro_batch_size == 2
     assert cfg.model.recompute_modules == ["mla_up_proj"]
+    # GB300 builds on the shared HybridEP base, not on the NCCL EP GB200 recipe.
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
     assert is_full_iteration_cuda_graph(cfg.model)
+    # The GB200 entry point's manual GC interval is not part of the shared builder.
+    assert cfg.train.manual_gc_interval == 10
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
 
 
@@ -144,15 +151,29 @@ def test_deepseek_v4_flash_128gpu_vrnvl72_fp8mx_disables_clamp_for_cutedsl() -> 
     assert vrnvl72_cfg.model.use_transformer_engine_op_fuser is True
     assert vrnvl72_cfg.model.moe_use_grouped_tensor is True
     assert vrnvl72_cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert vrnvl72_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+    assert vrnvl72_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
     assert is_full_iteration_cuda_graph(vrnvl72_cfg.model)
+    # VRNVL72 dispatches through NCCL EP; the GB300 recipe stays on the shared HybridEP base.
+    assert vrnvl72_cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert vrnvl72_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert vrnvl72_cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
+    assert gb300_cfg.model.moe_flex_dispatcher_backend == "hybridep"
 
     gb300_cfg.model.activation_func_clamp_value = None
     gb300_cfg.model.use_transformer_engine_op_fuser = True
     gb300_cfg.model.moe_use_grouped_tensor = True
+    gb300_cfg.model.moe_flex_dispatcher_backend = "ncclep"
     assert vars(vrnvl72_cfg.model) == vars(gb300_cfg.model)
+    # The environments differ in dispatcher settings and Rubin's kernel policy.
+    expected_env = {name: value for name, value in gb300_cfg.env_vars.items() if name not in HYBRID_EP_ENV_NAMES}
+    assert gb300_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+    assert vrnvl72_cfg.env_vars == {
+        **expected_env,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+    }
     for field in fields(vrnvl72_cfg):
-        if field.name != "model":
+        if field.name not in ("model", "env_vars"):
             assert getattr(vrnvl72_cfg, field.name) == getattr(gb300_cfg, field.name), field.name
 
 

@@ -229,7 +229,7 @@ class TestGetBatch:
         }
 
         # Stand in for MCore's CP slicing, which needs a real process group.
-        def fake_cp_shard(b, *, is_hybrid_cp, cp_group):
+        def fake_cp_shard(b, *, dynamic_cp, cp_group):
             return {k: (v[:, : v.size(1) // cp_group.size()] if v is not None else None) for k, v in b.items()}
 
         monkeypatch.setattr("megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank", fake_cp_shard)
@@ -366,7 +366,7 @@ class TestGetBatch:
         _set_middle_pp_stage(monkeypatch)
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
-            lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
+            lambda batch, dynamic_cp=False, cp_group=None, dynamic_cp_group_func=None: batch,
         )
 
         tokens = _as_nocuda(torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]]))
@@ -466,7 +466,7 @@ class TestGetBatch:
         _set_distributed_initialized(monkeypatch)
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
-            lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
+            lambda batch, dynamic_cp=False, cp_group=None, dynamic_cp_group_func=None: batch,
         )
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.parallel_state.get_virtual_pipeline_model_parallel_rank",
@@ -516,7 +516,7 @@ class TestGetBatch:
         _set_distributed_initialized(monkeypatch)
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
-            lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
+            lambda batch, dynamic_cp=False, cp_group=None, dynamic_cp_group_func=None: batch,
         )
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.parallel_state.get_virtual_pipeline_model_parallel_rank",
@@ -565,7 +565,7 @@ class TestGetBatch:
         _set_distributed_initialized(monkeypatch)
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
-            lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
+            lambda batch, dynamic_cp=False, cp_group=None, dynamic_cp_group_func=None: batch,
         )
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.parallel_state.get_virtual_pipeline_model_parallel_rank",
@@ -630,7 +630,7 @@ class TestGetBatch:
         _set_distributed_initialized(monkeypatch)
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
-            lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
+            lambda batch, dynamic_cp=False, cp_group=None, dynamic_cp_group_func=None: batch,
         )
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.parallel_state.get_virtual_pipeline_model_parallel_rank",
@@ -1016,7 +1016,7 @@ class TestGetBatch:
         monkeypatch.setattr("megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection())
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
-            lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
+            lambda batch, dynamic_cp=False, cp_group=None, dynamic_cp_group_func=None: batch,
         )
 
         output, returned_loss_mask = _forward_step_common(
@@ -1224,7 +1224,7 @@ class TestGetBatch:
         monkeypatch.setattr("megatron.bridge.training.gpt_step.get_pg_collection", lambda model: pg_collection)
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
-            lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
+            lambda batch, dynamic_cp=False, cp_group=None, dynamic_cp_group_func=None: batch,
         )
 
         def scatter_to_sp(tensor, group):

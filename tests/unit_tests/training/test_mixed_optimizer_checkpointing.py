@@ -20,8 +20,10 @@ def _optimizer_tree(*, distributed: bool = True, active: bool = True):
     config = OptimizerConfig(
         optimizer="muon", use_distributed_optimizer=False, use_layer_wise_distributed_optimizer=True
     )
-    layer_wise = Mock(spec=LayerWiseDistributedOptimizer, config=config, model_chunks=[])
-    dist_opt = Mock(spec=DistributedOptimizer, config=config, model_chunks=[])
+    layer_wise = Mock(
+        spec=LayerWiseDistributedOptimizer, config=config, model_chunks=[], _optimizer_state_offloader=None
+    )
+    dist_opt = Mock(spec=DistributedOptimizer, config=config, model_chunks=[], _optimizer_state_offloader=None)
     children = [layer_wise, dist_opt] if distributed else [layer_wise]
     chain = ChainedOptimizer([ChainedOptimizer(children)])
     mimo = MimoOptimizer(

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 from megatron.core import InferenceParams, tensor_parallel
@@ -45,7 +45,6 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     get_dist_train_vision_dp_data,
     get_vision_cp_data,
     pack_dist_train_vision_module_output,
-    preprocess_packed_seqs,
     qwen3vl_cp_split,
     reorganize_inputs,
     split_data_cp_rank,
@@ -55,6 +54,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3
 from megatron.bridge.training.utils.packed_seq_utils import (
     get_packed_seq_cp_partition_indices,
     get_packed_seq_q_cu_seqlens,
+    preprocess_packed_seqs,
 )
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
@@ -74,6 +74,20 @@ def _select_sequence(
     if val is None:
         return None
     return val.index_select(seq_dim, index).contiguous()
+
+
+def _scatter_padding_mask_to_sequence_parallel_region(
+    padding_mask: torch.Tensor, *, tp_group: torch.distributed.ProcessGroup
+) -> torch.Tensor:
+    """Shard a batch-first ``[b, s]`` MoE padding mask like sequence-parallel activations."""
+    return (
+        tensor_parallel.scatter_to_sequence_parallel_region(
+            padding_mask.transpose(0, 1).contiguous(),
+            group=tp_group,
+        )
+        .transpose(0, 1)
+        .contiguous()
+    )
 
 
 def _get_packed_seq_padding_mask(
@@ -275,7 +289,11 @@ class Qwen3VLModel(MegatronModule):
         model_config (ModelConfig, optional): Builder-backed model config. It owns the construction settings
             (token IDs, vocabulary, RoPE and vision-encoder options) that a provider carries on
             ``language_transformer_config``. Defaults to None, which reads them from ``language_transformer_config``.
+        language_model_kwargs (dict, optional): Additional decoder constructor arguments supplied by the builder,
+            such as a Hybrid layer pattern. Defaults to None.
     """
+
+    language_model_class = Qwen3VLGPTModel
 
     def __init__(
         self,
@@ -291,13 +309,14 @@ class Qwen3VLModel(MegatronModule):
         mtp_block_spec: Optional[ModuleSpec] = None,
         vp_stage: Optional[int] = None,
         model_config: Optional[ModelConfig] = None,
+        language_model_kwargs: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
         # A builder-backed model config also exposes its nested transformer settings, so the
         # construction settings below are read from it.
         settings = language_transformer_config if model_config is None else model_config
 
-        if hasattr(language_transformer_layer_spec, "submodules"):
+        if hasattr(getattr(language_transformer_layer_spec, "submodules", None), "self_attention"):
             language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
 
         self.vision_transformer_config = vision_transformer_config
@@ -389,7 +408,7 @@ class Qwen3VLModel(MegatronModule):
             else:
                 language_model_vocab_size = settings.vocab_size
 
-            self.language_model = Qwen3VLGPTModel(
+            self.language_model = self.language_model_class(
                 config=language_transformer_config,
                 transformer_layer_spec=language_transformer_layer_spec,
                 vocab_size=language_model_vocab_size,
@@ -407,6 +426,7 @@ class Qwen3VLModel(MegatronModule):
                 mtp_block_spec=mtp_block_spec,
                 vp_stage=vp_stage,
                 pg_collection=pg_collection,
+                **(language_model_kwargs or {}),
             )
             if pre_process:
                 deepstack_indexes = getattr(vision_transformer_config, "deepstack_visual_indexes", [])
@@ -686,6 +706,14 @@ class Qwen3VLModel(MegatronModule):
                         ),
                         seq_dim=1,
                     )
+                if not self.pre_process and self.config.sequence_parallel:
+                    # The first pipeline stage scatters the mask together with its
+                    # embeddings below. Later stages receive hidden states that are
+                    # already sequence-parallel, so the mask built here must match
+                    # that layout before the MoE routers consume it.
+                    padding_mask = _scatter_padding_mask_to_sequence_parallel_region(
+                        padding_mask, tp_group=self.pg_collection.tp
+                    )
         if self.language_model is not None:
             self.language_model.rotary_pos_emb.is_thd_format = False
 
@@ -880,13 +908,8 @@ class Qwen3VLModel(MegatronModule):
                 )
                 combined_embeddings = combined_embeddings.contiguous()
                 if padding_mask is not None:
-                    padding_mask = (
-                        tensor_parallel.scatter_to_sequence_parallel_region(
-                            padding_mask.transpose(0, 1).contiguous(),
-                            group=self.pg_collection.tp,
-                        )
-                        .transpose(0, 1)
-                        .contiguous()
+                    padding_mask = _scatter_padding_mask_to_sequence_parallel_region(
+                        padding_mask, tp_group=self.pg_collection.tp
                     )
 
         else:

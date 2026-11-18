@@ -12,18 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
+from functools import partial
+from typing import Any
+
+import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.deepseek.attention import get_deepseek_decoder_block_spec
+from megatron.bridge.models.gpt.model_config import BridgeGPTMLAModelConfig
 from megatron.bridge.models.sarvam.common import get_common_config
-from megatron.bridge.models.sarvam.sarvam_provider import SarvamMLAModelProvider
+from megatron.bridge.models.sarvam.sarvam_provider import HAVE_TE, SarvamMLAModelProvider
 
 
-@MegatronModelBridge.register_bridge(source="SarvamMLAForCausalLM", target=GPTModel)
+@MegatronModelBridge.register_bridge(source="SarvamMLAForCausalLM", target=GPTModel, provider=SarvamMLAModelProvider)
 class SarvamMLABridge(MegatronModelBridge):
     """
     Megatron Hub Bridge for Sarvam MLA Causal LM.
@@ -31,24 +36,84 @@ class SarvamMLABridge(MegatronModelBridge):
     This bridge handles the conversion between HuggingFace SarvamMLAForCausalLM
     and Megatron-Core GPTModel formats. Sarvam MLA models use multi-latent attention
     architecture.
+
+    Example:
+        >>> from megatron.bridge import AutoBridge
+        >>> bridge = AutoBridge.from_hf_pretrained("sarvamai/sarvam-105b", trust_remote_code=True)
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> SarvamMLAModelProvider:
-        hf_config = hf_pretrained.config
-        config = get_common_config(hf_config)
+    MODEL_CONFIG_CLASS = BridgeGPTMLAModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
-        config["fp16"] = self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16
-        config["bf16"] = self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16
-        config["params_dtype"] = self.dtype_from_hf(hf_config, default=torch.float32)
-        config["kv_channels"] = hf_config.hidden_size // hf_config.num_attention_heads
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Sarvam MLA config to builder config kwargs.
 
-        # MLA
-        config["kv_lora_rank"] = hf_config.kv_lora_rank
-        config["qk_head_dim"] = hf_config.qk_nope_head_dim
-        config["qk_pos_emb_head_dim"] = hf_config.qk_rope_head_dim
-        config["v_head_dim"] = hf_config.v_head_dim
+        The architecture sizes and the YaRN settings come from the HF config; the
+        remaining settings are fixed for the Sarvam MLA family, as
+        ``SarvamMLAModelProvider`` sets them. Without a query LoRA, the DeepSeek
+        block spec keeps the KV norm and omits the query norm that the checkpoint
+        does not define.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(get_common_config(hf_config))
+        config_kwargs.update(
+            transformer_layer_spec=partial(
+                get_deepseek_decoder_block_spec,
+                use_transformer_engine=HAVE_TE,
+                normalization="RMSNorm",
+                vp_stage=None,
+            ),
+            # MLA
+            kv_channels=hf_config.hidden_size // hf_config.num_attention_heads,
+            q_lora_rank=None,
+            kv_lora_rank=hf_config.kv_lora_rank,
+            qk_head_dim=hf_config.qk_nope_head_dim,
+            qk_pos_emb_head_dim=hf_config.qk_rope_head_dim,
+            v_head_dim=hf_config.v_head_dim,
+            multi_latent_attention=True,
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=False,
+            make_vocab_size_divisible_by=128,
+            add_qkv_bias=False,
+            qk_layernorm=True,
+            init_method_std=0.006,
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            layernorm_epsilon=1e-6,
+            moe_aux_loss_coeff=0,
+            moe_router_pre_softmax=True,
+            moe_router_enable_expert_bias=True,
+            moe_router_bias_update_rate=1e-3,
+            moe_grouped_gemm=True,
+            moe_permute_fusion=True,
+            moe_router_topk_scaling_factor=2.5,
+            moe_shared_expert_overlap=False,
+            moe_router_dtype="fp32",
+            moe_router_score_function="sigmoid",
+            moe_token_dispatcher_type="alltoall",
+            attention_softmax_in_fp32=True,
+            persist_layer_norm=True,
+            cross_entropy_fusion_impl="te",
+            cp_comm_type="p2p",
+            recompute_granularity="selective",
+            recompute_modules=["moe"],
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+            # SarvamMLAModelProvider keeps Megatron Core's defaults for these settings.
+            cross_entropy_loss_fusion=False,
+            deallocate_pipeline_outputs=False,
+            gradient_accumulation_fusion=False,
+            masked_softmax_fusion=False,
+        )
+        return config_kwargs
 
-        return SarvamMLAModelProvider(**config)
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated ``SarvamMLAModelProvider`` path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         param_mappings = {

@@ -130,7 +130,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-28</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-06</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -144,7 +144,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 48x GB200, the pinned complete checkpoint imports at TP2/PP3/EP8/ETP2 and exits successfully in 27:01. Published MXFP4 routed-expert weights are dequantized to BF16, and iter_0000000 is persisted with 48 distributed-checkpoint shards, metadata, and the recorded 93-layer run configuration. Exact Hugging Face round-trip parity is tracked separately by megatron_to_hf_gpu.
+        <p>On 48x GB200, the pinned complete checkpoint imports at TP2/PP3/EP8/ETP2 and exits successfully. Published MXFP4 routed-expert weights are dequantized to BF16, and iter_0000000 is persisted with 48 distributed-checkpoint shards, metadata, and the recorded 93-layer run configuration. Exact Hugging Face round-trip parity is tracked separately by megatron_to_hf_gpu.
 </p>
       </section>
     </article>

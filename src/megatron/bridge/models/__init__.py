@@ -15,6 +15,9 @@
 # Import model providers for easy access
 import importlib.util
 
+from packaging.version import Version as _Version
+from transformers import __version__ as _transformers_version
+
 
 _BAGEL_EXPORTS = []
 if (
@@ -61,6 +64,11 @@ from megatron.bridge.models.diffusion_gemma import (
 )
 from megatron.bridge.models.ernie import (
     Ernie45Bridge,
+    Ernie55Bridge,
+    Ernie55Config,
+    Ernie55ModelBuilder,
+    Ernie55ModelConfig,
+    Ernie55TransformerConfig,
 )
 from megatron.bridge.models.ernie_vl import (
     Ernie45VLBridge,
@@ -73,6 +81,8 @@ from megatron.bridge.models.exaone.exaone4 import (
 from megatron.bridge.models.exaone.exaone45 import (
     Exaone45Bridge,
     Exaone45Model,
+    Exaone45ModelBuilder,
+    Exaone45ModelConfig,
     Exaone45ModelProvider,
 )
 from megatron.bridge.models.exaone.exaone_moe import (
@@ -100,6 +110,13 @@ from megatron.bridge.models.glm import (
     GLM45Bridge,
     GLM47FlashBridge,
 )
+from megatron.bridge.models.glm5next import (
+    GLM53FlashBridge,
+    GLM53FlashModel,
+    GLM53FlashModelBuilder,
+    GLM53FlashModelConfig,
+    GLM53FlashModelProvider,
+)
 from megatron.bridge.models.glm_moe_dsa import (
     GLM5Bridge,
 )
@@ -119,6 +136,13 @@ from megatron.bridge.models.hybrid import (
     HybridModelConfig,
     HybridModelProvider,
 )
+
+
+_INKLING_EXPORTS = []
+if _Version(_transformers_version) >= _Version("5.23"):
+    from megatron.bridge.models.inkling import Inkling2Bridge, Inkling2ModelConfig
+
+    _INKLING_EXPORTS = ["Inkling2Bridge", "Inkling2ModelConfig"]
 from megatron.bridge.models.kimi import (
     KimiK2Bridge,
     KimiK3Bridge,
@@ -127,6 +151,7 @@ from megatron.bridge.models.kimi import (
 from megatron.bridge.models.kimi_vl import (
     KimiK25VLBridge,
     KimiK25VLModel,
+    KimiK25VLModelConfig,
     KimiK25VLModelProvider,
 )
 from megatron.bridge.models.llama import (
@@ -138,12 +163,15 @@ from megatron.bridge.models.mimo_v2_flash import (
     MiMoV2FlashBridge,
     MiMoV2FlashModelProvider,
 )
+from megatron.bridge.models.minicpmo import MiniCPMOBridge, MiniCPMOModelConfig
 from megatron.bridge.models.minimax_m2 import (
     MiniMaxM2Bridge,
 )
 from megatron.bridge.models.minimax_m3 import (
     MiniMaxM3Bridge,
+    MiniMaxM3ModelConfig,
     MiniMaxM3VLModel,
+    MiniMaxM3VLModelConfig,
     MiniMaxM3VLModelProvider,
 )
 from megatron.bridge.models.ministral3 import (
@@ -232,6 +260,8 @@ from megatron.bridge.models.stepfun import (
     Step35Bridge,
     Step37Bridge,
     Step37Model,
+    Step37ModelBuilder,
+    Step37ModelConfig,
     Step37ModelProvider,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
@@ -239,6 +269,8 @@ from megatron.bridge.models.t5_provider import T5ModelProvider
 
 __all__ = [
     "AutoBridge",
+    "MiniCPMOBridge",
+    "MiniCPMOModelConfig",
     "MegatronMappingRegistry",
     "MegatronModelBridge",
     "ColumnParallelMapping",
@@ -254,6 +286,11 @@ __all__ = [
     "DeepSeekV3Bridge",
     # ERNIE Text-Only Models
     "Ernie45Bridge",
+    "Ernie55Bridge",
+    "Ernie55Config",
+    "Ernie55ModelBuilder",
+    "Ernie55ModelConfig",
+    "Ernie55TransformerConfig",
     # ERNIE VL Models
     "Ernie45VLBridge",
     "Ernie45VLModel",
@@ -265,6 +302,11 @@ __all__ = [
     "GLM45Bridge",
     "GLM47FlashBridge",
     "GLM5Bridge",
+    "GLM53FlashBridge",
+    "GLM53FlashModel",
+    "GLM53FlashModelBuilder",
+    "GLM53FlashModelConfig",
+    "GLM53FlashModelProvider",
     "GLM45VBridge",
     "GLM45VModelProvider",
     "GPTModelProvider",
@@ -279,6 +321,7 @@ __all__ = [
     "KimiK3ModelProvider",
     "KimiK25VLModel",
     "KimiK25VLBridge",
+    "KimiK25VLModelConfig",
     "KimiK25VLModelProvider",
     "LlamaBridge",
     "MistralModelProvider",
@@ -288,7 +331,9 @@ __all__ = [
     "Ministral3ModelProvider",
     "MiniMaxM2Bridge",
     "MiniMaxM3Bridge",
+    "MiniMaxM3ModelConfig",
     "MiniMaxM3VLModel",
+    "MiniMaxM3VLModelConfig",
     "MiniMaxM3VLModelProvider",
     # Muse Glimmer
     "MuseGlimmerBridge",
@@ -372,12 +417,18 @@ __all__ = [
     "Step35Bridge",
     "Step37Bridge",
     "Step37Model",
+    "Step37ModelBuilder",
+    "Step37ModelConfig",
     "Step37ModelProvider",
     # EXAONE
     "Exaone4Bridge",
     "Exaone45Bridge",
     "Exaone45Model",
+    "Exaone45ModelBuilder",
+    "Exaone45ModelConfig",
     "Exaone45ModelProvider",
     "ExaoneMoeBridge",
     "ExaoneMoeModelProvider",
 ] + _BAGEL_EXPORTS
+
+__all__ += _INKLING_EXPORTS

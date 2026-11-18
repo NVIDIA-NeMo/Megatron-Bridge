@@ -183,6 +183,53 @@ class TestComputeAttentionMask:
         assert mask[0, 0, 1, 0].item() is False
 
 
+class TestDenseAttentionImageMasks:
+    """Dense Gemma 4 layers apply the VL mask as Hugging Face's create_masks_for_vision_model does."""
+
+    @pytest.mark.parametrize("layer_number", [1, 2])
+    def test_dense_core_attention_matches_hf_per_layer_mask(self, monkeypatch, layer_number):
+        from megatron.core.transformer.enums import AttnMaskType
+
+        from megatron.bridge.models.gemma.modeling_gemma4 import Gemma4DotProductAttention
+
+        sliding_window = 3
+        image, text = IMAGE_TOKEN_ID, 1
+        input_ids = torch.tensor([[text, text, image, image, image, image, text, text, image, image, text]])
+        block_ids = torch.tensor([-1, -1, 0, 0, 0, 0, -1, -1, 1, 1, -1])
+        vl_mask = _make_model()._compute_attention_mask(input_ids)
+
+        captured = {}
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.DotProductAttention.__init__", lambda self, **kwargs: None
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.DotProductAttention.forward",
+            lambda self, q, k, v, mask, *args, **kwargs: captured.setdefault("mask", mask),
+        )
+        config = SimpleNamespace(
+            window_size=(sliding_window - 1, 0),
+            window_attn_skip_freq=["sliding_attention", "full_attention"],
+            text_config=SimpleNamespace(use_bidirectional_attention="vision"),
+        )
+        attention = Gemma4DotProductAttention(
+            config=config, layer_number=layer_number, attn_mask_type=AttnMaskType.causal, attention_type="self"
+        )
+        qkv = torch.zeros(input_ids.shape[1], 1, 1, 4)
+        attention.forward(qkv, qkv, qkv, vl_mask)
+
+        # Hugging Face: full attention is causal only; sliding attention is
+        # AND(sliding window, OR(causal, same image block)).
+        q = torch.arange(input_ids.shape[1])[:, None]
+        k = torch.arange(input_ids.shape[1])[None, :]
+        causal = k <= q
+        same_image = (block_ids[:, None] == block_ids[None, :]) & (block_ids[:, None] >= 0)
+        if layer_number == 1:
+            hf_attends = (k > q - sliding_window) & (causal | same_image)
+        else:
+            hf_attends = causal
+        torch.testing.assert_close(captured["mask"][0, 0], ~hf_attends)
+
+
 class TestHFPrecisionBuffers:
     def test_keep_hf_precision_buffers_in_fp32(self):
         class RopeModule(torch.nn.Module):

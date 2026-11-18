@@ -133,8 +133,10 @@ uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/
 The export runs at any tensor, pipeline, expert and expert-tensor parallelism and writes the same checkpoint for all
 of them: packed quantized weights with their scales, and the `quantization_config` in `config.json` that vLLM, SGLang
 and TensorRT-LLM read. Unquantized linear layers are listed in its `ignore` list, derived from the disabled weight
-quantizers. Models it does not cover yet (e.g. KV-cache quantization or Mamba layers) fall back to ModelOpt's
-Megatron exporter, which supports TP=1 only.
+quantizers. Fused projections are split the way the bridge's own weight mapping splits them, and each quantized
+weight's scales follow its rows. For unsupported configurations (e.g. KV-cache quantization, or a mapping that transposes
+or slices the columns of a quantized weight), the script falls back to ModelOpt's Megatron exporter, which supports TP=1
+only.
 
 **Key Arguments:**
 - `--export-dir` - Output directory for the quantized HuggingFace checkpoint
@@ -197,13 +199,16 @@ Plan construction and export-stream iteration perform WORLD and model-parallel c
 must therefore build the plan and fully consume each export stream in the same task order, without rank-local early
 termination. The streaming API supports canonical per-expert layouts and grouped expert mappings that expose local
 expert specifications. Grouped mappings are resolved to per-expert gate, up, and down tensors before ModelOpt packing
-and EP collection. Unsupported custom grouped mappings fail explicitly.
+and EP collection. Unsupported custom grouped mappings fail explicitly. GPT-OSS experts, which Hugging Face stores
+as one tensor per projection, export only as weight-only MXFP4 (e.g. ModelOpt's `mxfp4_mlp_weight_only` recipe), in
+the format of OpenAI's released checkpoints: `*_blocks` / `*_scales` tensors and `"quant_method": "mxfp4"`, which keeps
+every other layer in BF16. This needs a ModelOpt release that packs weight-only MXFP4 (NVIDIA/Model-Optimizer#3221).
 
 Quantized adapter-wrapped weights are not supported. Fold adapters into the base weights before ModelOpt calibration
 or QAT. Quantized dimension-permuting mappings are also rejected by the streaming API; unquantized mappings retain
 their ordinary conversion path. Custom QKV mappings that change row layout are rejected for quantized weights.
-Post-mapping key renames of quantized weights are not supported, including legacy DeepSeek-V4 indexer scorer names;
-excluded weights retain their normal renaming behavior. This API requires a ModelOpt release that provides the
+Post-mapping key renames of quantized weights are not supported; excluded weights retain their normal renaming
+behavior. This API requires a ModelOpt release that provides the
 functional quantized-weight export interface.
 
 #### KV-cache scales in online export
@@ -212,6 +217,8 @@ The streaming API also supports symmetric FP8 and NVFP4 K/V quantizers on standa
 QKV-mapped attention layers. It supports both KV-only models with unquantized weights
 and combined weight/KV quantization. Build the plan after calibration and pass its
 `quantization_config` to the inference engine, as in the examples above.
+GPT-OSS's native MXFP4 format cannot carry KV-cache quantization metadata, so combining
+that format with KV quantization is rejected.
 
 FP8 requires static per-tensor E4M3 quantization. NVFP4 requires block-16 E2M1
 quantization with dynamic E4M3 block scales and a static global scale. Enabled
@@ -325,6 +332,36 @@ uv run python -m torch.distributed.run --nproc_per_node 4 pretrain_quantized_lla
     model.gradient_accumulation_fusion=False \
     checkpoint.pretrained_checkpoint=/models/llama3_8b_fp8_init
 ```
+
+### Scale Learning (LSQ)
+
+ModelOpt's learnable-scale algorithm (quantization algorithm `method: lsq`) makes the NVFP4 per-block weight scales trainable parameters (`_amax_pre` / `_amax_post`), trained alone (scale-only) or together with the weights.
+
+1. Quantize with a learnable-scale recipe, e.g. ModelOpt's `general/qad/nvfp4_lsq-mse_init-fp8_kv` (static-block NVFP4 requires `tensor_model_parallel_size=1`).
+2. Restore the checkpoint as in the QAT workflow above. Megatron Bridge gives the scales of expert weights the expert-data-parallel reduction group.
+3. Optionally give the scales their own optimizer parameter group:
+
+```python
+from megatron.bridge.training.post_training.lsq import LSQOptimizerConfigOverrideProvider
+
+cfg.optimizer_config_override_provider = LSQOptimizerConfigOverrideProvider(
+    scale_lr=3e-5,      # peak LR of the scales; follows the main LR schedule
+    scale_min_lr=None,  # None uses optimizer.min_lr
+    scale_wd_mult=0.0,  # no weight decay on the scales
+)
+```
+
+For scale-only training, register the freeze hook; the frozen weights take no gradient buffer or optimizer state:
+
+```python
+from megatron.bridge.training.post_training.lsq import freeze_all_but_lsq_scales
+
+cfg.model.register_pre_wrap_hook(freeze_all_but_lsq_scales)
+# With a ModelConfig instead of a model provider:
+# cfg.model.pre_wrap_hooks.append(freeze_all_but_lsq_scales)
+```
+
+The hook can run before or after the ModelOpt state is restored. Training the scales, with or without the provider and the hook, needs nvidia-modelopt with [NVIDIA/Model-Optimizer#3069](https://github.com/NVIDIA/Model-Optimizer/pull/3069), which computes the scale gradients of Transformer Engine `LayerNormLinear` layers and of frozen weights; the provider and the hook raise an error with an older version. The same PR adds them to ModelOpt's [`examples/megatron_bridge/distill.py`](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/megatron_bridge) as `--lsq_scale_lr` and `--lsq_scale_only`.
 
 ### Supported Models For QAT
 

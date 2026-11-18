@@ -411,6 +411,51 @@ class TestTrackExcludedFields:
         assert "funcs.relu" in excluded
 
 
+@dataclasses.dataclass
+class ConfigWithHFConfig:
+    """Config holding a Hugging Face config, as vision-language model configs do."""
+
+    hf_config: Any = None
+    name: str = "test"
+
+
+def _heterogeneous_hf_config():
+    """Return a two-layer Hugging Face config whose second layer has fewer KV heads."""
+    transformers = pytest.importorskip("transformers")
+    hf_config = transformers.LlamaConfig(
+        num_hidden_layers=2, hidden_size=64, intermediate_size=128, num_attention_heads=4, num_key_value_heads=4
+    )
+    try:
+        hf_config.per_layer_config = {1: {"num_key_value_heads": 2}}
+    except AttributeError:
+        pytest.skip("this transformers version has no heterogeneous configs")
+    return hf_config
+
+
+class TestHeterogeneousHFConfig:
+    """Hugging Face configs with per-layer attributes (Transformers 5.20+), such as Gemma 4's text config."""
+
+    def test_tracking_does_not_read_per_layer_attributes(self):
+        """Tracking excluded fields must not walk into the HF config, whose per-layer attributes raise."""
+        config = ConfigWithHFConfig(hf_config=_heterogeneous_hf_config())
+
+        assert _track_excluded_fields(config, "root") == {}
+
+    def test_overrides_keep_heterogeneous_hf_config(self):
+        """CLI overrides apply, and the HF config comes back with the same per-layer settings."""
+        hf_config = _heterogeneous_hf_config()
+        original = hf_config.to_dict()
+        config = ConfigWithHFConfig(hf_config=hf_config)
+
+        process_config_with_overrides(config, cli_overrides=["name=changed"])
+
+        assert config.name == "changed"
+        assert config.hf_config.is_heterogeneous
+        assert config.hf_config.per_layer_config[1].num_key_value_heads == 2
+        assert config.hf_config.per_layer_config[0].num_key_value_heads == 4
+        assert config.hf_config.to_dict() == original
+
+
 class TestRestoreExcludedFields:
     """Test _restore_excluded_fields function."""
 

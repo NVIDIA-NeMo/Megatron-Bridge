@@ -22,13 +22,14 @@ preserving its legacy parameter namespace exactly.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, Callable
 
 import torch
 import torch.nn.functional as F
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.tensor_parallel.mappings import scatter_to_sequence_parallel_region
-from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.module import MegatronModule, mark_keep_in_fp32
 from torch import nn
 
 from megatron.bridge.utils.common_utils import (
@@ -38,7 +39,9 @@ from megatron.bridge.utils.common_utils import (
 
 
 if TYPE_CHECKING:
+    from megatron.core.models.gpt import GPTModel
     from megatron.core.packed_seq_params import PackedSeqParams
+    from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 def _config_value(config: Any, name: str, default: Any = None) -> Any:
@@ -75,9 +78,10 @@ class MiniMaxM3VisionPatchEmbeddings(nn.Module):
         )
 
         # The released checkpoint stores this one vision tensor in FP32. Mark it
-        # so Bridge's mixed-precision wrapper does not truncate it to BF16.
+        # so the mixed-precision wrapper does not truncate it to BF16.
         self.patch_embedding.float()
         self.patch_embedding._keep_in_float32_parameter_names = ("weight",)
+        mark_keep_in_fp32(self.patch_embedding.weight)
 
     def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
         """Embed flattened image/video patches."""
@@ -181,7 +185,7 @@ def _apply_vision_rope(
 
 
 class MiniMaxM3VisionAttention(nn.Module):
-    """CLIP-style self-attention with MiniMax-M3 3D RoPE."""
+    """CLIP-style self-attention with MiniMax-M3 3D RoPE, kept within each image or video segment."""
 
     def __init__(self, config: Any) -> None:
         super().__init__()
@@ -200,8 +204,17 @@ class MiniMaxM3VisionAttention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        *,
+        segment_lengths: Sequence[int],
     ) -> torch.Tensor:
-        """Apply non-causal vision self-attention."""
+        """Apply non-causal vision self-attention within each image or video segment.
+
+        Args:
+            hidden_states: Packed patch features of shape ``[batch, sequence, hidden]``.
+            position_embeddings: Cosine and sine tables for the packed patches.
+            segment_lengths: Patch count of each image or video segment, in packing order. A patch attends
+                only to patches of its own segment, as in Transformers' MiniMax-M3-VL vision attention.
+        """
         batch_size, sequence_length, _ = hidden_states.shape
         target_shape = (batch_size, sequence_length, self.num_heads, self.head_dim)
         query = self.q_proj(hidden_states).reshape(target_shape)
@@ -210,13 +223,22 @@ class MiniMaxM3VisionAttention(nn.Module):
         query, key = _apply_vision_rope(query, key, *position_embeddings)
         query = query.transpose(1, 2)
         key = key.transpose(1, 2)
-        output = F.scaled_dot_product_attention(
-            query,
-            key,
-            value,
-            dropout_p=self.dropout if self.training else 0.0,
-            scale=self.head_dim**-0.5,
-        )
+        dropout = self.dropout if self.training else 0.0
+        outputs = [
+            F.scaled_dot_product_attention(
+                segment_query,
+                segment_key,
+                segment_value,
+                dropout_p=dropout,
+                scale=self.head_dim**-0.5,
+            )
+            for segment_query, segment_key, segment_value in zip(
+                query.split(segment_lengths, dim=2),
+                key.split(segment_lengths, dim=2),
+                value.split(segment_lengths, dim=2),
+            )
+        ]
+        output = outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=2)
         output = output.transpose(1, 2).reshape(batch_size, sequence_length, self.hidden_size)
         return self.out_proj(output)
 
@@ -252,9 +274,13 @@ class MiniMaxM3VisionEncoderLayer(nn.Module):
         self,
         hidden_states: torch.Tensor,
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        *,
+        segment_lengths: Sequence[int],
     ) -> torch.Tensor:
         """Apply attention and MLP residual blocks."""
-        hidden_states = hidden_states + self.self_attn(self.layer_norm1(hidden_states), position_embeddings)
+        hidden_states = hidden_states + self.self_attn(
+            self.layer_norm1(hidden_states), position_embeddings, segment_lengths=segment_lengths
+        )
         return hidden_states + self.mlp(self.layer_norm2(hidden_states))
 
 
@@ -270,10 +296,12 @@ class MiniMaxM3VisionEncoder(nn.Module):
         self,
         hidden_states: torch.Tensor,
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        *,
+        segment_lengths: Sequence[int],
     ) -> torch.Tensor:
         """Run all vision transformer layers."""
         for layer in self.layers:
-            hidden_states = layer(hidden_states, position_embeddings)
+            hidden_states = layer(hidden_states, position_embeddings, segment_lengths=segment_lengths)
         return hidden_states
 
 
@@ -304,15 +332,25 @@ class MiniMaxM3VisionModel(nn.Module):
         )
 
     def forward(self, pixel_values: torch.Tensor, image_grid_thw: torch.Tensor) -> torch.Tensor:
-        """Return unprojected patch features with shape ``[1, patches, hidden]``."""
+        """Return unprojected patch features with shape ``[1, patches, hidden]``.
+
+        Each ``image_grid_thw`` row (an image or a video segment) is its own attention segment, so packed
+        images and videos never attend to one another.
+        """
         hidden_states = self.embeddings(pixel_values).to(dtype=self.pre_layrnorm.weight.dtype)
+        segment_lengths = image_grid_thw.prod(dim=-1).tolist()
+        if sum(segment_lengths) != hidden_states.shape[0]:
+            raise ValueError(
+                f"MiniMax-M3 vision grids describe {sum(segment_lengths)} patches, "
+                f"but pixel_values holds {hidden_states.shape[0]}."
+            )
         position_embeddings = self.rotary_embedding(
             image_grid_thw,
             device=hidden_states.device,
             dtype=hidden_states.dtype,
         )
         hidden_states = self.pre_layrnorm(hidden_states).unsqueeze(0)
-        return self.encoder(hidden_states, position_embeddings)
+        return self.encoder(hidden_states, position_embeddings, segment_lengths=segment_lengths)
 
 
 class MiniMaxM3VisionTower(nn.Module):
@@ -377,7 +415,19 @@ class MiniMaxM3LightningIndexerState(nn.Module):
 
 
 class MiniMaxM3VLModel(MegatronModule):
-    """MiniMax-M3 vision tower, projectors, and Megatron language model."""
+    """MiniMax-M3 vision tower, projectors, and Megatron language model.
+
+    Args:
+        config: The provider, or the vision-language transformer config of a builder-backed model
+            config. Either one carries the vision config, the token IDs, the projector shape and
+            the Lightning Indexer layout.
+        pre_process: Whether to build the vision tower, the projectors and the embeddings.
+        post_process: Whether to build the language-model output layer.
+        vp_stage: Virtual pipeline stage.
+        build_language_model: Builds the language model from ``pre_process``, ``post_process`` and
+            ``vp_stage``. Defaults to the provider's ``provide_language_model()``.
+        pg_collection: Process groups a builder passes. Defaults to the provider's.
+    """
 
     def __init__(
         self,
@@ -385,8 +435,13 @@ class MiniMaxM3VLModel(MegatronModule):
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: int | None = None,
+        *,
+        build_language_model: Callable[..., GPTModel] | None = None,
+        pg_collection: ProcessGroupCollection | None = None,
     ) -> None:
         super().__init__(config=config)
+        if pg_collection is not None:
+            self.pg_collection = pg_collection
         self.pre_process = pre_process
         self.post_process = post_process
         self.vp_stage = vp_stage
@@ -414,7 +469,9 @@ class MiniMaxM3VLModel(MegatronModule):
             for module in (self.vision_tower, self.multi_modal_projector, self.patch_merge_mlp):
                 hook_hf_module_setattr_for_tp_grad_sync(module)
 
-        self.language_model = config.provide_language_model(
+        if build_language_model is None:
+            build_language_model = config.provide_language_model
+        self.language_model = build_language_model(
             pre_process=pre_process,
             post_process=post_process,
             vp_stage=vp_stage,
@@ -426,7 +483,7 @@ class MiniMaxM3VLModel(MegatronModule):
             layer_idx = int(layer.layer_number) - 1
             if layer_idx in sparse_layer_indices:
                 self.lightning_indexers[str(layer_idx)] = MiniMaxM3LightningIndexerState(config)
-        self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
+        self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
         self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
 
     @property
@@ -550,6 +607,10 @@ class MiniMaxM3VLModel(MegatronModule):
             )
             inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
 
+        # A builder passes the model its process groups; a provider carries them.
+        pg_collection = getattr(self, "pg_collection", None)
+        if pg_collection is None:
+            pg_collection = getattr(self.config, "_pg_collection", None)
         inputs_embeds, labels, loss_mask, position_ids, attention_mask = slice_batch_for_context_parallel(
             inputs_embeds=inputs_embeds,
             labels=labels,
@@ -557,10 +618,10 @@ class MiniMaxM3VLModel(MegatronModule):
             position_ids=position_ids,
             attention_mask=attention_mask,
             packed_seq_params=packed_seq_params,
-            pg_collection=self.config._pg_collection,
+            pg_collection=pg_collection,
         )
         if self.config.sequence_parallel and inputs_embeds is not None:
-            tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+            tp_group = pg_collection.tp if pg_collection is not None else None
             inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         output = self.language_model(

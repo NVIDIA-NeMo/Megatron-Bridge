@@ -18,12 +18,11 @@ Registers a :class:`MegatronModelBridge` for the upstream
 ``Step3p7ForConditionalGeneration`` HF architecture (model_type ``step37``).
 The bridge:
 
-* Re-uses :class:`Step35Bridge`'s text-decoder logic for ``provider_bridge`` by
-  delegating to a synthetic Step-3.5 HF wrapper (the Step3.7 HF config
-  exposes its Step-3.5 text fields under ``hf_config.text_config``).
-* Adds vision-tower configuration (vision_config, image_token_id,
-  projector_bias, understand_projector_stride) on top of the resulting
-  provider.
+* Maps the config to a builder-backed :class:`Step37ModelConfig`: the
+  language fields come from :class:`Step35Bridge` applied to
+  ``hf_config.text_config`` (the Step3.7 HF config nests its Step-3.5 text
+  fields there), and the vision-tower fields (vision_config, image_token_id,
+  projector_bias, understand_projector_stride) come from the top-level config.
 * Defines an HF↔Megatron parameter mapping registry that prefixes every
   Step-3.5 text mapping with ``language_model.`` (since
   :class:`Step37Model` wraps the text GPTModel) and adds direct
@@ -34,10 +33,9 @@ The bridge:
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import Any, List
 
-import torch
-from transformers import AutoConfig
+from transformers import AutoConfig, PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -47,15 +45,14 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVGMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.stepfun.configuration_step37 import Step37Config
 from megatron.bridge.models.stepfun.modelling_step37.model import Step37Model
 from megatron.bridge.models.stepfun.step35_bridge import (
     StackedExpertAutoMapping,
     StackedExpertGatedMLPMapping,
     Step35Bridge,
-    build_step35_layer_spec,
 )
+from megatron.bridge.models.stepfun.step37_config import Step37ModelConfig
 from megatron.bridge.models.stepfun.step37_provider import Step37ModelProvider
 
 
@@ -101,20 +98,21 @@ class Step37Bridge(MegatronModelBridge):
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained(
-        ...     "/path/to/step3p7_flash_bf16", trust_remote_code=True
-        ... )
-        >>> provider = bridge.to_megatron_provider()
+        >>> bridge = AutoBridge.from_hf_pretrained("stepfun-ai/Step-3.7-Flash")
+        >>> model_config = bridge.get_model_config()
     """
 
-    # The same translation table Step35Bridge uses (so the parent
-    # provider_bridge picks up the text-side renames). Step3.7's text config
-    # uses the identical HF schema.
+    MODEL_CONFIG_CLASS = Step37ModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
+
+    # The same translation table Step35Bridge uses (so the shared mapping
+    # picks up the text-side renames). Step3.7's text config uses the
+    # identical HF schema.
     CONFIG_MAPPING = Step35Bridge.CONFIG_MAPPING
 
     @classmethod
-    def megatron_to_hf_config(cls, provider: Step37ModelProvider) -> dict:
-        """Convert a Step3.7 provider into its nested Hugging Face config."""
+    def megatron_to_hf_config(cls, provider: Step37ModelConfig | Step37ModelProvider) -> dict:
+        """Convert a Step3.7 model config or provider into its nested Hugging Face config."""
         hf_config = super().megatron_to_hf_config(provider)
         mtp_num_layers = hf_config.pop("num_nextn_predict_layers", None)
         if mtp_num_layers is not None:
@@ -124,194 +122,53 @@ class Step37Bridge(MegatronModelBridge):
             hf_config["projector_bias"] = projector_bias
         return hf_config
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Step37ModelProvider:
-        """Convert a HuggingFace Step3.7 config into a :class:`Step37ModelProvider`.
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Step3.7 config to builder config kwargs.
 
-        Mirrors the qwen3-vl bridge pattern:
-
-        * Pull the nested ``text_config`` directly out of the top-level Step3.7
-          ``Step37Config`` and run the framework helper
-          ``self.hf_config_to_provider_kwargs(text_config)`` to populate the
-          common architecture fields (``num_layers`` / ``hidden_size`` /
-          ``num_attention_heads`` / ``ffn_hidden_size`` / ``vocab_size`` /
-          ``rotary_base`` / etc.) via :attr:`CONFIG_MAPPING`. That helper
-          uses ``hasattr`` + ``getattr(..., None)`` internally, so fields
-          that are absent on the Step3.7 text config (e.g. anything Step-3.5
-          carried at the top level of *its* config.json) are skipped cleanly.
-
-        * Construct :class:`Step37ModelProvider` directly from the filtered
-          kwargs (instead of delegating to :meth:`Step35Bridge.provider_bridge`
-          via a wrapper — that path was fragile because Step35Bridge does
-          a number of bare ``hf_config.X`` reads that crash on missing
-          fields like ``zero_centered`` or ``use_qk_norm``).
-
-        * Apply Step-3.5 text-decoder overrides with explicit
-          ``getattr(text_config, name, default)`` for every field that
-          may or may not be present in the released Step3.7 ``text_config``.
-
-        * Finally attach Step3.7 vision / multimodal fields from the
-          top-level ``hf_config``.
+        The language fields come from :class:`Step35Bridge` applied to
+        ``hf_config.text_config``. Where the Step3.7 provider configured a field
+        differently, it is set here as the provider set it. The vision-language
+        fields come from the top-level config.
         """
-        hf_config = hf_pretrained.config
         text_config = hf_config.text_config
-        vision_config = hf_config.vision_config
+        config_kwargs = Step35Bridge().hf_config_to_model_config_kwargs(text_config)
 
-        # ── 1. Framework-safe mapping of the text config ─────────────────────
-        # ``hf_config_to_provider_kwargs`` iterates ``self.CONFIG_MAPPING``
-        # (which we inherit from :class:`Step35Bridge`) and uses
-        # ``hasattr`` + ``getattr(..., None)`` to skip missing HF fields.
-        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
-        # Filter to the multimodal provider's dataclass fields so an
-        # unexpected key from ``CONFIG_MAPPING`` (or a future extension)
-        # never causes the ``Step37ModelProvider(**kwargs)`` call below to
-        # raise ``TypeError: unexpected keyword argument``.
-        valid_fields = Step37ModelProvider.__dataclass_fields__
-        provider_kwargs = {k: v for k, v in provider_kwargs.items() if k in valid_fields}
-
-        provider = Step37ModelProvider(**provider_kwargs)
-
-        # ── 2. Step-3.5 text-decoder overrides (safe getattr+defaults) ──────
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.add_bias_linear = False
-        provider.add_qkv_bias = False
-        provider.hidden_dropout = 0.0
-        provider.attention_dropout = 0.0
-
-        # Mirror qwen3-vl's explicit assignment (qwen3_vl_bridge.py:96). The
-        # framework base ``MegatronModelBridge.provider_bridge`` would flip
-        # this field to ``"rope"`` (or ``"yarn"``) via its rope_scaling branch,
-        # but this bridge constructs the provider directly without calling
-        # ``super().provider_bridge``, so we set it explicitly. This is the
-        # field ``SelfAttention.__init__`` reads when ``rotary_base_per_layer``
-        # is set; ``"learned_absolute"`` would raise NotImplementedError.
-        provider.position_embedding_type = "rope"
-
-        # ``zero_centered`` lived at the top of Step-3.5-Flash's config.json
-        # (=true) but is absent from the Step3.7 text_config — default to
-        # True to match the Step-3.5 RMSNorm convention.
-        provider.layernorm_zero_centered_gamma = bool(getattr(text_config, "zero_centered", True))
-        provider.qk_layernorm = bool(getattr(text_config, "use_qk_norm", True))
-
-        # ``tie_word_embeddings`` exists at the top of Step-3.5-Flash's
-        # config.json (=false) but is absent from the Step3.7 text_config.
-        # ``hf_config_to_provider_kwargs`` uses ``hasattr`` to decide whether
-        # to copy ``tie_word_embeddings -> share_embeddings_and_output_weights``,
-        # so on Step3.7 the field is skipped and the provider would inherit the
-        # ``GPTModelProvider`` dataclass default (``True``) — which ties the
-        # output layer to the embedding inside Megatron. Step-3.5/3.7 actually
-        # ship distinct ``lm_head.weight`` and ``model.embed_tokens.weight``
-        # tensors, so the round-trip HF→Megatron→HF then writes the embedding
-        # values into the exported ``lm_head.weight``. Mirror qwen3_vl_bridge's
-        # pattern (qwen3_vl_bridge.py:93) and default to False for this family.
-        provider.share_embeddings_and_output_weights = bool(getattr(text_config, "tie_word_embeddings", False))
-
-        # Per-layer partial RoPE fractions ([0.5, 1.0, 1.0, 1.0, …]).
-        rotary_percents = getattr(text_config, "partial_rotary_factors", None)
-        if rotary_percents is not None:
-            provider.rotary_percents = list(rotary_percents)
-
-        # Sliding-attention shape overrides. Defaults match Step-3.5-Flash;
-        # we then overlay anything the HF config provides.
-        provider.sliding_attention_setting = {
-            "window_size": [512, 0],
-            "num_attention_heads": 96,
-            "num_query_groups": 8,
-            "kv_channels": 128,
-        }
-        sliding_window = getattr(text_config, "sliding_window", None)
-        if sliding_window is not None:
-            provider.sliding_attention_setting["window_size"] = [int(sliding_window), 0]
-        attn_other = getattr(text_config, "attention_other_setting", None) or {}
-        if isinstance(attn_other, dict) and attn_other.get("attention_type") == "sliding_attention":
-            if "num_attention_heads" in attn_other:
-                provider.sliding_attention_setting["num_attention_heads"] = int(attn_other["num_attention_heads"])
-            if "num_attention_groups" in attn_other:
-                provider.sliding_attention_setting["num_query_groups"] = int(attn_other["num_attention_groups"])
-            if "head_dim" in attn_other:
-                provider.sliding_attention_setting["kv_channels"] = int(attn_other["head_dim"])
-        provider.attention_other_setting = attn_other if isinstance(attn_other, dict) else None
-
-        # Per-layer RoPE base. Step-3.5 ships ``rope_theta`` as a list (one
-        # entry per text layer); fall back to scalar for forward-compat.
-        rope_theta = getattr(text_config, "rope_theta", None)
-        if isinstance(rope_theta, list):
-            provider.rotary_base = float(rope_theta[0])
-            provider.rotary_base_per_layer = [float(x) for x in rope_theta]
-        elif rope_theta is not None:
-            provider.rotary_base = float(rope_theta)
-
-        # Dtype handling — accept string or torch.dtype, ignore if absent.
-        torch_dtype = getattr(text_config, "torch_dtype", None)
-        if isinstance(torch_dtype, str):
-            dtype_map = {
-                "bfloat16": torch.bfloat16,
-                "float16": torch.float16,
-                "float32": torch.float32,
-            }
-            if torch_dtype not in dtype_map:
-                raise ValueError(f"Unknown torch dtype: {torch_dtype}")
-            provider.autocast_dtype = dtype_map[torch_dtype]
-        elif isinstance(torch_dtype, torch.dtype):
-            provider.autocast_dtype = torch_dtype
-        elif torch_dtype is not None:
-            raise ValueError(f"Unknown torch dtype: {torch_dtype}")
-
-        # MoE settings.
-        provider.moe_router_enable_expert_bias = bool(getattr(text_config, "use_moe_router_bias", False))
-        moe_router_activation = getattr(text_config, "moe_router_activation", None)
-        if moe_router_activation is not None:
-            provider.moe_router_score_function = moe_router_activation
-        moe_router_scaling_factor = getattr(text_config, "moe_router_scaling_factor", None)
-        if moe_router_scaling_factor is not None:
-            provider.moe_router_topk_scaling_factor = float(moe_router_scaling_factor)
-        provider.swiglu_limits = getattr(text_config, "swiglu_limits", None)
-        provider.swiglu_limits_shared = getattr(text_config, "swiglu_limits_shared", None)
-        if bool(getattr(text_config, "need_fp32_gate", False)):
-            provider.moe_router_dtype = "fp32"
-
-        provider.moe_grouped_gemm = True
-        provider.moe_router_load_balancing_type = "aux_loss"
-        provider.moe_aux_loss_coeff = 1e-3
-        provider.moe_router_pre_softmax = False
-        provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_permute_fusion = True
-
-        # Per-layer MoE / dense schedule, plus the Step-3.5 layer-spec
-        # builder (handles MTP / hybrid attention / per-layer overrides).
-        moe_layers_enum = getattr(text_config, "moe_layers_enum", None)
-        if moe_layers_enum is not None:
-            moe_layer_freq = [0] * provider.num_layers
-            if isinstance(moe_layers_enum, str):
-                moe_layers = [int(layer) for layer in moe_layers_enum.split(",") if layer]
-            else:
-                moe_layers = [int(layer) for layer in moe_layers_enum]
-            for idx in moe_layers:
-                if 0 <= idx < provider.num_layers:
-                    moe_layer_freq[idx] = 1
-            provider.moe_layer_freq = moe_layer_freq
-            provider.transformer_layer_spec = build_step35_layer_spec
-
-        # Per-layer hybrid full/sliding attention schedule.
+        # The Step3.7 text_config omits ``use_qk_norm`` and ``tie_word_embeddings``, which
+        # Step-3.5-Flash's config.json carries. Step3.7 normalizes Q and K and ships a
+        # separate ``lm_head.weight``, so the defaults differ from Step-3.5's.
+        config_kwargs["qk_layernorm"] = bool(getattr(text_config, "use_qk_norm", True))
+        config_kwargs["share_embeddings_and_output_weights"] = bool(getattr(text_config, "tie_word_embeddings", False))
+        config_kwargs["head_wise_attn_gate"] = bool(getattr(text_config, "use_head_wise_attn_gate", True))
+        # Step3.7 requires Megatron Core's native head-wise gate (see the example README), so the
+        # output-gate fallback Step-3.5 selects for older Megatron Core does not apply.
+        config_kwargs.pop("attention_output_gate", None)
+        if hasattr(text_config, "attention_output_gate"):
+            config_kwargs["attention_output_gate"] = text_config.attention_output_gate
+        # Step3.7 builds no MTP block, so the attention types stay those of the main decoder.
         layer_types = getattr(text_config, "layer_types", None)
         if layer_types is not None:
-            provider.layer_types = list(layer_types)
+            config_kwargs["layer_types"] = list(layer_types)
+        config_kwargs["position_embedding_type"] = "rope"
 
-        # Head-wise attention gate (default is True for Step3.7 text config).
-        head_wise_attn_gate = bool(getattr(text_config, "use_head_wise_attn_gate", True))
-        provider.head_wise_attn_gate = head_wise_attn_gate
+        config_kwargs.update(
+            vision_config=hf_config.vision_config,
+            image_token_id=int(getattr(hf_config, "image_token_id", 128001)),
+            understand_projector_stride=int(getattr(hf_config, "understand_projector_stride", 2)),
+            projector_bias=bool(getattr(hf_config, "projector_bias", False)),
+            # Size the rotary cache to the full Step-3.5 262144-position window.
+            language_max_sequence_length=int(getattr(text_config, "max_position_embeddings", 262144)),
+        )
+        return config_kwargs
 
-        # ── 3. Step3.7 multimodal / vision fields ───────────────────────────
-        provider.vision_config = vision_config
-        provider.image_token_id = int(getattr(hf_config, "image_token_id", 128001))
-        provider.understand_projector_stride = int(getattr(hf_config, "understand_projector_stride", 2))
-        provider.projector_bias = bool(getattr(hf_config, "projector_bias", False))
-
-        # Long-context sequence length so Step37GPTModel sizes the rotary
-        # cache to the full Step-3.5 262144-position window.
-        provider.language_max_sequence_length = int(getattr(text_config, "max_position_embeddings", 262144))
-
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        # The provider also records the HF sliding-attention setting, which no module reads.
+        attention_other_setting = getattr(hf_config.text_config, "attention_other_setting", None) or {}
+        provider_kwargs["attention_other_setting"] = (
+            attention_other_setting if isinstance(attention_other_setting, dict) else None
+        )
+        return provider_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return the full text + vision parameter mapping registry.

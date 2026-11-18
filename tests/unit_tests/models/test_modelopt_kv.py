@@ -125,13 +125,30 @@ def test_kv_only_plan_captures_fresh_unclamped_scales_exactly_once(kv_format, qu
     assert first[f"{prefix}.k_scale"].item() == 0.25
 
 
-def test_quantized_qkv_plan_reuses_weight_and_kv_companions():
+@pytest.mark.parametrize("custom_mapping", [False, True])
+def test_quantized_qkv_plan_reuses_weight_and_kv_companions(custom_mapping):
     model, attention, task = _model_and_task(query=True)
     linear = model.self_attention.linear_qkv
     mtq.quantize(linear, deepcopy(mtq.FP8_DEFAULT_CFG), lambda candidate: candidate(torch.ones(2, 4)))
+    with torch.no_grad():
+        linear.weight.copy_(torch.arange(1, 9, dtype=torch.float32).unsqueeze(1).expand(8, 4))
+    linear.weight_quantizer.axis = 0
+    linear.weight_quantizer.reset_amax()
+    linear.weight_quantizer.amax = linear.weight.abs().amax(dim=1, keepdim=True)
+    if custom_mapping:
+
+        class ReversedQKVMapping(QKVMapping):
+            def megatron_to_hf(self, megatron_weights, megatron_module):
+                return {
+                    name: weight.flip(0)
+                    for name, weight in super().megatron_to_hf(megatron_weights, megatron_module).items()
+                }
+
+        task = replace(task, mapping=ReversedQKVMapping(task.global_param_name, *task.mapping.hf_param.values()))
     task = replace(task, megatron_module=linear, param_weight=linear.weight)
     plan = modelopt_utils.build_modelopt_export_plan([task], model=[model])
     assert task.global_param_name in plan.quantized_params
+    assert (task.global_param_name in plan.traced_rows) == custom_mapping
     prefix = "model.layers.0.self_attn"
 
     def stream():
@@ -149,6 +166,9 @@ def test_quantized_qkv_plan_reuses_weight_and_kv_companions():
         for suffix in ("weight", "weight_scale", "input_scale")
     )
     assert set(first) == expected
+    for name, weight in task.mapping.megatron_to_hf(linear.weight, linear).items():
+        scale = first[f"{name.removesuffix('.weight')}.weight_scale"]
+        torch.testing.assert_close(scale.reshape(-1), weight.abs().amax(dim=1) / 448, rtol=0, atol=0)
     attention.k_bmm_quantizer.amax = 224.0
     second = stream()
     assert set(second) == expected

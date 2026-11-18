@@ -261,6 +261,12 @@ Use `from_hf_pretrained()` when an existing Hugging Face repository or local
 directory provides the configuration, tokenizer, and other export artifacts.
 The pretrained wrapper loads these artifacts lazily; exporting Megatron weights
 does not require materializing the reference Hugging Face model weights.
+The export copies the source's tokenizer and processor files (such as
+`tokenizer.json`, `vocab.json` and `preprocessor_config.json`) unchanged. A
+tokenizer or processor that you assign to the wrapper or edit after loading,
+e.g. with `add_special_tokens()` or a new `chat_template`, is saved with
+`save_pretrained()` instead, as are artifacts loaded with arguments that change
+them, such as a tokenizer's `model_max_length`.
 
 ```python
 from megatron.bridge import AutoBridge

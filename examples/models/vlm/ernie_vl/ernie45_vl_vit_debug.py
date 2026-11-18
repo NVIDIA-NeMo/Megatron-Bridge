@@ -297,7 +297,7 @@ def main():
 
         # Run MG first block
         mg_block0_out, _ = mg_layer0(
-            hidden_states=mg_hidden_3d,
+            mg_hidden_3d,
             attention_mask=None,
             rotary_pos_emb=mg_rotary_for_block,
             packed_seq_params=mg_packed_seq,

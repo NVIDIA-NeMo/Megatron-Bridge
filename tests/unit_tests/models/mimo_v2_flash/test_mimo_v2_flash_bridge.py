@@ -154,6 +154,10 @@ class TestMiMoV2FlashBridgeProviderBridge:
         assert provider.moe_router_pre_softmax is True
         assert provider.moe_token_dispatcher_type == "alltoall"
 
+    def test_router_logits_in_fp32(self, provider):
+        # HF MiMo-V2-Flash computes router logits from FP32 input and weight.
+        assert provider.moe_router_dtype == "fp32"
+
     def test_moe_layer_freq(self, provider):
         assert isinstance(provider.moe_layer_freq, list)
         assert provider.moe_layer_freq[0] == 0

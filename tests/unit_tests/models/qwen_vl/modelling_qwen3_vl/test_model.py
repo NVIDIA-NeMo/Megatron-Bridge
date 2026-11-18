@@ -160,10 +160,7 @@ def test_builder_model_config_supplies_construction_settings(monkeypatch):
     language_model.config.cuda_graph_impl = "none"
     language_model.share_embeddings_and_output_weights = True
     language_model_constructor = Mock(return_value=language_model)
-    monkeypatch.setattr(
-        "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.Qwen3VLGPTModel",
-        language_model_constructor,
-    )
+    monkeypatch.setattr(Qwen3VLModel, "language_model_class", language_model_constructor)
     model_config = Qwen35VLModelConfig(
         transformer=Qwen35VLTransformerConfig(num_layers=2, hidden_size=64, num_attention_heads=4),
         vocab_size=1000,
@@ -213,10 +210,10 @@ def hf_config():
 class TestQwen3VLModel:
     """Test suite for Qwen3VL Model."""
 
-    @classmethod
-    def setup_class(cls):
-        """Setup distributed process group once for all tests in this class."""
-        if not dist.is_initialized():
+    def setup_method(self):
+        """Create a process group per test so subgroups do not accumulate across tests."""
+        self._owns_process_group = not dist.is_initialized()
+        if self._owns_process_group:
             os.environ["MASTER_ADDR"] = "127.0.0.1"
             os.environ["MASTER_PORT"] = "29500"
             os.environ["RANK"] = "0"
@@ -233,12 +230,6 @@ class TestQwen3VLModel:
                 rank=0,
                 timeout=datetime.timedelta(minutes=30),
             )
-
-    @classmethod
-    def teardown_class(cls):
-        """Teardown distributed process group once after all tests in this class."""
-        if dist.is_initialized():
-            dist.destroy_process_group()
 
     def _setup_parallel_state(self, tp_size=1, ep_size=1, pp_size=1, cp_size=1):
         """Setup Megatron parallel state with specified parallelism configuration.
@@ -265,8 +256,12 @@ class TestQwen3VLModel:
         model_parallel_cuda_manual_seed(123)
 
     def teardown_method(self):
-        """Teardown Megatron parallel state after each test method."""
-        parallel_state.destroy_model_parallel()
+        """Release this test's parallel state and owned process groups."""
+        try:
+            parallel_state.destroy_model_parallel()
+        finally:
+            if self._owns_process_group and dist.is_initialized():
+                dist.destroy_process_group()
 
     @staticmethod
     def get_vision_transformer_config(hf_config):
@@ -517,10 +512,7 @@ class TestQwen3VLModel:
         language_model.config.cuda_graph_impl = "none"
         language_model.share_embeddings_and_output_weights = False
         language_model_constructor = Mock(return_value=language_model)
-        monkeypatch.setattr(
-            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.Qwen3VLGPTModel",
-            language_model_constructor,
-        )
+        monkeypatch.setattr(Qwen3VLModel, "language_model_class", language_model_constructor)
 
         Qwen3VLModel(
             vision_transformer_config=self.get_vision_transformer_config(hf_config),
@@ -886,7 +878,12 @@ class TestQwen3VLModel:
         assert len(preprocess_calls) == 2
 
     def test_forward_preserves_collate_packed_layout_for_sequence_parallel(self, monkeypatch):
-        """Packed SP forwards the collator's THD tensors and metadata unchanged."""
+        """Packed SP forwards the collator's THD tensors and metadata unchanged.
+
+        The MoE padding mask is the exception: a later pipeline stage receives
+        sequence-parallel hidden states, so the mask it builds from the packed
+        metadata is scattered the same way before it reaches the routers.
+        """
 
         monkeypatch.setattr(
             "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
@@ -895,6 +892,17 @@ class TestQwen3VLModel:
         monkeypatch.setattr(
             "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
             lambda *_args, **_kwargs: None,
+        )
+        scattered = []
+
+        def scatter_first_half(tensor, group):
+            del group
+            scattered.append(tensor)
+            return tensor[: tensor.shape[0] // 2]
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.tensor_parallel.scatter_to_sequence_parallel_region",
+            scatter_first_half,
         )
 
         class DummyLanguageModel:
@@ -951,9 +959,79 @@ class TestQwen3VLModel:
         assert language_model.last_kwargs["labels"] is labels
         assert language_model.last_kwargs["loss_mask"] is loss_mask
         assert language_model.last_kwargs["packed_seq_params"] is packed_seq_params
-        assert language_model.last_kwargs["padding_mask"].tolist() == [
-            [False, False, False, True, False, False, False, True]
-        ]
+        # Scattered sequence-first like the hidden states this stage receives, then
+        # returned batch-first: this TP rank keeps the first half of the 8 tokens.
+        assert len(scattered) == 1 and scattered[0].shape == (8, 1)
+        assert language_model.last_kwargs["padding_mask"].tolist() == [[False, False, False, True]]
+
+    def test_forward_passes_explicit_padding_mask_through_on_later_sequence_parallel_stages(self, monkeypatch):
+        """A caller-provided mask is already sharded by the step; the model must not scatter it again."""
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
+            lambda *_args, **_kwargs: None,
+        )
+
+        def fail_if_called(*_args, **_kwargs):
+            raise AssertionError("scatter_to_sequence_parallel_region must not run for an explicit mask")
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.tensor_parallel.scatter_to_sequence_parallel_region",
+            fail_if_called,
+        )
+
+        class DummyLanguageModel:
+            def __init__(self):
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.last_kwargs = None
+
+            def __call__(self, **kwargs):
+                self.last_kwargs = kwargs
+                return torch.ones(1)
+
+        language_model = DummyLanguageModel()
+        model = SimpleNamespace(
+            pre_process=False,
+            config=SimpleNamespace(sequence_parallel=True),
+            pg_collection=SimpleNamespace(
+                cp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                tp=SimpleNamespace(rank=lambda: 0, size=lambda: 2),
+                pp=object(),
+            ),
+            language_model=language_model,
+            use_dist_train=False,
+        )
+        cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32)
+        cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32)
+        packed_seq_params = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_kv=cu_seqlens,
+            cu_seqlens_q_padded=cu_seqlens_padded,
+            cu_seqlens_kv_padded=cu_seqlens_padded,
+            max_seqlen_q=4,
+            max_seqlen_kv=4,
+        )
+        input_ids = torch.tensor([[1, 2, 3, 0, 4, 5, 6, 0]])
+        position_ids = torch.arange(8).view(1, 1, 8).expand(3, -1, -1).clone()
+        sharded_padding_mask = torch.tensor([[False, False, False, True]])
+
+        Qwen3VLModel.forward(
+            model,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            attention_mask=torch.ones_like(input_ids, dtype=torch.bool),
+            labels=input_ids.clone(),
+            loss_mask=torch.ones_like(input_ids, dtype=torch.float),
+            packed_seq_params=packed_seq_params,
+            padding_mask=sharded_padding_mask,
+        )
+
+        assert language_model.last_kwargs["padding_mask"] is sharded_padding_mask
 
     def test_forward_preserves_pre_sharded_packed_cp_layout_and_selects_vision_embeds(self, monkeypatch):
         """Pre-sharded CP inputs stay local and select matching vision and deepstack rows."""
