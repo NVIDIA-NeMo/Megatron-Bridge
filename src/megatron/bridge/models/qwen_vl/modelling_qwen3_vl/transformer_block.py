@@ -127,8 +127,8 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     # Use layer.config (not self.config) because the layer's config is what
                     # determines if _should_call_te_cudagraph returns True.
                     layer_uses_te_cudagraph = (
-                        hasattr(layer, "cuda_graphs")
-                        and layer.cuda_graphs
+                        hasattr(layer, "te_cuda_graphs")
+                        and layer.te_cuda_graphs
                         and layer.training
                         and hasattr(layer, "config")
                         and getattr(layer.config, "cuda_graph_impl", "none") == "transformer_engine"
@@ -342,8 +342,8 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                         # Use layer.config (not self.config) because the layer's config is what
                         # determines if _should_call_te_cudagraph returns True.
                         layer_uses_te_cudagraph = (
-                            hasattr(layer, "cuda_graphs")
-                            and layer.cuda_graphs
+                            hasattr(layer, "te_cuda_graphs")
+                            and layer.te_cuda_graphs
                             and layer.training
                             and hasattr(layer, "config")
                             and getattr(layer.config, "cuda_graph_impl", "none") == "transformer_engine"
