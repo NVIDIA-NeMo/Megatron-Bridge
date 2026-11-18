@@ -2546,6 +2546,43 @@ class TestDynamicSparseAttentionFlops:
 
 
 @pytest.mark.unit
+class TestGLMHybridDSAFlops:
+    """GLM's paired D-/DE Hybrid layers are estimated as DSA Transformer layers in logical coordinates."""
+
+    @pytest.fixture(autouse=True)
+    def _offline_glm_recipes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from megatron.bridge.recipes.glm.gb200 import glm5 as gb200_glm5
+        from tests.unit_tests.recipes.recipe_test_utils import GLM5BuilderOnlyBridge
+
+        monkeypatch.setattr(gb200_glm5, "AutoBridge", GLM5BuilderOnlyBridge)
+
+    @pytest.mark.parametrize(
+        ("recipe_name", "expected_flops"),
+        [
+            ("glm52_pretrain_192gpu_gb200_bf16_config", 1_245_355_045_289_984),
+            ("glm5_pretrain_192gpu_gb200_bf16_config", 1_290_422_194_012_160),
+            ("glm52_proxy_pretrain_16gpu_gb200_bf16_config", 179_537_465_049_088),
+            ("glm52_peft_192gpu_gb200_bf16_config", 585_623_964_614_656),
+        ],
+    )
+    def test_recipe_estimate_leaves_the_model_config_unchanged(self, recipe_name: str, expected_flops: int) -> None:
+        """Training estimates FLOPs on the run's own config every step, so the estimate must not edit it.
+
+        ``GLM5ModelConfig`` stores ``num_layers`` and ``moe_layer_freq`` on its nested transformer config,
+        which the built model shares; the logical layer counts must stay local to the estimate.
+        """
+        from megatron.bridge.recipes.glm.gb200 import glm5 as gb200_glm5
+
+        cfg = getattr(gb200_glm5, recipe_name)()
+        layers = (cfg.model.num_layers, list(cfg.model.moe_layer_freq))
+        serialized = cfg.model.as_dict()
+
+        assert [num_floating_point_operations(cfg, batch_size=1) for _ in range(2)] == [expected_flops] * 2
+        assert (cfg.model.num_layers, cfg.model.moe_layer_freq) == layers
+        assert cfg.model.as_dict() == serialized
+
+
+@pytest.mark.unit
 class TestKimiK3KdaFlops:
     """Tests for Kimi K3's KDA (Kimi Delta Attention) hybrid attention schedule.
 

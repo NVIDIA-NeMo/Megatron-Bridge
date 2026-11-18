@@ -1144,8 +1144,15 @@ def num_floating_point_operations(
         dsv4_hybrid_core_attn_term = 3 * 2 * (sparse_attn_r128_core + indexer_scoring_core)
         return self_attn_term, dsv4_hybrid_core_attn_term
 
-    def transformer_flops():
-        """Calculate FLOPs for a standard Transformer model."""
+    def transformer_flops(decoder_num_layers: int | None = None, moe_layer_freq: int | list[int] | None = None):
+        """Calculate FLOPs for a standard Transformer model.
+
+        Args:
+            decoder_num_layers: Decoder layers to count instead of ``cfg.model.num_layers``.
+            moe_layer_freq: MoE layer schedule to use instead of ``cfg.model.moe_layer_freq``.
+        """
+        if decoder_num_layers is None:
+            decoder_num_layers = cfg.model.num_layers
         # TODO(helenn/dnarayanan): Refactor this to reuse the helper methods.
         # Attention projection size.
         query_projection_size = cfg.model.kv_channels * cfg.model.num_attention_heads
@@ -1191,7 +1198,7 @@ def num_floating_point_operations(
             _, avg_tokens, _, avg_seqlen2 = _lora_seq_stats_cache[cache_key]
 
             hs = cfg.model.hidden_size
-            n_layers = cfg.model.num_layers
+            n_layers = decoder_num_layers
             n_heads = cfg.model.num_attention_heads
             ffn_hs = cfg.model.ffn_hidden_size
             vocab_size = cfg.model.vocab_size
@@ -1208,26 +1215,27 @@ def num_floating_point_operations(
         # MoE.
         if cfg.model.num_moe_experts is None:
             # Every Transformer MLP is dense.
-            num_dense_layers = cfg.model.num_layers
+            num_dense_layers = decoder_num_layers
             num_moe_layers = 0
             num_experts_routed_to = 0
             last_layer_is_moe = 0
         else:
             # Calculate number of dense and MoE Transformer MLPs.
-            moe_layer_freq = getattr(cfg.model, "moe_layer_freq", 1)
+            if moe_layer_freq is None:
+                moe_layer_freq = getattr(cfg.model, "moe_layer_freq", 1)
             if isinstance(moe_layer_freq, int):
-                moe_layer_pattern = [1 if (i % moe_layer_freq == 0) else 0 for i in range(cfg.model.num_layers)]
+                moe_layer_pattern = [1 if (i % moe_layer_freq == 0) else 0 for i in range(decoder_num_layers)]
             elif isinstance(moe_layer_freq, list):
                 moe_layer_pattern = moe_layer_freq
             else:
                 raise RuntimeError("Illegal --moe-layer-freq argument provided!")
-            assert len(moe_layer_pattern) == cfg.model.num_layers, (
+            assert len(moe_layer_pattern) == decoder_num_layers, (
                 f"Invalid length of moe_layer_pattern: {len(moe_layer_pattern)}, "
-                f"expected {cfg.model.num_layers}, "
+                f"expected {decoder_num_layers}, "
                 f"current moe layer pattern: {moe_layer_freq}"
             )
             num_moe_layers = sum(moe_layer_pattern)  # Number of 1s in `moe_layer_pattern`.
-            num_dense_layers = cfg.model.num_layers - num_moe_layers
+            num_dense_layers = decoder_num_layers - num_moe_layers
             num_experts_routed_to = getattr(cfg.model, "moe_router_topk", 1)
             last_layer_is_moe = moe_layer_pattern[-1]
 
@@ -1235,10 +1243,10 @@ def num_floating_point_operations(
             mtp_num_layers = cfg.model.mtp_num_layers
             num_moe_layers += last_layer_is_moe * mtp_num_layers
             num_dense_layers += (1 - last_layer_is_moe) * mtp_num_layers
-            num_layers = cfg.model.num_layers + mtp_num_layers
+            num_layers = decoder_num_layers + mtp_num_layers
         else:
             mtp_num_layers = 0
-            num_layers = cfg.model.num_layers
+            num_layers = decoder_num_layers
 
         # 'moe_ffn_hidden_size' is set only for MoE models.
         moe_ffn_hidden_size = (
@@ -1278,7 +1286,7 @@ def num_floating_point_operations(
                     raise ValueError(
                         f"Invalid length of csa_compress_ratios: {len(compress_ratios)}, "
                         f"expected {num_layers} "
-                        f"(num_layers={cfg.model.num_layers}, mtp_num_layers={mtp_num_layers})."
+                        f"(num_layers={decoder_num_layers}, mtp_num_layers={mtp_num_layers})."
                     )
 
                 self_attn_term, dsv4_hybrid_core_attn_term = dsv4_attention_terms(compress_ratios)
@@ -1323,7 +1331,7 @@ def num_floating_point_operations(
                 # MCore gives MTP layers their own 1-based numbering, so their sharing cadence
                 # restarts independently of the decoder. GLM-5.2 has MTP1, which computes one
                 # fresh index. See transformer/multi_token_prediction.py in Megatron-Core.
-                num_indexer_layers = count_indexer_layers(cfg.model.num_layers) + count_indexer_layers(mtp_num_layers)
+                num_indexer_layers = count_indexer_layers(decoder_num_layers) + count_indexer_layers(mtp_num_layers)
 
                 # Average valid causal pairs per token. The top-k expression is exact for a
                 # fixed-length batch. Packed metadata supplies only sum(s) and sum(s^2), so for
@@ -1529,7 +1537,6 @@ def num_floating_point_operations(
         # the deprecated "gated_delta_net" alias to "gdn" during config finalization.
         if _is_gated_delta_net_variant(experimental_attention_variant):
             linear_attention_freq = cfg.model.linear_attention_freq
-            decoder_num_layers = cfg.model.num_layers
             if linear_attention_freq is None:
                 raise ValueError("linear_attention_freq must be set for gated delta net attention variants")
             if isinstance(linear_attention_freq, int):
@@ -1594,7 +1601,6 @@ def num_floating_point_operations(
         # with the KDA per-layer cost.
         kimi_kda_layers = getattr(cfg.model, "kimi_kda_layers", None)
         if kimi_kda_layers:
-            decoder_num_layers = cfg.model.num_layers
             # `kimi_kda_layers` holds 1-indexed global layer numbers, matching the
             # `layer_number in config.kimi_kda_layers` check in the K3 layer spec.
             kda_layer_numbers = set(kimi_kda_layers)
@@ -1713,17 +1719,17 @@ def num_floating_point_operations(
     # GLM's split Hybrid graph has the same arithmetic as its paired DSA/MoE
     # blocks. Reuse the DSA estimator in logical coordinates (including top-k
     # reuse and MTP) rather than counting D as ordinary multi-head attention.
+    # The logical counts are passed to the estimator, not set on a config copy:
+    # builder-backed configs keep both fields on a nested transformer config
+    # that a shallow copy shares with the run's config and its built model.
     pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
     if pattern and getattr(cfg.model, "experimental_attention_variant", None) == "dsa":
-        import copy
-
         main = pattern.split("/")[0].replace("|", "")
         if len(main) % 2 == 0 and all(main[i : i + 2] in ("D-", "DE") for i in range(0, len(main), 2)):
-            cfg = copy.copy(cfg)
-            cfg.model = copy.copy(cfg.model)
-            cfg.model.num_layers = len(main) // 2
-            cfg.model.moe_layer_freq = [int(main[i] == "E") for i in range(1, len(main), 2)]
-            return transformer_flops()
+            return transformer_flops(
+                decoder_num_layers=len(main) // 2,
+                moe_layer_freq=[int(main[i] == "E") for i in range(1, len(main), 2)],
+            )
 
     # Main entrypoint for FLOPs calculation. Mirror MCore's hybrid detection:
     # a physical hybrid pattern is sufficient to select hybrid accounting.
