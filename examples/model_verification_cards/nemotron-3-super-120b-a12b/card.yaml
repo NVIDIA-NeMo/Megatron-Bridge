@@ -27,8 +27,8 @@ verification_index:
       verified: [pretrain, sft_long_context, checkpoint_resume]
       unverified: [sft, sft_export_inference, peft]
     GB200:
-      verified: [pretrain, sft, sft_export_inference, peft]
-      unverified: [sft_long_context, checkpoint_resume]
+      verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
+      unverified: [sft_long_context]
   performance:
     H100: verified
     GB200: verified
@@ -643,8 +643,9 @@ items:
         deadlock in the long first step (pytorch/pytorch#200848).
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: b54e844c7292488410e4ec3f9d7acee157e28053  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4
@@ -671,19 +672,24 @@ items:
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
         sentinels_match: true
-      last_verified: null
+      last_verified: 2026-11-18
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 6.220981
+        final_loss: 5.636043
+        last_10_steps_step_time_ms_avg: 24122.160
+        last_10_steps_model_tflops_per_gpu_avg: 286.580
+        last_10_steps_tokens_per_second_per_gpu_avg: 6792.095
       expected_result: >
-        The direct GB200 continuation must restore full model, optimizer,
-        scheduler, data-order, and RNG state from iter_0000050 and execute
-        exactly steps 51-100 into a distinct output root. Each declared loss
-        sentinel must satisfy abs(resumed - reference) <= 1e-6 + 0.01 *
-        abs(reference) against the uninterrupted 64-GB200 pretrain reference.
+        At this item's Bridge commit, the direct GB200 continuation on 64
+        GB200s restored model, optimizer, scheduler, data-order, and RNG state
+        from iter_0000050 of the uninterrupted 64-GB200 pretrain reference and
+        executed exactly steps 51-100 into a distinct output root with finite
+        loss and zero skipped or NaN iterations. Every declared loss sentinel
+        satisfied abs(resumed - reference) <= 1e-6 + 0.01 * abs(reference): lm
+        loss 6.220981 versus 6.220984 at step 51 and 5.636043 versus 5.635972 at
+        step 100, with the two MTP losses also within tolerance at both steps.
+        The complete iter_0000100 checkpoint saved. Metrics average steps
+        91-100. Run on a NeMo nightly base container (2026-11-18).
 
   pretrain_performance:
     H100:
