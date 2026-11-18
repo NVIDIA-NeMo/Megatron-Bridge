@@ -38,7 +38,15 @@ the D-layer tests check against an fp64 oracle at CP = 1:
   of full recompute) get the zigzag ``PACKED_THD_GENERAL`` arguments (one tensor of the padded
   ``cu_seqlens`` for queries and keys, the pack's ``max_seqlen``, ``packed_thd_single_sequence=False``)
   and the loss hook ``coeff / CP``; the replay gets the no-grad forward's indexer inputs;
-* the zigzag geometry (positions, key permutation, one cache entry per micro-batch);
+* the zigzag geometry (positions, key permutation and, on request, its inverse up to CP = 64, one
+  cache entry per micro-batch);
+* the key gather's backward behind ``ernie_cp_key_gather_inverse_grad``: off (the default), the
+  gather keeps autograd's ``index_select`` backward (an ``index_add_`` into zeros) bit for bit and
+  builds no inverse; on, it gathers by the inverse permutation, with the forward bitwise and the
+  gradients equal in value (``torch.equal``; only the sign of a zero may differ, ``index_add_``
+  turns ``-0.0`` into ``+0.0``), for the permutation alone, for ``gather_cp_rows`` on the CP ranks
+  and for a whole D layer, whose output, input gradient, parameter gradients and indexer loss equal
+  those with the flag off;
 * the guards: SBHD input, missing routes, a stack partition that disagrees with the config, and
   Megatron-Core builds without the CP converter or its zigzag helpers (main), at construction and
   in forward, or (for per-row MTP) without the grouped MTP roll;
@@ -68,6 +76,7 @@ from megatron.core import parallel_state
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.layers import ColumnParallelLinear, RowParallelLinear
+from megatron.core.tensor_parallel.mappings import gather_from_sequence_parallel_region
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.experimental_attention_variant import dsa, dsa_kernels
 from megatron.core.transformer.experimental_attention_variant.absorbed_mla import AbsorbedMLASelfAttentionSubmodules
@@ -339,6 +348,55 @@ def _assert_close(actual: torch.Tensor, expected: torch.Tensor, what: str, tol: 
     assert error <= tol, f"{what}: normalized max error {error:.3e} > {tol:.0e}"
 
 
+def _index_select_gather_cp_rows(local: torch.Tensor, *, geometry, cp_group) -> torch.Tensor:
+    """The key gather with autograd's ``index_select`` backward (an ``index_add_`` into zeros): the reference."""
+    gathered = gather_from_sequence_parallel_region(
+        local.contiguous(), tensor_parallel_output_grad=True, group=cp_group
+    )
+    return gathered.index_select(0, geometry.key_reorder)
+
+
+_BIT_VIEWS = {
+    torch.bfloat16: torch.int16,
+    torch.float16: torch.int16,
+    torch.float32: torch.int32,
+    torch.float64: torch.int64,
+}
+
+
+def _bits(tensor: torch.Tensor) -> torch.Tensor:
+    """The bit patterns of a floating-point tensor, as integers of the same width."""
+    return tensor.detach().contiguous().view(_BIT_VIEWS[tensor.dtype])
+
+
+def _assert_equal_up_to_zero_sign(actual: torch.Tensor, expected: torch.Tensor, what: str) -> int:
+    """``torch.equal`` values whose bit patterns differ only at zeros (``-0.0`` against ``+0.0``).
+
+    Returns:
+        The number of elements whose bit patterns differ.
+    """
+    assert actual.dtype == expected.dtype, f"{what}: dtype {actual.dtype} != {expected.dtype}"
+    assert torch.equal(actual, expected), f"{what}: values differ"
+    differ = _bits(actual) != _bits(expected)
+    assert bool((actual.detach()[differ] == 0).all()), f"{what}: bit patterns differ at nonzero values"
+    return int(differ.sum())
+
+
+def _gradient_with_special_values(shape: tuple[int, ...], dtype: torch.dtype, seed: int) -> torch.Tensor:
+    """A random gradient with ``-0.0``, ``+0.0``, infinities, subnormals and the largest finite value mixed in."""
+    generator = torch.Generator().manual_seed(seed)
+    grad = torch.randn(shape, generator=generator, dtype=torch.float64).to(dtype)
+    info = torch.finfo(dtype)
+    specials = torch.tensor(
+        [-0.0, 0.0, -0.0, float("inf"), float("-inf"), info.tiny / 2, -info.tiny / 2, info.max, -0.0], dtype=dtype
+    )
+    flat = grad.view(-1)
+    copies = max(1, min(4, flat.numel() // (2 * specials.numel())))
+    slots = torch.randperm(flat.numel(), generator=generator)[: copies * specials.numel()]
+    flat[slots] = specials.repeat(copies)[: slots.numel()]
+    return grad
+
+
 # ---------------------------------------------------------------------------------------------
 # Single-process tests: index geometry with explicit positions, metadata checks, config guards
 # ---------------------------------------------------------------------------------------------
@@ -567,10 +625,10 @@ class TestZigzagGeometry:
     """``zigzag_cp_geometry``: positions and key permutation of the zigzag rows, cached once per micro-batch."""
 
     @staticmethod
-    def _geometry(metadata, cp_rank: int):
+    def _geometry(metadata, cp_rank: int, **kwargs):
         group = types.SimpleNamespace(size=lambda: 2, rank=lambda: cp_rank)
         return context_parallel.zigzag_cp_geometry(
-            metadata, cp_group=group, local_rows=40, device=torch.device("cpu"), what="core"
+            metadata, cp_group=group, local_rows=40, device=torch.device("cpu"), what="core", **kwargs
         )
 
     def test_positions_and_key_order(self):
@@ -585,6 +643,47 @@ class TestZigzagGeometry:
             # Keys gathered in rank order land in global packed order.
             assert torch.equal(torch.cat(rows).index_select(0, geometry.key_reorder), torch.arange(80))
             assert (geometry.cp_size, geometry.cp_rank, geometry.num_rows) == (2, rank, 80)
+            # No inverse unless asked for (ernie_cp_key_gather_inverse_grad off).
+            assert geometry.key_reorder_inverse is None
+            # The inverse is the global position of every gathered row.
+            fresh = self._geometry(_host_metadata(doc_lens, cp_partition_mode="zigzag"), rank, with_inverse=True)
+            assert torch.equal(fresh.key_reorder_inverse, torch.cat(rows))
+
+    @pytest.mark.parametrize(
+        "cp_size, doc_lens",
+        [
+            (2, [24, 8, 16, 32]),
+            (4, [24, 8, 16, 32]),
+            (8, [16, 48, 64, 128]),
+            # The SFT recipe's shape: one 262144-row document over CP = 64 (4096 rows per rank).
+            (64, [262144]),
+            (64, [131072, 65536, 32768, 128, 32640]),
+        ],
+        ids=["cp2", "cp4", "cp8", "cp64-one-document", "cp64-five-documents"],
+    )
+    def test_key_reorder_inverse(self, cp_size, doc_lens):
+        """``key_reorder_inverse`` inverts ``key_reorder`` and lists every gathered row's global position."""
+        if context_parallel.load_cp_layout_api() is None:
+            pytest.skip("Megatron-Core main has no zigzag CP helpers")
+        total = sum(doc_lens)
+        gathered_positions = torch.cat(
+            [_rows_of_rank(dict(doc_lens=doc_lens), cp_size, rank, "zigzag") for rank in range(cp_size)]
+        )
+        for cp_rank in (0, cp_size - 1):
+            group = types.SimpleNamespace(size=lambda: cp_size, rank=lambda rank=cp_rank: rank)
+            geometry = context_parallel.zigzag_cp_geometry(
+                _host_metadata(doc_lens, cp_partition_mode="zigzag"),
+                cp_group=group,
+                local_rows=total // cp_size,
+                device=torch.device("cpu"),
+                what="core",
+                with_inverse=True,
+            )
+            identity = torch.arange(total)
+            assert geometry.key_reorder_inverse.dtype == torch.int64
+            assert torch.equal(geometry.key_reorder_inverse.index_select(0, geometry.key_reorder), identity)
+            assert torch.equal(geometry.key_reorder.index_select(0, geometry.key_reorder_inverse), identity)
+            assert torch.equal(geometry.key_reorder_inverse, gathered_positions)
 
     def test_one_cache_entry(self):
         if context_parallel.load_cp_layout_api() is None:
@@ -600,6 +699,87 @@ class TestZigzagGeometry:
         assert torch.equal(second.query_positions, _rows_of_rank(dict(doc_lens=[16, 32, 32]), 2, 1, "zigzag"))
         key, cached = getattr(metadata, context_parallel._GEOMETRY_CACHE_ATTR)
         assert cached is second and key[-1] == (0, 16, 48, 80)
+
+    def test_inverse_on_request(self):
+        """``with_inverse`` adds the inverse to the cached entry, keeping its tensors; later calls reuse it."""
+        if context_parallel.load_cp_layout_api() is None:
+            pytest.skip("Megatron-Core main has no zigzag CP helpers")
+        doc_lens = [24, 8, 16, 32]
+        rows = torch.cat([_rows_of_rank(dict(doc_lens=doc_lens), 2, rank, "zigzag") for rank in range(2)])
+        metadata = _host_metadata(doc_lens, cp_partition_mode="zigzag")
+        plain = self._geometry(metadata, 0)
+        assert plain.key_reorder_inverse is None
+        with_inverse = self._geometry(metadata, 0, with_inverse=True)
+        assert with_inverse is not plain
+        assert with_inverse.query_positions is plain.query_positions
+        assert with_inverse.key_reorder is plain.key_reorder
+        assert torch.equal(with_inverse.key_reorder_inverse, rows)
+        assert getattr(metadata, context_parallel._GEOMETRY_CACHE_ATTR)[1] is with_inverse
+        # The entry with the inverse serves both kinds of call.
+        assert self._geometry(metadata, 0) is with_inverse
+        assert self._geometry(metadata, 0, with_inverse=True) is with_inverse
+        # New boundaries rebuild the entry, with the inverse only when asked for.
+        metadata.thd_cp_host_cu_seqlens_q = [0, 16, 48, 80]
+        metadata.thd_cp_host_cu_seqlens_kv = [0, 16, 48, 80]
+        assert self._geometry(metadata, 0).key_reorder_inverse is None
+        new_rows = torch.cat([_rows_of_rank(dict(doc_lens=[16, 32, 32]), 2, rank, "zigzag") for rank in range(2)])
+        assert torch.equal(self._geometry(metadata, 0, with_inverse=True).key_reorder_inverse, new_rows)
+
+
+class TestPermuteRows:
+    """The key gather's reorder: ``index_select`` forward, a backward that gathers by the inverse permutation.
+
+    Autograd's ``index_select`` backward adds the gradient into zeros (``index_add_``). Under a
+    permutation every row gets one gradient row, so the gather by the inverse permutation must give
+    the same values (``torch.equal``), and the same bits except at ``-0.0``, which ``index_add_``
+    turns into ``+0.0`` (``+0.0 + -0.0 == +0.0``) and the gather keeps.
+    """
+
+    @staticmethod
+    def _permutation(size: int, seed: int) -> tuple[torch.Tensor, torch.Tensor]:
+        order = torch.randperm(size, generator=torch.Generator().manual_seed(seed))
+        return order, context_parallel._inverse_permutation(order)
+
+    @pytest.mark.parametrize("size", [0, 1, 7, 1000])
+    def test_inverse_permutation(self, size):
+        order, inverse = self._permutation(size, seed=size)
+        assert inverse.dtype == order.dtype and inverse.shape == order.shape
+        assert torch.equal(inverse.index_select(0, order), torch.arange(size))
+        assert torch.equal(order.index_select(0, inverse), torch.arange(size))
+
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32, torch.float64])
+    @pytest.mark.parametrize("shape", [(96,), (96, 5), (96, 1, 7)], ids=["1d", "2d", "thd"])
+    def test_matches_index_select(self, dtype, shape):
+        order, inverse = self._permutation(shape[0], seed=3)
+        generator = torch.Generator().manual_seed(4)
+        rows = torch.randn(shape, generator=generator, dtype=torch.float64).to(dtype)
+        grad = _gradient_with_special_values(shape, dtype, seed=5)
+        permuted_input = rows.clone().requires_grad_(True)
+        reference_input = rows.clone().requires_grad_(True)
+
+        permuted = context_parallel._PermuteRows.apply(permuted_input, order, inverse)
+        reference = reference_input.index_select(0, order)
+        assert torch.equal(_bits(permuted), _bits(reference)), "forward bits"
+        permuted.backward(grad)
+        reference.backward(grad)
+        actual, expected = permuted_input.grad, reference_input.grad
+        assert actual.dtype == dtype and actual.is_contiguous()
+        assert torch.equal(actual, expected), "gradient values"
+        # Exactly the -0.0 gradient elements change bits: the gather keeps -0.0, index_add_ makes it +0.0.
+        negative_zero = (actual == 0) & torch.signbit(actual)
+        assert bool(negative_zero.any()), "the gradient exercises -0.0"
+        assert torch.equal(_bits(actual) != _bits(expected), negative_zero)
+        assert not bool(torch.signbit(expected[negative_zero]).any())
+        # Infinities and subnormals pass through unchanged.
+        assert torch.equal(actual, grad.index_select(0, inverse))
+
+    def test_gradcheck_and_no_grad(self):
+        order, inverse = self._permutation(12, seed=6)
+        rows = torch.randn(12, 3, dtype=torch.float64, generator=torch.Generator().manual_seed(7), requires_grad=True)
+        assert torch.autograd.gradcheck(lambda x: context_parallel._PermuteRows.apply(x, order, inverse), (rows,))
+        with torch.no_grad():
+            permuted = context_parallel._PermuteRows.apply(rows, order, inverse)
+        assert permuted.grad_fn is None and torch.equal(permuted, rows.index_select(0, order))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -783,6 +963,133 @@ def case_zigzag_stack(rank: _Rank) -> None:
 def case_full_recompute(rank: _Rank) -> None:
     """A recompute replay converts again from the restored stack partition and gives the same gradients."""
     _compare_with_cp1(rank, "multi_document", seed=16, recompute=True)
+
+
+def case_gather_cp_rows_matches_index_select(rank: _Rank) -> None:
+    """``gather_cp_rows`` against the ``index_select`` gather, with ``inverse_grad`` off and on.
+
+    Every rank holds its zigzag rows of the same full pack, so the gathered rows must be the full
+    pack bit for bit. Every rank back-propagates the same gradient with ``-0.0``, infinities and
+    subnormals mixed in. After the reduce-scatter the input gradient must be bitwise the
+    ``index_select`` gather's by default, and ``torch.equal`` to it with ``inverse_grad``, with bits
+    that differ exactly where the rank's gradient rows hold ``-0.0`` (the reduce-scatter sums ``CP``
+    copies of it, which stay ``-0.0``; ``index_add_`` made them ``+0.0``). ``inverse_grad`` without
+    the inverse permutation raises before any collective.
+    """
+    cp_size, cp_group = rank.world_size, rank.cp.cp
+    flips_seen = 0
+    for layout_name, layout in LAYOUTS.items():
+        padded = layout.get("padded_lens", layout["doc_lens"])
+        total = sum(padded)
+        geometry = context_parallel.zigzag_cp_geometry(
+            _host_metadata(padded, cp_partition_mode="zigzag"),
+            cp_group=cp_group,
+            local_rows=total // cp_size,
+            device=torch.device("cpu"),
+            what="core",
+            with_inverse=True,
+        )
+        rows = _rows_of_rank(layout, cp_size, rank.rank, "zigzag")
+        for dtype in (torch.bfloat16, torch.float32):
+            generator = torch.Generator().manual_seed(81)
+            full = torch.randn(total, 1, 6, generator=generator, dtype=torch.float64).to(dtype)
+            grad = _gradient_with_special_values((total, 1, 6), dtype, seed=82)
+            local = full[rows].contiguous()
+            inputs = {name: local.clone().requires_grad_(True) for name in ("default", "inverse", "reference")}
+            outputs = {
+                "default": context_parallel.gather_cp_rows(inputs["default"], geometry=geometry, cp_group=cp_group),
+                "inverse": context_parallel.gather_cp_rows(
+                    inputs["inverse"], geometry=geometry, cp_group=cp_group, inverse_grad=True
+                ),
+                "reference": _index_select_gather_cp_rows(inputs["reference"], geometry=geometry, cp_group=cp_group),
+            }
+            what = f"{layout_name} {dtype}"
+            for name, output in outputs.items():
+                assert torch.equal(_bits(output), _bits(full)), f"{what} {name}: gathered rows are not the full pack"
+            for output in outputs.values():
+                output.backward(grad)
+            reference_grad = inputs["reference"].grad
+            assert torch.equal(_bits(inputs["default"].grad), _bits(reference_grad)), f"{what}: default gradient bits"
+            flips = _assert_equal_up_to_zero_sign(inputs["inverse"].grad, reference_grad, f"{what}: inverse_grad")
+            own_rows = grad[rows]
+            assert flips == int(((own_rows == 0) & torch.signbit(own_rows)).sum()), f"{what}: -0.0 bits"
+            flips_seen += flips
+        plain = context_parallel.zigzag_cp_geometry(
+            _host_metadata(padded, cp_partition_mode="zigzag"),
+            cp_group=cp_group,
+            local_rows=total // cp_size,
+            device=torch.device("cpu"),
+            what="core",
+        )
+        with pytest.raises(ValueError, match="with_inverse=True"):
+            context_parallel.gather_cp_rows(local, geometry=plain, cp_group=cp_group, inverse_grad=True)
+    assert flips_seen > 0, "the gradients exercise -0.0"
+
+
+def case_d_layer_matches_index_select_gather(rank: _Rank) -> None:
+    """A D layer gives equal outputs, gradients and indexer loss with ``ernie_cp_key_gather_inverse_grad`` on and off.
+
+    Two modules with the same weights run the same inputs on the CP ranks, one built from the default
+    config and one with the flag on. Off, the key gathers keep ``index_select``'s backward: no inverse
+    permutation is built and the inverse-permutation backward never runs. On, that backward runs once
+    for each of the two key gathers (the latent key and the indexer key). Everything must be
+    ``torch.equal``: the output, the input gradient, every parameter gradient and the indexer loss.
+    """
+    cp_size, cp_group = rank.world_size, rank.cp.cp
+    for layout_name in ("multi_document", "padded_documents"):
+        layout = LAYOUTS[layout_name]
+        modules = {
+            flag: _build_attention(_config(cp_size, ernie_cp_key_gather_inverse_grad=flag), rank.cp, seed=91)
+            for flag in (False, True)
+        }
+        assert {flag: module.core_attention.cp_key_gather_inverse_grad for flag, module in modules.items()} == {
+            False: False,
+            True: True,
+        }
+        weights_off, weights_on = (dict(module.named_parameters()) for module in modules.values())
+        assert weights_off.keys() == weights_on.keys()
+        assert all(torch.equal(weights_off[name], weights_on[name]) for name in weights_off)
+        assert not _config(cp_size).ernie_cp_key_gather_inverse_grad
+        x, grad_output = _inputs(layout, seed=91)
+        rows = _rows_of_rank(layout, cp_size, rank.rank, "contiguous")
+        original_geometry = context_parallel.zigzag_cp_geometry
+        original_backward = context_parallel._PermuteRows.__dict__["backward"]  # the staticmethod itself
+        backward_rows, geometries = [], []
+
+        def counting_backward(ctx, grad, _original=original_backward.__func__):
+            backward_rows.append(grad.size(0))
+            return _original(ctx, grad)
+
+        def recording_geometry(*args, **kwargs):
+            geometries.append(original_geometry(*args, **kwargs))
+            return geometries[-1]
+
+        runs, calls, inverses = {}, {}, {}
+        for flag, attention in modules.items():
+            backward_rows.clear()
+            geometries.clear()
+            context_parallel._PermuteRows.backward = staticmethod(counting_backward)
+            context_parallel.zigzag_cp_geometry = recording_geometry
+            try:
+                params = _prebuilt(_packed_seq_params(layout, mode="contiguous"), cp_group)
+                runs[flag] = _run(
+                    attention, x[rows], params, grad_output[rows] * cp_size, indexer_loss_scale=float(cp_size)
+                )
+            finally:
+                context_parallel.zigzag_cp_geometry = original_geometry
+                context_parallel._PermuteRows.backward = original_backward
+            calls[flag] = list(backward_rows)
+            inverses[flag] = [geometry.key_reorder_inverse is not None for geometry in geometries]
+        total = sum(layout.get("padded_lens", layout["doc_lens"]))
+        assert calls == {False: [], True: [total, total]}, calls
+        assert inverses == {False: [False], True: [True]}, inverses
+        actual, expected = runs[True], runs[False]
+        _assert_equal_up_to_zero_sign(actual.output, expected.output, f"{layout_name}: output")
+        _assert_equal_up_to_zero_sign(actual.input_grad, expected.input_grad, f"{layout_name}: input gradient")
+        assert actual.grads.keys() == expected.grads.keys()
+        for name, grad in actual.grads.items():
+            _assert_equal_up_to_zero_sign(grad, expected.grads[name], f"{layout_name}: gradient of {name}")
+        _assert_equal_up_to_zero_sign(actual.loss, expected.loss, f"{layout_name}: indexer loss")
 
 
 def _designed_indexer(module: Ernie55LatentMQASelfAttention) -> None:
@@ -1286,6 +1593,8 @@ CASES = [
     "case_per_token_loss",
     "case_zigzag_stack",
     "case_full_recompute",
+    "case_gather_cp_rows_matches_index_select",
+    "case_d_layer_matches_index_select_gather",
     "case_selection_matches_cp1",
     "case_data_helper_batch_feeds_the_d_layer",
     "case_mode_restored_after_error",

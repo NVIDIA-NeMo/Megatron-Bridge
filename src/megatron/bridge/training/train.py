@@ -116,6 +116,7 @@ from megatron.bridge.training.utils.train_utils import (
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
+from megatron.bridge.utils.instantiate_utils import _resolve_target
 
 
 # For Paged Stashing support
@@ -285,6 +286,7 @@ def train(
     # Capture CUDA Graphs.
     cuda_graph_helper = None
     if model_config.cuda_graph_impl == "transformer_engine":
+        te_cuda_graph_helper_cls = _te_cuda_graph_helper_class(model_config)
         _te_cg_kwargs: dict[str, Any] = dict(
             model=model,
             config=model_config,
@@ -292,9 +294,9 @@ def train(
             micro_batch_size=config.train.micro_batch_size,
             optimizers=[optimizer],
         )
-        if "pg_collection" in inspect.signature(TECudaGraphHelper.__init__).parameters:
+        if "pg_collection" in inspect.signature(te_cuda_graph_helper_cls.__init__).parameters:
             _te_cg_kwargs["pg_collection"] = pg_collection
-        cuda_graph_helper = TECudaGraphHelper(**_te_cg_kwargs)
+        cuda_graph_helper = te_cuda_graph_helper_cls(**_te_cg_kwargs)
     # Capture Vision Encoder CUDA Graphs (separate from language model).
     # Check if vision encoder has CUDA graph enabled
     vision_cuda_graph_helper = None
@@ -1763,6 +1765,32 @@ def _delete_local_cuda_graph_runners(model: list[MegatronModule]) -> None:
                     runner.mempool = None
                 module.cudagraph_runners.clear()
                 module.custom_cudagraphs_lookup_table.clear()
+
+
+def _te_cuda_graph_helper_class(model_config: Any) -> type:
+    """The Transformer Engine CUDA graph helper class to build for ``model_config``.
+
+    A model config class may name a ``TECudaGraphHelper`` subclass in a ``te_cuda_graph_helper`` class attribute (a
+    dotted path, resolved through Bridge's target allowlist), e.g. to restrict which layers are graphed. Without that
+    attribute on the config's class (only the class is read, so mock configs never provide one), Megatron-Core's
+    ``TECudaGraphHelper``.
+
+    Args:
+        model_config: The model's transformer config.
+
+    Returns:
+        The helper class.
+
+    Raises:
+        TypeError: If the named target is not a class.
+    """
+    helper_path = getattr(type(model_config), "te_cuda_graph_helper", None)
+    if not isinstance(helper_path, str):
+        return TECudaGraphHelper
+    helper_cls = _resolve_target(helper_path, full_key="te_cuda_graph_helper")
+    if not isinstance(helper_cls, type):
+        raise TypeError(f"te_cuda_graph_helper {helper_path!r} of {type(model_config).__name__} is not a class.")
+    return helper_cls
 
 
 def _release_cuda_graph_references(optimizer: MegatronOptimizer | None) -> None:

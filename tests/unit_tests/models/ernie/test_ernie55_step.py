@@ -50,10 +50,11 @@ from megatron.bridge.models.ernie.ernie55_data import Ernie55SFTDatasetConfig, c
 from megatron.bridge.models.ernie.ernie55_step import (
     ernie55_documents_from_batch,
     ernie55_loss_function,
+    forward_step,
     get_batch,
 )
 from megatron.bridge.training.losses import masked_next_token_loss
-from megatron.bridge.training.utils import train_utils
+from megatron.bridge.training.utils import flop_utils, train_utils
 from tests.unit_tests.models.ernie.test_ernie55_builder import _build, _tiny_config
 from tests.unit_tests.models.ernie.test_ernie55_mhc_mtp import (  # noqa: F401 - pytest fixtures
     _cpu_nvtx,
@@ -134,6 +135,22 @@ class TestBatchContract:
         config = SimpleNamespace(cp_partition_mode="contiguous", csa_compress_ratios=[128, 0], csa_window_size=128)
         with pytest.raises(ValueError, match="pad_token_id"):
             get_batch(iter([batch]), config, cp_group=_FakeGroup(2), device="cpu")
+
+    @pytest.mark.parametrize("switch", [False, True])
+    def test_cp_batch_prebuilds_the_inverse_key_permutation_with_the_switch(self, pg_collection, switch):
+        # pg_collection initializes torch.distributed, so the batch builder reads the fake group's size.
+        from megatron.bridge.models.ernie.modeling_ernie55 import context_parallel
+
+        if context_parallel.load_cp_layout_api() is None:
+            pytest.skip("Megatron-Core main has no zigzag CP helpers")
+        tokens = torch.arange(1, 9).view(1, 8)
+        config = SimpleNamespace(cp_partition_mode="contiguous", ernie_cp_key_gather_inverse_grad=switch)
+        batch = get_batch(
+            iter([dict(tokens=tokens, labels=tokens + 1)]), config, cp_group=_FakeGroup(2, 1), device="cpu"
+        )
+        _, geometry = getattr(batch.packed_seq_params, context_parallel._GEOMETRY_CACHE_ATTR)
+        # ernie_cp_key_gather_inverse_grad: the D layers' key-gather backward reads the prebuilt inverse.
+        assert (geometry.key_reorder_inverse is not None) is switch
 
     def test_cp1_batch(self):
         collated = collate_ernie55_rows(
@@ -264,6 +281,103 @@ class TestSFTData:
         assert collated["pad_token_id"] == 0
         documents = ernie55_documents_from_batch(collated)
         assert [len(tokens) for tokens, _ in documents] == [9, 5, 9, 5]
+
+
+class _StepTorch:
+    """``torch`` as ``ernie55_step`` sees it in these CPU tests: ``torch.cuda.current_device()`` answers ``"cpu"``."""
+
+    class _Cuda:
+        @staticmethod
+        def current_device():
+            return "cpu"
+
+        def __getattr__(self, name):
+            return getattr(torch.cuda, name)
+
+    cuda = _Cuda()
+
+    def __getattr__(self, name):
+        return getattr(torch, name)
+
+
+def _run_the_step_on_the_cpu(monkeypatch):
+    """Run ``forward_step`` with the CPU model of these tests as on a machine without CUDA.
+
+    ``forward_step`` asks ``torch.cuda.current_device()`` for the batch's device, so the step module's view of
+    ``torch`` answers ``"cpu"``; ``torch.cuda.current_device`` itself is left alone, because with a GPU present
+    ``torch.compile`` asks it for a device index. CUDA is reported unavailable, so code that checks
+    takes the CPU path it takes on a machine without CUDA (e.g. ``torch.compile``'s Triton probe).
+    """
+    monkeypatch.setattr(ernie55_step, "torch", _StepTorch())
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+
+@needs_hook
+def test_forward_step_numbers_micro_batches_for_the_expert_load_diagnostic(pg_collection, monkeypatch, tmp_path):
+    """With ERNIE55_LOG_EXPERT_LOAD=1, the step labels every MoE layer's record with its step and micro-batch.
+
+    Two iterations of two micro-batches through ``forward_step`` on a model with one decoder and one MTP MoE layer;
+    the window holds the second iteration only, and the first micro-batch after it writes the file.
+    """
+    import atexit
+
+    from megatron.bridge.models.ernie.modeling_ernie55 import expert_load
+
+    monkeypatch.setattr(expert_load, "_RECORDER", None)
+    monkeypatch.setenv(expert_load.ENV_SWITCH, "1")
+    monkeypatch.setenv(expert_load.ENV_DIR, str(tmp_path))
+    monkeypatch.setenv(expert_load.ENV_STEPS, "1:2")
+    model = _build(pg_collection, _tiny_config(hybrid_layer_pattern="D-DE/DE", num_layers=4, csa_compress_ratios=None))
+    recorder = expert_load.expert_load_recorder()
+    atexit.unregister(recorder._dump_at_exit)
+    _randomize_(model, seed=6)
+    monkeypatch.setattr(flop_utils, "accumulate_flops_metadata", lambda state, tokens, **kwargs: None)
+    _run_the_step_on_the_cpu(monkeypatch)
+    rows = [[([3, 4, 5, 6, 7, 8], [4, 5, 6, 7, 8, IGNORE_LABEL]), ([9, 10, 11, 12], [10, 11, 12, IGNORE_LABEL])]]
+    collated = collate_ernie55_rows(rows, pad_token_id=0)
+
+    class _Context:
+        def __call__(self, *args, **kwargs):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def start(self):
+            return None
+
+        def stop(self):
+            return None
+
+    state = SimpleNamespace(
+        timers=_Context(),
+        straggler_timer=_Context(),
+        train_state=SimpleNamespace(step=0),
+        cfg=SimpleNamespace(
+            profiling=None,
+            rerun_state_machine=SimpleNamespace(check_for_nan_in_loss=True, check_for_spiky_loss=False),
+        ),
+    )
+    for step in (0, 1, 2):
+        state.train_state.step = step
+        for _ in range(1 if step == 2 else 2):
+            output, loss_function = forward_step(state, iter([collated]), model)
+            loss_function(output)[0].backward()
+    payload = json.loads((tmp_path / "expert_load_rank00000.json").read_text())
+    assert payload["window"] == [1, 2]
+    assert [layer["is_mtp_layer"] for layer in payload["layers"]] == [False, True]
+    assert [(r["step"], r["microbatch"], r["slot"]) for r in payload["records"]] == [
+        (1, 0, 0),
+        (1, 0, 1),
+        (1, 1, 0),
+        (1, 1, 1),
+    ]
+    # Ten tokens (no padding) per micro-batch reach the experts of each MoE layer, top-k times each.
+    topk = model.config.moe_router_topk
+    assert all(sum(r["routed"]) == 10 * topk and r["received"] == r["routed"] for r in payload["records"])
 
 
 def test_recipe_runner_registers_the_step():

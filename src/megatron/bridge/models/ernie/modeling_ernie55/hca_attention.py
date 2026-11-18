@@ -110,6 +110,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from torch import Tensor
 
 from megatron.bridge.models.ernie.modeling_ernie55.context_parallel import validate_ernie55_context_parallel_config
+from megatron.bridge.models.ernie.modeling_ernie55.cuda_graph import validate_ernie55_cuda_graph_config
 from megatron.bridge.models.ernie.modeling_ernie55.latent_mqa_attention import Ernie55LatentMQASelfAttention
 from megatron.bridge.models.ernie.modeling_ernie55.latent_mqa_core import _param_device
 from megatron.bridge.models.ernie.modeling_ernie55.ops import sigmoid_output_gate, vha_postmix
@@ -145,10 +146,15 @@ def validate_ernie55_hca_config(config: TransformerConfig) -> None:
     """Raise ``ValueError`` if ``config`` is outside the supported ERNIE 5.5 H-layer envelope.
 
     Supported: Megatron-Core's DSv4 hybrid attention variant with TP = 1, BF16 (no FP8/FP4, no
-    Kitchen quantization), no CUDA graphs and no delayed weight gradients, RMSNorm q/kv/compressor
-    norms, no linear biases, a q latent (``q_lora_rank``, the gate input), a positive
-    ``ernie_vha_rank``, RoPE on every positional channel (``rotary_percent == 1``) and
-    ``dsa_kernel_backend`` ``"cudnn"`` (with a fused ``attention_backend``) or ``"none"``.
+    Kitchen quantization), no delayed weight gradients, RMSNorm q/kv/compressor norms, no linear
+    biases, a q latent (``q_lora_rank``, the gate input), a positive ``ernie_vha_rank``, RoPE on
+    every positional channel (``rotary_percent == 1``) and ``dsa_kernel_backend`` ``"cudnn"`` (with
+    a fused ``attention_backend``) or ``"none"``.
+
+    CUDA graphs: per-layer Transformer Engine graphs of the H layers' mHC wrappers
+    (``cuda_graph_impl="transformer_engine"``, ``cuda_graph_modules=["attn"]``) within the envelope of
+    :func:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.validate_ernie55_cuda_graph_config`;
+    no other CUDA graphs.
 
     Context parallelism (CP > 1) is Megatron-Core's: DSv4 runs it in the contiguous partition on
     packed THD input (it exchanges the CP-boundary rows the window and the compressor need and
@@ -185,11 +191,7 @@ def validate_ernie55_hca_config(config: TransformerConfig) -> None:
         config.quant_recipe is None and not config.use_kitchen and not config.use_kitchen_attention,
         "quant_recipe and Kitchen quantization are not supported.",
     )
-    require(
-        getattr(config, "cuda_graph_impl", "none") in (None, "none")
-        and not getattr(config, "enable_cuda_graph", False),
-        "CUDA graphs are not supported.",
-    )
+    validate_ernie55_cuda_graph_config(config, layer="H")
     require(not config.delay_wgrad_compute, "delay_wgrad_compute is not supported.")
     require(not config.add_bias_linear, "add_bias_linear must be False.")
     require(config.normalization == "RMSNorm", "normalization must be 'RMSNorm'.")
@@ -274,7 +276,8 @@ class Ernie55HCACoreAttention(CompressedSparseAttention):
     * ``attn_sink`` seeding: the all-zero sink is drawn from ``N(0, 0.1)`` at construction when
       ``perform_initialization`` is set (never in ``forward``).
     * ``forward`` returns ``vha_postmix(core_output)``, computed out of place
-      (``ernie_vha_bf16_mix`` selects the bf16 or the fp32 contract).
+      (``ernie_vha_bf16_mix`` selects the bf16 or the fp32 contract; ``ernie_vha_batched_mix`` applies the bf16
+      mix as one batched GEMM over the tokens, without the layout copies of ``torch.matmul``).
 
     The constructor forwards every argument to ``CompressedSparseAttention`` unchanged. Megatron-Core's
     ``Attention.__init__`` first builds a throwaway core without ``compress_ratio`` (a window-only layer) before
@@ -293,6 +296,7 @@ class Ernie55HCACoreAttention(CompressedSparseAttention):
         if not isinstance(vha_rank, int) or isinstance(vha_rank, bool) or vha_rank <= 0:
             raise ValueError(f"ERNIE 5.5 H layers need a positive integer ernie_vha_rank, got {vha_rank!r}.")
         self.vha_bf16_mix = bool(getattr(config, "ernie_vha_bf16_mix", True))
+        self.vha_batched_mix = bool(getattr(config, "ernie_vha_batched_mix", False))
 
         device = _param_device(config)
         num_heads = config.num_attention_heads
@@ -320,6 +324,7 @@ class Ernie55HCACoreAttention(CompressedSparseAttention):
             u=self.vha_postmix_u,
             v=self.vha_postmix_v,
             bf16_mix=self.vha_bf16_mix,
+            batched_mix=self.vha_batched_mix,
         )
         return mixed.reshape(output.shape)
 

@@ -52,7 +52,7 @@ the bridge its mapping registry and checks on import that a checkpoint holds exa
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import torch.nn.functional as F
 from transformers import PretrainedConfig
@@ -322,6 +322,9 @@ class Ernie55Bridge(Ernie55WeightConversionMixin, MegatronModelBridge):
 
     MODEL_CONFIG_CLASS = Ernie55ModelConfig
     USE_MODEL_CONFIG_FOR_CONVERSION = True
+    # FP8 checkpoints (ERNIE-5.5-Flash-Base): the import dequantizes every ``<name>`` with its ``<name>_scale_inv``
+    # block scales (ernie55_mappings.dequantize_ernie55_fp8), and export writes the dequantized weights only.
+    DEQUANTIZED_SOURCE_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = ("_scale_inv",)
 
     @classmethod
     def hf_to_megatron_activation(cls, hidden_act: str):

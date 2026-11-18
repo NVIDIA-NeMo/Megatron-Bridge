@@ -299,6 +299,28 @@ class TestSettings:
         assert cfg.model.transformer.ernie_reference_rmsnorm is flipped
         assert cfg.model.ernie_reference_rmsnorm is flipped
 
+    @pytest.mark.parametrize(
+        ("field", "default", "override", "value"),
+        [
+            ("ernie_fused_mhc", False, "true", True),
+            ("ernie_graph_d_layers", False, "true", True),
+            ("ernie_graph_mtp_layers", False, "true", True),
+            ("ernie_muon_ns_batch_size", 1, "32", 32),
+            ("ernie_cp_key_gather_inverse_grad", False, "true", True),
+            ("ernie_vha_batched_mix", False, "true", True),
+            ("ernie_fused_situ_prob", False, "true", True),
+            ("ernie_router_force_balance", False, "true", True),
+        ],
+    )
+    def test_opt_in_performance_options_from_the_command_line(self, field, default, override, value):
+        """The opt-in performance and benchmark options stay off in the recipe and reach the model when set."""
+        from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+        assert getattr(getattr(recipes, RECIPE)().model, field) == default
+        cfg = process_config_with_overrides(getattr(recipes, RECIPE)(), cli_overrides=[f"model.{field}={override}"])
+        assert getattr(cfg.model.transformer, field) == value
+        assert getattr(cfg.model, field) == value
+
     def test_per_row_loss_is_selected_by_the_step(self):
         cfg = getattr(recipes, RECIPE)()
         loss_function = ernie55_loss_function(

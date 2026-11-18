@@ -72,6 +72,7 @@ BASE = dict(
 ERNIE_FIELDS = {
     "ernie_vha_rank": None,
     "ernie_vha_bf16_mix": True,
+    "ernie_vha_batched_mix": False,
     "ernie_output_gate_fp32": False,
     "ernie_native_sink_grad": True,
     "ernie_d_num_attention_heads": None,
@@ -83,6 +84,13 @@ ERNIE_FIELDS = {
     "ernie_d_rotary_base": None,
     "ernie_per_row_loss": False,
     "ernie_fused_ops": True,
+    "ernie_fused_situ_prob": False,
+    "ernie_fused_mhc": False,
+    "ernie_muon_ns_batch_size": 1,
+    "ernie_cp_key_gather_inverse_grad": False,
+    "ernie_graph_d_layers": False,
+    "ernie_graph_mtp_layers": False,
+    "ernie_router_force_balance": False,
 }
 
 
@@ -129,20 +137,56 @@ class TestErnie55TransformerConfig:
             _config(ernie_vha_rank=None)
 
     @pytest.mark.parametrize("value", ["false", 0, None])
-    def test_finalize_rejects_a_fused_ops_flag_that_is_not_a_bool(self, value):
-        with pytest.raises(ValueError, match="ernie_fused_ops must be a bool"):
-            _config(ernie_fused_ops=value)
+    @pytest.mark.parametrize("flag", ["ernie_fused_ops", "ernie_fused_situ_prob", "ernie_fused_mhc"])
+    def test_finalize_rejects_a_fused_flag_that_is_not_a_bool(self, flag, value):
+        with pytest.raises(ValueError, match=f"{flag} must be a bool"):
+            _config(**{flag: value})
+
+    @pytest.mark.parametrize("value", [0, -2, True, 2.0, "4", None])
+    def test_finalize_rejects_a_muon_batch_size_that_is_not_a_positive_int(self, value):
+        with pytest.raises(ValueError, match="ernie_muon_ns_batch_size must be an int of at least 1"):
+            _config(ernie_muon_ns_batch_size=value)
+
+    def test_finalize_accepts_a_muon_batch_size(self):
+        assert _config(ernie_muon_ns_batch_size=32).ernie_muon_ns_batch_size == 32
+
+    @pytest.mark.parametrize("value", ["true", 1, None])
+    def test_finalize_rejects_a_cp_key_gather_flag_that_is_not_a_bool(self, value):
+        with pytest.raises(ValueError, match="ernie_cp_key_gather_inverse_grad must be a bool"):
+            _config(ernie_cp_key_gather_inverse_grad=value)
+
+    @pytest.mark.parametrize("value", ["true", 1, None])
+    def test_finalize_rejects_a_batched_vha_flag_that_is_not_a_bool(self, value):
+        with pytest.raises(ValueError, match="ernie_vha_batched_mix must be a bool"):
+            _config(ernie_vha_batched_mix=value)
+
+    def test_batched_vha_mix_needs_the_bf16_contract(self):
+        with pytest.raises(ValueError, match="needs ernie_vha_bf16_mix=True"):
+            _config(ernie_vha_batched_mix=True, ernie_vha_bf16_mix=False)
+        assert _config(ernie_vha_batched_mix=True).ernie_vha_batched_mix is True
 
     def test_ernie_fields_survive_per_layer_copies(self):
         config = _config(
-            ernie_vha_rank=16, ernie_d_rotary_base=8e6, ernie_output_gate_fp32=True, ernie_fused_ops=False
+            ernie_vha_rank=16,
+            ernie_d_rotary_base=8e6,
+            ernie_output_gate_fp32=True,
+            ernie_fused_ops=False,
+            ernie_fused_mhc=True,
+            ernie_cp_key_gather_inverse_grad=True,
+            ernie_vha_batched_mix=True,
         )
         layer_config = DSALayerConfig.from_config(config)
         assert type(layer_config) is DSALayerConfig
         assert (layer_config.ernie_vha_rank, layer_config.ernie_d_rotary_base) == (16, 8e6)
         assert layer_config.ernie_output_gate_fp32 is True
+        # The D and H cores read the VHA switches from the config they are built with.
+        assert layer_config.ernie_vha_batched_mix is True
         # The RoPE dispatcher reads the flag from the per-layer config it is handed.
         assert layer_config.ernie_fused_ops is False
+        # The hyper-connection modules read ernie_fused_mhc from the config they are built with.
+        assert layer_config.ernie_fused_mhc is True
+        # The D-layer core reads the key-gather flag from its per-layer config.
+        assert layer_config.ernie_cp_key_gather_inverse_grad is True
         validate_ernie55_config(layer_config)
 
 
@@ -217,6 +261,16 @@ class TestDLayerConfig:
         assert vars(ernie55_d_layer_config(d)) == vars(d)
 
 
+# Transformer Engine graphs of the H layers, with BASE turned into an mHC H + D stack (only its D layer is validated
+# here; a D-only stack has nothing to graph).
+_H_LAYER_GRAPHS = dict(
+    experimental_attention_variant="dsv4_hybrid",
+    csa_compress_ratios=[128, 0],
+    enable_mhc_connections=True,
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_modules=["attn"],
+)
+
 GUARD_CASES = [
     ({"multi_latent_attention": False}, "multi_latent_attention"),
     ({"tensor_model_parallel_size": 2}, "tensor_model_parallel_size"),
@@ -231,7 +285,13 @@ GUARD_CASES = [
     ({"use_kitchen_attention": True}, "Kitchen"),
     ({"delay_wgrad_compute": True}, "delay_wgrad_compute"),
     ({"cuda_graph_impl": "local"}, "CUDA graphs"),
+    ({"cuda_graph_impl": "full_iteration"}, "CUDA graphs"),
     ({"cuda_graph_impl": "transformer_engine"}, "CUDA graphs"),
+    (
+        {"cuda_graph_impl": "transformer_engine", "cuda_graph_modules": ["attn"]},
+        "CUDA graphs need experimental_attention_variant='dsv4_hybrid'",
+    ),
+    (_H_LAYER_GRAPHS, "CUDA graphs need use_te_rng_tracker"),
     ({"enable_cuda_graph": True}, "CUDA graphs"),
     ({"recompute_granularity": "selective", "recompute_modules": ["core_attn"]}, "core_attn"),
     ({"recompute_granularity": "selective", "recompute_modules": ["mla_up_proj"]}, "mla_up_proj"),
@@ -288,6 +348,13 @@ class TestValidation:
             {"attention_latent_norm_epsilon": BASE["layernorm_epsilon"]},
             {"dsa_indexer_k_norm_epsilon": BASE["layernorm_epsilon"]},
             {"cuda_graph_impl": "none"},
+            # Transformer Engine graphs of the H attention layers; D layers stay eager.
+            {
+                **_H_LAYER_GRAPHS,
+                "use_te_rng_tracker": True,
+                "max_seqlen_per_dp_cp_rank": 64,
+                "thd_max_packed_sequences": 1,
+            },
             {"ernie_d_q_lora_rank": 24},
             {"params_dtype": torch.bfloat16, "bf16": True},
         ],

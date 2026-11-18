@@ -18,13 +18,20 @@
 * H layer: Megatron-Core's DSv4 hybrid attention at compress ratio 128 with the ERNIE output gate,
   VHA head mix, plain RoPE or YaRN and sink seeding (``hca_attention``).
 * MoE layer: Megatron-Core's ``MoELayer`` with the split-feature router and fp32 latent projections
-  (``moe``).
+  (``moe``), and an opt-in diagnostic of the tokens each rank's experts receive (``expert_load``). Behind
+  ``ernie_fused_situ_prob`` (off by default), the routed experts run SiTU-GLU and the routing-probability
+  multiply as one Triton kernel per direction (``fused_situ_prob``). Behind ``ernie_router_force_balance`` (off by
+  default, benchmark only), the routers select uniformly random experts (``moe``).
 * Context parallelism: D layers run zigzag inside the contiguous DSv4 stack
   (``context_parallel``).
 * Hyper-connections with fp32 decoder streams: the eager fp32 mapping and mixing
   (``hyper_connection``), downcasting pre-norms (``norm``) and the fp32 decoder stack
   (``hybrid_stack``). ``norm`` also holds the reference implementation's RMSNorm arithmetic,
-  behind ``ernie_reference_rmsnorm``.
+  behind ``ernie_reference_rmsnorm``. Behind ``ernie_fused_mhc`` (off by default), the hyper-connections run
+  fused fp32 Triton kernels instead (``fused_mhc``).
+* Transformer Engine CUDA graphs of the H attention layers with fp32 streams, and opt-in of the D layers with the
+  host plan of one fixed composition: their static inputs and replay checks, and the capture helper that graphs only
+  them (``cuda_graph``).
 * Multimax output head with its own gradient-norm group (``output_layer``).
 * The reference implementation's Triton kernels for SiTU-GLU, multimax and the context-parallel
   local RoPE (``fused_ops``), dispatched behind ``ernie_fused_ops`` (``fused_dispatch``).
@@ -33,10 +40,20 @@
 * The model, which applies all of the above after Megatron-Core builds it (``model``).
 
 FlashMLA and the cuDNN DSA kernels are imported lazily by Megatron-Core, and Triton by
-``fused_ops`` on its first kernel launch, so importing this package needs none of them.
+``fused_ops``, ``fused_situ_prob`` and ``fused_mhc`` on their first kernel launch, so importing this package needs
+none of them.
 """
 
 from megatron.bridge.models.ernie.modeling_ernie55.context_parallel import validate_ernie55_context_parallel_config
+from megatron.bridge.models.ernie.modeling_ernie55.cuda_graph import (
+    Ernie55DHyperConnectionHybridLayer,
+    Ernie55HCAHyperConnectionHybridLayer,
+    Ernie55MTPDHyperConnectionHybridLayer,
+    Ernie55TECudaGraphHelper,
+    use_ernie55_attention_cuda_graphs,
+    use_ernie55_d_layer_cuda_graphs,
+    validate_ernie55_cuda_graph_config,
+)
 from megatron.bridge.models.ernie.modeling_ernie55.fused_dispatch import install_ernie55_fused_ops
 from megatron.bridge.models.ernie.modeling_ernie55.hca_attention import (
     ERNIE55_ATTN_SINK_INIT_STD,
@@ -71,9 +88,11 @@ from megatron.bridge.models.ernie.modeling_ernie55.latent_mqa_core import (
 )
 from megatron.bridge.models.ernie.modeling_ernie55.model import Ernie55HybridModel
 from megatron.bridge.models.ernie.modeling_ernie55.moe import (
+    Ernie55GroupedMLP,
     Ernie55LatentProjection,
     Ernie55MoELayer,
     Ernie55SplitFeatureRouter,
+    use_ernie55_fused_situ_prob,
     validate_ernie55_moe_config,
 )
 from megatron.bridge.models.ernie.modeling_ernie55.mtp import (
@@ -82,7 +101,12 @@ from megatron.bridge.models.ernie.modeling_ernie55.mtp import (
     validate_ernie55_mtp_sharing,
 )
 from megatron.bridge.models.ernie.modeling_ernie55.mtp_loss import PER_ROW_MTP_LOSS_SUPPORTED, ernie55_process_mtp_loss
-from megatron.bridge.models.ernie.modeling_ernie55.muon import ernie55_muon_split_sizes, tag_ernie55_muon_params
+from megatron.bridge.models.ernie.modeling_ernie55.muon import (
+    Ernie55BatchedMuon,
+    ernie55_muon_split_sizes,
+    install_ernie55_batched_muon,
+    tag_ernie55_muon_params,
+)
 from megatron.bridge.models.ernie.modeling_ernie55.norm import (
     Ernie55RMSNorm,
     Ernie55RMSNormSelector,
@@ -112,7 +136,11 @@ __all__ = [
     "MULTIMAX_PARAMETER_NAMES",
     "PER_ROW_MTP_LOSS_SUPPORTED",
     "REFERENCE_FALLBACK_MAX_TOKENS",
+    "Ernie55BatchedMuon",
+    "Ernie55DHyperConnectionHybridLayer",
+    "Ernie55GroupedMLP",
     "Ernie55HCACoreAttention",
+    "Ernie55HCAHyperConnectionHybridLayer",
     "Ernie55HCASelfAttention",
     "Ernie55HCASelfAttentionSubmodules",
     "Ernie55HybridModel",
@@ -122,10 +150,12 @@ __all__ = [
     "Ernie55LatentMQACoreSubmodules",
     "Ernie55LatentMQASelfAttention",
     "Ernie55LatentProjection",
+    "Ernie55MTPDHyperConnectionHybridLayer",
     "Ernie55MoELayer",
     "Ernie55RMSNorm",
     "Ernie55RMSNormSelector",
     "Ernie55SplitFeatureRouter",
+    "Ernie55TECudaGraphHelper",
     "check_ernie55_attention_layers",
     "check_ernie55_mtp_aliases",
     "downcasting_norm",
@@ -137,15 +167,20 @@ __all__ = [
     "ernie55_rmsnorm",
     "ernie55_rmsnorm_spec",
     "indexer_loss_layer_number",
+    "install_ernie55_batched_muon",
     "install_ernie55_fused_ops",
     "install_ernie55_multimax",
     "is_downcasting_norm",
     "rotary_embedding_references",
     "share_mtp_body_with_last_layer",
     "tag_ernie55_muon_params",
+    "use_ernie55_attention_cuda_graphs",
+    "use_ernie55_d_layer_cuda_graphs",
+    "use_ernie55_fused_situ_prob",
     "use_ernie55_hyper_connections",
     "validate_ernie55_config",
     "validate_ernie55_context_parallel_config",
+    "validate_ernie55_cuda_graph_config",
     "validate_ernie55_hca_config",
     "validate_ernie55_mhc_config",
     "validate_ernie55_moe_config",

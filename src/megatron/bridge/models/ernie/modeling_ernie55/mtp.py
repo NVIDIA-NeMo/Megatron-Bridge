@@ -147,8 +147,12 @@ def share_mtp_body_with_last_layer(model: torch.nn.Module) -> dict[str, str]:
                 f"MTP depth {depth} layers {body_symbols!r} differ from the decoder's last layers {decoder_symbols!r}."
             )
         for offset, (body_layer, source) in enumerate(zip(body_layers, decoder_layers[-count:])):
-            source_params = dict(source.named_parameters())
-            target_params = dict(body_layer.named_parameters())
+            # Every name, also a second name of the same Parameter: Megatron-Core's MoK backend registers the routed
+            # experts' weights again as megakernel_experts.routed_fc{1,2}_weight<i> and computes with those. With
+            # duplicates removed, the MTP body's second names would keep its own weights, which MoK would then use
+            # and the optimizer train as separate parameters.
+            source_params = dict(source.named_parameters(remove_duplicate=False))
+            target_params = dict(body_layer.named_parameters(remove_duplicate=False))
             if source_params.keys() != target_params.keys():
                 missing = sorted(source_params.keys() - target_params.keys())
                 extra = sorted(target_params.keys() - source_params.keys())

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
 import zlib
 from pathlib import Path
@@ -64,6 +65,7 @@ from megatron.bridge.models.ernie.ernie55_mappings import (  # noqa: E402
     Ernie55HFLayout,
     Ernie55WeightConversionMixin,
     check_ernie55_checkpoint_keys,
+    dequantize_ernie55_fp8,
     ernie55_hf_param_dtypes,
     ernie55_mapping_registry,
     ernie55_param_mappings,
@@ -1222,6 +1224,228 @@ class TestImportChecks:
                 assert torch.equal(exported[name], source.to(_BF16).float()), name
                 rounded += 1
         assert rounded > 0
+
+
+# ---------------------------------------------------------------------------------------------
+# FP8 block-scaled checkpoints (the released ERNIE-5.5-Flash-Base)
+# ---------------------------------------------------------------------------------------------
+
+# Tensors ERNIE-5.5-Flash-Base stores as float8_e4m3fn with ``<name>_scale_inv`` (its safetensors headers):
+# every attention, MLP, expert, latent-MoE and MTP projection. Embedding, head, router, compressor, the
+# indexer's wk/weights_proj and VHA stay 16/32-bit.
+_FP8_NAME = re.compile(
+    r"\.(linear_q_down_proj\.weight|linear_q_up_proj\.weight|linear_kv_proj\.weight|linear_o_group_proj"
+    r"|q_a_proj\.weight|q_b_proj\.weight|kv_a_proj_with_mqa\.weight|kv_b_proj\.weight|self_attn\.o_proj\.weight"
+    r"|self_attn\.gate_proj\.weight|indexer\.wq_b\.weight|mlp\.(gate|up|down)_proj\.weight|w[123]\.weight"
+    r"|fc[12]_latent_proj\.weight|[eh]_proj\.weight)$"
+)
+_E4M3_MAX = 448.0
+
+
+def _blocks(shape: tuple[int, int], block: tuple[int, int]):
+    """Every (row slice, column slice, block index) of a matrix in ``block``-sized (edge: partial) blocks."""
+    for i, r0 in enumerate(range(0, shape[0], block[0])):
+        for j, c0 in enumerate(range(0, shape[1], block[1])):
+            yield slice(r0, r0 + block[0]), slice(c0, c0 + block[1]), (i, j)
+
+
+def _quantize_fp8(weight: torch.Tensor, block: tuple[int, int], *, ue8m0: bool = True):
+    """Block-quantize ``weight`` to E4M3 the way the released checkpoint is stored (power-of-two scales)."""
+    w = weight.double()
+    grid = (-(-w.shape[0] // block[0]), -(-w.shape[1] // block[1]))
+    scale = torch.empty(grid, dtype=torch.float32)
+    quantized = torch.empty(w.shape, dtype=torch.float8_e4m3fn)
+    for rows, cols, index in _blocks(tuple(w.shape), block):
+        amax = w[rows, cols].abs().max().clamp(min=1e-30) / _E4M3_MAX
+        value = torch.exp2(torch.ceil(torch.log2(amax))) if ue8m0 else amax
+        scale[index] = value.float()
+        scaled = (w[rows, cols] / scale[index].double()).clamp(-_E4M3_MAX, _E4M3_MAX)
+        quantized[rows, cols] = scaled.to(torch.float8_e4m3fn)
+    return quantized, scale
+
+
+def _dequantize_reference(quantized: torch.Tensor, scale: torch.Tensor, block: tuple[int, int], dtype) -> torch.Tensor:
+    """The definition, one block at a time: ``weight[block] * scale_inv[block index]``."""
+    out = torch.empty(quantized.shape, dtype=torch.float32)
+    for rows, cols, index in _blocks(tuple(quantized.shape), block):
+        out[rows, cols] = quantized[rows, cols].float() * scale[index]
+    return out.to(dtype)
+
+
+def _fp8_checkpoint(config: dict, tensors: dict[str, torch.Tensor], block: tuple[int, int]):
+    """The FP8 checkpoint of ``tensors`` and the 16-bit checkpoint it stands for (its exact dequantization)."""
+    fp8, dequantized = {}, {}
+    for name, tensor in tensors.items():
+        if not _FP8_NAME.search(name):
+            fp8[name] = dequantized[name] = tensor
+            continue
+        assert tensor.ndim == 2, name
+        quantized, scale = _quantize_fp8(tensor, block)
+        fp8[name], fp8[name + "_scale_inv"] = quantized, scale
+        dequantized[name] = _dequantize_reference(quantized, scale, block, torch.bfloat16)
+    return fp8, dequantized
+
+
+class TestFP8Checkpoint:
+    @pytest.mark.parametrize("shape", [(256, 384), (300, 200), (576, 4096), (5, 7)])
+    @pytest.mark.parametrize("ue8m0", [True, False])
+    def test_dequant_matches_the_blockwise_definition(self, shape, ue8m0):
+        weight = torch.randn(shape, generator=torch.Generator().manual_seed(sum(shape)), dtype=torch.float64) * 3
+        quantized, scale = _quantize_fp8(weight, (128, 128), ue8m0=ue8m0)
+        expected = _dequantize_reference(quantized, scale, (128, 128), torch.bfloat16)
+        actual = dequantize_ernie55_fp8(quantized, scale, name="w")
+        assert actual.dtype == torch.bfloat16 and torch.equal(actual, expected)
+        # Power-of-two scales make the bf16 result exact (E4M3 has 4 significant bits).
+        if ue8m0:
+            assert torch.equal(actual.float(), _dequantize_reference(quantized, scale, (128, 128), torch.float32))
+        # The scale is applied per block: perturb one scale and only its block moves.
+        bumped = scale.clone()
+        bumped[-1, -1] *= 2
+        moved = dequantize_ernie55_fp8(quantized, bumped, name="w") != actual
+        rows, cols = (shape[0] - 1) // 128 * 128, (shape[1] - 1) // 128 * 128
+        assert not moved[:rows].any() and not moved[:, :cols].any()
+
+    def test_dequant_rejects_mismatched_scales_and_dtypes(self):
+        quantized, scale = _quantize_fp8(torch.randn(300, 200, dtype=torch.float64), (128, 128))
+        with pytest.raises(ValueError, match=r"is \(3, 2\), but a 300 x 200 weight in 128 x 64 blocks needs \(3, 4\)"):
+            dequantize_ernie55_fp8(quantized, scale, name="w", block=(128, 64))
+        with pytest.raises(ValueError, match="needs"):
+            dequantize_ernie55_fp8(quantized, scale.T, name="w")
+        with pytest.raises(TypeError, match="not torch.float8_e4m3fn"):
+            dequantize_ernie55_fp8(quantized.float(), scale, name="w")
+
+    def test_block_size_comes_from_the_quantization_config(self):
+        assert mappings._fp8_block_size({}) == (128, 128)
+        fp8 = dict(quant_method="fp8", fmt="e4m3", scale_fmt="ue8m0", weight_block_size=[128, 64])
+        assert mappings._fp8_block_size({"quantization_config": fp8}) == (128, 64)
+        with pytest.raises(ValueError, match="only block-scaled FP8 E4M3"):
+            mappings._fp8_block_size({"quantization_config": dict(quant_method="mxfp4")})
+
+    def test_key_check_accepts_block_scales_of_known_tensors_only(self):
+        scales = [f"{name}_scale_inv" for name in _PROXY_DTYPES if _FP8_NAME.search(name)]
+        assert len(scales) > 100
+        check_ernie55_checkpoint_keys(_PROXY_CONFIG, [*_PROXY_DTYPES, *scales])
+        stray = "model.layers.0.mlp.shared_experts.w1.weight_scale_inv"
+        with pytest.raises(ValueError, match=rf"1 that no mapping reads \['{re.escape(stray)}'\]"):
+            check_ernie55_checkpoint_keys(_PROXY_CONFIG, [*_PROXY_DTYPES, *scales, stray])
+
+    def test_strict_export_ignores_the_source_block_scales(self):
+        """Export writes dequantized weights only, so strict saving must not report the ``_scale_inv`` keys."""
+        from megatron.bridge.models.ernie.ernie55_bridge import Ernie55Bridge
+
+        assert Ernie55Bridge.DEQUANTIZED_SOURCE_KEY_SUFFIXES == ("_scale_inv",)
+
+    @pytest.mark.parametrize("variant", ["proxy_layout", "latent_moe"])
+    def test_fp8_checkpoint_loads_as_its_dequantization(self, pg_collection, variant):
+        """An FP8 checkpoint lands in Megatron exactly as the 16-bit checkpoint it dequantizes to.
+
+        The toy uses 16 x 8 blocks so its small matrices span several (and partial) blocks.
+        """
+        block = (16, 8)
+        hf_overrides, megatron_overrides = _VARIANTS[variant]
+        quantization = dict(quant_method="fp8", fmt="e4m3", scale_fmt="ue8m0", weight_block_size=list(block))
+        config = _toy_hf_config(**hf_overrides, quantization_config=quantization)
+        tensors = _toy_hf_tensors(config, seed=21)
+        fp8, dequantized = _fp8_checkpoint(config, tensors, block)
+        n_fp8 = sum(tensor.dtype == torch.float8_e4m3fn for tensor in fp8.values())
+        assert n_fp8 > 50 and any(scale.numel() > 1 for name, scale in fp8.items() if name.endswith("_scale_inv"))
+        models = []
+        for checkpoint in (fp8, dequantized):
+            with contextlib.nullcontext() if not megatron_overrides else _latent_moe_without_te():
+                model = _build_model(
+                    pg_collection, pattern=_PATTERN, seed=0, **_megatron_overrides(**megatron_overrides)
+                )
+            _load(model, config, checkpoint)
+            models.append(_megatron_tensors(model))
+        from_fp8, from_bf16 = models
+        assert from_fp8.keys() == from_bf16.keys()
+        differ = [name for name, tensor in from_fp8.items() if not torch.equal(tensor, from_bf16[name])]
+        assert not differ, differ[:10]
+        # And the dequantized weights are what the model holds (not a plain FP8 cast).
+        name = "model.layers.3.self_attn.kv_a_proj_with_mqa.weight"
+        assert not torch.equal(fp8[name].to(torch.bfloat16), dequantized[name])
+
+    def test_fp8_tensor_without_its_scales_is_rejected(self, pg_collection):
+        quantization = dict(quant_method="fp8", fmt="e4m3", scale_fmt="ue8m0", weight_block_size=[16, 8])
+        config = _toy_hf_config(quantization_config=quantization)
+        fp8, _ = _fp8_checkpoint(config, _toy_hf_tensors(config, seed=22), (16, 8))
+        del fp8["model.layers.1.self_attn.q_a_proj.weight_scale_inv"]
+        model = _build_model(pg_collection, pattern=_PATTERN, seed=0, **_megatron_overrides())
+        with pytest.raises(ValueError, match=r"q_a_proj\.weight is FP8, but the checkpoint has no"):
+            _load(model, config, fp8)
+
+
+_PUBLIC_HF_DIR = os.environ.get("ERNIE55_PUBLIC_HF_DIR")
+
+
+@pytest.mark.skipif(not _PUBLIC_HF_DIR, reason="set ERNIE55_PUBLIC_HF_DIR to a dir with the release's config/index")
+class TestPublicCheckpointIndex:
+    """The released ERNIE-5.5-Flash-Base index against the registry (no tensor data needed).
+
+    ``ERNIE55_PUBLIC_HF_DIR`` holds its ``config.json`` and ``model.safetensors.index.json``, and optionally
+    safetensors headers saved as ``header_*.json`` (the JSON header of a shard) for the dtype/shape checks.
+    """
+
+    @staticmethod
+    def _load():
+        root = Path(_PUBLIC_HF_DIR)
+        config = json.loads((root / "config.json").read_text())
+        keys = list(json.loads((root / "model.safetensors.index.json").read_text())["weight_map"])
+        headers = {}
+        for path in sorted(root.glob("header_*.json")):
+            headers.update({k: v for k, v in json.loads(path.read_text()).items() if k != "__metadata__"})
+        return config, keys, headers
+
+    def test_every_index_tensor_is_read_exactly_once(self):
+        config, keys, _ = self._load()
+        check_ernie55_checkpoint_keys(config, keys)
+        layout = Ernie55HFLayout.from_hf_config(config)
+        # Routed experts have two alternative Megatron layouts (grouped ``linear_fc1.weight<e>`` and sequential
+        # ``local_experts.<e>``); a model has one of them, so each layout must read the same names once.
+        readers: dict[str, int] = {}
+        sequential: dict[str, int] = {}
+        for mapping in ernie55_param_mappings(layout):
+            names = [mapping.hf_param] if isinstance(mapping.hf_param, str) else list(mapping.hf_param.values())
+            counts = sequential if ".local_experts." in mapping.megatron_param else readers
+            for name in names:
+                for hf_name in (
+                    [name.replace("*", str(e)) for e in range(layout.num_experts)] if "*" in name else [name]
+                ):
+                    counts[hf_name] = counts.get(hf_name, 0) + 1
+        assert sequential and set(sequential.values()) == {1}
+        assert set(sequential) == {name for name in readers if ".experts." in name and ".shared_experts." not in name}
+        twice = {name for name, count in readers.items() if count != 1}
+        # kv_b_proj feeds the D layer's k_b_proj and v_b_proj: two mappings read it.
+        assert all(name.endswith("kv_b_proj.weight") for name in twice), sorted(twice)[:5]
+        assert all(readers[name] == 2 for name in twice)
+        copies = mappings.ernie55_mtp_body_copy_keys(config)
+        scales = {name for name in keys if name.endswith("_scale_inv")}
+        assert {name[: -len("_scale_inv")] for name in scales} <= set(keys)
+        assert set(keys) == set(readers) | (copies & set(keys)) | scales
+
+    def test_headers_have_the_registry_dtypes_and_fp8_block_scales(self):
+        config, keys, headers = self._load()
+        if not headers:
+            pytest.skip("no header_*.json in ERNIE55_PUBLIC_HF_DIR")
+        dtypes = ernie55_hf_param_dtypes(config)
+        block = mappings._fp8_block_size(config)
+        checked = 0
+        for name, info in headers.items():
+            if name.endswith("_scale_inv"):
+                weight = headers[name[: -len("_scale_inv")]]
+                assert weight["dtype"] == "F8_E4M3" and info["dtype"] == "F32", name
+                rows, cols = weight["shape"]
+                assert info["shape"] == [-(-rows // block[0]), -(-cols // block[1])], name
+                continue
+            if name not in dtypes:  # an MTP body copy
+                continue
+            checked += 1
+            if info["dtype"] == "F8_E4M3":
+                assert name + "_scale_inv" in headers, name
+            else:
+                torch_dtype = {"BF16": torch.bfloat16, "F32": torch.float32}[info["dtype"]]
+                mappings._check_hf_dtype(name, torch.empty(0, dtype=torch_dtype), dtypes[name])
+        assert checked > 1000
 
 
 # ---------------------------------------------------------------------------------------------

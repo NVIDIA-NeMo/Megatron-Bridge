@@ -46,8 +46,11 @@ from megatron.core.transformer.experimental_attention_variant import dsa_layout
 from megatron.core.utils import get_pg_rank, get_pg_size
 from torch import Tensor
 
-from megatron.bridge.models.ernie.modeling_ernie55.context_parallel import require_cp_layout_api
-from megatron.bridge.models.ernie.modeling_ernie55.ops import record_pack_end
+from megatron.bridge.models.ernie.modeling_ernie55.context_parallel import (
+    prebuild_zigzag_cp_geometry,
+    require_cp_layout_api,
+)
+from megatron.bridge.models.ernie.modeling_ernie55.ops import record_pack_boundaries
 from megatron.bridge.training.losses import validate_local_loss
 
 
@@ -178,6 +181,7 @@ def build_ernie55_thd_cp_batch(
     max_seqlen: int | None = None,
     min_local_rows: int = 1,
     device: torch.device | str | None = None,
+    with_key_reorder_inverse: bool = False,
 ) -> Ernie55ThdBatch:
     """Pack samples into one THD micro-batch and slice this CP rank's rows, as the reference does.
 
@@ -189,7 +193,11 @@ def build_ernie55_thd_cp_batch(
     fields (Megatron-Core's fused zigzag indexer scorer needs the query and key boundaries to be the
     same tensor). At CP > 1 the partition routes and host ``cu_seqlens`` are prebuilt with
     Megatron-Core's ``prebuild_thd_cp_partition_routes``, so no layer synchronizes the device to
-    build them, and the rank keeps its rows of ``cp_partition_mode``:
+    build them, and so is the D layers' zigzag geometry
+    (:func:`~megatron.bridge.models.ernie.modeling_ernie55.context_parallel.prebuild_zigzag_cp_geometry`), so no
+    layer copies it to the device in its forward. At CP = 1 the host boundaries are noted on the metadata
+    (:func:`~megatron.bridge.models.ernie.modeling_ernie55.ops.record_pack_boundaries`). The rank keeps its rows of
+    ``cp_partition_mode``:
 
     * ``"contiguous"`` (the DSv4 hybrid stack): rows ``[r * T / CP, (r + 1) * T / CP)``;
     * ``"zigzag"`` (a D-only stack): chunks ``r`` and ``2 * CP - 1 - r`` of every sample.
@@ -215,6 +223,9 @@ def build_ernie55_thd_cp_batch(
         min_local_rows: Fewest rows each CP rank must hold under the contiguous partition (see
             :func:`ernie55_cp_min_local_rows`); ignored at CP = 1 and for ``"zigzag"``.
         device: Device of the returned tensors; defaults to the samples' device.
+        with_key_reorder_inverse: At CP > 1, also prebuild the zigzag geometry's inverse key permutation, which
+            the D layers' key-gather backward reads with ``ernie_cp_key_gather_inverse_grad``; ignored at
+            CP = 1.
 
     Returns:
         This rank's :class:`Ernie55ThdBatch`.
@@ -267,7 +278,8 @@ def build_ernie55_thd_cp_batch(
         raise ValueError(
             f"max_seqlen must be an int of at least the longest padded sample ({longest}), got {max_seqlen!r}."
         )
-    cu_seqlens = torch.tensor([0, *torch.tensor(lengths).cumsum(0).tolist()], dtype=torch.int32, device=device)
+    boundaries = [0, *torch.tensor(lengths).cumsum(0).tolist()]
+    cu_seqlens = torch.tensor(boundaries, dtype=torch.int32, device=device)
     metadata = dict(
         qkv_format="thd",
         cu_seqlens_q=cu_seqlens,
@@ -286,17 +298,26 @@ def build_ernie55_thd_cp_batch(
         packed_seq_params = PackedSeqParams(**metadata, cp_partition_mode=cp_partition_mode)
         api.prebuild_thd_cp_partition_routes(packed_seq_params, cp_group)
         local_rows = tokens.numel() // cp_size
+        # The D layers' zigzag geometry: built here, so no D layer copies it to the device in its forward.
+        prebuild_zigzag_cp_geometry(
+            packed_seq_params,
+            cp_group=cp_group,
+            local_rows=local_rows,
+            device=device,
+            with_inverse=with_key_reorder_inverse,
+        )
         if cp_partition_mode == "contiguous":
             rows = torch.arange(cp_rank * local_rows, (cp_rank + 1) * local_rows, device=device)
         else:
             rows = dsa_layout.build_packed_allgather_cp_local_positions_from_host(
-                [0, *torch.tensor(lengths).cumsum(0).tolist()], cp_size, cp_rank, torch.device(device)
+                boundaries, cp_size, cp_rank, torch.device(device)
             )
         tokens, labels, positions = (tensor.index_select(0, rows) for tensor in (tokens, labels, positions))
     else:
         packed_seq_params = PackedSeqParams(**metadata)
-        # The pack's last boundary on the host: the D layers check it at CP = 1 without reading the device.
-        record_pack_end(packed_seq_params, sum(lengths))
+        # The pack's boundaries on the host: the D layers check its end at CP = 1 without reading the device, and a
+        # D-layer CUDA graph compares them with the boundaries it was captured for.
+        record_pack_boundaries(packed_seq_params, boundaries)
 
     labels = labels.unsqueeze(0)
     return Ernie55ThdBatch(

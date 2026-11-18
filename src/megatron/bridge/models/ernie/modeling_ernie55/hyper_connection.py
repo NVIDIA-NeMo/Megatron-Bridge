@@ -51,6 +51,19 @@ its mixing operations with ``torch.compile``. Two consequences make that unsuita
 The fp32 GEMMs (the projection and the ``H_res`` mix) follow PyTorch's TF32 setting, as the
 reference implementation's do, so parity runs must pin it.
 
+Fused kernels (``ernie_fused_mhc``, default ``False``). With the flag on, CUDA tensors that fit
+(fp32 or bf16 streams, fp32 mapping parameters, a power-of-two stream count up to 8, no layer
+output bias) run the same fp32 contract through the Triton kernels of
+:mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_mhc`: the projection is still a
+cuBLAS GEMM (on the transposed view of ``W``, without the contiguous copy), and one kernel each
+computes the mapping epilogue (norm, sigmoids, Sinkhorn), the aggregate and the residual update,
+plus one backward kernel each. They sum in their own order, so they match the eager path to fp32
+rounding (mappings about 1e-6 relative; bf16 stream outputs one bf16 ulp apart on a small fraction
+of elements, more only where the update nearly cancels), not bitwise. They are deterministic and
+independent of the grad mode, so a full-recompute replay still reproduces the first pass bitwise.
+Everything else, CPU tensors included, runs the eager operations above. Megatron-Core's own fused
+mHC (``use_fused_mhc``) stays rejected: it rounds the mappings to the stream dtype.
+
 Only the arithmetic changes, so parameter names, shapes, dtypes and initialization stay
 Megatron-Core's. :func:`use_ernie55_hyper_connections` switches existing Megatron-Core modules to
 :class:`Ernie55HyperConnectionModule` in place; the ERNIE decoder stack and model call it.
@@ -58,6 +71,7 @@ Megatron-Core's. :func:`use_ernie55_hyper_connections` switches existing Megatro
 
 from __future__ import annotations
 
+import logging
 import math
 
 import torch
@@ -65,11 +79,15 @@ from megatron.core.transformer.hyper_connection import HyperConnectionModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from torch import Tensor
 
+from megatron.bridge.models.ernie.modeling_ernie55 import fused_dispatch, fused_mhc
+
 
 __all__ = [
     "Ernie55HyperConnectionModule",
+    "ernie55_fused_mhc_enabled",
     "ernie55_h_aggregate",
     "ernie55_h_post_bda",
+    "ernie55_h_post_bda_dispatch",
     "ernie55_sinkhorn",
     "use_ernie55_hyper_connections",
     "validate_ernie55_mhc_config",
@@ -139,6 +157,71 @@ def ernie55_h_post_bda(
     return output.to(original_residual.dtype)
 
 
+_FUSED_MHC_SITE = "hyper_connection"
+
+
+def ernie55_fused_mhc_enabled(config: object) -> bool:
+    """Whether ``config`` asks for the fused fp32 mHC kernels (``ernie_fused_mhc``; configs without it do not).
+
+    Args:
+        config: A transformer config, or a per-layer copy of one.
+
+    Returns:
+        The flag, ``False`` for configs without it.
+    """
+    return bool(getattr(config, "ernie_fused_mhc", False))
+
+
+def _fused_mhc_applies(op: str, streams: Tensor, n: int, **operands: object) -> bool:
+    """Whether the fused kernel ``op`` takes these operands; count the launch if so.
+
+    A CUDA call the kernels cannot take logs one warning per process, op and reason on every rank that falls
+    back (not only global rank 0: with pipeline parallelism the MTP hyper-connections live on the last stage), so
+    a silent fallback to the eager path shows up in the log. CPU calls fall back quietly.
+    """
+    reason = fused_mhc.fused_mhc_unsupported_reason(streams, n, **operands)
+    if reason is None:
+        fused_dispatch.record_fused_launch(op, _FUSED_MHC_SITE, streams)
+        return True
+    if streams.is_cuda:
+        fused_dispatch.log_once(
+            f"{op}_fallback:{reason}",
+            "ERNIE 5.5 fused mHC (rank %d): ernie_fused_mhc=True, but %s runs eagerly: %s.",
+            torch.distributed.get_rank() if torch.distributed.is_initialized() else 0,
+            op,
+            reason,
+            level=logging.WARNING,
+            all_ranks=True,
+        )
+    return False
+
+
+def ernie55_h_post_bda_dispatch(
+    h_res: Tensor, original_residual: Tensor, h_post: Tensor, x: Tensor, bias: Tensor | None
+) -> Tensor:
+    """:func:`ernie55_h_post_bda` through the fused kernel when it applies (the ``ernie_fused_mhc`` slot).
+
+    Same signature and result contract as :func:`ernie55_h_post_bda`, the operation slot Megatron-Core's forward
+    calls; the output is a contiguous ``[s, b, n, C]`` tensor in ``original_residual.dtype``.
+
+    Args:
+        h_res: ``[s, b, n, n]`` fp32 residual mixing matrices.
+        original_residual: ``[s, b, n, C]`` streams before the update.
+        h_post: ``[s, b, n]`` fp32 expansion weights.
+        x: ``[s, b, C]`` layer output.
+        bias: Optional ``[C]`` layer output bias (the fused kernel takes only ``None``).
+
+    Returns:
+        ``[s, b, n, C]`` in ``original_residual.dtype``.
+    """
+    n = original_residual.shape[-2]
+    if _fused_mhc_applies(
+        "mhc_post_bda", original_residual, n, fp32_operands=(h_res, h_post), layer_output=x, bias=bias
+    ):
+        return fused_mhc.fused_mhc_post_bda(h_res, original_residual, h_post, x)
+    return ernie55_h_post_bda(h_res, original_residual, h_post, x, bias)
+
+
 class Ernie55HyperConnectionModule(HyperConnectionModule):
     """Megatron-Core's ``HyperConnectionModule`` with the ERNIE 5.5 eager fp32 mapping and mixing.
 
@@ -149,8 +232,10 @@ class Ernie55HyperConnectionModule(HyperConnectionModule):
     residual update (``_h_post_bda_op``, which Megatron-Core's forward calls) mixes in fp32 and
     rounds once to the stream dtype. Both ways of getting an instance point Megatron-Core's
     operation slots at the ERNIE operations; without that, Megatron-Core's compiled residual update
-    would run. The fused-kernel path and the dropout path (``apply_h_res``) are not used:
+    would run. Megatron-Core's fused-kernel path and the dropout path (``apply_h_res``) are not used:
     :func:`validate_ernie55_mhc_config` requires ``use_fused_mhc=False`` and ``hidden_dropout=0``.
+    With ``ernie_fused_mhc`` the three operations run the fused fp32 kernels of
+    :mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_mhc` where they apply (see the module docstring).
     """
 
     def __init__(self, config: TransformerConfig, layer_number: int) -> None:
@@ -158,11 +243,20 @@ class Ernie55HyperConnectionModule(HyperConnectionModule):
         self._use_ernie55_operations()
 
     def _use_ernie55_operations(self) -> None:
-        """Point the operation slots Megatron-Core's forward calls at the ERNIE 5.5 operations."""
+        """Point the operation slots Megatron-Core's forward calls at the ERNIE 5.5 operations.
+
+        Reads ``ernie_fused_mhc`` from ``self.config``, so a module converted in place by
+        :func:`use_ernie55_hyper_connections` gets the same operations as one constructed directly.
+        """
+        self._ernie_fused_mhc = ernie55_fused_mhc_enabled(self.config)
         self._sinkhorn_op = ernie55_sinkhorn
         self._h_aggregate_op = ernie55_h_aggregate
-        self._h_post_bda_op = ernie55_h_post_bda
+        self._h_post_bda_op = ernie55_h_post_bda_dispatch if self._ernie_fused_mhc else ernie55_h_post_bda
         self._proj_rms_compute_h_op = None
+
+    def _fused_mhc_parameters(self) -> tuple[Tensor, ...]:
+        """The mapping parameters the fused mapping kernel reads, in its argument order."""
+        return (self.mapping_proj.weight, self.alpha_pre, self.alpha_post, self.alpha_res, self.bias)
 
     def compute_mappings(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         """Compute ``h_pre`` and ``h_post`` (``[s, b, n]``) and ``H_res`` (``[s, b, n, n]``), all fp32.
@@ -175,6 +269,19 @@ class Ernie55HyperConnectionModule(HyperConnectionModule):
         """
         s, b, width = x.shape
         n = self.n
+        if getattr(self, "_ernie_fused_mhc", False) and _fused_mhc_applies(
+            "mhc_mappings", x, n, fp32_operands=self._fused_mhc_parameters()
+        ):
+            h_pre, h_post, h_res = fused_mhc.fused_mhc_mappings(
+                x.reshape(s * b, width),
+                *self._fused_mhc_parameters(),
+                n,
+                self.norm_eps,
+                self.compute_h_eps,
+                self.sinkhorn_iterations,
+                self.sinkhorn_eps,
+            )
+            return h_pre.view(s, b, n), h_post.view(s, b, n), h_res.view(s, b, n, n)
         x_fp32 = x.float()
         with torch.autocast(device_type=x.device.type, enabled=False):
             # The projection multiplies by a contiguous copy of W^T: the operand layout of the
@@ -210,7 +317,12 @@ class Ernie55HyperConnectionModule(HyperConnectionModule):
                 "attention CUDA graphs); its layer input is fp32 by contract."
             )
         s, b, _ = x.shape
-        return ernie55_h_aggregate(x.view(s, b, self.n, self.hidden_size), h_pre)
+        streams = x.view(s, b, self.n, self.hidden_size)
+        if getattr(self, "_ernie_fused_mhc", False) and _fused_mhc_applies(
+            "mhc_aggregate", x, self.n, fp32_operands=(h_pre,)
+        ):
+            return fused_mhc.fused_mhc_aggregate(streams, h_pre)
+        return ernie55_h_aggregate(streams, h_pre)
 
 
 def use_ernie55_hyper_connections(root: torch.nn.Module) -> int:
@@ -248,7 +360,8 @@ def validate_ernie55_mhc_config(config: object) -> None:
 
     Configs without hyper-connections pass. With them:
 
-    * ``use_fused_mhc=False``: the ERNIE operations replace the unfused ones only.
+    * ``use_fused_mhc=False``: the ERNIE operations replace the unfused ones only. ERNIE 5.5's own fused
+      kernels are ``ernie_fused_mhc``.
     * ``hidden_dropout=0``: with dropout Megatron-Core mixes the residual through ``apply_h_res``,
       outside the ERNIE fp32 update.
     * ``fp32_residual_connection=False``: the decoder carries fp32 streams by its own entry cast.
@@ -270,7 +383,11 @@ def validate_ernie55_mhc_config(config: object) -> None:
         if not condition:
             raise ValueError(f"ERNIE 5.5 hyper-connections: {message}")
 
-    require(not config.use_fused_mhc, "use_fused_mhc must be False (ERNIE 5.5 mixes eagerly in fp32).")
+    require(
+        not config.use_fused_mhc,
+        "use_fused_mhc must be False (Megatron-Core's fused mHC rounds the mappings to the stream dtype; "
+        "ernie_fused_mhc=True runs ERNIE 5.5's fused fp32 kernels instead).",
+    )
     require(not config.hidden_dropout, "hidden_dropout must be 0.")
     require(not config.fp32_residual_connection, "fp32_residual_connection must be False.")
     require(

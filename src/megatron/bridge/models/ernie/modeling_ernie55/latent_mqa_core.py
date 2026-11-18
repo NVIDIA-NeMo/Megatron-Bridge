@@ -51,7 +51,9 @@ the indexer's RoPE already applied at the rows' true document positions. The cor
 * takes the global packed position of every local row from the zigzag geometry (built on the host
   from the micro-batch's prebuilt ``cu_seqlens``, cached per micro-batch);
 * all-gathers the 576-wide latent key and the indexer key over the CP group and puts them in
-  global packed order (the backward reduce-scatters the key gradients to their owners);
+  global packed order (the backward reduce-scatters the key gradients to their owners; with
+  ``ernie_cp_key_gather_inverse_grad`` it first puts them back in rank order with one gather by the
+  inverse permutation instead of ``index_select``'s zero fill and ``index_add_``);
 * evaluates the document bounds ``[d(t), t - W]``, the window and the placeholder candidate (see
   :func:`~megatron.bridge.models.ernie.modeling_ernie55.ops.ernie55_kernel_selection_ends`) in global
   coordinates, so the indices address the gathered keys;
@@ -414,7 +416,9 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
     With Megatron-Core dev, a deterministic backward is requested through Megatron-Core's
     ``_deterministic_sparse_bwd_kwargs`` (``deterministic_mode`` or
     ``torch.use_deterministic_algorithms``); it raises at the first backward when the GPU, the
-    cuDNN frontend (>= 1.28) or the head count cannot provide one.
+    cuDNN frontend (>= 1.28) or the head count cannot provide one. ``cuda_graph`` requests its
+    workspace in CUDA-graph mode, as the native path does through ``csa_sparse_attn``: Megatron-Core
+    keeps one deterministic workspace per device and rejects callers that mix the two modes.
     """
 
     @staticmethod
@@ -428,6 +432,7 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
         softmax_scale: float,
         d_v: int,
         deterministic: bool,
+        cuda_graph: bool = False,
     ) -> Tensor:
         """Run FlashMLA with the sink in the denominator; save tensors for backward."""
         pad = -topk_idxs.size(-1) % _DSA_FLASH_MLA_TOPK_ALIGNMENT
@@ -443,6 +448,7 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
         ctx.save_for_backward(q, kv, attn_sink, backward_idxs, topk_length, out, lse)
         ctx.softmax_scale = softmax_scale
         ctx.deterministic = deterministic
+        ctx.cuda_graph = cuda_graph
         return out
 
     @staticmethod
@@ -455,7 +461,9 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
         backward_kwargs = {}
         deterministic_kwargs = getattr(fused_sparse_attention, "_deterministic_sparse_bwd_kwargs", None)
         if deterministic_kwargs is not None:
-            # Returns {} unless determinism was requested here or through torch's global switch.
+            # Returns {} unless determinism was requested here or through torch's global switch. Only passed when
+            # set, so the call is unchanged without it.
+            graph_kwargs = {"cuda_graph": True} if ctx.cuda_graph else {}
             backward_kwargs = deterministic_kwargs(
                 q,
                 kv,
@@ -466,6 +474,7 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
                 topk_length,
                 ctx.softmax_scale,
                 requested=ctx.deterministic,
+                **graph_kwargs,
             )
         grad_q, grad_kv, _ = fused_sparse_attention._csa_sparse_attention_backward(
             q,
@@ -480,7 +489,7 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
             **backward_kwargs,
         )
         grad_sink = attention_sink_grad(attn_sink=attn_sink, lse=lse, out=out, d_out=grad_out).to(attn_sink.dtype)
-        return grad_q, grad_kv, grad_sink, None, None, None, None, None
+        return grad_q, grad_kv, grad_sink, None, None, None, None, None, None
 
 
 @dataclass
@@ -596,6 +605,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         self.index_topk = config.dsa_indexer_topk
         self.loss_coeff = config.dsa_indexer_loss_coeff or 0.0
         self.vha_bf16_mix = bool(getattr(config, "ernie_vha_bf16_mix", True))
+        self.vha_batched_mix = bool(getattr(config, "ernie_vha_batched_mix", False))
         self.output_gate_fp32 = bool(getattr(config, "ernie_output_gate_fp32", False))
         if softmax_scale is None:
             softmax_scale = 1.0 / math.sqrt(k_channels if k_channels is not None else config.kv_channels)
@@ -620,12 +630,26 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         # Megatron-Core's pre-scaled weights.
         self._hooks_take_score_scale = getattr(config, "dsa_kernel_backend", None) == "cudnn"
         self.native_sink_grad = bool(getattr(config, "ernie_native_sink_grad", True))
+        # At CP > 1: the key gathers' backward gathers by the inverse permutation (off: index_select's backward).
+        self.cp_key_gather_inverse_grad = bool(getattr(config, "ernie_cp_key_gather_inverse_grad", False))
         self.deterministic = bool(getattr(config, "deterministic_mode", False))
         self._csa_sparse_attn_kwargs = {}
         if self.use_fused:
             _check_fused_geometry(config)
-            if "deterministic" in inspect.signature(fused_sparse_attention.csa_sparse_attn).parameters:
+            sparse_attn_parameters = inspect.signature(fused_sparse_attention.csa_sparse_attn).parameters
+            if "deterministic" in sparse_attn_parameters:
                 self._csa_sparse_attn_kwargs["deterministic"] = self.deterministic
+            if (
+                self.deterministic
+                and "cuda_graph" in sparse_attn_parameters
+                and getattr(config, "cuda_graph_impl", "none") == "transformer_engine"
+                and getattr(config, "ernie_graph_d_layers", False)
+            ):
+                # Graphed D layers: the deterministic backward's workspace must be graph-owned, as Megatron-Core's
+                # DSv4 layers mark theirs under CUDA graphs (every MTP depth's D layer too, eager or not: Megatron-Core
+                # rejects a device mixing graph-owned and eager deterministic workspaces). The analytic sink-gradient
+                # fallback (ernie_native_sink_grad=False) requests its workspace with the same flag.
+                self._csa_sparse_attn_kwargs["cuda_graph"] = True
             if self.deterministic and not hasattr(fused_sparse_attention, "_deterministic_sparse_bwd_kwargs"):
                 _warn_once(
                     "deterministic",
@@ -767,9 +791,12 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
                 local_rows=seqlen,
                 device=query.device,
                 what="ERNIE 5.5 D-layer core attention",
+                with_inverse=self.cp_key_gather_inverse_grad,
             )
             # Every local row attends to keys anywhere before it in its document.
-            key_mqa = context_parallel.gather_cp_rows(key_mqa, geometry=geometry, cp_group=cp_group)
+            key_mqa = context_parallel.gather_cp_rows(
+                key_mqa, geometry=geometry, cp_group=cp_group, inverse_grad=self.cp_key_gather_inverse_grad
+            )
             key_heads = key_mqa.unsqueeze(2)
         positions = geometry.query_positions if geometry is not None else None
 
@@ -781,7 +808,9 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         use_indexer_loss = self.training and torch.is_grad_enabled() and self.loss_coeff > 0
         q_indexer, k_indexer, w_indexer = self.indexer.forward_before_topk(x.detach(), qr.detach(), packed_seq_params)
         if geometry is not None:
-            k_indexer = context_parallel.gather_cp_rows(k_indexer, geometry=geometry, cp_group=cp_group)
+            k_indexer = context_parallel.gather_cp_rows(
+                k_indexer, geometry=geometry, cp_group=cp_group, inverse_grad=self.cp_key_gather_inverse_grad
+            )
         topk, indexer_loss = self._select_topk(
             q_indexer,
             k_indexer,
@@ -800,7 +829,13 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
             query, key_mqa, torch.cat((topk, window), dim=-1), block_layout=geometry is None
         )
         projected = torch.einsum("sbhc,hdc->sbhd", latent_out, up_v_weight.to(latent_out.dtype))
-        projected = vha_postmix(projected, u=self.vha_postmix_u, v=self.vha_postmix_v, bf16_mix=self.vha_bf16_mix)
+        projected = vha_postmix(
+            projected,
+            u=self.vha_postmix_u,
+            v=self.vha_postmix_v,
+            bf16_mix=self.vha_bf16_mix,
+            batched_mix=self.vha_batched_mix,
+        )
         projected = projected.reshape(seqlen, batch, num_heads * self.v_head_dim)
         gate_logits, _ = self.linear_output_gate(qr)
         output = sigmoid_output_gate(projected, gate_logits=gate_logits, fp32=self.output_gate_fp32)
@@ -1266,6 +1301,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
             self.softmax_scale,
             self.kv_lora_rank,
             self.deterministic,
+            self._csa_sparse_attn_kwargs.get("cuda_graph", False),
         )
         return out.reshape(seqlen, batch, num_heads, self.kv_lora_rank)
 

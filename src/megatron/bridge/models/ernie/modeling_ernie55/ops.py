@@ -23,16 +23,21 @@ the computation Megatron-Core lacks:
   ``[max(d(t), t - W + 1), t]``. The two sets are disjoint and their union is every
   causal key of the document. Under context parallelism ``t`` and ``d(t)`` are global
   packed positions (the helpers take the local rows' ``positions``).
-* The VHA post-mix ``out'_k = sum_h (I + V U^T)[k, h] out_h`` on the head axis.
+* The VHA post-mix ``out'_k = sum_h (I + V U^T)[k, h] out_h`` on the head axis, optionally as one
+  strided-batched GEMM over the tokens with an explicit backward (``batched_mix``).
 * The sigmoid output gate ``out * sigmoid(gate_logits)``.
 * The analytic gradient of a softmax sink that only enters the denominator.
 * The FlashMLA key list of the reference implementation without its all-invalid key blocks.
+* The host values of a pack's document boundaries, noted by the batch builder, and whether the current CUDA stream
+  is capturing a graph (where reading them from the device is not allowed).
 
 All index tensors use ``-1`` for an invalid slot and int32 storage, the convention of
 the Megatron-Core sparse-attention kernels.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 
 import torch
 import torch.nn.functional as F
@@ -50,12 +55,24 @@ __all__ = [
     "ernie55_window_indices",
     "lse_with_sink",
     "mask_topk_beyond_end",
+    "noted_pack_boundaries",
     "pack_end",
     "pad_topk",
+    "record_pack_boundaries",
     "record_pack_end",
     "sigmoid_output_gate",
+    "stream_is_capturing",
     "vha_postmix",
 ]
+
+
+def stream_is_capturing() -> bool:
+    """Whether the current CUDA stream is capturing a CUDA graph; ``False`` without CUDA.
+
+    Host-to-device and device-to-host copies cannot be captured, so the D layer's host-planned metadata must exist
+    before a capture: every fallback that would build or read it on the device raises under a capture instead.
+    """
+    return torch.cuda.is_available() and torch.cuda.is_current_stream_capturing()
 
 
 def _row_positions(num_rows: int, positions: Tensor | None, device: torch.device | str) -> Tensor:
@@ -113,6 +130,8 @@ def ernie55_document_starts(
 
 # Attribute under which a micro-batch's PackedSeqParams holds its boundary tensor and that tensor's last entry.
 _PACK_END_ATTR = "_ernie55_pack_end"
+# Attribute under which it holds its boundary tensor and the host values of all of that tensor's boundaries.
+_PACK_BOUNDARIES_ATTR = "_ernie55_pack_boundaries"
 
 
 def record_pack_end(packed_seq_params: PackedSeqParams, end: int) -> None:
@@ -129,21 +148,66 @@ def record_pack_end(packed_seq_params: PackedSeqParams, end: int) -> None:
     setattr(packed_seq_params, _PACK_END_ATTR, (cu_seqlens, int(end)))
 
 
+def record_pack_boundaries(packed_seq_params: PackedSeqParams, boundaries: Sequence[int]) -> None:
+    """Note on ``packed_seq_params`` the host values of all its (padded) document boundaries, and so its last one.
+
+    The batch builder knows them when it builds the ``cu_seqlens``. :func:`noted_pack_boundaries` returns them, and
+    :func:`pack_end` their last entry, while the metadata still holds the same boundary tensor. A D-layer CUDA graph
+    compares them with the boundaries it was captured for, on the host
+    (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph`).
+
+    Args:
+        packed_seq_params: Packed THD metadata.
+        boundaries: The values of its padded ``cu_seqlens``, ``0`` first.
+    """
+    boundaries = tuple(int(value) for value in boundaries)
+    if not boundaries:
+        raise ValueError("A pack has at least one boundary.")
+    cu_seqlens, _ = get_packed_qk_cu_seqlens(packed_seq_params)
+    setattr(packed_seq_params, _PACK_BOUNDARIES_ATTR, (cu_seqlens, boundaries))
+    setattr(packed_seq_params, _PACK_END_ATTR, (cu_seqlens, boundaries[-1]))
+
+
+def noted_pack_boundaries(packed_seq_params: PackedSeqParams) -> tuple[int, ...] | None:
+    """The host boundaries :func:`record_pack_boundaries` noted for the current boundary tensor, else ``None``.
+
+    Never reads the device.
+
+    Args:
+        packed_seq_params: Packed THD metadata.
+    """
+    cu_seqlens, _ = get_packed_qk_cu_seqlens(packed_seq_params)
+    noted = getattr(packed_seq_params, _PACK_BOUNDARIES_ATTR, None)
+    if noted is None or noted[0] is not cu_seqlens:
+        return None
+    return noted[1]
+
+
 def pack_end(packed_seq_params: PackedSeqParams) -> int:
     """The last boundary of a pack's (padded) ``cu_seqlens`` on the host.
 
-    It is the value :func:`record_pack_end` noted for the current boundary tensor; otherwise it is read from the
-    device (one synchronization) and noted the same way, so each micro-batch reads it at most once.
+    It is the value :func:`record_pack_end` (or :func:`record_pack_boundaries`) noted for the current boundary
+    tensor; otherwise it is read from the device (one synchronization) and noted the same way, so each micro-batch
+    reads it at most once. Under a CUDA graph capture that read is not allowed, so a missing note raises instead.
 
     Args:
         packed_seq_params: Packed THD metadata.
 
     Returns:
         ``cu_seqlens[-1]`` as a Python int.
+
+    Raises:
+        RuntimeError: If the value was not noted and the current CUDA stream is capturing a graph.
     """
     cu_seqlens, _ = get_packed_qk_cu_seqlens(packed_seq_params)
     noted = getattr(packed_seq_params, _PACK_END_ATTR, None)
     if noted is None or noted[0] is not cu_seqlens:
+        if stream_is_capturing():
+            raise RuntimeError(
+                "The pack's last boundary was not noted on the host, and reading cu_seqlens[-1] from the device is "
+                "not allowed inside a CUDA graph capture. Note it when the batch is built (record_pack_boundaries); "
+                "an ERNIE 5.5 D-layer graph notes the boundaries it is captured for."
+            )
         noted = (cu_seqlens, int(cu_seqlens[-1]))
         setattr(packed_seq_params, _PACK_END_ATTR, noted)
     return noted[1]
@@ -270,7 +334,66 @@ def pad_topk(topk: Tensor, width: int) -> Tensor:
     return topk.to(torch.int32)
 
 
-def vha_postmix(out: Tensor, *, u: Tensor, v: Tensor, bf16_mix: bool) -> Tensor:
+def _sum_of_token_products(grad: Tensor, rows: Tensor) -> Tensor:
+    """``sum_n grad[n] @ rows[n]^T`` over the tokens ``n``, accumulated in fp32 (or the inputs' dtype if wider).
+
+    One strided-batched GEMM writes every token's ``[H, H]`` product in that precision, and one reduction sums
+    them, so the result is rounded once more, by the caller, like the single GEMM it replaces. On CUDA a 16-bit
+    input goes to cuBLAS as is (``out_dtype``); elsewhere, and when autograd records this backward (double
+    backward), the inputs are widened first.
+    """
+    accumulate = torch.promote_types(grad.dtype, torch.float32)
+    native = grad.is_cuda and grad.dtype in (torch.float16, torch.bfloat16) and rows.dtype == grad.dtype
+    if native and not torch.is_grad_enabled():
+        products = torch.bmm(grad, rows.transpose(1, 2), out_dtype=accumulate)
+    else:
+        products = torch.bmm(grad.to(accumulate), rows.to(accumulate).transpose(1, 2))
+    return products.sum(dim=0)
+
+
+class _TokenBatchedHeadMix(torch.autograd.Function):
+    """``out'[n] = M @ out[n]`` for every token ``n``, as one strided-batched GEMM with a stride-0 ``M``.
+
+    ``torch.matmul(M, out)`` with an ``M`` that requires gradients folds the tokens into one GEMM over the head-last
+    transpose of ``out`` and copies the result back out of that layout; its backward copies the incoming gradient
+    into the layout once more. A contiguous ``out`` (the H core output) is also copied into the layout, and the
+    gradient handed back for it is a transposed view that the H core's reshape copies: two activation-sized copies
+    each way in an H layer, one each way in a D layer, whose head-major V-up result folds as a view. Here the
+    forward reads ``out`` in place, ``dout[n] = M^T @ dout'[n]`` is the same batched GEMM, and ``dM`` is one
+    reduction over the tokens (:func:`_sum_of_token_products`).
+
+    The forward and ``dout`` take the same ``H`` products per entry as the folded GEMM, accumulated in the GEMM's
+    dtype. ``dM`` sums its ``tokens * D`` products per entry in a different order, so it matches the folded GEMM to
+    floating-point summation order, not bitwise.
+    """
+
+    @staticmethod
+    def forward(ctx, mix: Tensor, rows: Tensor) -> Tensor:
+        """``mix`` ``[H, H]``, ``rows`` ``[tokens, H, D]`` in the same dtype; returns contiguous ``[tokens, H, D]``.
+
+        Saves only what the backward reads: ``rows`` for ``dM`` and ``mix`` for ``dout``. So with frozen VHA factors
+        (``mix`` needs no gradient) the activation is not kept for the backward, as with ``torch.matmul``.
+        """
+        ctx.save_for_backward(mix if ctx.needs_input_grad[1] else None, rows if ctx.needs_input_grad[0] else None)
+        return torch.bmm(mix.expand(rows.size(0), -1, -1), rows)
+
+    @staticmethod
+    def backward(ctx, grad: Tensor) -> tuple[Tensor | None, Tensor | None]:
+        """Gradients of ``mix`` (one reduction over the tokens) and ``rows`` (the transposed batched GEMM).
+
+        Each reads only the tensor the forward saved for it (``mix`` is None without ``dout``, ``rows`` without
+        ``dM``); ``mix`` and ``rows`` share one dtype.
+        """
+        mix, rows = ctx.saved_tensors
+        grad_mix = grad_rows = None
+        if ctx.needs_input_grad[0]:
+            grad_mix = _sum_of_token_products(grad, rows).to(rows.dtype)
+        if ctx.needs_input_grad[1]:
+            grad_rows = torch.bmm(mix.t().expand(grad.size(0), -1, -1), grad)
+        return grad_mix, grad_rows
+
+
+def vha_postmix(out: Tensor, *, u: Tensor, v: Tensor, bf16_mix: bool, batched_mix: bool) -> Tensor:
     """Mix attention heads with the low-rank-plus-identity matrix ``M = I + V U^T``.
 
     ``out'[..., k, :] = sum_h M[k, h] * out[..., h, :]``, so ``V`` indexes the output head
@@ -285,16 +408,30 @@ def vha_postmix(out: Tensor, *, u: Tensor, v: Tensor, bf16_mix: bool) -> Tensor:
             bf16 contract of the reference implementation. When False, ``M - I = V U^T``
             is formed and the mix is accumulated in fp32 (or ``out.dtype`` if wider), and
             the result is rounded to ``out.dtype`` once.
+        batched_mix: Apply the bf16 contract's ``M`` as one strided-batched GEMM over the tokens, with an explicit
+            backward (:class:`_TokenBatchedHeadMix`), instead of ``torch.matmul``, whose fold copies the result (and
+            a contiguous ``out``) through their head-last transposes. The output and the gradient of ``out`` take the
+            same products and are expected to be bitwise equal; the gradient of ``M`` (so of ``U`` and ``V``) is
+            summed over the tokens in another order. Needs ``bf16_mix``.
 
     Returns:
         Tensor with the shape and dtype of ``out``.
+
+    Raises:
+        ValueError: If ``u`` and ``v`` are not ``[H, R]``, or if ``batched_mix`` is set without ``bf16_mix``.
     """
     num_heads = out.size(-2)
     if u.shape != v.shape or u.ndim != 2 or u.size(0) != num_heads:
         raise ValueError(f"Expected u and v of shape [{num_heads}, R], got {tuple(u.shape)} and {tuple(v.shape)}.")
+    if batched_mix and not bf16_mix:
+        raise ValueError("batched_mix applies the bf16 contract's mix; it needs bf16_mix=True.")
     if bf16_mix:
         identity = torch.eye(num_heads, dtype=out.dtype, device=out.device)
         mix = torch.addmm(identity, v.to(out.dtype), u.to(out.dtype).t())
+        if batched_mix:
+            # A view for the core outputs (contiguous in H, a head-major einsum result in D): no copy.
+            rows = out.reshape(-1, num_heads, out.size(-1))
+            return _TokenBatchedHeadMix.apply(mix, rows).view(out.shape)
         return torch.matmul(mix, out)
     compute_dtype = torch.promote_types(out.dtype, torch.float32)
     delta = v.to(compute_dtype) @ u.to(compute_dtype).t()

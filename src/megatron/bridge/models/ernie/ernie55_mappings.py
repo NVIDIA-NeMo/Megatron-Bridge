@@ -76,6 +76,14 @@ model). Export casts every tensor to its checkpoint dtype. Bridge keeps the D-la
 fp32 while the checkpoint stores ``softmax_offset`` in the checkpoint dtype (bf16): imports widen it
 exactly, and exports round it back.
 
+FP8 checkpoints. The released ERNIE-5.5-Flash-Base stores its projection matrices (attention, dense
+and shared MLPs, routed experts, latent-MoE and MTP projections) as ``float8_e4m3fn`` with 128 x 128
+block scales in ``<name>_scale_inv`` (F32, ``quantization_config`` ``quant_method: fp8``,
+``weight_block_size: [128, 128]``, ``scale_fmt: ue8m0``). The import dequantizes each such tensor,
+``weight * scale_inv[row // 128, col // 128]``, to the checkpoint dtype before the mapping sees it
+(:func:`dequantize_ernie55_fp8`), and the key check accepts a ``<name>_scale_inv`` next to every tensor
+it knows. Export always writes the dequantized dtypes, never FP8.
+
 Supported envelope (anything else raises): ``compress_ratios`` entries 128 and -2 only,
 ``hybrid_mla_attention="mqa_dsa"`` for -2 layers, ``hca_rope_type`` ``"rope"`` or ``"yarn"``, and SD-MTP. Bridge reads
 ``n_routed_experts``, ``first_k_dense_replace`` and ``n_shared_experts`` only; a config whose other
@@ -119,6 +127,7 @@ __all__ = [
     "Ernie55HFLayout",
     "Ernie55WeightConversionMixin",
     "check_ernie55_checkpoint_keys",
+    "dequantize_ernie55_fp8",
     "ernie55_hf_param_dtypes",
     "ernie55_mapping_registry",
     "ernie55_mtp_body_copy_keys",
@@ -162,6 +171,67 @@ def _hf_checkpoint_dtype(hf_config: Any) -> torch.dtype:
                 return dtype
         raise ValueError(f"ERNIE 5.5 conversion: unsupported Hugging Face {key}={value!r}.")
     return torch.bfloat16
+
+
+# FP8 checkpoints: the block-scale companion of an FP8 tensor, and the default scale block.
+FP8_SCALE_SUFFIX = "_scale_inv"
+_FP8_DEFAULT_BLOCK = (128, 128)
+
+
+def _fp8_block_size(hf_config: Any) -> tuple[int, int]:
+    """The ``weight_block_size`` of an FP8 ``quantization_config`` (128 x 128 when the config has none).
+
+    Raises:
+        ValueError: If the config declares a quantization other than block-scaled FP8 E4M3.
+    """
+    quantization = _hf_get(hf_config, "quantization_config") if hf_config is not None else None
+    if quantization is None:
+        return _FP8_DEFAULT_BLOCK
+    if not isinstance(quantization, Mapping):
+        quantization = getattr(quantization, "to_dict", lambda: vars(quantization))()
+    method, fmt = quantization.get("quant_method"), quantization.get("fmt", "e4m3")
+    block = quantization.get("weight_block_size")
+    if method != "fp8" or fmt != "e4m3" or block is None or len(block) != 2:
+        raise ValueError(
+            "ERNIE 5.5 conversion: only block-scaled FP8 E4M3 checkpoints are supported, got "
+            f"quantization_config quant_method={method!r} fmt={fmt!r} weight_block_size={block!r}."
+        )
+    return int(block[0]), int(block[1])
+
+
+def dequantize_ernie55_fp8(
+    weight: torch.Tensor,
+    scale_inv: torch.Tensor,
+    *,
+    name: str = "",
+    block: tuple[int, int] = _FP8_DEFAULT_BLOCK,
+    dtype: torch.dtype = torch.bfloat16,
+) -> torch.Tensor:
+    """Dequantize a block-scaled FP8 E4M3 matrix: ``out[r, c] = weight[r, c] * scale_inv[r // br, c // bc]``.
+
+    ``scale_inv`` must have one entry per (possibly partial) block, ``[ceil(R / br), ceil(C / bc)]``. The
+    product is formed in fp32 and cast once to ``dtype``; with power-of-two (ue8m0) scales it is exact in
+    bf16, since an E4M3 value has 4 significant bits.
+
+    Raises:
+        TypeError: If ``weight`` is not ``float8_e4m3fn``.
+        ValueError: If ``weight`` is not 2-D or ``scale_inv`` does not have one entry per block.
+    """
+    if weight.dtype != torch.float8_e4m3fn:
+        raise TypeError(f"ERNIE 5.5 FP8 dequant: {name} is {weight.dtype}, not torch.float8_e4m3fn.")
+    rows_block, cols_block = block
+    if weight.ndim != 2:
+        raise ValueError(f"ERNIE 5.5 FP8 dequant: {name} must be 2-D, got {tuple(weight.shape)}.")
+    rows, cols = weight.shape
+    expected = (-(-rows // rows_block), -(-cols // cols_block))
+    if tuple(scale_inv.shape) != expected:
+        raise ValueError(
+            f"ERNIE 5.5 FP8 dequant: {name}{FP8_SCALE_SUFFIX} is {tuple(scale_inv.shape)}, but a "
+            f"{rows} x {cols} weight in {rows_block} x {cols_block} blocks needs {expected}."
+        )
+    scale = scale_inv.to(device=weight.device, dtype=_FP32)
+    scale = scale.repeat_interleave(rows_block, dim=0)[:rows].repeat_interleave(cols_block, dim=1)[:, :cols]
+    return (weight.to(_FP32) * scale).to(dtype)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -989,9 +1059,10 @@ def check_ernie55_checkpoint_keys(hf_config: Any, hf_keys: Iterable[str]) -> Non
 
     Bridge's import fails on a mapped tensor that the checkpoint lacks, but ignores a checkpoint tensor
     that no mapping reads, which would drop weights silently: for example the shared experts of a config
-    without ``n_shared_experts``. The one exception is :func:`ernie55_mtp_body_copy_keys`: the released
+    without ``n_shared_experts``. The exceptions are :func:`ernie55_mtp_body_copy_keys` (the released
     checkpoints also store the shared MTP body under every MTP layer, a copy of the decoder's last layer that
-    the import does not read.
+    the import does not read) and the FP8 block scales ``<name>_scale_inv`` of any of these tensors, which
+    the import reads to dequantize ``<name>``.
 
     Args:
         hf_config: The checkpoint's Hugging Face config (a ``PretrainedConfig`` or a dict).
@@ -1005,7 +1076,10 @@ def check_ernie55_checkpoint_keys(hf_config: Any, hf_keys: Iterable[str]) -> Non
     expected = set(ernie55_hf_param_dtypes(hf_config))
     keys = set(hf_keys)
     missing = sorted(expected - keys)
-    unexpected = sorted(keys - expected - ernie55_mtp_body_copy_keys(hf_config, expected))
+    known = expected | ernie55_mtp_body_copy_keys(hf_config, expected)
+    # An FP8 checkpoint stores the block scales of a tensor next to it (dequantize_ernie55_fp8).
+    scales = {name + FP8_SCALE_SUFFIX for name in known}
+    unexpected = sorted(keys - known - scales)
     if missing or unexpected:
         raise ValueError(
             "ERNIE 5.5 conversion: the checkpoint does not hold exactly the tensors its config describes: "
@@ -1042,6 +1116,44 @@ class Ernie55WeightConversionMixin:
             ValueError, NotImplementedError: If ``hf_config`` is unset or outside the supported envelope.
         """
         return ernie55_mapping_registry(getattr(self, "hf_config", None))
+
+    def maybe_modify_loaded_hf_weight(
+        self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
+        """Load a mapping's checkpoint tensor(s), dequantizing FP8 ones with their ``_scale_inv`` blocks.
+
+        An FP8 tensor dequantizes to the checkpoint dtype (``dtype``/``torch_dtype``), so it then meets the
+        mapping's dtype check like any tensor of a bf16 checkpoint (:func:`dequantize_ernie55_fp8`).
+
+        Raises:
+            ValueError: If an FP8 tensor has no ``<name>_scale_inv``, or the scales do not match its blocks.
+        """
+        loaded = super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+        if isinstance(hf_param, str):
+            return self._ernie55_dequantize(hf_param, loaded, hf_state_dict)
+        return {
+            role: self._ernie55_dequantize(hf_param[role], tensor, hf_state_dict) for role, tensor in loaded.items()
+        }
+
+    def _ernie55_dequantize(
+        self, name: str, tensor: torch.Tensor, hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor:
+        if not isinstance(tensor, torch.Tensor) or tensor.dtype != torch.float8_e4m3fn:
+            return tensor
+        hf_config = getattr(self, "hf_config", None)
+        scale = hf_state_dict.get(name + FP8_SCALE_SUFFIX)
+        if scale is None:
+            raise ValueError(
+                f"ERNIE 5.5 conversion: {name} is FP8, but the checkpoint has no {name}{FP8_SCALE_SUFFIX} "
+                "block scales."
+            )
+        return dequantize_ernie55_fp8(
+            tensor,
+            scale,
+            name=name,
+            block=_fp8_block_size(hf_config),
+            dtype=_hf_checkpoint_dtype(hf_config) if hf_config is not None else torch.bfloat16,
+        )
 
     def load_weights_hf_to_megatron(self, hf_pretrained: Any, megatron_model: Any, *args: Any, **kwargs: Any) -> Any:
         """Check the checkpoint's tensor names, then load it as ``MegatronModelBridge`` does.

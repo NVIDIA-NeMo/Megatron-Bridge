@@ -89,7 +89,7 @@ from megatron.bridge.models.ernie.modeling_ernie55 import (
     validate_ernie55_config,
     validate_ernie55_hca_config,
 )
-from tests.unit_tests.models.ernie.ernie55_test_utils import cpu_current_device
+from tests.unit_tests.models.ernie.ernie55_test_utils import cpu_current_device, record_batched_vha_mixes
 
 
 logger = logging.getLogger(__name__)
@@ -584,14 +584,28 @@ class TestOracle:
             assert len(calls) == 1, "main's packed THD path did not reach its sparse-attention kernel"
 
     @pytest.mark.parametrize(
-        ("vha_bf16_mix", "output_gate_fp32"), [(True, False), (False, True)], ids=["bf16-contracts", "fp32-contracts"]
+        ("vha_bf16_mix", "vha_batched_mix", "output_gate_fp32"),
+        [(True, False, False), (True, True, False), (False, False, True)],
+        ids=["bf16-contracts", "bf16-contracts-batched-vha", "fp32-contracts"],
     )
-    def test_precision_switches_keep_the_math(self, pg_collection, monkeypatch, vha_bf16_mix, output_gate_fp32):
-        """Both VHA and gate precision contracts compute the same function (exact in fp32)."""
-        config = _config(ernie_vha_bf16_mix=vha_bf16_mix, ernie_output_gate_fp32=output_gate_fp32)
+    def test_precision_switches_keep_the_math(
+        self, pg_collection, monkeypatch, vha_bf16_mix, vha_batched_mix, output_gate_fp32
+    ):
+        """Both VHA and gate precision contracts, and the batched VHA mix, compute the same function (fp32 exact).
+
+        The batched mix computes what ``torch.matmul`` does, so the core's one forward must also be seen to take it
+        (and no forward without the flag).
+        """
+        config = _config(
+            ernie_vha_bf16_mix=vha_bf16_mix,
+            ernie_vha_batched_mix=vha_batched_mix,
+            ernie_output_gate_fp32=output_gate_fp32,
+        )
         attention = _build_attention(config, pg_collection, seed=21)
         x, packed_seq_params, documents = _inputs(_LAYOUTS["sbhd-b2"], seed=22)
+        batched_mixes = record_batched_vha_mixes(monkeypatch)
         _run_against_oracle(attention, x, packed_seq_params, documents, tol=TOL, seed=23)
+        assert batched_mixes == ([(x.size(0) * x.size(1), HEADS, HEAD_DIM)] if vha_batched_mix else [])
 
     @pytest.mark.parametrize("layout", ["thd", "sbhd-b2"])
     def test_yarn_matches_fp64_oracle(self, pg_collection, monkeypatch, layout):
@@ -701,12 +715,15 @@ class TestOutputGate:
 
 @needs_hook
 class TestVHA:
-    @pytest.mark.parametrize("bf16_mix", [True, False], ids=["bf16-mix", "fp32-mix"])
-    def test_core_mixes_heads_out_of_place(self, pg_collection, monkeypatch, bf16_mix):
+    @pytest.mark.parametrize(
+        ("bf16_mix", "batched_mix"),
+        [(True, False), (True, True), (False, False)],
+        ids=["bf16-mix", "bf16-batched-mix", "fp32-mix"],
+    )
+    def test_core_mixes_heads_out_of_place(self, pg_collection, monkeypatch, bf16_mix, batched_mix):
         """The core returns ``vha_postmix(Megatron-Core core output)`` and leaves that output untouched."""
-        attention = _build_attention(
-            _config(params_dtype=torch.bfloat16, ernie_vha_bf16_mix=bf16_mix), pg_collection, seed=51
-        )
+        config = _config(params_dtype=torch.bfloat16, ernie_vha_bf16_mix=bf16_mix, ernie_vha_batched_mix=batched_mix)
+        attention = _build_attention(config, pg_collection, seed=51)
         core = attention.core_attention
         captured = {}
         mcore_forward = csa.CompressedSparseAttention.forward
@@ -721,7 +738,10 @@ class TestVHA:
         returned = {}
         core.register_forward_hook(lambda module, args, output: returned.update(output=output))
         x, packed_seq_params, _ = _inputs(_LAYOUTS["sbhd-b2"], seed=52)
+        batched_mixes = record_batched_vha_mixes(monkeypatch)
         attention(x.detach().bfloat16(), None, packed_seq_params=packed_seq_params)
+        # The batched and the torch.matmul mix agree here, so only this tells which one the core ran.
+        assert batched_mixes == ([(x.size(0) * x.size(1), HEADS, HEAD_DIM)] if batched_mix else [])
 
         mcore_out = captured["mcore"]
         expected = ops.vha_postmix(
@@ -729,6 +749,7 @@ class TestVHA:
             u=core.vha_postmix_u,
             v=core.vha_postmix_v,
             bf16_mix=bf16_mix,
+            batched_mix=batched_mix,
         ).reshape(mcore_out.shape)
         assert torch.equal(returned["output"], expected)
         assert torch.equal(mcore_out, captured["mcore_copy"]), "VHA modified the core output in place"
@@ -1076,6 +1097,29 @@ class TestGuards:
         """
         with pytest.raises(ValueError, match=re.escape(f"ERNIE 5.5 D layer: {message}")):
             validate_ernie55_config(_violating_config(overrides))
+
+    def test_transformer_engine_attention_graphs_pass_both_validators(self):
+        """The one supported CUDA-graph setting: Transformer Engine graphs of the H attention layers.
+
+        The full envelope is tested in ``test_ernie55_cuda_graph.py``; here, both validators accept it on a real H
+        config, and the legacy flag and the other implementations keep failing as above.
+        """
+        config = _violating_config(
+            {
+                "cuda_graph_impl": "transformer_engine",
+                "cuda_graph_modules": ["attn"],
+                "enable_mhc_connections": True,
+                "use_te_rng_tracker": True,
+                "max_seqlen_per_dp_cp_rank": 512,
+                "thd_max_packed_sequences": 1,
+            }
+        )
+        validate_ernie55_hca_config(config)
+        validate_ernie55_config(config)
+        # Only the H layers' mHC wrappers are graphed: without hyper-connections there is nothing to capture.
+        _set_config_field(config, "enable_mhc_connections", False)
+        with pytest.raises(ValueError, match="ERNIE 5.5 H layer: CUDA graphs need enable_mhc_connections=True"):
+            validate_ernie55_hca_config(config)
 
     def test_finalize_checks_the_h_envelope_with_dsv4_hybrid_only(self):
         with pytest.raises(ValueError, match="ERNIE 5.5 H layer: rotary_percent"):

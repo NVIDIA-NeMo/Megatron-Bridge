@@ -81,8 +81,8 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     (``num_attention_heads``, ``q_lora_rank``, ``v_head_dim``, ``qk_pos_emb_head_dim``,
     ``output_projection_groups``, ``output_projection_lora_rank``), ``csa_window_size`` and
     ``csa_compress_rotary_base`` (Hugging Face ``compress_rope_theta``, their RoPE base), plus
-    :attr:`ernie_hca_rope_type` and the shared ERNIE fields ``ernie_vha_rank``, ``ernie_vha_bf16_mix`` and
-    ``ernie_output_gate_fp32``.
+    :attr:`ernie_hca_rope_type` and the shared ERNIE fields ``ernie_vha_rank``, ``ernie_vha_bf16_mix``,
+    ``ernie_vha_batched_mix`` and ``ernie_output_gate_fp32``.
 
     The MoE layers use Megatron-Core's MoE fields: ``num_moe_experts``, ``moe_router_topk``,
     ``moe_ffn_hidden_size``, ``moe_shared_expert_intermediate_size``,
@@ -105,7 +105,48 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     DSv4 hybrid attention variant that H layers need, also with
     :func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_hca_config`; and, when MoE
     is configured, with :func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_moe_config`.
+
+    CUDA graphs are Megatron-Core's per-layer Transformer Engine graphs of the H attention layers' mHC wrappers
+    (``cuda_graph_impl="transformer_engine"``, ``cuda_graph_modules=["attn"]``, with hyper-connections, an H layer in
+    the decoder, ``use_te_rng_tracker``, ``max_seqlen_per_dp_cp_rank`` and ``thd_max_packed_sequences``; see
+    :mod:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph`), plus, opt-in, of the D layers
+    (:attr:`ernie_graph_d_layers`, :attr:`ernie_graph_mtp_layers`). The training loop captures them with
+    :attr:`te_cuda_graph_helper`.
     """
+
+    te_cuda_graph_helper: ClassVar[str] = (
+        "megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.Ernie55TECudaGraphHelper"
+    )
+    """Dotted path of the Transformer Engine CUDA graph helper that Bridge's training loop builds for models with
+    this config (``cuda_graph_impl="transformer_engine"``) instead of Megatron-Core's ``TECudaGraphHelper``: it
+    graphs the H attention layers, and the D layers with :attr:`ernie_graph_d_layers` and
+    :attr:`ernie_graph_mtp_layers`. A class attribute, not a config field."""
+
+    ernie_graph_d_layers: bool = False
+    """With the H-layer Transformer Engine CUDA graphs (``cuda_graph_impl="transformer_engine"``,
+    ``cuda_graph_modules=["attn"]``), also graph the decoder's D attention layers
+    (:class:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.Ernie55DHyperConnectionHybridLayer`). A D layer
+    plans its context-parallel routes, zigzag geometry and kernel lengths on the host, so its graph assumes one fixed
+    sequence composition, one document over the whole row (``thd_max_packed_sequences=1``, the SFT recipe's rows): it
+    pins the plan of that composition and replays only micro-batches of it. With H layers in the decoder (every ERNIE
+    5.5 stack) every micro-batch must have that composition: the H graphs reject a row of another document count or a
+    longer ``max_seqlen`` with ``ValueError``, so such a micro-batch fails instead of running the D layers eagerly.
+    There the D layers fall back to eager execution only for a micro-batch the H graphs accept whose host plan still
+    differs (metadata without the batch builder's host notes); in a decoder of D layers alone, for a micro-batch of any
+    other composition. The first fallback of a process logs a warning. Same kernels and communication as eager
+    execution, so no math change. Costs graph memory (a few GiB per rank). The D layers offload
+    nothing, but with the H layers' ``core_attn``/``attn_proj`` offloading a graphed D layer's shorter backward leaves
+    less time to hide the reload of the H layer before it, so exposed reload waits can grow unless that reload starts
+    earlier. Off by default; no recipe sets it. There is no Hugging Face key; on the command line,
+    ``model.ernie_graph_d_layers=true``."""
+
+    ernie_graph_mtp_layers: bool = False
+    """Also graph the D attention layer of every MTP depth
+    (:class:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.Ernie55MTPDHyperConnectionHybridLayer`), like
+    the decoder's (:attr:`ernie_graph_d_layers`, which it needs). With SD-MTP the MTP depth's D layer shares the
+    decoder's last D layer's parameters; graphed next to each other, their gradient contributions add up as in eager
+    execution. SD-MTP is supported with one MTP depth. Off by default; no recipe sets it. On the command line,
+    ``model.ernie_graph_mtp_layers=true``."""
 
     ernie_mtp_shared_last_layer: bool = False
     """SD-MTP (Hugging Face ``mtp_shared_last_layer``): every MTP depth's inner layers share the
@@ -118,6 +159,23 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     ernie_norm_topk_prob: bool = True
     """Divide the top-k gate values by their sum (plus 1e-20) when ``moe_router_topk > 1``, before the
     per-expert scale (Hugging Face ``norm_topk_prob``)."""
+
+    ernie_router_force_balance: bool = False
+    """BENCHMARK ONLY; changes the training math. Force a balanced expert load the way Megatron-Core's
+    ``moe_router_force_load_balancing`` benchmark mode does. Every MoE router selects its top-k experts
+    from Megatron-Core's random logits (``apply_random_logits``, its ``RandomSTE``: a fresh draw from the
+    expert-parallel RNG state on every call) instead of the split-feature scores plus the expert bias. Each token
+    goes to ``moe_router_topk`` distinct experts drawn uniformly, so an expert's load over ``N`` tokens is binomial
+    with mean ``N * moe_router_topk / num_moe_experts``. The gate values stay the unbiased scores of the drawn
+    experts, normalized and scaled as usual: they are finite, and the router parameters still get gradients. The
+    expert bias still counts tokens and updates, but never selects. Megatron-Core's activation checkpoint restores the
+    RNG state before a recompute, so the MoE or full recompute replays the same selection;
+    :func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_moe_config` rejects that recompute with a
+    graph-safe RNG tracker (``use_te_rng_tracker`` or CUDA graphs) where the checkpoint cannot rewind it: in FP8/FP4
+    (Transformer Engine's checkpoint) and on a Megatron-Core before dev 2f2f8ebae (#5841), main included. Every rank
+    logs a warning once. Megatron-Core's ``moe_router_force_load_balancing`` stays rejected: it would also make the
+    random logits the gate values. Off by default; no recipe sets it. There is no Hugging Face key; on the command
+    line, ``model.ernie_router_force_balance=true``."""
 
     ernie_vha_rank: int | None = None
     """Rank ``R`` of the VHA head post-mix ``I + V U^T`` (``U``, ``V`` are ``[heads, R]``) of both the
@@ -133,6 +191,17 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     """Form ``I + V U^T`` and apply it with GEMMs in the activation dtype (bf16 in training), the
     reference implementation's default contract, in D and H layers. False accumulates the mix in fp32
     and rounds once."""
+
+    ernie_vha_batched_mix: bool = False
+    """Apply the bf16 VHA head mix (``ernie_vha_bf16_mix``) of the D and H layers as one strided-batched GEMM over the
+    tokens with an explicit backward (:func:`~megatron.bridge.models.ernie.modeling_ernie55.ops.vha_postmix`).
+    ``torch.matmul`` instead folds the tokens into one GEMM over the head-last transpose of the attention output and
+    copies the activation through that layout: twice in the forward and twice in the backward of an H layer (inside the
+    H-layer CUDA graphs too), once each way in a D layer, whose head-major V-up result folds without a copy. The output
+    and the gradient of the attention output take the same products and are expected to be bitwise equal; the gradient
+    of the mix, and so of the VHA factors, is summed over the tokens in another order (in fp32, rounded once), so it
+    matches to floating-point summation order, not bitwise. Needs ``ernie_vha_bf16_mix``. Off by default; no recipe
+    turns it on. There is no Hugging Face key; on the command line, ``model.ernie_vha_batched_mix=true``."""
 
     ernie_output_gate_fp32: bool = False
     """Run the output gate's sigmoid and product in fp32 and round once, in D and H layers (Hugging
@@ -196,6 +265,56 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     :mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_dispatch`. The reference has no switch and always
     runs them on CUDA. There is no Hugging Face key; on the command line, ``model.ernie_fused_ops=false``."""
 
+    ernie_fused_situ_prob: bool = False
+    """Run the routed experts' SiTU-GLU and their routing-probability multiply as one Bridge Triton kernel per
+    direction (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_situ_prob`) instead of the SiTU-GLU kernel
+    followed by Megatron-Core's multiply and cast: the MoE layers turn their ``TEGroupedMLP`` into
+    :class:`~megatron.bridge.models.ernie.modeling_ernie55.moe.Ernie55GroupedMLP`. The kernel keeps the reference's
+    two roundings (the activation to bf16, then its product with the fp32 probability to bf16), so the output and the
+    input gradient are bitwise those of the unfused path; the probability gradient sums each row in the kernel's
+    order (fp32 summation order only). Needs ``ernie_fused_ops=True``, SiTU-GLU and ``bias_activation_fusion=False``
+    (:func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_moe_config`). CPU tensors and inputs the
+    kernel does not take run the unfused path. Off by default; no recipe turns it on. There is no Hugging Face key; on
+    the command line, ``model.ernie_fused_situ_prob=true``."""
+
+    ernie_fused_mhc: bool = False
+    """Run the hyper-connections (mHC) through Bridge's fused fp32 Triton kernels
+    (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_mhc`) instead of the eager fp32 operations:
+    the mapping epilogue (norm, sigmoids, Sinkhorn), the stream aggregate and the residual update each become one
+    kernel per direction, and the projection stays a cuBLAS GEMM. The fp32 contract is unchanged, but the
+    kernels sum in their own order, so results match the eager path to fp32 rounding, not bitwise; they are
+    deterministic and replay bitwise under full recompute. CUDA tensors the kernels do not take, and every CPU
+    tensor, run the eager operations. This is not Megatron-Core's ``use_fused_mhc``, which stays rejected. Off by
+    default; no recipe turns it on. There is no Hugging Face key; on the command line,
+    ``model.ernie_fused_mhc=true``."""
+
+    ernie_muon_ns_batch_size: int = 1
+    """Batch Muon's Newton-Schulz over up to this many same-shape matrices
+    (:class:`~megatron.bridge.models.ernie.modeling_ernie55.muon.Ernie55BatchedMuon`). Muon orthogonalizes every
+    row block (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.muon`) and every other matrix on its own, so a rank
+    runs about a thousand small Newton-Schulz iterations per step, mostly its local experts' 2048 x 2048 blocks, and
+    the step is bound by kernel launches. With ``N > 1`` the blocks of one shape are stacked ``N`` at a time into one
+    batched Newton-Schulz. Each block keeps its own normalization, iteration and Muon scale; only the GEMM kernels
+    change (batched instead of one per matrix), so updates match the unbatched ones to floating-point summation order,
+    not bitwise. ``1`` (the default) keeps Megatron-Core's ``TensorParallelMuon`` unchanged. Takes effect for the Muon
+    optimizer built after the model (the model installs it, see
+    :func:`~megatron.bridge.models.ernie.modeling_ernie55.muon.install_ernie55_batched_muon`), without tensor, expert
+    tensor or GTP sharding. There is no Hugging Face key; on the command line, ``model.ernie_muon_ns_batch_size=32``."""
+
+    ernie_cp_key_gather_inverse_grad: bool = False
+    """At ``context_parallel_size > 1``, compute the backward of the D layers' two key gathers (the latent key and the
+    indexer key, :func:`~megatron.bridge.models.ernie.modeling_ernie55.context_parallel.gather_cp_rows`) as one gather
+    of the gradient by the inverse of the key permutation, instead of autograd's ``index_select`` backward: a zero fill
+    and an ``index_add_``, on CUDA one atomic add per element. The permutation moves every row once, so the forward is
+    the same operation and the gradient values are the same (``torch.equal``), but not always the same bits:
+    ``index_add_`` adds onto ``+0.0`` and turns a ``-0.0`` gradient element into ``+0.0``, while the gather keeps
+    ``-0.0`` (and in fp32 on CUDA, whose float atomics flush subnormals to zero, it also keeps subnormal elements).
+    The inverse permutation costs 8 bytes per gathered row and micro-batch (2 MiB at 262144 rows); the batch builder
+    prebuilds it with the zigzag geometry, and a D-layer CUDA graph (:attr:`ernie_graph_d_layers`) pins it with
+    the geometry of its captured composition. Off by default:
+    the ``index_select`` backward, bitwise unchanged. No effect at ``context_parallel_size=1``. There is no Hugging
+    Face key; on the command line, ``model.ernie_cp_key_gather_inverse_grad=true``."""
+
     ernie_reference_rmsnorm: bool = False
     """Build every RMSNorm of the model with the reference implementation's eager arithmetic
     (:class:`~megatron.bridge.models.ernie.modeling_ernie55.norm.Ernie55RMSNorm`) instead of Transformer Engine's
@@ -219,18 +338,42 @@ class Ernie55TransformerConfig(MLATransformerConfig):
         envelope is checked only when ``num_moe_experts`` is set.
 
         Raises:
-            ValueError: If ``ernie_fused_ops`` or ``ernie_reference_rmsnorm`` is not a bool, if
-                ``ernie_per_row_loss`` is combined with ``calculate_per_token_loss`` or (with MTP)
-                ``mtp_loss_early_backward`` or an MTP loss other than cross entropy, or if a layer envelope is
-                violated.
+            ValueError: If ``ernie_fused_ops``, ``ernie_fused_situ_prob``, ``ernie_fused_mhc``,
+                ``ernie_cp_key_gather_inverse_grad``, ``ernie_reference_rmsnorm``, ``ernie_vha_batched_mix``,
+                ``ernie_graph_d_layers``, ``ernie_graph_mtp_layers`` or ``ernie_router_force_balance`` is not a bool,
+                if ``ernie_vha_batched_mix`` is set without ``ernie_vha_bf16_mix``, if ``ernie_muon_ns_batch_size`` is
+                not an int of at least 1, if ``ernie_per_row_loss`` is combined with ``calculate_per_token_loss``
+                or (with MTP) ``mtp_loss_early_backward`` or an MTP loss other than cross entropy, or if a layer
+                envelope is violated.
             RuntimeError: If Megatron-Core lacks a piece the configured context parallelism needs (see
                 :func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_context_parallel_config`).
         """
         super().finalize()
         if not isinstance(self.ernie_fused_ops, bool):
             raise ValueError(f"ernie_fused_ops must be a bool, got {self.ernie_fused_ops!r}.")
+        if not isinstance(self.ernie_fused_situ_prob, bool):
+            raise ValueError(f"ernie_fused_situ_prob must be a bool, got {self.ernie_fused_situ_prob!r}.")
+        if not isinstance(self.ernie_fused_mhc, bool):
+            raise ValueError(f"ernie_fused_mhc must be a bool, got {self.ernie_fused_mhc!r}.")
+        if not isinstance(self.ernie_cp_key_gather_inverse_grad, bool):
+            raise ValueError(
+                f"ernie_cp_key_gather_inverse_grad must be a bool, got {self.ernie_cp_key_gather_inverse_grad!r}."
+            )
         if not isinstance(self.ernie_reference_rmsnorm, bool):
             raise ValueError(f"ernie_reference_rmsnorm must be a bool, got {self.ernie_reference_rmsnorm!r}.")
+        if not isinstance(self.ernie_vha_batched_mix, bool):
+            raise ValueError(f"ernie_vha_batched_mix must be a bool, got {self.ernie_vha_batched_mix!r}.")
+        if self.ernie_vha_batched_mix and not self.ernie_vha_bf16_mix:
+            raise ValueError(
+                "ernie_vha_batched_mix=True applies the bf16 VHA head mix as a batched GEMM; it needs "
+                "ernie_vha_bf16_mix=True."
+            )
+        for name in ("ernie_graph_d_layers", "ernie_graph_mtp_layers", "ernie_router_force_balance"):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be a bool, got {getattr(self, name)!r}.")
+        batch = self.ernie_muon_ns_batch_size
+        if isinstance(batch, bool) or not isinstance(batch, int) or batch < 1:
+            raise ValueError(f"ernie_muon_ns_batch_size must be an int of at least 1, got {batch!r}.")
         if self.ernie_per_row_loss and self.calculate_per_token_loss:
             raise ValueError(
                 "ernie_per_row_loss=True needs calculate_per_token_loss=False: the per-row loss returns one token per "

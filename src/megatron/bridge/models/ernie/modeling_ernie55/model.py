@@ -24,12 +24,13 @@ from megatron.core.models.hybrid import hybrid_model as mcore_hybrid_model
 from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.ernie.modeling_ernie55.cuda_graph import use_ernie55_d_layer_cuda_graphs
 from megatron.bridge.models.ernie.modeling_ernie55.fused_dispatch import install_ernie55_fused_ops
 from megatron.bridge.models.ernie.modeling_ernie55.hca_attention import check_ernie55_attention_layers
 from megatron.bridge.models.ernie.modeling_ernie55.hyper_connection import use_ernie55_hyper_connections
 from megatron.bridge.models.ernie.modeling_ernie55.mtp import check_ernie55_mtp_aliases, share_mtp_body_with_last_layer
 from megatron.bridge.models.ernie.modeling_ernie55.mtp_loss import PER_ROW_MTP_LOSS_SUPPORTED, per_row_mtp_loss_in
-from megatron.bridge.models.ernie.modeling_ernie55.muon import tag_ernie55_muon_params
+from megatron.bridge.models.ernie.modeling_ernie55.muon import install_ernie55_batched_muon, tag_ernie55_muon_params
 from megatron.bridge.models.ernie.modeling_ernie55.output_layer import (
     install_ernie55_multimax,
     register_multimax_grad_norm_group,
@@ -47,6 +48,10 @@ class Ernie55HybridModel(HybridModel):
 
     * every hyper-connection module, the MTP stack's included, uses the ERNIE 5.5 eager fp32
       arithmetic (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.hyper_connection`);
+    * with Transformer Engine CUDA graphs and ``ernie_graph_mtp_layers``, every MTP depth's D-layer wrapper gets its
+      graph inputs and host plan
+      (:func:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.use_ernie55_d_layer_cuda_graphs`; the
+      decoder's are converted by its stack);
     * the ``multimax`` gradient-norm group is registered with Megatron-Core, on every pipeline
       stage (the optimizer's per-group collectives need the same group list on every rank);
     * the output layer, when this stage has one, applies multimax to the main and the MTP logits
@@ -57,7 +62,10 @@ class Ernie55HybridModel(HybridModel):
     * every attention module is checked to be an ERNIE H or D layer;
     * ``ernie_fused_ops`` takes effect: the Triton kernels' dispatchers are installed in Megatron-Core,
       and the SiTU-GLU kernel is turned on or off for this model's clamp scales
-      (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_dispatch`).
+      (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_dispatch`);
+    * ``ernie_muon_ns_batch_size`` takes effect: above 1, Megatron-Core's ``muon`` optimizer is built as
+      :class:`~megatron.bridge.models.ernie.modeling_ernie55.muon.Ernie55BatchedMuon` (batched Newton-Schulz),
+      at 1 as Megatron-Core's own (:func:`~megatron.bridge.models.ernie.modeling_ernie55.muon.install_ernie55_batched_muon`).
 
     With ``ernie_per_row_loss`` the forward normalizes every MTP depth per row, with the row's supervised
     tokens counted over the context-parallel group, instead of Megatron-Core's per-rank token mean
@@ -78,6 +86,14 @@ class Ernie55HybridModel(HybridModel):
         super().__init__(config, *args, **kwargs)
         if self.config.enable_mhc_connections:
             use_ernie55_hyper_connections(self)
+            mtp = getattr(self, "mtp", None)
+            if (
+                getattr(self.config, "cuda_graph_impl", "none") == "transformer_engine"
+                and getattr(self.config, "ernie_graph_mtp_layers", False)
+                and mtp is not None
+            ):
+                for depth in mtp.layers:
+                    use_ernie55_d_layer_cuda_graphs(depth.mtp_model_layer, mtp=True)
         output_layer = getattr(self, "output_layer", None)
         if output_layer is not None:
             install_ernie55_multimax(output_layer, self.config)
@@ -93,6 +109,7 @@ class Ernie55HybridModel(HybridModel):
         check_ernie55_attention_layers(self)
         tag_ernie55_muon_params(self)
         install_ernie55_fused_ops(self.config)
+        install_ernie55_batched_muon(self.config)
 
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         """Megatron-Core's ``HybridModel.forward``, with the per-row MTP loss under ``ernie_per_row_loss``.

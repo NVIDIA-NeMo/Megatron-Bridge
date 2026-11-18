@@ -28,11 +28,17 @@ decoder, and ``HybridStack`` builds its final norm as a plain ``TENorm``.
   ``ernie_reference_rmsnorm`` it is :class:`~megatron.bridge.models.ernie.modeling_ernie55.norm.Ernie55RMSNorm`,
   the reference implementation's arithmetic, instead of Megatron-Core's ``TENorm``;
 * the ERNIE 5.5 hyper-connection arithmetic on its layers
-  (:func:`~megatron.bridge.models.ernie.modeling_ernie55.hyper_connection.use_ernie55_hyper_connections`).
+  (:func:`~megatron.bridge.models.ernie.modeling_ernie55.hyper_connection.use_ernie55_hyper_connections`);
+* with Transformer Engine CUDA graphs (``cuda_graph_impl="transformer_engine"``), the fp32 static inputs and the
+  replay checks of the H layers' graphs
+  (:func:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.use_ernie55_attention_cuda_graphs`), and with
+  ``ernie_graph_d_layers`` those of the D layers' graphs and their host plan
+  (:func:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.use_ernie55_d_layer_cuda_graphs`).
 
 The MTP stack, which Megatron-Core builds directly as ``HybridStack``, gets the same
 hyper-connection arithmetic from
-:class:`~megatron.bridge.models.ernie.modeling_ernie55.model.Ernie55HybridModel`.
+:class:`~megatron.bridge.models.ernie.modeling_ernie55.model.Ernie55HybridModel`, and with ``ernie_graph_mtp_layers``
+its D layer's graph inputs.
 """
 
 from __future__ import annotations
@@ -46,6 +52,10 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import WrappedTensor
 from torch import Tensor
 
+from megatron.bridge.models.ernie.modeling_ernie55.cuda_graph import (
+    use_ernie55_attention_cuda_graphs,
+    use_ernie55_d_layer_cuda_graphs,
+)
 from megatron.bridge.models.ernie.modeling_ernie55.hyper_connection import (
     use_ernie55_hyper_connections,
     validate_ernie55_mhc_config,
@@ -71,7 +81,13 @@ class Ernie55HybridStack(HybridStack):
     that every layer norm the streams reach downcasts its input, so no layer can receive an fp32
     activation. With ``ernie_reference_rmsnorm`` the final norm is replaced by
     :class:`~megatron.bridge.models.ernie.modeling_ernie55.norm.Ernie55RMSNorm` right after
-    Megatron-Core builds it.
+    Megatron-Core builds it. With hyper-connections and ``cuda_graph_impl="transformer_engine"``, the
+    mHC wrappers of the H layers become
+    :class:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.Ernie55HCAHyperConnectionHybridLayer`
+    (in place; same parameters, buffers and checkpoint keys), whose Transformer Engine graphs take fp32
+    streams, and with ``ernie_graph_d_layers`` those of the D layers become
+    :class:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph.Ernie55DHyperConnectionHybridLayer`;
+    without CUDA graphs every wrapper keeps Megatron-Core's class.
 
     Raises:
         TypeError: If hyper-connections are on and a layer's input or pre-MLP norm does not
@@ -93,6 +109,10 @@ class Ernie55HybridStack(HybridStack):
             downcast_norm_input(final_norm)
         if self.config.enable_mhc_connections:
             use_ernie55_hyper_connections(self)
+            if getattr(self.config, "cuda_graph_impl", "none") == "transformer_engine" and not self.is_mtp_layer:
+                use_ernie55_attention_cuda_graphs(self)
+                if getattr(self.config, "ernie_graph_d_layers", False):
+                    use_ernie55_d_layer_cuda_graphs(self)
             for index, layer in enumerate(self.layers):
                 inner = getattr(layer, "inner_layer", layer)
                 for slot in ("input_layernorm", "pre_mlp_layernorm"):
