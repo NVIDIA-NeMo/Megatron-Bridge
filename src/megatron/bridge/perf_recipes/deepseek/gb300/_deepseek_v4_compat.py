@@ -75,22 +75,27 @@ def dsv4_hybrid_stack_spec(config: DeepSeekV4HybridModelProvider) -> ModuleSpec:
     return hybrid_dsv4_stack_spec(config)
 
 
-def configure_dsv4_perf_model(model: DeepSeekV4HybridModelProvider) -> None:
+def configure_dsv4_perf_model(model: DeepSeekV4HybridModelProvider, *, attention_graphs: bool = True) -> None:
     """Configure declared main/dev APIs without weakening the graph requirements.
 
     Native main uses BF16 packed indexer scoring; development MCore retains the
-    measured compact MXFP8 indexer. Both require mHC recompute with attention
-    graphs (MCore #7337 on main). Call after choosing the main and MTP patterns.
+    measured compact MXFP8 indexer. Attention graphs require MCore #7337 on main;
+    the explicit eager variant retains mHC recompute without that capability.
+    Call after choosing the main and MTP patterns.
     """
     declared_fields = {item.name for item in fields(model)}
     development_api = "o_groups" in declared_fields
     api_fields = _DEV_MCORE_CAPABILITIES if development_api else _MAIN_MCORE_CAPABILITIES
-    missing = sorted(set(_MCORE_CAPABILITIES + api_fields) - declared_fields)
+    required_fields = set(_MCORE_CAPABILITIES + api_fields)
+    if not attention_graphs:
+        required_fields.remove("mhc_recompute_attn_cuda_graph_split")
+    missing = sorted(required_fields - declared_fields)
     if missing:
         raise RuntimeError(
             "The DSv4 performance recipes require MCore with DSv4 THD, MoK, and "
-            "mHC recompute with attention CUDA graphs. Native main requires the "
-            "mHC graph support from https://github.com/NVIDIA/Megatron-LM/pull/7337. "
+            "mHC recompute. Attention-graph variants also require the mHC graph "
+            "support from https://github.com/NVIDIA/Megatron-LM/pull/7337. "
+            "Use an explicit eager variant for main without that PR. "
             "See examples/models/deepseek_v4/README.md for exact runtime revisions "
             "and the native BF16 indexer difference. "
             f"The installed MCore is missing configuration fields: {', '.join(missing)}."
@@ -114,6 +119,8 @@ def configure_dsv4_perf_model(model: DeepSeekV4HybridModelProvider) -> None:
     model.attention_cp_layout = "contiguous"
     model.linear_cp_layout = "contiguous"
     model.hybrid_stack_spec = dsv4_hybrid_stack_spec
+    if "mhc_recompute_attn_cuda_graph_split" in declared_fields:
+        model.mhc_recompute_attn_cuda_graph_split = attention_graphs
     if development_api:
         model.o_groups = 16
         model.o_lora_rank = 1024
@@ -122,7 +129,7 @@ def configure_dsv4_perf_model(model: DeepSeekV4HybridModelProvider) -> None:
         model.cp_partition_mode = "contiguous"
         model.pipeline_p2p_fixed_shape = True
         model.thd_max_packed_sequences = 8
-        model.cuda_graph_dynamic_microbatches = True
+        model.cuda_graph_dynamic_microbatches = attention_graphs
         model.dsa_indexer_precision = "mxfp8"
     else:
         model.output_projection_groups = 16

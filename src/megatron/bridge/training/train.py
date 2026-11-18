@@ -52,7 +52,6 @@ from megatron.core.transformer.cuda_graphs import (
     CudaGraphManager,
     TECudaGraphHelper,
     VisionTECudaGraphHelper,
-    get_vision_cuda_graph_seq_length,
 )
 from megatron.core.transformer.cuda_graphs import (
     delete_cuda_graphs as delete_local_cuda_graphs,
@@ -112,7 +111,7 @@ from megatron.bridge.training.utils.train_utils import (
     training_log,
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
-from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
+from megatron.bridge.utils.cuda_graph import get_vision_cuda_graph_seq_length, is_full_iteration_cuda_graph
 from megatron.bridge.utils.mcore_fsdp import FullyShardedDataParallelV1, FullyShardedDataParallelV2
 
 

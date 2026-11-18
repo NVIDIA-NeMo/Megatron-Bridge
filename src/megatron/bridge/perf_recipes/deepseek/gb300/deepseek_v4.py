@@ -36,6 +36,7 @@ from megatron.bridge.recipes.utils.optimizer_utils import distributed_muon_with_
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_with_mxfp8_mixed
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules
 
 
 def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
@@ -74,6 +75,20 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     Uses forced load balancing and fixed synthetic THD packs for performance
     correlation, not convergence validation. No Hugging Face download is needed.
     """
+    return _deepseek_v4_pro_benchmark_config(attention_graphs=True)
+
+
+def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config() -> ConfigContainer:
+    """Run full Pro on native main with mHC recompute and synchronous gathers.
+
+    Keeps the 61-block + MTP model and batch contract, disables CUDA graphs and
+    parameter-gather overlap, and does not require MCore's mHC graph PR #7337.
+    """
+    return _deepseek_v4_pro_benchmark_config(attention_graphs=False)
+
+
+def _deepseek_v4_pro_benchmark_config(*, attention_graphs: bool) -> ConfigContainer:
+    """Build the shared 65K Pro benchmark before applying runtime-specific policy."""
     cfg = _pretrain_common()
     cfg.model = DeepSeekV4HybridModelProvider(
         num_layers=122,
@@ -85,7 +100,7 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         vocab_size=129280,
     )
     # Validate and map the runtime API before assigning benchmark settings.
-    configure_dsv4_perf_model(cfg.model)
+    configure_dsv4_perf_model(cfg.model, attention_graphs=attention_graphs)
 
     cfg.model.experimental_attention_variant = "dsv4_hybrid"
     cfg.model.multi_latent_attention = True
@@ -168,12 +183,14 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["mla_up_proj", "mhc"]
     cfg.model.mhc_recompute_layer_num = 2
-    cfg.model.mhc_recompute_attn_cuda_graph_split = True
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn"]
-    cfg.model.cuda_graph_warmup_steps = 1
+    cfg.model.cuda_graph_impl = "transformer_engine" if attention_graphs else "none"
+    if attention_graphs:
+        cfg.model.cuda_graph_scope = ["attn"]
+    else:
+        clear_cuda_graph_modules(cfg.model)
+    cfg.model.cuda_graph_warmup_steps = 1 if attention_graphs else 0
     cfg.model.use_transformer_engine_op_fuser = False
 
     cfg.mixed_precision = bf16_with_mxfp8_mixed()
@@ -214,14 +231,25 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=False,
         overlap_grad_reduce=True,
-        overlap_param_gather=True,
+        overlap_param_gather=attention_graphs,
+        overlap_param_gather_with_optimizer_step=None if attention_graphs else False,
         overlap_p2p_comm=True,
         batch_p2p_comm=False,
-        align_param_gather=True,
+        align_param_gather=attention_graphs,
         bucket_size=64000000,
         overlap_moe_expert_parallel_comm=False,
         delay_wgrad_compute=False,
     )
+    if not attention_graphs:
+        # Bare main lacks the mHC projection readiness hook from #7337. Keep
+        # parameter gathering synchronous, and avoid graph-safe RNG tracking.
+        cfg.ddp.overlap_param_gather = False
+        cfg.ddp.align_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+        clear_cuda_graph_modules(cfg.model)
+        cfg.model.use_te_rng_tracker = False
+        cfg.rng.te_rng_tracker = False
     cfg.train.manual_gc_interval = 10
     cfg.validation.eval_iters = 32
     cfg.validation.eval_interval = 200
@@ -258,13 +286,23 @@ def deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config() -> ConfigContainer
     Retains full width, experts, 64K sequences and batch sizes. This reduces GPU
     cost per iteration, but does not exercise the full recipe's PP/VPP schedule.
     """
-    cfg = deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config()
+    return _deepseek_v4_pro_proxy_config(attention_graphs=True)
+
+
+def deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config() -> ConfigContainer:
+    """Run the 16-block + MTP proxy eagerly on native main, retaining mHC group two."""
+    return _deepseek_v4_pro_proxy_config(attention_graphs=False)
+
+
+def _deepseek_v4_pro_proxy_config(*, attention_graphs: bool) -> ConfigContainer:
+    """Reduce only depth and PP/VPP for the selected full-Pro execution policy."""
+    cfg = _deepseek_v4_pro_benchmark_config(attention_graphs=attention_graphs)
     cfg.model.num_layers = 32
     cfg.model.hybrid_layer_pattern = cfg.model.hybrid_layer_pattern.replace("|", "")[:32]
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
-    configure_dsv4_perf_model(cfg.model)
+    configure_dsv4_perf_model(cfg.model, attention_graphs=attention_graphs)
     cfg.comm_overlap.overlap_p2p_comm = False
     cfg.comm_overlap.align_param_gather = False
     return cfg

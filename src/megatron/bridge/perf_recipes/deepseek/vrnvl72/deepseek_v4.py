@@ -17,6 +17,7 @@ from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
     deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config,
+    deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config,
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
@@ -63,6 +64,21 @@ def deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContain
     the communication SM allocation from the Rubin benchmark.
     """
     cfg = deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config()
+    cfg.model.moe_megakernel_backend_config = {
+        **cfg.model.moe_megakernel_backend_config,
+        "fwd_num_comm_sms": 40,
+        "bwd_num_comm_sms": 40,
+    }
+    return cfg
+
+
+def deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config() -> ConfigContainer:
+    """Run the 16-block + MTP Rubin proxy eagerly without MCore's mHC graph PR.
+
+    Retains the full model widths, 65K sequence, CP16, Muon, MXFP8 and mHC group
+    two. Parameter gathers are synchronous; native main uses BF16 indexer scoring.
+    """
+    cfg = deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config()
     cfg.model.moe_megakernel_backend_config = {
         **cfg.model.moe_megakernel_backend_config,
         "fwd_num_comm_sms": 40,

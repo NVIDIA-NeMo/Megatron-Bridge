@@ -168,7 +168,7 @@ The earlier 50-step GB300 runs used the private `dsv4` revision
 They completed with finite reported losses and gradient norms and no skipped or
 NaN iterations; this is execution evidence, not convergence or numerical parity.
 
-The native-main functional target is the immutable merge revision
+The native-main attention-graph target is the immutable merge revision
 [`28c439772712240602a28123b462d8e374bec67f`](https://github.com/malay-nagda/Megatron-LM/commit/28c439772712240602a28123b462d8e374bec67f):
 main `c1ad819d07cb946620341a317b8d06e74207e0f1` plus
 [MCore #7337](https://github.com/NVIDIA/Megatron-LM/pull/7337) at
@@ -176,7 +176,9 @@ main `c1ad819d07cb946620341a317b8d06e74207e0f1` plus
 Use this full merge SHA for nemo-ci's `--mcore-ref`. Unmodified main at the
 specified revision lacks graphable mHC wrappers: removing the capability guard
 would allow graph discovery to skip attention capture. The recipe therefore
-requires the declared mHC recompute/attention-graph split capability.
+requires the declared mHC recompute/attention-graph split capability for its
+graph variants. The explicit eager variants below also support main without
+#7337.
 
 Use the MoK Rubin/Blackwell image built in pipeline 82972924:
 `nvcr.io/nvidian/nemo:dgxctestingtemp-nemofw-nightly.83236778`, whose immutable
@@ -280,6 +282,123 @@ synthetic dataset emits fixed THD packed metadata, including boundaries on
 intermediate pipeline stages, with one full-length sequence per microbatch.
 It reproduces the fixed pack shape used in the logs, rather than their random
 token stream or the general variable-length `dp_balanced` data scheduler.
+
+### Eager Pro functional tests without the mHC graph PR
+
+Use native main `c1ad819d07cb946620341a317b8d06e74207e0f1` for the following
+explicit variants. They do not require #7337 and also work with the documented
+main-plus-PR and development revisions.
+
+| Recipe | Performance selector variant |
+|--------|------------------------------|
+| `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config` | `eager` |
+| `deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config` | `proxy_eager` |
+| `deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config` | `proxy_eager` |
+
+For the performance launcher's Rubin proxy, retain your allocation, image and
+source-mount arguments and use this model selection:
+
+```bash
+-m deepseek -mr deepseek_v4_pro -g vrnvl72 -c fp8_mx -ng 64 \
+  --task pretrain --config_variant proxy_eager
+```
+
+Keep the flat performance recipe path (`--use_recipes` omitted). Remove explicit
+CUDA-graph or parameter-gather-overlap overrides from an earlier launch so they
+do not override the eager recipe policy. For the training launcher, select the
+full factory name from the table with `--recipe`.
+
+These variants retain all model layers for their respective full/proxy sizes,
+one MTP, sequence 65,536, CP16/EP64, GBS256/MBS1, Muon, model MXFP8 and parameter
+gather buffer reuse, and selective `mla_up_proj`/mHC recompute with
+`mhc_recompute_layer_num=2`. The native-main BF16 indexer difference still applies.
+Fixed THD metadata capacity remains eight in eager mode.
+
+The deliberate execution changes are:
+
+- `cuda_graph_impl="none"`, empty graph scopes/modules and zero graph warmup.
+- Both model and RNG TE-tracker flags are false.
+- Parameter-gather overlap, optimizer-step gather overlap and gather alignment
+  are disabled. Gradient-reduction overlap and the full model's PP overlap remain
+  as configured by the corresponding benchmark.
+
+Synchronous parameter gathering is needed for this conservative main-only test:
+#7337 also adds a readiness check before mHC directly reads projection weights,
+which otherwise bypasses the child module's forward pre-hook. Its absence is
+relevant even with CUDA graphs disabled. The helper requires the split-graph
+capability only for graph variants and never creates that field on a main config
+that does not declare it. Selecting an eager variant happens before the guard;
+overriding `cuda_graph_impl` after constructing a graph recipe is insufficient.
+
+The value two groups physical HybridStack layers for activation recomputation;
+in this attention/MoE pattern that is one logical block. It does not reduce model
+depth. Eager runs omit graph replay and communication overlap, so they are
+functional-test variants and their throughput is not directly comparable to the
+graph-enabled reference. GPU execution must still be validated on the target
+cluster.
+
+### MCore graph-helper import compatibility
+
+[MCore #8924](https://github.com/NVIDIA/Megatron-LM/pull/8924) renamed
+`get_vision_cuda_graph_seq_length` to `get_vision_te_cuda_graph_seq_length` on
+main, preserving its signature and behavior. This is unrelated to mHC #7337 or
+Rubin kernels. The shared training module imports vision support even for a
+text-only DSv4 run; Bridge resolves either helper name through its compatibility
+utility. Validation includes importing `megatron.bridge.training.pretrain` in
+addition to constructing recipe configs.
+
+The Slurm performance launcher bind-mounts its Bridge source, but its Git packager
+excludes submodules. Bridge imported from a shared checkout and MCore imported from
+`/opt` can therefore be intentional. Check the actual imported files and their Git
+revisions in the training container; a path difference alone does not establish a
+revision mismatch.
+
+For an explicit MCore checkout, select it in the launcher's Python environment and mount
+the same source for workers. Set `BRIDGE_SOURCE` and `MCORE_SOURCE` to your existing
+checkouts, and verify `git -C "$MCORE_SOURCE" rev-parse HEAD` against the desired pinned
+revision. Before invoking `scripts/performance/setup_experiment.py`:
+
+```bash
+export PYTHONPATH="${BRIDGE_SOURCE}/src:${MCORE_SOURCE}${PYTHONPATH:+:${PYTHONPATH}}"
+```
+
+Add these arguments to that invocation, combining the mount with any existing mounts:
+
+```bash
+--custom_mounts "${MCORE_SOURCE}:/opt/dsv4-mcore" \
+--custom_bash_cmds 'export PYTHONPATH=/opt/dsv4-mcore:$PYTHONPATH'
+```
+
+The pre-command runs inside the worker container before Python. Use this explicit
+pre-command rather than relying solely on `--custom_env_vars PYTHONPATH=...`: NeMo-Run
+merges the task environment after executor variables, and this launcher supplies its own
+task `PYTHONPATH` prefix.
+
+Inside the same container and source environment as the training process, this read-only
+check verifies imports and identifies their source revisions:
+
+```python
+import importlib
+import logging
+import subprocess
+from pathlib import Path
+
+logging.basicConfig(level=logging.INFO)
+
+for name in ("megatron.bridge", "megatron.core", "megatron.bridge.training.pretrain"):
+    module = importlib.import_module(name)
+    path = Path(module.__file__).resolve()
+    result = subprocess.run(
+        ["git", "-C", str(path.parent), "rev-parse", "HEAD"],
+        check=False, capture_output=True, text=True,
+    )
+    revision = result.stdout.strip() if result.returncode == 0 else "Git revision unavailable"
+    logging.info("%s: %s (%s)", name, path, revision)
+```
+
+For an unpacked snapshot without `.git`, the path and installed package version cannot
+establish the source commit: retain the launch's source manifest and pin the checkout
+before packaging. A successful import check does not validate GPU kernels or training.
 
 ## Supervised Fine-Tuning
 
