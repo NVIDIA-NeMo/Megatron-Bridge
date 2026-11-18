@@ -702,6 +702,29 @@ def _with_released_copies(config: dict, tensors: dict[str, torch.Tensor]) -> dic
     return {**tensors, **{copy: tensors[body].clone() for copy, body in _released_copies(config, tensors).items()}}
 
 
+def _save_in_two_shards(config: dict, tensors: dict[str, torch.Tensor], directory: Path) -> dict[str, str]:
+    """Save ``tensors`` as a checkpoint of two shards and return each tensor's shard.
+
+    The second shard holds the last decoder layer and the MTP layer, so the copies of the shared MTP body share it
+    with tensors the registry writes.
+    """
+    from safetensors.torch import save_file
+
+    last = f"model.layers.{config['num_hidden_layers'] - 1}."
+    mtp = f"model.layers.{config['num_hidden_layers']}."
+    shards = {
+        name: "model-00002-of-00002.safetensors"
+        if name.startswith((last, mtp))
+        else "model-00001-of-00002.safetensors"
+        for name in tensors
+    }
+    directory.mkdir()
+    for shard in sorted(set(shards.values())):
+        save_file({n: t.contiguous() for n, t in tensors.items() if shards[n] == shard}, directory / shard)
+    (directory / "model.safetensors.index.json").write_text(json.dumps({"weight_map": shards}))
+    return shards
+
+
 class TestExportOfReleasedCheckpoints:
     """``run_conversion.py export`` on a checkpoint that stores the shared MTP body under its MTP layer, as the
     released checkpoints do: the export holds that checkpoint's tensors, the copies included."""
@@ -730,25 +753,10 @@ class TestExportOfReleasedCheckpoints:
     def test_strict_save_writes_the_shards_that_hold_the_copies(self, toy, tmp_path):
         """The copies share a shard with tensors the registry writes. The export yields every tensor of that
         shard, so a strict save writes it; an export without the copies would leave it incomplete."""
-        from safetensors.torch import save_file
-
-        last = f"model.layers.{toy.config['num_hidden_layers'] - 1}."
-        mtp = f"model.layers.{toy.config['num_hidden_layers']}."
         source = _with_released_copies(toy.config, toy.tensors)
         # Two shards: the copies share the second one with the last decoder layer and the MTP's own tensors.
-        shards = {
-            name: "model-00002-of-00002.safetensors"
-            if name.startswith((last, mtp))
-            else "model-00001-of-00002.safetensors"
-            for name in source
-        }
-        source_dir = tmp_path / "source"
-        source_dir.mkdir()
-        for shard in sorted(set(shards.values())):
-            save_file({n: t.contiguous() for n, t in source.items() if shards[n] == shard}, source_dir / shard)
-        (source_dir / "model.safetensors.index.json").write_text(json.dumps({"weight_map": shards}))
-
-        state = SafeTensorsStateSource(source_dir)
+        shards = _save_in_two_shards(toy.config, source, tmp_path / "source")
+        state = SafeTensorsStateSource(tmp_path / "source")
         with pytest.raises(RuntimeError, match="not written|Missing"):
             state.save_generator(iter(toy.exported.items()), tmp_path / "without_copies", strict=True)
         bridge = _load(toy.model, toy.config, source)
@@ -1487,6 +1495,46 @@ class TestFP8Checkpoints:
         for name in set(source) - set(names):
             expected = source[name] if source[name].dtype == _BF16 else source[name].float()
             assert torch.equal(exported[name], expected), name
+
+    def test_fp8_checkpoint_with_mtp_body_copies_exports_them_dequantized(self, pg_collection, tmp_path):
+        """A released FP8 checkpoint stores the shared MTP body under its MTP layer too, its linear weights
+        quantized there as well, with inverse scales of their own. The export writes each copy as it writes the
+        body, dequantized, and no scales; a strict save writes the shards that hold them."""
+        block_size = 8
+        quantization = dict(FP8_QUANTIZATION, weight_block_size=[block_size, block_size])
+        config = _toy_hf_config(quantization_config=quantization)
+        plain = _with_released_copies(config, _toy_hf_tensors(config, seed=3))
+        copies = _released_copies(config, plain)
+        linear = self._linear_weights(config)
+        quantized_copies = sorted(copy for copy, body in copies.items() if body in linear)
+        # the copies of linear weights, and copies of tensors the checkpoint does not quantize
+        assert quantized_copies and len(quantized_copies) < len(copies)
+        tensors = fp8_quantize(plain, linear + quantized_copies, block_size)
+        assert all(tensors[copy].dtype == _FP8 and f"{copy}_scale_inv" in tensors for copy in quantized_copies)
+        model = self._model(pg_collection)
+        bridge = _load(model, config, tensors)
+        exported = _export(bridge, model, config, tensors)
+        assert sorted(exported) == sorted(plain)  # every tensor once, the copies included, no scales
+        for copy, body in copies.items():
+            assert exported[copy].dtype == exported[body].dtype and torch.equal(exported[copy], exported[body]), copy
+
+        # The shard that holds the copies also holds their scales, which the export does not write.
+        shards = _save_in_two_shards(config, tensors, tmp_path / "source")
+        stream = bridge.stream_weights_megatron_to_hf(
+            [model], _hf_pretrained(config, tensors), cpu=True, show_progress=False
+        )
+        SafeTensorsStateSource(tmp_path / "source").save_generator(
+            stream,
+            tmp_path / "strict",
+            strict=True,
+            ignored_source_key_suffixes=bridge.DEQUANTIZED_SOURCE_KEY_SUFFIXES,
+        )
+        written = json.loads((tmp_path / "strict" / "model.safetensors.index.json").read_text())["weight_map"]
+        assert set(written) == set(plain)
+        assert set(written.values()) == set(shards.values())
+        saved = SafeTensorsStateSource(tmp_path / "strict")
+        for copy in quantized_copies:
+            assert saved[copy].dtype == _BF16 and torch.equal(saved[copy], saved[copies[copy]]), copy
 
     def test_fp8_latent_projections_load_widened(self, pg_collection):
         """The released checkpoints quantize the latent projections too; they load dequantized, widened into their
