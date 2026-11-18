@@ -72,6 +72,31 @@ def _uses_gated_delta_product(model_config: Any) -> bool:
     return issubclass(module, GatedDeltaProductMixer)
 
 
+def glm_logical_layer_schedule(model_config: Any) -> tuple[int, list[int]] | None:
+    """Return the logical decoder layers of a GLM-style paired DSA Hybrid model.
+
+    GLM builds each decoder block as two Hybrid layers: a DSA attention layer ``D`` followed by
+    a dense (``-``) or MoE (``E``) MLP layer. The analytical FLOPs and memory estimators count
+    each pair as one Transformer layer. The model config keeps the physical, per-Hybrid-layer
+    ``num_layers`` and ``moe_layer_freq``, which the estimators must not change: the run's
+    config and its built model share them.
+
+    Args:
+        model_config: Model config or provider to inspect.
+
+    Returns:
+        The logical decoder layer count and the per-block MoE flags (1 for an MoE block), or
+        ``None`` when the model is not a DSA Hybrid model made only of ``D-`` and ``DE`` pairs.
+    """
+    pattern = getattr(model_config, "hybrid_layer_pattern", None)
+    if not pattern or getattr(model_config, "experimental_attention_variant", None) != "dsa":
+        return None
+    main = pattern.split("/")[0].replace("|", "")
+    if not main or len(main) % 2 or not all(main[i : i + 2] in ("D-", "DE") for i in range(0, len(main), 2)):
+        return None
+    return len(main) // 2, [int(main[i] == "E") for i in range(1, len(main), 2)]
+
+
 @dataclass(frozen=True)
 class GlobalFlopsRuntimeStats:
     """Data-parallel-global FLOPS statistics collected during one training step.
@@ -1719,17 +1744,13 @@ def num_floating_point_operations(
     # GLM's split Hybrid graph has the same arithmetic as its paired DSA/MoE
     # blocks. Reuse the DSA estimator in logical coordinates (including top-k
     # reuse and MTP) rather than counting D as ordinary multi-head attention.
-    # The logical counts are passed to the estimator, not set on a config copy:
-    # builder-backed configs keep both fields on a nested transformer config
-    # that a shallow copy shares with the run's config and its built model.
-    pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
-    if pattern and getattr(cfg.model, "experimental_attention_variant", None) == "dsa":
-        main = pattern.split("/")[0].replace("|", "")
-        if len(main) % 2 == 0 and all(main[i : i + 2] in ("D-", "DE") for i in range(0, len(main), 2)):
-            return transformer_flops(
-                decoder_num_layers=len(main) // 2,
-                moe_layer_freq=[int(main[i] == "E") for i in range(1, len(main), 2)],
-            )
+    # The logical counts are passed in, never set on the config: builder-backed
+    # configs keep both fields on a nested transformer config that a shallow
+    # copy shares with the run's config and its built model.
+    glm_layers = glm_logical_layer_schedule(cfg.model)
+    if glm_layers is not None:
+        decoder_num_layers, moe_layer_freq = glm_layers
+        return transformer_flops(decoder_num_layers=decoder_num_layers, moe_layer_freq=moe_layer_freq)
 
     # Main entrypoint for FLOPs calculation. Mirror MCore's hybrid detection:
     # a physical hybrid pattern is sufficient to select hybrid accounting.

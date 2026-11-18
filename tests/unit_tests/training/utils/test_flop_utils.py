@@ -36,6 +36,7 @@ from megatron.bridge.training.utils.flop_utils import (
     _lora_seq_stats_cache,
     _packed_data_exists,
     accumulate_flops_metadata,
+    glm_logical_layer_schedule,
     num_floating_point_operations,
     requires_global_flops_reduce,
     resolve_global_flops_runtime_stats,
@@ -2545,6 +2546,17 @@ class TestDynamicSparseAttentionFlops:
         assert with_mtp - decoder_only == 4 * (1345 + 912 + 6144)
 
 
+class _ConfigView:
+    """Read-only view of a config object with some fields replaced."""
+
+    def __init__(self, config: object, **overrides: object) -> None:
+        self._config = config
+        self.__dict__.update(overrides)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.__dict__["_config"], name)
+
+
 @pytest.mark.unit
 class TestGLMHybridDSAFlops:
     """GLM's paired D-/DE Hybrid layers are estimated as DSA Transformer layers in logical coordinates."""
@@ -2556,6 +2568,16 @@ class TestGLMHybridDSAFlops:
 
         monkeypatch.setattr(gb200_glm5, "AutoBridge", GLM5BuilderOnlyBridge)
 
+    @staticmethod
+    def _finalized_recipe(recipe_name: str):
+        """Build a GLM recipe and finalize its model config as training does, with the CPU DSA backend."""
+        from megatron.bridge.recipes.glm.gb200 import glm5 as gb200_glm5
+
+        cfg = getattr(gb200_glm5, recipe_name)()
+        cfg.model.dsa_kernel_backend = "none"
+        cfg.model.finalize()
+        return cfg
+
     @pytest.mark.parametrize(
         ("recipe_name", "expected_flops"),
         [
@@ -2565,21 +2587,54 @@ class TestGLMHybridDSAFlops:
             ("glm52_peft_192gpu_gb200_bf16_config", 585_623_964_614_656),
         ],
     )
-    def test_recipe_estimate_leaves_the_model_config_unchanged(self, recipe_name: str, expected_flops: int) -> None:
+    def test_recipe_estimate_leaves_the_config_unchanged(self, recipe_name: str, expected_flops: int) -> None:
         """Training estimates FLOPs on the run's own config every step, so the estimate must not edit it.
 
         ``GLM5ModelConfig`` stores ``num_layers`` and ``moe_layer_freq`` on its nested transformer config,
         which the built model shares; the logical layer counts must stay local to the estimate.
         """
-        from megatron.bridge.recipes.glm.gb200 import glm5 as gb200_glm5
-
-        cfg = getattr(gb200_glm5, recipe_name)()
+        cfg = self._finalized_recipe(recipe_name)
         layers = (cfg.model.num_layers, list(cfg.model.moe_layer_freq))
-        serialized = cfg.model.as_dict()
+        serialized = cfg.to_dict()
 
         assert [num_floating_point_operations(cfg, batch_size=1) for _ in range(2)] == [expected_flops] * 2
         assert (cfg.model.num_layers, cfg.model.moe_layer_freq) == layers
-        assert cfg.model.as_dict() == serialized
+        assert cfg.to_dict() == serialized
+
+    def test_estimate_equals_the_logical_dsa_transformer_estimate(self) -> None:
+        """GLM-5.2's 156 Hybrid layers cost as much as its 78 DSA Transformer layers: 3 dense, then 75 MoE."""
+        cfg = self._finalized_recipe("glm52_pretrain_192gpu_gb200_bf16_config")
+        transformer_model = _ConfigView(
+            cfg.model,
+            hybrid_layer_pattern=None,
+            is_hybrid_model=False,
+            num_layers=78,
+            moe_layer_freq=[0] * 3 + [1] * 75,
+        )
+        transformer_cfg = SimpleNamespace(model=transformer_model, peft=cfg.peft, dataset=cfg.dataset, train=cfg.train)
+
+        assert num_floating_point_operations(cfg, batch_size=1) == num_floating_point_operations(
+            transformer_cfg, batch_size=1
+        )
+
+    @pytest.mark.parametrize(
+        ("fields", "expected"),
+        [
+            ({"hybrid_layer_pattern": "D-DE|DE/DE", "experimental_attention_variant": "dsa"}, (3, [0, 1, 1])),
+            ({"hybrid_layer_pattern": "D-D-DE", "experimental_attention_variant": "dsa"}, (3, [0, 0, 1])),
+            ({}, None),
+            ({"hybrid_layer_pattern": None, "experimental_attention_variant": "dsa"}, None),
+            ({"hybrid_layer_pattern": "/DE", "experimental_attention_variant": "dsa"}, None),
+            ({"hybrid_layer_pattern": "D-DE", "experimental_attention_variant": None}, None),
+            ({"hybrid_layer_pattern": "D-DE", "experimental_attention_variant": "dsv4_hybrid"}, None),
+            ({"hybrid_layer_pattern": "D-D", "experimental_attention_variant": "dsa"}, None),
+            ({"hybrid_layer_pattern": "D-*E", "experimental_attention_variant": "dsa"}, None),
+            ({"hybrid_layer_pattern": "-DED", "experimental_attention_variant": "dsa"}, None),
+        ],
+    )
+    def test_logical_layer_schedule(self, fields: dict[str, str | None], expected: object) -> None:
+        """Only a DSA Hybrid pattern made of D- and DE pairs has a logical layer schedule."""
+        assert glm_logical_layer_schedule(SimpleNamespace(**fields)) == expected
 
 
 @pytest.mark.unit

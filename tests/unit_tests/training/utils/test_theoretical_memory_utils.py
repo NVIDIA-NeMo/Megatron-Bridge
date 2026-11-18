@@ -17,11 +17,23 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
 from megatron.bridge.training.utils.theoretical_memory_utils import (
     estimate_training_memory,
     format_training_memory_estimate,
     report_theoretical_memory,
 )
+
+
+class _ConfigView:
+    """Read-only view of a config object with some fields replaced."""
+
+    def __init__(self, config: object, **overrides: object) -> None:
+        self._config = config
+        self.__dict__.update(overrides)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.__dict__["_config"], name)
 
 
 def _make_config(**model_overrides):
@@ -56,6 +68,8 @@ def _make_config(**model_overrides):
         "activation_func": None,
         "sequence_parallel": True,
         "recompute_granularity": "selective",
+        "hybrid_layer_pattern": None,
+        "experimental_attention_variant": None,
     }
     for key, value in model_overrides.items():
         if key not in model_defaults:
@@ -188,6 +202,51 @@ def test_moe_list_pattern_shared_expert_latent_and_mtp_counts():
     assert routed_component.parameter_count == 3072
     assert routed_component.parameter_count_per_gpu == 3072
     assert estimate.total_parameters == 14304
+
+
+@pytest.mark.unit
+def test_glm_paired_dsa_hybrid_layers_are_estimated_as_logical_layers():
+    """GLM splits each DSA block into a D attention and a -/E MLP Hybrid layer; the estimate counts one layer."""
+    moe = {"num_moe_experts": 4, "moe_ffn_hidden_size": 32, "moe_shared_expert_intermediate_size": 8}
+    glm = _make_config(
+        num_layers=6,
+        moe_layer_freq=[0, 0, 0, 1, 0, 1],
+        mtp_num_layers=1,
+        hybrid_layer_pattern="D-DE|DE/DE",
+        experimental_attention_variant="dsa",
+        **moe,
+    )
+    transformer = _make_config(num_layers=3, moe_layer_freq=[0, 1, 1], mtp_num_layers=1, **moe)
+    glm_model_fields = vars(glm.model).copy()
+
+    assert estimate_training_memory(glm, num_microbatches=4) == estimate_training_memory(
+        transformer, num_microbatches=4
+    )
+    assert vars(glm.model) == glm_model_fields
+
+
+@pytest.mark.unit
+def test_glm_recipe_estimate_counts_logical_layers_and_ignores_flops_estimates(monkeypatch):
+    """Training logs the estimate after a FLOPs estimate; both use GLM-5.2's 78 blocks and leave the config alone."""
+    from megatron.bridge.recipes.glm.gb200 import glm5 as gb200_glm5
+    from tests.unit_tests.recipes.recipe_test_utils import GLM5BuilderOnlyBridge
+
+    monkeypatch.setattr(gb200_glm5, "AutoBridge", GLM5BuilderOnlyBridge)
+    cfg = gb200_glm5.glm52_pretrain_192gpu_gb200_bf16_config()
+    cfg.model.dsa_kernel_backend = "none"
+    cfg.model.finalize()
+    serialized = cfg.to_dict()
+    transformer_model = _ConfigView(
+        cfg.model, hybrid_layer_pattern=None, num_layers=78, moe_layer_freq=[0] * 3 + [1] * 75
+    )
+    transformer_cfg = SimpleNamespace(model=transformer_model, train=cfg.train, optimizer=cfg.optimizer)
+
+    estimate = estimate_training_memory(cfg, num_microbatches=4)
+    num_floating_point_operations(cfg, batch_size=1)
+
+    assert estimate_training_memory(cfg, num_microbatches=4) == estimate
+    assert estimate == estimate_training_memory(transformer_cfg, num_microbatches=4)
+    assert cfg.to_dict() == serialized
 
 
 @pytest.mark.unit

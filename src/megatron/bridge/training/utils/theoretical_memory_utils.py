@@ -21,10 +21,12 @@ https://github.com/ISEEKYAN/mbridge/tree/main/memory_estimator
 
 import math
 from dataclasses import dataclass
+from typing import Any
 
 import torch.nn.functional as F
 
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.flop_utils import glm_logical_layer_schedule
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -120,6 +122,36 @@ class _ParameterCounts:
         return self.dense_transformer + self.routed_experts + self.embeddings
 
 
+class _LogicalLayerView:
+    """Read-only view of a model config with GLM's logical layer schedule.
+
+    The formulas count GLM's paired DSA Hybrid layers as logical Transformer layers. The view
+    supplies the logical ``num_layers`` and ``moe_layer_freq`` and reads every other field from
+    the model config, which it never modifies: the run's config and its built model share them.
+    Only these two fields are translated: GLM places pipeline stage boundaries in
+    ``hybrid_layer_pattern`` and leaves the per-stage layer counts unset.
+    """
+
+    def __init__(self, model_config: object, num_layers: int, moe_layer_freq: list[int]) -> None:
+        self._model_config = model_config
+        self.num_layers = num_layers
+        self.moe_layer_freq = moe_layer_freq
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "_model_config":
+            raise AttributeError(name)
+        return getattr(self._model_config, name)
+
+
+def _estimated_model_config(config: ConfigContainer) -> object:
+    """Return the model config with GLM's paired DSA Hybrid layers counted as logical layers."""
+    logical_layers = glm_logical_layer_schedule(config.model)
+    if logical_layers is None:
+        return config.model
+    num_layers, moe_layer_freq = logical_layers
+    return _LogicalLayerView(config.model, num_layers, moe_layer_freq)
+
+
 def estimate_training_memory(
     config: ConfigContainer,
     num_microbatches: int | None = None,
@@ -148,7 +180,7 @@ def estimate_training_memory(
     Returns:
         Structured per-GPU theoretical memory estimate.
     """
-    model_config = config.model
+    model_config = _estimated_model_config(config)
     parameter_counts = _count_parameters(model_config)
 
     tensor_parallel_size = _positive_int_attr(model_config, "tensor_model_parallel_size", 1)
@@ -362,7 +394,7 @@ def _compute_activation_memory_bytes(
     # Using formula in Table 2 of https://arxiv.org/pdf/2205.05198.pdf.
     # We are trying to compute the maximum activation footprint, so all calculations in this
     # function are for the first pipeline stage.
-    model_config = config.model
+    model_config = _estimated_model_config(config)
     train_config = config.train
 
     tensor_parallel_size = _positive_int_attr(model_config, "tensor_model_parallel_size", 1)
