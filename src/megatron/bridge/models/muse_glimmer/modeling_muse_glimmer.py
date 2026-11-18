@@ -312,11 +312,20 @@ class MuseGlimmerVisionRotaryEmbedding(nn.Module):
     def __init__(self, config: MuseGlimmerVisionModelConfig) -> None:
         super().__init__()
         head_dim = config.hidden_size // config.num_attention_heads
-        spatial_dim = head_dim // 2
-        inverse_frequency = 1.0 / (
-            config.rotary_base ** (torch.arange(0, spatial_dim, 2, dtype=torch.float32) / spatial_dim)
-        )
-        self.register_buffer("inv_freq", inverse_frequency, persistent=False)
+        self._spatial_dim = head_dim // 2
+        self._rotary_base = config.rotary_base
+        self.register_buffer("inv_freq", self._build_inverse_frequency(), persistent=False)
+
+    def _build_inverse_frequency(self, device: torch.device | None = None) -> Tensor:
+        indices = torch.arange(0, self._spatial_dim, 2, dtype=torch.float32, device=device)
+        return 1.0 / (self._rotary_base ** (indices / self._spatial_dim))
+
+    def _apply(self, fn, *args, **kwargs):
+        # Module.to(dtype=...) would round ``inv_freq`` to the parameter dtype (e.g. BF16) and the
+        # rounding cannot be undone later, so rebuild it in FP32 after every conversion.
+        result = super()._apply(fn, *args, **kwargs)
+        self.inv_freq = self._build_inverse_frequency(self.inv_freq.device)
+        return result
 
     def forward(self, hidden_states: Tensor, position_ids: Tensor) -> tuple[Tensor, Tensor]:
         del hidden_states

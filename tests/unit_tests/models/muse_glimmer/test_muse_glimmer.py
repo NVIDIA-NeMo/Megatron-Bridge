@@ -39,6 +39,7 @@ from megatron.bridge.models.muse_glimmer import (
 from megatron.bridge.models.muse_glimmer.modeling_muse_glimmer import (
     MuseGlimmerVisionAttention,
     MuseGlimmerVisionModel,
+    MuseGlimmerVisionRotaryEmbedding,
     get_muse_glimmer_hybrid_stack_spec,
 )
 from megatron.bridge.models.muse_glimmer.muse_glimmer_bridge import (
@@ -621,3 +622,18 @@ def test_qkvg_mapping_executes_against_hybrid_qkv_module(tiny_hybrid_model: Muse
     torch.testing.assert_close(exported["model.language_model.layers.0.self_attn.k_proj.weight"], key)
     torch.testing.assert_close(exported["model.language_model.layers.0.self_attn.v_proj.weight"], value)
     torch.testing.assert_close(exported["model.language_model.layers.0.self_attn.gate_proj.weight"], gate)
+
+
+def test_vision_rotary_inv_freq_survives_bf16_conversion() -> None:
+    from megatron.bridge.models.muse_glimmer.muse_glimmer_config import MuseGlimmerVisionModelConfig
+
+    config = MuseGlimmerVisionModelConfig(hidden_size=1536, num_attention_heads=16, rotary_base=10000.0)
+    rotary = MuseGlimmerVisionRotaryEmbedding(config)
+    reference = rotary.inv_freq.clone()
+
+    rotary.to(dtype=torch.bfloat16)
+    assert rotary.inv_freq.dtype == torch.float32
+    assert torch.equal(rotary.inv_freq, reference)
+
+    rotary.bfloat16()
+    assert torch.equal(rotary.inv_freq, reference)
