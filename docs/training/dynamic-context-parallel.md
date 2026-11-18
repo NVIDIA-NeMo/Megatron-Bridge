@@ -220,15 +220,16 @@ GPUs the extra ranks are data-parallel replicas; scale
 while the other ranks wait.
 
 Measured on GB300 nodes with the NeMo 26.10.00 container, the pretrained text
-checkpoint, and the first 8,000 SWE-Rebench trajectories, over 100 steps. Each
-group of eight CP and EP ranks runs on two nodes of one NVL72 rack. Throughput
-is runtime tokens per second over steps 41–100:
+checkpoint, and the first 8,000 SWE-Rebench trajectories, over up to 100 steps.
+Each group of eight CP and EP ranks runs on two nodes of one NVL72 rack.
+Throughput is runtime tokens per second over the steps from 41 on:
 
 | GPUs | Packing | Static CP8 | Dynamic CP |
 |---:|---|---:|---:|
 | 8 | Offline rows, 8 per step | 36,190 | 32,448 |
 | 8 | Online, 16 trajectories per step | 20,246 | 16,331 |
-| 16 | Offline rows, 16 per step | 70,858 | not measured |
+| 16 | Offline rows, 16 per step | 70,858 | 49,484 |
+| 16 | Online, 32 trajectories per step | 34,768 | 24,888 |
 | 32 | Offline rows, 32 per step | 125,425 | not supported |
 
 - Both modes train the same model: on identical rows from the same checkpoint
@@ -236,12 +237,15 @@ is runtime tokens per second over steps 41–100:
   100.
 - Of these trajectories 12% fit a CP2 group, 66% need CP4, and 22% need CP8,
   so dynamic CP has few short sequences to place. Once warm, its step takes as
-  long as a static one (median 25.9 s against 25.6 s on offline rows).
+  long as a static one (median 25.9 s against 25.6 s on offline rows and
+  8 GPUs).
 - Its deficit is warm-up. A rank compiles kernels the first time it runs a
-  microbatch with a new token count, which costs about 20 s. Offline rows
-  under static CP8 are nearly full and repeat a few token counts; dynamic CP
-  and online packing keep producing new ones, for about 30 steps on offline
-  rows and beyond step 100 online.
+  microbatch with a new token count, which costs about 20 s while the other
+  ranks wait. Offline rows under static CP8 are nearly full and repeat a few
+  token counts; dynamic CP and online packing keep producing new ones, for
+  about 30 steps on offline rows and 8 GPUs, longer on 16, and beyond step 100
+  online. In a longer online run on 8 GPUs, dynamic CP is level with static
+  CP8 after step 100 (19,932 against 20,913 tokens/s over steps 101–159).
 - Static CP8 on offline rows scales from 4,524 tokens/s per GPU on 8 GPUs to
   4,429 on 16 and 3,920 on 32. Dynamic CP's pool is limited to 16 ranks for
   this model (see Configuration), so 32 GPUs ran static CP8 only.

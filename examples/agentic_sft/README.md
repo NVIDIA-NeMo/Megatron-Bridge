@@ -213,47 +213,59 @@ For an online run against an offline run, give each its token counts and batch, 
 GB300 nodes (four GPUs of 284 GB each), NeMo 26.10.00 container with the `transformers` version Bridge locks,
 Megatron-Core at Bridge's pin, the pretrained text checkpoint of `Qwen/Qwen3.5-35B-A3B`, and the first 8,000
 SWE-Rebench trajectories. Each context-parallel and expert-parallel group of eight ranks runs on two nodes of one NVL72
-rack; at 16 and 32 GPUs the data-parallel replicas are in different racks. Every run takes 100 steps at 8 rows or 16
-trajectories per 8 GPUs. Throughput is runtime tokens per second from `compare_runs.py`; memory is the peak device
-memory in use on any GPU.
+rack; at 16 and 32 GPUs the data-parallel replicas are in different racks. A run takes 100 steps at 8 rows or 16
+trajectories per 8 GPUs, or as many as fit in its job's two hours; the tables give the steps reached. Throughput is
+runtime tokens per second from `compare_runs.py`; the median step and model TFLOP/s are over the steps from 41 on;
+memory is the peak device memory in use on any GPU.
 
 Offline packed rows (about 1.0M tokens per step on 8 GPUs):
 
-| GPUs | Mode | Tokens/s, steps 11–100 | Tokens/s, steps 41–100 | Median s/step | Median model TFLOP/s per GPU | Peak GiB per GPU |
-| ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| 8 | Static CP8 | 35,099 | 36,190 | 25.6 | 182 | 118 |
-| 8 | Dynamic CP | 25,432 | 32,448 | 25.9 | 177 | 123 |
-| 16 | Static CP8 | 66,019 | 70,858 | 24.7 | 188 | 120 |
-| 32 | Static CP8 | 115,393 | 125,425 | 24.5 | 187 | 120 |
+| GPUs | Mode | Steps | Tokens/s from step 11 | Tokens/s from step 41 | Median s/step | Median model TFLOP/s per GPU | Peak GiB per GPU |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | Static CP8 | 100 | 35,099 | 36,190 | 25.6 | 182 | 118 |
+| 8 | Dynamic CP | 100 | 25,432 | 32,448 | 25.9 | 177 | 123 |
+| 16 | Static CP8 | 100 | 66,019 | 70,858 | 24.7 | 188 | 120 |
+| 16 | Dynamic CP | 98 | 40,606 | 49,484 | 34.2 | 134 | 127 |
+| 32 | Static CP8 | 100 | 115,393 | 125,425 | 24.5 | 187 | 120 |
 
 Online packing (about 0.8M tokens per step on 8 GPUs):
 
-| GPUs | Mode | Tokens/s, steps 11–100 | Tokens/s, steps 41–100 | Median s/step | Median model TFLOP/s per GPU | Peak GiB per GPU |
-| ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| 8 | Static CP8 | 17,252 | 20,246 | 38.3 | 106 | 118 |
-| 8 | Dynamic CP | 14,556 | 16,331 | 38.9 | 98 | 123 |
+| GPUs | Mode | Steps | Tokens/s from step 11 | Tokens/s from step 41 | Median s/step | Median model TFLOP/s per GPU | Peak GiB per GPU |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | Static CP8 | 100 | 17,252 | 20,246 | 38.3 | 106 | 118 |
+| 8 | Dynamic CP | 100 | 14,556 | 16,331 | 38.9 | 98 | 123 |
+| 16 | Static CP8 | 82 | 27,711 | 34,768 | 37.9 | 98 | 120 |
+| 16 | Dynamic CP | 73 | 24,022 | 24,888 | 55.0 | 77 | 127 |
+| 32 | Static CP8 | 40 | 28,565 | | | | 119 |
 
-* **Dynamic CP trains the same model.** From the same checkpoint and on identical rows, the step-1 loss is 0.18854
-  with static CP8 and 0.18860 with dynamic CP, and 0.14035 against 0.14028 at step 100. Online, the two modes give
-  0.18065 and 0.18071 at step 1 and 0.14700 at step 100.
-* **Offline rows with static CP8 are the fastest setup on this data, and scale with GPUs.** Per GPU, steps 41–100 run
-  at 4,524 tokens/s on 8 GPUs, 4,429 on 16 and 3,920 on 32, with the median step flat at about 25 s. A 300-step run on
-  another pair of nodes reached 40,641 tokens/s over steps 41–300 (median 23.3 s), so differences of about 10% between
-  runs are within node-to-node variation.
+* **Dynamic CP trains the same model.** From the same checkpoint and on identical rows, the step-1 loss on 8 GPUs is
+  0.18854 with static CP8 and 0.18860 with dynamic CP, and 0.14035 against 0.14028 at step 100; on 16 GPUs it is
+  0.18525 and 0.18529 at step 1 and 0.14107 and 0.14121 at step 98. Online, the two modes give 0.18065 and 0.18071 at
+  step 1 and 0.14700 at step 100 on 8 GPUs. No run skipped an iteration or produced a NaN.
+* **Offline rows with static CP8 are the fastest setup on this data, and scale with GPUs.** Per GPU, the steps from 41
+  on run at 4,524 tokens/s on 8 GPUs, 4,429 on 16 and 3,920 on 32, with the median step flat at about 25 s. A
+  300-step run on another pair of nodes reached 40,641 tokens/s over steps 41–300 (median 23.3 s), so differences of
+  about 10% between runs are within node-to-node variation.
 * **On these trajectories dynamic CP has little to gain.** Almost none of them fits one GPU, and the scheduler puts
   47% of the offline tokens on CP4 groups and 53% on CP8 groups, in 9.1 microbatches per step against 8.0 for static
-  CP8. After warm-up a dynamic-CP step takes as long as a static one (median 25.9 s against 25.6 s); over steps 41–100
-  it is 10.3% behind in throughput (95% bootstrap interval −19.0% to −0.6%), and 27.5% behind over steps 11–100.
-  Expect a gain only on streams with a meaningful share of short sequences, as on the mock data above.
+  CP8. On 8 GPUs a warm dynamic-CP step takes as long as a static one (median 25.9 s against 25.6 s); over steps
+  41–100 it is 10.3% behind in throughput (95% bootstrap interval −19.0% to −0.6%), and 27.5% behind over steps
+  11–100. Expect a gain only on streams with a meaningful share of short sequences, as on the mock data above.
 * **Warm-up is kernel compilation per microbatch shape.** The first microbatch a rank runs with a token count it has
   not seen takes about 20 s longer: about 6 s in its first MoE layer's forward pass and 12 s in backward, while the
   other ranks wait. Offline rows under static CP8 are nearly full, so a rank sees few distinct token counts (79 in 623
   microbatches, 21 of them slow, 15 among the first 90). Dynamic CP and online packing produce bins of many more
-  sizes: with dynamic CP on offline rows, 49 of the first 90 microbatches were slow, 22 of the next 90, and at most 4
-  of every 90 after step 30.
+  sizes: with dynamic CP on offline rows and 8 GPUs, 49 of the first 90 microbatches were slow, 22 of the next 90, and
+  at most 4 of every 90 after step 30.
+* **Warm-up lengthens with the number of ranks**, because a step waits for every rank that compiles. On 16 GPUs dynamic
+  CP on offline rows is 30.9% behind static CP8 over steps 41–98 (−39.0% to −22.0%), with a median step of 34.2 s
+  against 24.4 s; 10 of its last 15 steps take 30 s or less.
 * **Online packing is slower here for the same reason.** Its bins hold whatever a step's trajectories add up to, so new
-  token counts keep appearing through step 100: static CP8 reaches 20,246 tokens/s over steps 41–100 and dynamic CP
-  16,331 (19.3% behind, interval −30.2% to −7.2%), with equal median steps (38.3 s and 38.9 s).
-* **Memory.** Device memory in use peaks at 118 GiB per GPU with static CP8 and 123 GiB with dynamic CP.
+  token counts keep appearing. On 8 GPUs static CP8 reaches 20,246 tokens/s over steps 41–100 and dynamic CP 16,331
+  (19.3% behind, interval −30.2% to −7.2%). In a longer pair of runs dynamic CP is level with static CP8 after step
+  100: 19,932 against 20,913 tokens/s over steps 101–159 (−4.7%, interval −15.0% to +5.8%). On 16 GPUs dynamic CP is
+  28.2% behind over steps 41–73 (−46.1% to +0.2%). On 32 GPUs static CP8 reached step 40 at 28,565 tokens/s from step
+  11, with a median step of 107 s that was still falling.
+* **Memory.** Device memory in use peaks at 118–120 GiB per GPU with static CP8 and 123–127 GiB with dynamic CP.
 * **Dynamic CP is limited to 16 GPUs per pool for this model**, as described under Run, so only static CP8 was run on
   32 GPUs.
