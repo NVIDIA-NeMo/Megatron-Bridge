@@ -206,7 +206,8 @@ every other layer in BF16. This needs a ModelOpt release that packs weight-only 
 
 Quantized adapter-wrapped weights are not supported. Fold adapters into the base weights before ModelOpt calibration
 or QAT. Quantized dimension-permuting mappings are also rejected by the streaming API; unquantized mappings retain
-their ordinary conversion path. Custom QKV mappings that change row layout are rejected for quantized weights.
+their ordinary conversion path. Custom QKV mappings that only select or reorder whole rows are supported for
+quantized weights; mappings that transpose, slice columns, or combine row values are rejected.
 Post-mapping key renames of quantized weights are not supported; excluded weights retain their normal renaming
 behavior. This API requires a ModelOpt release that provides the
 functional quantized-weight export interface.
