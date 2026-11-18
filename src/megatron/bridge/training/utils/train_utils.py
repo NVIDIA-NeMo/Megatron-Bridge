@@ -901,11 +901,7 @@ def training_log(
     learning_rate = reduce_max_stat_across_model_parallel_group(learning_rate, group=pg_collection.mp)
     # Tensorboard values.
     # Timer requires all the ranks to call.
-    if (
-        logger_config.timing_log_level >= 0
-        and logger_config.log_timers_to_tensorboard
-        and iteration % logger_config.tensorboard_log_interval == 0
-    ):
+    if logger_config.log_timers_to_tensorboard and (iteration % logger_config.tensorboard_log_interval == 0):
         timer_backends = [
             (getattr(timers, "write_to_wandb", None), wandb_writer),
             (getattr(timers, "write_to_mlflow", None), mlflow_logger),

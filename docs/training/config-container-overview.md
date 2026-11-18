@@ -81,7 +81,7 @@ settings. Existing serialized configs that store these values retain them on
 reload; external code constructing individual sections must select its intended
 policy explicitly.
 
-This migration requires the shared training-schema and timer changes upstream. Older Core revisions with eager constructor validation
+This migration requires the shared training-schema changes upstream. Older Core revisions with eager constructor validation
 cannot provide the same construct-then-override lifecycle using direct imports.
 The dependency pins must include the prerequisite changes before this draft can
 be merged; no subclass fallback or dynamically attached fields are used.
@@ -96,10 +96,6 @@ settings belong only to `ValidationConfig`; old saved `train.eval_iters`,
 Checkpoint fields and behavior remain in Bridge for a separate PR. Bridge's
 logger extension, including MLflow/Comet and its metrics gate, also remains local
 pending the dedicated logger migration.
-
-`timing_log_level=-1` suppresses timer reports and optional operator timing.
-Level-0 measurements remain active for progress, throughput, and checkpoint
-bookkeeping, so ordinary training metrics and their timing overhead remain.
 
 The wider inventory also includes the tokenizer and GPT dataset extensions.
 They remain separate work: the tokenizer normalizes legacy HF/SFT options and
