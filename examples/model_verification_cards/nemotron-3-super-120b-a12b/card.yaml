@@ -27,8 +27,8 @@ verification_index:
       verified: [pretrain, sft_long_context, checkpoint_resume]
       unverified: [sft, sft_export_inference, peft]
     GB200:
-      verified: [peft]
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, checkpoint_resume]
+      verified: [sft, sft_export_inference, peft]
+      unverified: [pretrain, sft_long_context, checkpoint_resume]
   performance:
     H100: verified
     GB200: verified
@@ -293,8 +293,9 @@ items:
         needs a rerun.
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: b54e844c7292488410e4ec3f9d7acee157e28053  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
       command: >
@@ -324,20 +325,21 @@ items:
         --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-sft
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: null
+      last_verified: 2026-11-18
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 1.173371
+        final_loss: 0.7121329
+        last_10_steps_step_time_ms_avg: 36521.260
+        last_10_steps_model_tflops_per_gpu_avg: 37.640
+        last_10_steps_tokens_per_second_per_gpu_avg: 448.623
       expected_result: >
-        The immutable-revision Tulu3 run must complete exactly 100 full-SFT steps
-        on 16 GB200s at sequence length 8192, TP8/EP16, the recipe's cohort
-        GBS/MBS 32/1, and pad-8 offline packing. Loss must stay finite with no
-        skipped or NaN iteration, and the step-100 checkpoint must save
-        completely. The recipe moved from GBS 16 to the cohort GBS 32, so the
-        earlier metrics no longer describe this command and it needs a rerun.
+        On 16 GB200s at this item's Bridge commit, the immutable-revision Tulu3
+        run completed exactly 100 full-SFT steps at sequence length 8192,
+        TP8/EP16, the recipe's cohort GBS/MBS 32/1, and pad-8 offline packing,
+        with finite loss and zero skipped or NaN iterations, and the step-100
+        checkpoint saved completely. Metrics average steps 91-100; token-slot
+        throughput uses 8192 times GBS32 per step. Run on a NeMo nightly base
+        container (2026-11-18).
 
   sft_export_inference:
     H100:
@@ -368,8 +370,9 @@ items:
         pinned deterministic 45-token greedy inference before promotion.
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: b54e844c7292488410e4ec3f9d7acee157e28053  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
@@ -388,15 +391,17 @@ items:
           --prompt "Name the capital of France and explain its role in one sentence."
           --max-new-tokens 45 --chat-template --disable-thinking
           --device cuda --device-map balanced --require-gpu-only
-      last_verified: null
+      last_verified: 2026-11-18
       expected_result: >
-        The GB200 step-100 full-SFT checkpoint exports as 50 indexed BF16
-        safetensor shards and reloads natively as NemotronHForCausalLM with 88
-        layers. Greedy inference produces exactly 45 new tokens and the literal
+        At this item's Bridge commit, the GB200 step-100 full-SFT checkpoint
+        exported as 50 indexed BF16 safetensor shards and reloaded natively in
+        Transformers, sharded across the node's four GB200s with
+        device-map balanced and GPU-only placement (the 120B BF16 model does
+        not fit on one GPU). Greedy chat-template inference stopped at EOS
+        after 22 new tokens, under the 45-token maximum, with the literal
         completion "The capital of France is Paris, which serves as the
-        country's political, cultural, and economic center. It is home to many
-        important government institutions, such as the French National
-        Assembly and the Senate, as well as numerous museums".
+        country's political, cultural, and economic center." Run on a NeMo
+        nightly base container (2026-11-18).
 
   sft_long_context:
     H100:

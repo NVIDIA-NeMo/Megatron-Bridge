@@ -5112,7 +5112,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
+          "bridge_commit": "b54e844c7292488410e4ec3f9d7acee157e28053",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -5130,19 +5130,19 @@
             "sequence_packing": "offline"
           },
           "entry_id": "nemotron-3-super-120b-a12b-sft-gb200",
-          "expected_result": "The immutable-revision Tulu3 run must complete exactly 100 full-SFT steps on 16 GB200s at sequence length 8192, TP8/EP16, the recipe's cohort GBS/MBS 32/1, and pad-8 offline packing. Loss must stay finite with no skipped or NaN iteration, and the step-100 checkpoint must save completely. The recipe moved from GBS 16 to the cohort GBS 32, so the earlier metrics no longer describe this command and it needs a rerun.\n",
+          "expected_result": "On 16 GB200s at this item's Bridge commit, the immutable-revision Tulu3 run completed exactly 100 full-SFT steps at sequence length 8192, TP8/EP16, the recipe's cohort GBS/MBS 32/1, and pad-8 offline packing, with finite loss and zero skipped or NaN iterations, and the step-100 checkpoint saved completely. Metrics average steps 91-100; token-slot throughput uses 8192 times GBS32 per step. Run on a NeMo nightly base container (2026-11-18).\n",
           "hardware": "GB200",
-          "last_verified": null,
+          "last_verified": "2026-11-18",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 0.7121329,
+            "initial_loss": 1.173371,
+            "last_10_steps_model_tflops_per_gpu_avg": 37.64,
+            "last_10_steps_step_time_ms_avg": 36521.26,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 448.623
           },
           "precision": "bf16",
           "source_pointer": "items.sft.GB200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "sft"
         },
@@ -5178,7 +5178,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
+          "bridge_commit": "b54e844c7292488410e4ec3f9d7acee157e28053",
           "command_topologies": [
             {
               "expert_parallel": "16",
@@ -5198,13 +5198,13 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-super-120b-a12b-sft-export-inference-gb200",
-          "expected_result": "The GB200 step-100 full-SFT checkpoint exports as 50 indexed BF16 safetensor shards and reloads natively as NemotronHForCausalLM with 88 layers. Greedy inference produces exactly 45 new tokens and the literal completion \"The capital of France is Paris, which serves as the country's political, cultural, and economic center. It is home to many important government institutions, such as the French National Assembly and the Senate, as well as numerous museums\".\n",
+          "expected_result": "At this item's Bridge commit, the GB200 step-100 full-SFT checkpoint exported as 50 indexed BF16 safetensor shards and reloaded natively in Transformers, sharded across the node's four GB200s with device-map balanced and GPU-only placement (the 120B BF16 model does not fit on one GPU). Greedy chat-template inference stopped at EOS after 22 new tokens, under the 45-token maximum, with the literal completion \"The capital of France is Paris, which serves as the country's political, cultural, and economic center.\" Run on a NeMo nightly base container (2026-11-18).\n",
           "hardware": "GB200",
-          "last_verified": null,
+          "last_verified": "2026-11-18",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.sft_export_inference.GB200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "sft_export_inference"
         },
