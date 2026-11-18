@@ -268,7 +268,10 @@ class Qwen35VLModelProvider(GPTModelProvider):
         builder = Qwen35VLModelBuilder(config)
         builder.model_class = getattr(self, "MODEL_CLASS", None)
         pg = self._pg_collection or ProcessGroupCollection.use_mpu_process_groups()
-        return builder.build_model(pg, pre_process, post_process, vp_stage)
+        model = builder.build_model(pg, pre_process, post_process, vp_stage)
+        # Lets save_megatron_model write the builder config, as for AutoBridge-built models.
+        model.model_config = config
+        return model
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> HybridModel:
         """Provide just the language model component without vision."""
@@ -513,7 +516,10 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         builder = Qwen35VLModelBuilder(config)
         builder.model_class = getattr(self, "MODEL_CLASS", None)
         pg = self._pg_collection or ProcessGroupCollection.use_mpu_process_groups()
-        return builder.build_model(pg, pre_process, post_process, vp_stage)
+        model = builder.build_model(pg, pre_process, post_process, vp_stage)
+        # Lets save_megatron_model write the builder config, as for AutoBridge-built models.
+        model.model_config = config
+        return model
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> HybridModel:
         """Provide just the language model component without vision."""
