@@ -233,7 +233,7 @@ items:
         final_loss: 5.635972
         last_10_steps_step_time_ms_avg: 27354.380
         last_10_steps_model_tflops_per_gpu_avg: 251.950
-        last_10_steps_tokens_per_second_per_gpu_avg: 5989.534
+        last_10_steps_tokens_per_second_per_gpu_avg: 2994.767
       expected_result: >
         On 64 GB200s in one NVL72 domain at this item's Bridge commit, the BF16
         support run completed exactly 100 bounded RP2 optimizer steps with the
@@ -244,7 +244,7 @@ items:
         MNNVL). Loss stayed finite from 12.14941 to 5.635972 with zero skipped
         or NaN iterations, and complete iter_0000050 and iter_0000100
         checkpoints saved. Metrics average steps 91-100; token throughput uses
-        8192 times GBS1280 per step. Run on a NeMo nightly base container
+        4096 times GBS1280 per step. Run on a NeMo nightly base container
         (2026-11-18).
 
   sft:
@@ -678,7 +678,7 @@ items:
         final_loss: 5.636043
         last_10_steps_step_time_ms_avg: 24122.160
         last_10_steps_model_tflops_per_gpu_avg: 286.580
-        last_10_steps_tokens_per_second_per_gpu_avg: 6792.095
+        last_10_steps_tokens_per_second_per_gpu_avg: 3396.047
       expected_result: >
         At this item's Bridge commit, the direct GB200 continuation on 64
         GB200s restored model, optimizer, scheduler, data-order, and RNG state
@@ -689,7 +689,8 @@ items:
         loss 6.220981 versus 6.220984 at step 51 and 5.636043 versus 5.635972 at
         step 100, with the two MTP losses also within tolerance at both steps.
         The complete iter_0000100 checkpoint saved. Metrics average steps
-        91-100. Run on a NeMo nightly base container (2026-11-18).
+        91-100; token throughput uses 4096 times GBS1280 per step. Run on a
+        NeMo nightly base container (2026-11-18).
 
   pretrain_performance:
     H100:

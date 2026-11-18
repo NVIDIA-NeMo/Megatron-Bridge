@@ -335,7 +335,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>5,989.534 tokens/s/GPU</dd>
+            <dd>2,994.767 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -351,7 +351,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 64 GB200s in one NVL72 domain at this item&#x27;s Bridge commit, the BF16 support run completed exactly 100 bounded RP2 optimizer steps with the same convergence recipe and layout as the H100 item: TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural routing, and HybridEP flex dispatch with 1.10x fixed expert capacity, here with the NVL72 HybridEP environment (32 ranks per NVLink domain, domain size 72, MNNVL). Loss stayed finite from 12.14941 to 5.635972 with zero skipped or NaN iterations, and complete iter_0000050 and iter_0000100 checkpoints saved. Metrics average steps 91-100; token throughput uses 8192 times GBS1280 per step. Run on a NeMo nightly base container (2026-11-18).</p>
+        <p>On 64 GB200s in one NVL72 domain at this item&#x27;s Bridge commit, the BF16 support run completed exactly 100 bounded RP2 optimizer steps with the same convergence recipe and layout as the H100 item: TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural routing, and HybridEP flex dispatch with 1.10x fixed expert capacity, here with the NVL72 HybridEP environment (32 ranks per NVLink domain, domain size 72, MNNVL). Loss stayed finite from 12.14941 to 5.635972 with zero skipped or NaN iterations, and complete iter_0000050 and iter_0000100 checkpoints saved. Metrics average steps 91-100; token throughput uses 4096 times GBS1280 per step. Run on a NeMo nightly base container (2026-11-18).</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-sft-h100" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-sft-h100" tabindex="-1">
