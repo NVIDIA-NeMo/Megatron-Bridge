@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CPU unit tests for the Inkling2 layers' process groups and the model's attention-mask check."""
+"""CPU unit tests for the Inkling2 layers' process groups, the model's attention-mask check, and the attention's
+FlexAttention kernel options."""
 
 from types import SimpleNamespace
 
@@ -22,7 +23,7 @@ import torch
 
 pytest.importorskip("transformers", minversion="5.23")
 
-from megatron.bridge.models.inkling.modeling_inkling2 import layers, ops
+from megatron.bridge.models.inkling.modeling_inkling2 import attention, layers, ops
 from megatron.bridge.models.inkling.modeling_inkling2.model import Inkling2Model, reject_document_masks
 
 
@@ -138,3 +139,27 @@ def test_model_forward_rejects_a_document_reset_mask():
         Inkling2Model.forward(
             model, input_ids=torch.zeros(1, 8, dtype=torch.long), attention_mask=_document_reset_mask(8, eod=2)
         )
+
+
+@pytest.mark.parametrize(
+    ("capability", "head_dim", "pinned"),
+    [
+        ((10, 0), 128, True),
+        ((10, 3), 128, True),
+        ((10, 0), 64, True),
+        ((10, 0), 256, False),
+        ((9, 0), 128, False),
+        ((12, 0), 128, False),
+    ],
+)
+def test_flex_attention_pins_backward_tiles_only_on_blackwell(monkeypatch, capability, head_dim, pinned):
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: capability)
+    options = attention._flex_kernel_options(torch.device("cuda", 0), head_dim)
+    if not pinned:
+        assert options is None
+        return
+    assert options == attention._BLACKWELL_BACKWARD_KERNEL_OPTIONS
+    # Only backward options: the forward keeps PyTorch's default tiles.
+    assert all(key.startswith("bwd_") for key in options)
+    # Callers get their own copy, so FlexAttention cannot change the shared table.
+    assert options is not attention._BLACKWELL_BACKWARD_KERNEL_OPTIONS

@@ -64,7 +64,7 @@ def qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config() -> ConfigContainer:
     cfg.model.recompute_modules = None
 
     # Qwen-VL's multimodal inputs are not yet a safe full-iteration graph
-    # target, and its mRoPE path is incompatible with fused RoPE.
+    # target. RoPE fusion is supported but not yet validated for this recipe.
     cfg.model.apply_rope_fusion = False
     cfg.model.cuda_graph_impl = "none"
     set_cuda_graph_modules(cfg.model, [])

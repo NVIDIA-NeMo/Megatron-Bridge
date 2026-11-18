@@ -45,7 +45,12 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from tests.unit_tests.models.ernie.ernie55_test_utils import allow_conversion_imports_without_te
+from tests.unit_tests.models.ernie.ernie55_test_utils import (
+    FP8_QUANTIZATION,
+    allow_conversion_imports_without_te,
+    fp8_quantize,
+    fp8_reference,
+)
 
 
 # Bridge's conversion modules import its LoRA layers, which need Transformer Engine at import time.
@@ -90,6 +95,7 @@ _FIXTURES = Path(__file__).parent / "fixtures"
 _PROXY_CONFIG = json.loads((_FIXTURES / "ernie55_proxy_config.json").read_text())
 _PROXY_DTYPES = json.loads((_FIXTURES / "ernie55_proxy_checkpoint_dtypes.json").read_text())["tensors"]
 _SAFETENSORS_DTYPES = {torch.float32: "F32", torch.bfloat16: "BF16"}
+_FP8 = torch.float8_e4m3fn
 _BF16, _FP32 = torch.bfloat16, torch.float32
 
 # The toy's layout is the proxy's: H + dense, D + MoE, H + MoE, D + MoE, and an SD-MTP depth D + MoE.
@@ -1431,3 +1437,97 @@ def test_pipeline_parallel_round_trip(tmp_path):
         world_size=2, module_name=__name__, setup_name="setup_pp_rank", case_names=_PP_CASES, workdir=tmp_path / "pp2"
     )
     _assert_cases_pass(results, _PP_CASES, 2)
+
+
+class TestFP8Checkpoints:
+    """The released FP8 checkpoints: e4m3 linear weights with blockwise inverse scales (``quantization_config``)."""
+
+    @staticmethod
+    def _model(pg_collection):
+        return _build_model(pg_collection, pattern=_PATTERN, seed=0, **_megatron_overrides())
+
+    @staticmethod
+    def _linear_weights(config: dict) -> list[str]:
+        """The toy's quantization rule: every 2D checkpoint-dtype tensor but the embeddings.
+
+        The released checkpoints quantize their linear projections, including the latent projections that the toy
+        checkpoint keeps in F32 (covered by :meth:`test_fp8_latent_projections_load_widened`).
+        """
+        return sorted(
+            name
+            for name, (shape, dtype) in _toy_hf_spec(config).items()
+            if len(shape) == 2 and dtype == _BF16 and name not in ("model.embed_tokens.weight", "lm_head.weight")
+        )
+
+    @pytest.mark.parametrize("block_size", [8, 128])  # several blocks per toy tensor; one partial block
+    def test_fp8_checkpoint_loads_dequantized(self, pg_collection, block_size):
+        """Every FP8 weight loads as its blocks times their inverse scales, exactly; the scales are consumed."""
+        quantization = dict(FP8_QUANTIZATION, weight_block_size=[block_size, block_size])
+        config = _toy_hf_config(quantization_config=quantization)
+        names = self._linear_weights(config)
+        # fused experts (a dict of HF names), a parameter not named ``.weight`` and the MTP projections
+        assert any(".experts." in name for name in names)
+        assert any(name.endswith(".linear_o_group_proj") for name in names)
+        assert any(name.endswith(".e_proj.weight") for name in names)
+        source = _toy_hf_tensors(config, seed=3)
+        tensors = fp8_quantize(source, names, block_size)
+        assert all(tensors[name].dtype == _FP8 for name in names)
+        model = self._model(pg_collection)
+        bridge = _load(model, config, tensors)
+        assert bridge.DEQUANTIZED_SOURCE_KEY_SUFFIXES == ("_scale_inv",)
+        exported = _export(bridge, model, config, tensors)
+        assert sorted(exported) == sorted(source)  # every tensor once, no scales
+        for name in names:
+            scale_inv = tensors[f"{name}_scale_inv"]
+            expected = fp8_reference(tensors[name], scale_inv, block_size)
+            assert exported[name].dtype == _BF16 and torch.equal(exported[name], expected), name
+            # e4m3 keeps 3 mantissa bits (half an ulp is 2^-4 relative); below 2^-6 x scale it rounds to steps of 2^-9 x scale
+            atol = 2.0**-9 * float(scale_inv.max())
+            assert torch.allclose(exported[name].float(), source[name].float(), rtol=2.0**-3, atol=atol), name
+        for name in set(source) - set(names):
+            expected = source[name] if source[name].dtype == _BF16 else source[name].float()
+            assert torch.equal(exported[name], expected), name
+
+    def test_fp8_latent_projections_load_widened(self, pg_collection):
+        """The released checkpoints quantize the latent projections too; they load dequantized, widened into their
+        fp32 parameters exactly (the keep-in-fp32 contract accepts a 16-bit copy)."""
+        block_size = 8
+        quantization = dict(FP8_QUANTIZATION, weight_block_size=[block_size, block_size])
+        config = _toy_hf_config(moe_latent_size=_LATENT, latent_moe_use_norm=True, quantization_config=quantization)
+        source = _toy_hf_tensors(config, seed=3)
+        names = sorted(name for name in source if name.endswith(("fc1_latent_proj.weight", "fc2_latent_proj.weight")))
+        assert names and all(source[name].dtype == _FP32 for name in names)
+        tensors = fp8_quantize(source, names, block_size)
+        with _latent_moe_without_te():
+            model = _build_model(
+                pg_collection,
+                pattern=_PATTERN,
+                seed=0,
+                **_megatron_overrides(moe_latent_size=_LATENT, moe_use_norm_before_up_proj=True),
+            )
+        exported = _export(_load(model, config, tensors), model, config, tensors)
+        for name in names:
+            expected = fp8_reference(tensors[name], tensors[f"{name}_scale_inv"], block_size).float()
+            assert exported[name].dtype == _FP32 and torch.equal(exported[name], expected), name
+
+    def test_fp8_weight_without_its_scales_is_rejected(self, pg_collection):
+        """A plain cast of an FP8 weight would load it without its scales; the import refuses instead."""
+        block_size = 8
+        quantization = dict(FP8_QUANTIZATION, weight_block_size=[block_size, block_size])
+        config = _toy_hf_config(quantization_config=quantization)
+        names = self._linear_weights(config)
+        victim = next(name for name in names if ".experts." in name)
+        tensors = fp8_quantize(_toy_hf_tensors(config, seed=3), names, block_size)
+        del tensors[f"{victim}_scale_inv"]
+        with pytest.raises(ValueError, match=rf"{re.escape(victim)} is torch\.float8_e4m3fn .* got None"):
+            _load(self._model(pg_collection), config, tensors)
+        tensors = fp8_quantize(_toy_hf_tensors(config, seed=3), names, block_size)
+        tensors[f"{victim}_scale_inv"] = tensors[f"{victim}_scale_inv"][:1, :1]
+        with pytest.raises(ValueError, match=rf"{re.escape(victim)} is torch\.float8_e4m3fn .* got \(1, 1\)"):
+            _load(self._model(pg_collection), config, tensors)
+        # an FP8 tensor that is not a matrix has no blockwise scales to apply
+        tensors = fp8_quantize(_toy_hf_tensors(config, seed=3), names, block_size)
+        tensors["model.norm.weight"] = tensors["model.norm.weight"].to(_FP8)
+        tensors["model.norm.weight_scale_inv"] = torch.ones(1, 1)
+        with pytest.raises(ValueError, match=r"model\.norm\.weight is torch\.float8_e4m3fn .* shape None"):
+            _load(self._model(pg_collection), config, tensors)
