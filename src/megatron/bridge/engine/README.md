@@ -96,7 +96,7 @@ Each engine owns its recipe, model, and training state; engines in one process s
 | `cpu()` / `cuda()` | Offload and restore model parameters, optimizer state, and pending accumulation gradients. Calls are idempotent. |
 | `save_state(path, user_state=None, async_save=False)` | Save resumable training state at a closed accumulation window; return a `CheckpointHandle`. |
 | `load_state(path)` | Restore training state from a checkpoint root or iteration directory; return this rank's saved `user_state`. |
-| `export(path=...)` / `export(streaming=True)` | Export language-model weights in the recipe's HF layout, to a directory or an iterator of `(name, tensor)` pairs. LoRA adapters are merged in; `adapter_only=True` exports them alone in the HF PEFT layout (a PEFT directory needs `base_model_name_or_path`, the HF model the adapters were trained on). |
+| `export(path=...)` / `export(streaming=True)` | Export language-model weights in the recipe's HF layout, to a directory or an iterator of `(name, tensor)` pairs. LoRA adapters are merged in; `adapter_only=True` exports them alone in the HF PEFT layout (a PEFT directory needs `base_model_name_or_path`, the HF model the adapters were trained on). The `"outer_shared"` expert layout has no unmerged export yet. |
 | `close()` | Wait for any pending save and release the engine. Other engines and the shared runtime remain available. |
 
 `AdamParams` supplies the learning rate, betas, epsilon, and weight decay for that step. The learning-rate schedule belongs to the application. Recipe parameter-group multipliers still apply.

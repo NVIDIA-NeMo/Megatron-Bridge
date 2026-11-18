@@ -97,6 +97,11 @@ the text recipe. Missing:
   included, with per-expert adapters by default and outer-shared ones with `enable_moe_shared_loras`;
   Bridge's adapter export has the per-expert, 3D and shared-outer forms), and its decode cost and
   train/inference gap measured against merged refit.
+- **Unmerged export of outer-shared expert adapters** (`TODO(lora-outer-shared-export)`):
+  `export(adapter_only=True)` raises for `expert_adapters="outer_shared"`. Bridge's shared-outer adapter
+  export names each expert's own factor after that expert's HF tensor, and a checkpoint that packs its
+  experts (Qwen3.5) has one such name for all of them, so the PEFT conversion keeps one expert. It needs
+  the stacked form the other layouts get: one `[experts, ...]` tensor per packed name.
 - **Adapter conversion planning** is redone on every merged streaming export: Bridge rebuilds the
   adapter tasks, and only the base conversion tasks are cached.
 - **FP32 adapters** (`lora_dtype`): Bridge's `LoRA.lora_dtype` reaches only adapters on plain

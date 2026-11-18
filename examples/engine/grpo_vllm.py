@@ -72,7 +72,17 @@ def parse_args(add_arguments=None, description: str = __doc__) -> argparse.Names
         help="With --lora-rank: every N rounds (and the last), score the round's samples with a frozen engine on "
         "the merged weights vllm received, to split the train/vllm gap into merge rounding and kernels (0: never)",
     )
-    parser.add_argument("--merge-dir", default=None, help="Scratch root for the merged HF exports of the measurement")
+    parser.add_argument(
+        "--merge-dir",
+        default=None,
+        help="Scratch root for the measurement's exports; each run writes its own run-<time>-<id> subdirectory",
+    )
+    parser.add_argument(
+        "--base-model-name-or-path",
+        default=None,
+        help="HF ID or directory of the model --checkpoint holds, recorded as the adapters' base in adapter "
+        "exports (needed by --measure-merge-every)",
+    )
     parser.add_argument("--clip-low", type=float, default=0.2)
     parser.add_argument("--clip-high", type=float, default=0.28)
     parser.add_argument("--tis-coef", type=float, default=2.0)
@@ -167,7 +177,19 @@ def _gap_stats(name: str, datums: list[Datum], first: list[torch.Tensor], second
     }
 
 
-def measure_merge(policy: TrainingEngine, datums: list[Datum], args, round_index: int) -> dict[str, float]:
+def merge_run_dir(merge_dir: str) -> str:
+    """This run's own directory under ``--merge-dir``, named on rank 0 so that every rank exports to it."""
+    import os
+    import uuid
+
+    name = [f"run-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"]
+    torch.distributed.broadcast_object_list(name, src=0)
+    return os.path.join(merge_dir, name[0])
+
+
+def measure_merge(
+    policy: TrainingEngine, datums: list[Datum], args, round_index: int, run_dir: str
+) -> dict[str, float]:
     """Split this round's train/vllm logprob gap into merge rounding and kernel differences.
 
     All three logprob sets are taken on the round's samples at the weights vllm sampled them with (before
@@ -175,8 +197,9 @@ def measure_merge(policy: TrainingEngine, datums: list[Datum], args, round_index
     frozen engine built from the merged bf16 weights the refresh sent (``bf16(W + s B A) x``), C vllm's own
     logprobs. ``merge_gap`` = |A - B| is the rounding alone (same kernels), ``kernel_gap`` = |B - C| matches
     what full fine-tuning sees, ``total_gap`` = |A - C| is the example's usual agreement metric. The merged
-    HF directory and an adapter-only export of the same state stay under ``--merge-dir/round_<n>`` for an
-    offline per-tensor analysis; the previous round's directories are removed.
+    HF directory and an adapter-only export of the same state stay under ``run_dir/round_<n>`` for an
+    offline per-tensor analysis, and this run's previous round is removed. ``run_dir`` belongs to this run
+    alone (``merge_run_dir``), so other runs under the same ``--merge-dir`` are never touched.
     """
     import os
     import shutil
@@ -184,13 +207,14 @@ def measure_merge(policy: TrainingEngine, datums: list[Datum], args, round_index
     start = time.perf_counter()
     rank0 = torch.distributed.get_rank() == 0
     plain = without_routing(datums)
-    out_dir = os.path.join(args.merge_dir, f"round_{round_index:04d}")
+    out_dir = os.path.join(run_dir, f"round_{round_index:04d}")
     policy.cuda()
     trainer = [lp.cpu() for lp in policy.forward_only(plain).logprobs]
     policy.export(path=os.path.join(out_dir, "merged"))
-    # The example trains on --checkpoint, a conversion of the recipe's HF model, so that model is the base.
     policy.export(
-        path=os.path.join(out_dir, "adapter"), adapter_only=True, base_model_name_or_path=policy.recipe.hf_path
+        path=os.path.join(out_dir, "adapter"),
+        adapter_only=True,
+        base_model_name_or_path=args.base_model_name_or_path,
     )
     policy.cpu()
     frozen = build_engine(args, checkpoint_path=os.path.join(out_dir, "merged"), trainable=False)
@@ -204,9 +228,9 @@ def measure_merge(policy: TrainingEngine, datums: list[Datum], args, round_index
     }
     torch.distributed.barrier()
     if rank0:
-        for entry in os.listdir(args.merge_dir):
+        for entry in os.listdir(run_dir):
             if entry.startswith("round_") and entry != os.path.basename(out_dir):
-                shutil.rmtree(os.path.join(args.merge_dir, entry), ignore_errors=True)
+                shutil.rmtree(os.path.join(run_dir, entry), ignore_errors=True)
     stats["merge_measure_seconds"] = time.perf_counter() - start
     print_rank_0(f"[merge] round {round_index}: " + json.dumps({k: round(v, 6) for k, v in stats.items()}))
     return stats
@@ -437,9 +461,12 @@ def main() -> None:
     """Entry point."""
     logging.basicConfig(level=logging.INFO)
     args = parse_args()
-    if args.measure_merge_every and not (args.lora_rank and args.merge_dir):
-        raise SystemExit("--measure-merge-every needs --lora-rank and --merge-dir")
+    if args.measure_merge_every and not (args.lora_rank and args.merge_dir and args.base_model_name_or_path):
+        raise SystemExit("--measure-merge-every needs --lora-rank, --merge-dir and --base-model-name-or-path")
     policy = build_engine(args)
+    merge_dir = merge_run_dir(args.merge_dir) if args.measure_merge_every else None
+    if merge_dir is not None:
+        print_rank_0(f"[merge] this run's measurement exports go to {merge_dir}")
     hf_path = policy.recipe.hf_path  # tokenizer and vllm weights; the same for both construction paths
     prompts, eval_prompts = load_data(args, hf_path)
 
@@ -474,7 +501,7 @@ def main() -> None:
         stats.update(eval_stats)
         datums = [to_datum(s) for s in samples]
         if measure_this_round(args, round_index):
-            stats.update(measure_merge(policy, datums, args, round_index))
+            stats.update(measure_merge(policy, datums, args, round_index, merge_dir))
         stats.update(train_round(policy, datums, args))
         last_round_seconds = time.perf_counter() - start
         stats["round_seconds"] = last_round_seconds

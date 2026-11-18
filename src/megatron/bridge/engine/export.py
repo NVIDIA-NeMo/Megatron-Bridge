@@ -109,24 +109,31 @@ def export_hf_adapter(
     rank; like the merged stream it is collective and every rank must drain it. ``path`` writes a PEFT
     directory (``adapter_config.json`` + ``adapter_model.safetensors``) that
     ``peft.PeftModel.from_pretrained`` loads over ``base_model_name_or_path``. Expert adapters come out
-    under per-expert names in every layout: an ``"outer_shared"`` adapter's shared factor is repeated for
-    each expert (Bridge's ``expand_shared_outer``, which leaves the other layouts unchanged).
+    per expert: under per-expert names, or stacked along a leading expert dimension under the packed name
+    when the HF checkpoint packs its experts.
+
+    Raises:
+        NotImplementedError: For ``expert_adapters="outer_shared"`` (``TODO(lora-outer-shared-export)``).
+            Bridge names each expert's own factor of such an adapter after that expert's HF tensor; a
+            checkpoint that packs its experts (Qwen3.5) has one name for all of them, so the PEFT file would
+            keep a single expert's factor.
+        ValueError: Without ``path`` when ``streaming`` is false.
     """
+    if getattr(peft, "experts_shared_outer_loras", False):
+        # TODO(lora-outer-shared-export): needs Bridge to stack the per-expert factors under a packed name.
+        raise NotImplementedError(
+            "export(adapter_only=True) does not support expert_adapters='outer_shared' yet: on a checkpoint that "
+            "packs its experts, every expert's own factor would land under one name and only one would be kept. "
+            "Export the merged weights, or train with expert_adapters='shared' or 'per_expert'."
+        )
     if streaming:
         return (
             (item.param_name, item.weight)
-            for item in state.bridge.export_adapter_weights(
-                model, cpu=False, show_progress=False, expand_shared_outer=True
-            )
+            for item in state.bridge.export_adapter_weights(model, cpu=False, show_progress=False)
         )
     if path is None:
         raise ValueError("export needs a path unless streaming=True.")
     state.bridge.save_hf_adapter(
-        model,
-        path,
-        peft_config=peft,
-        base_model_name_or_path=base_model_name_or_path,
-        show_progress=False,
-        expand_shared_outer=True,
+        model, path, peft_config=peft, base_model_name_or_path=base_model_name_or_path, show_progress=False
     )
     return None

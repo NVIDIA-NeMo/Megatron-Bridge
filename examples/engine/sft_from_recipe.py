@@ -123,6 +123,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--async-save", action="store_true", help="Use the asynchronous save for --save-at")
     parser.add_argument("--resume-from", default=None, help="Engine checkpoint root to resume from")
     parser.add_argument("--export-dir", default=None, help="After training, export HF weights here and verify")
+    parser.add_argument(
+        "--base-model-name-or-path",
+        default=None,
+        help="HF ID or directory of the model --checkpoint holds, recorded as the adapters' base in the adapter "
+        "export (needed by --export-dir with --lora-rank)",
+    )
     parser.add_argument("--lora-rank", type=int, default=0, help="Train LoRA adapters of this rank (0: full weights)")
     parser.add_argument("--lora-alpha", type=float, default=64.0, help="LoRA scaling numerator (alpha / rank)")
     parser.add_argument(
@@ -190,10 +196,12 @@ def copy_trainable_weights(source: TrainingEngine, target: TrainingEngine) -> No
     target.optimizer.reload_model_params()
 
 
-def check_adapter_export(engine: TrainingEngine, adapter_dir: str) -> None:
+def check_adapter_export(engine: TrainingEngine, adapter_dir: str, base_model_name_or_path: str) -> None:
     """Adapter-only export: a PEFT directory, then the adapter stream, rewritten into the same PEFT layout,
-    compared tensor by tensor against the file (rank 0)."""
+    compared tensor by tensor against the file (rank 0). Streamed names must be distinct: the PEFT
+    conversion keeps one tensor per name, so a repeated name would lose data on both sides alike."""
     import os
+    from collections import Counter
 
     from safetensors import safe_open
 
@@ -201,8 +209,7 @@ def check_adapter_export(engine: TrainingEngine, adapter_dir: str) -> None:
     from megatron.bridge.models.conversion.peft_bridge import convert_adapter_weights_to_peft_state
 
     start = time.time()
-    # This gate trains on --checkpoint, a conversion of the recipe's HF model, so that model is the base.
-    engine.export(path=adapter_dir, adapter_only=True, base_model_name_or_path=engine.recipe.hf_path)
+    engine.export(path=adapter_dir, adapter_only=True, base_model_name_or_path=base_model_name_or_path)
     torch.distributed.barrier()
     print_rank_0(f"[export] adapter directory {adapter_dir} written in {time.time() - start:.1f}s")
     rank0 = torch.distributed.get_rank() == 0
@@ -215,6 +222,9 @@ def check_adapter_export(engine: TrainingEngine, adapter_dir: str) -> None:
         family = ".".join(part for part in stem.split(".")[-2:] if not part.isdigit())
         families[family] = families.get(family, 0) + 1
     if rank0:
+        counts = Counter(item.param_name for item in streamed)
+        repeated = sorted(name for name, count in counts.items() if count > 1)
+        assert not repeated, f"the adapter stream repeats {len(repeated)} names, e.g. {repeated[0]}"
         state, _, _ = convert_adapter_weights_to_peft_state(streamed)
         saved = safe_open(os.path.join(adapter_dir, "adapter_model.safetensors"), framework="pt")
         file_keys = set(saved.keys())
@@ -495,6 +505,9 @@ def check_accumulation(args: argparse.Namespace, recipe) -> None:
 
 def train(args: argparse.Namespace, recipe) -> None:
     """The engine-driven reproduction of the baseline schedule."""
+    adapter_export = bool(args.export_dir and args.lora_rank and args.lora_expert_adapters != "outer_shared")
+    if adapter_export and not args.base_model_name_or_path:
+        raise SystemExit("--export-dir with --lora-rank needs --base-model-name-or-path for the adapter export")
     engine = TrainingEngine.from_recipe(
         recipe, checkpoint_path=args.checkpoint, trainable=True, lora=lora_config(args)
     )
@@ -564,8 +577,10 @@ def train(args: argparse.Namespace, recipe) -> None:
         print_rank_0(f"[guard] load_state after a newer save to the same root restored update {updates}: PASSED")
     if args.export_dir:
         check_export(engine, args.export_dir)
-        if args.lora_rank:
-            check_adapter_export(engine, args.export_dir.rstrip("/") + "-adapter")
+        if adapter_export:
+            check_adapter_export(engine, args.export_dir.rstrip("/") + "-adapter", args.base_model_name_or_path)
+        elif args.lora_rank:
+            print_rank_0("[export] no adapter-only export: not implemented for outer_shared expert adapters yet")
     if run is not None:
         run.finish()
     engine.close()

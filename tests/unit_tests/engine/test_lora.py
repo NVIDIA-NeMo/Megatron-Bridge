@@ -645,20 +645,26 @@ def test_export_hf_adapter_streams_unmerged_adapters_and_writes_peft_directories
     peft = object()
     items = list(export_hf_adapter(state, [], peft, path=None, streaming=True, base_model_name_or_path="hf/base"))
     assert [name for name, _ in items] == ["model.layers.0.self_attn.q_proj.lora_A.weight"]
-    assert bridge.calls[0] == ("stream", {"cpu": False, "show_progress": False, "expand_shared_outer": True})
+    assert bridge.calls[0] == ("stream", {"cpu": False, "show_progress": False})
     assert export_hf_adapter(state, [], peft, path="/out", streaming=False, base_model_name_or_path="hf/base") is None
     assert bridge.calls[1] == (
         "save",
         "/out",
-        {
-            "peft_config": peft,
-            "base_model_name_or_path": "hf/base",
-            "show_progress": False,
-            "expand_shared_outer": True,
-        },
+        {"peft_config": peft, "base_model_name_or_path": "hf/base", "show_progress": False},
     )
     with pytest.raises(ValueError, match="path"):
         export_hf_adapter(state, [], peft, path=None, streaming=False, base_model_name_or_path="hf/base")
+
+
+def test_export_hf_adapter_rejects_outer_shared_expert_adapters_before_exporting():
+    # Bridge names each expert's own outer-shared factor after that expert's HF tensor; with packed experts
+    # (Qwen3.5) every expert has the same name, and the PEFT file would keep a single expert's factor.
+    bridge = _AdapterBridge()
+    peft = build_lora(LoraConfig(rank=2, alpha=4.0, expert_adapters="outer_shared"), _recipe())
+    for kwargs in ({"path": None, "streaming": True}, {"path": "/out", "streaming": False}):
+        with pytest.raises(NotImplementedError, match="expert_adapters='outer_shared'"):
+            export_hf_adapter(ExportState(bridge=bridge), [], peft, base_model_name_or_path="hf/base", **kwargs)
+    assert bridge.calls == []
 
 
 def test_engine_export_adapter_only_needs_lora_and_an_explicit_base_model(monkeypatch):
@@ -686,7 +692,6 @@ def test_engine_export_adapter_only_needs_lora_and_an_explicit_base_model(monkey
                 "peft_config": peft,
                 "base_model_name_or_path": "org/sft-model",
                 "show_progress": False,
-                "expand_shared_outer": True,
             },
         )
     ]

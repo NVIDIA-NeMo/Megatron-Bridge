@@ -78,7 +78,9 @@ takes the value per step.
 
 - `--save-at N --save-dir ROOT [--async-save]` saves an engine checkpoint after step N;
   `--resume-from ROOT` continues a run (the data cursor travels in `user_state`).
-- `--export-dir DIR` writes an HF checkpoint at the end and verifies it.
+- `--export-dir DIR` writes an HF checkpoint at the end and verifies it. With `--lora-rank` it also
+  writes and checks an adapter-only export in `DIR-adapter`, which records `--base-model-name-or-path`
+  (the HF model `--checkpoint` holds) as the adapters' base.
 - `--check-accumulation` runs the strict accumulation gate instead: one update as 1 call versus 4
   calls from identical state, comparing gradient buffers, gradient norms and master parameters.
 
