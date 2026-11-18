@@ -346,7 +346,9 @@ class TrainingEngine:
         peft = None
         if lora is not None:
             if output_head != "lm":
-                raise ValueError("lora needs output_head='lm'; LoRA on a value head is not supported.")
+                # TODO(lora-critic): LoRA freezes the new value head with the base and the adapter-only
+                # checkpoint drops it, and the value-head and LoRA hooks would each load the base.
+                raise NotImplementedError("lora with output_head='value' (a LoRA critic) is not implemented yet.")
             if not trainable:
                 raise ValueError("lora needs trainable=True; a frozen engine already scores the base model.")
             if checkpoint_path is None:

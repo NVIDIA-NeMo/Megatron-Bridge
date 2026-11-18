@@ -6,7 +6,8 @@ name or from a recipe, THD packing with CP sharding, `forward_only` logprobs and
 `forward_backward` with the predefined losses (cross entropy, importance sampling, PPO clip, value
 loss) and custom losses, gradient accumulation across calls, `optim_step`, synchronous and asynchronous
 checkpoints, HF export (directory and streaming), `cpu()`/`cuda()`, rollout routing replay for MoE
-models, several engines sharing one runtime.
+models, LoRA on the policy (adapter-only checkpoints, merged or adapter-only export), several engines
+sharing one runtime.
 
 ## Construction and recipes
 
@@ -73,40 +74,31 @@ the text recipe. Missing:
 
 ## LoRA
 
-- Implemented as agreed: Bridge `LoRA` applied through a pre-wrap hook after the base weights load,
-  targets = the recipe's `lora_target_modules` (Qwen3.5: Bridge's default four linears plus the GDN
-  `in_proj`/`out_proj`), routing kept the base model's (no router may match a target pattern, router
-  expert biases frozen, quantile-balanced routing rejected), the expert-adapter gradient sync for expert
-  parallelism, adapter-only checkpoints that record the LoRA settings `load_state` checks, merged weights
-  in the streaming export plus `export(adapter_only=True)` (a PEFT directory names its base through
-  `base_model_name_or_path`), and `forward_only(disable_adapters=True)` replacing the reference engine in
-  `ppo_vllm.py`. Rank 32 / alpha 64 is the examples' setting (`--lora-rank 32`, `--lora-alpha` defaults
-  to 64), not a library default.
-- **Expert adapter layouts and vision-language targets.** `LoraConfig.expert_adapters` selects Bridge's
-  layout for grouped expert linears: `"shared"` (Bridge's default), `"per_expert"` or `"outer_shared"`.
-  On a vision-language recipe that freezes part of the model (the provider's `freeze_*` flags), plain
-  target names attach only to the parts it trains. Only the shared layout on the Qwen3.5 text recipe has
-  run on GPU; LoRA has not run on the vision-language recipe.
-- Validated on 16 GB300s with the Qwen3.5-35B-A3B recipe (TP1 CP8 EP16, rank 32 / alpha 64):
-  construction, 1-vs-4-call accumulation and mid-window movement (exact), adapters off vs a frozen engine
-  (bit for bit), merged-stream vs written-files export (exact), resume (identical losses), GRPO and PPO
-  with the merged refit, and a 10-round 32K GRPO run. The router checks, the expert-bias freeze, the
-  settings check on resume, the adapter base name, the expert layouts and the vision-language targets are
-  covered by CPU unit tests only (Qwen3.5 has no expert bias).
-- **Merged refit and train/inference agreement** (`TODO(lora-refit)`): the trainer computes
-  `W x + s B(A x)` with the update kept apart, while the merged refit sends vllm `bf16(W + s B A)`, so
-  update elements below half a bf16 step of W are lost to the sampler. Measured on the 10-round 32K GRPO
-  run (trainer with adapters, a frozen engine on the merged weights, and vllm, on the same rollout
-  tokens): the cast leaves 62% of the updated elements unchanged at round 5 and 52% at round 9, but the
-  trainer-vs-vllm gap is only 2-6% above full fine-tuning on the same prompts from round 2 on. Merged
-  refit stays the default for now; recheck on a longer run. vllm 0.29 already applies LoRA to Qwen3.5, GDN
-  projections and MoE experts included (per-expert adapters by default, outer-shared ones with
-  `enable_moe_shared_loras`). Adapter-only refit still needs a refresh that loads adapter tensors into vllm
-  instead of reloading the weights, the expert adapters in a layout vllm loads (Bridge's adapter export has
-  the per-expert, 3D and shared-outer forms), and its decode cost and train/inference gap measured against
-  merged refit.
-- **Adapter conversion planning** is redone on every merged streaming export (Bridge rebuilds the
-  adapter tasks; only the base conversion tasks are cached).
+- **LoRA on the critic** (`TODO(lora-critic)`): `lora=` with `output_head="value"` raises. Bridge's LoRA
+  freezes every base parameter, the newly built value head included, and the adapter-only checkpoint
+  keeps trainable tensors only, so the head has to be unfrozen after LoRA is applied and recorded with
+  the adapters. The value-head and LoRA hooks would also each load the base, so a LoRA critic needs a
+  single load (base weights, then the value head, then LoRA). `ppo_vllm.py` needs a critic option too.
+- **Multi-LoRA**: an engine trains one adapter set. Bridge's `MultiLoRA` (`peft/multi_lora.py`) already
+  wraps each target with several adapter slots, picks the slot per token segment
+  (`set_tokens_per_adapter_slot`, with slot routing through the MoE dispatcher) and manages the slots
+  (`init_adapter_slot`, `load_adapter`). The engine still needs a config for several adapters, an adapter
+  per `Datum` with micro-batches ordered by adapter, and per-adapter optimizer state, checkpoints and
+  export.
+- **User-supplied adapters**: training starts from fresh adapters or from the engine's own checkpoint.
+  Starting from an adapter the user brings (for RL as a service) needs a `lora=` option naming its
+  source, a check that its rank, alpha, targets and expert layout match the `LoraConfig`, and an HF PEFT
+  import: Bridge loads Megatron adapter checkpoints (`load_peft_adapter_checkpoint`) and exports HF
+  adapters, but has no HF adapter import.
+- **Adapter-only refit** (`TODO(lora-refit)`): the examples refresh vllm with merged weights,
+  `bf16(W + s B A)`, which drops update elements below half a bf16 step of W. Refreshing vllm with the
+  adapters instead needs a refresh that loads adapter tensors without reloading the weights, the expert
+  adapters in a layout vllm loads (vllm 0.29 applies LoRA to Qwen3.5, GDN projections and MoE experts
+  included, with per-expert adapters by default and outer-shared ones with `enable_moe_shared_loras`;
+  Bridge's adapter export has the per-expert, 3D and shared-outer forms), and its decode cost and
+  train/inference gap measured against merged refit.
+- **Adapter conversion planning** is redone on every merged streaming export: Bridge rebuilds the
+  adapter tasks, and only the base conversion tasks are cached.
 - **FP32 adapters** (`lora_dtype`): Bridge's `LoRA.lora_dtype` reaches only adapters on plain
   `torch.nn.Linear`. Adapters on Megatron layers are built in the model's `params_dtype`, and
   `Float16Module` casts every tensor not marked `keep_in_fp32`, so FP32 adapters need Bridge's adapters to
@@ -114,6 +106,9 @@ the text recipe. Missing:
   `LoraConfig` does not expose it until then.
 - **LoRA+** (a per-group `max_lr` ratio on `lora_B`) is not reachable from the engine, and
   `apply_adam_params` scales by `lr_mult` only, so wiring it needs the ratio rule too.
+- **Not run on GPU yet:** LoRA on the vision-language recipe (its target scoping by the recipe's
+  `freeze_*` flags is unit-tested only), and the router checks and the expert-bias freeze on a model that
+  has an expert bias (Qwen3.5 has none).
 
 ## State, export and placement
 

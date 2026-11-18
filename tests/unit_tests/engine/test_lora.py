@@ -19,7 +19,7 @@ from megatron.bridge.engine.lora import build_lora, make_lora_hook
 from megatron.bridge.engine.recipes.base import BRIDGE_LORA_TARGET_MODULES, TrainingRecipe
 from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.peft.lora import LoRA
-from megatron.bridge.training.setup import _apply_peft_transformation
+from megatron.bridge.peft.utils import create_peft_hook
 from megatron.bridge.training.state import TrainState
 
 
@@ -103,9 +103,10 @@ def test_lora_hook_loads_the_base_into_the_bare_model_before_applying_lora(monke
         lambda recipe, model, optimizer, path: calls.append(("load", model, optimizer, path)),
     )
     wrapped = [_MoeLayer(_CpuRouter(expert_bias=True))]
+    # LoRA is applied by Bridge's own PEFT hook, built for this engine's LoRA.
     monkeypatch.setattr(
-        "megatron.bridge.engine.lora._apply_peft_transformation",
-        lambda peft, model: calls.append(("lora", peft, model)) or wrapped,
+        "megatron.bridge.engine.lora.create_peft_hook",
+        lambda peft: lambda model: calls.append(("lora", peft, model)) or wrapped,
     )
     recipe, peft, bare = _recipe(), build_lora(LoraConfig(rank=2, alpha=4.0), _recipe()), [_MoeLayer(_CpuRouter())]
     assert make_lora_hook(recipe, peft, "/base")(bare) is wrapped
@@ -131,8 +132,9 @@ def test_bridge_lora_freezes_the_base_and_disable_adapter_scores_it():
     model = [_Block()]
     x = torch.randn(3, 4)
     base_out, base_router = model[0](x)
-    wrapped = _apply_peft_transformation(peft, model)
+    wrapped = create_peft_hook(peft)(model)
     trainable = sorted(name for name, p in wrapped[0].named_parameters() if p.requires_grad)
+    assert peft.params_to_save == set(trainable)  # what the adapter-only checkpoint view keeps
     assert trainable == [
         "linear_proj.adapter.linear_in.weight",
         "linear_proj.adapter.linear_out.weight",
@@ -315,16 +317,16 @@ def test_vision_language_lora_rejects_a_recipe_that_freezes_everything(monkeypat
 
 
 @pytest.mark.parametrize(
-    "kwargs, message",
+    "kwargs, error, message",
     [
-        ({"output_head": "value", "checkpoint_path": "/base"}, "lora needs output_head='lm'"),
-        ({"trainable": False, "checkpoint_path": "/base"}, "lora needs trainable=True"),
-        ({}, "lora needs checkpoint_path"),
+        ({"output_head": "value", "checkpoint_path": "/base"}, NotImplementedError, "(a LoRA critic)"),
+        ({"trainable": False, "checkpoint_path": "/base"}, ValueError, "lora needs trainable=True"),
+        ({}, ValueError, "lora needs checkpoint_path"),
     ],
 )
-def test_lora_engine_validates_its_options_before_anything_is_built(monkeypatch, kwargs, message):
+def test_lora_engine_validates_its_options_before_anything_is_built(monkeypatch, kwargs, error, message):
     monkeypatch.setattr("megatron.bridge.engine.engine.finalize_recipe", lambda recipe: pytest.fail("finalized"))
-    with pytest.raises(ValueError, match=re.escape(message)):
+    with pytest.raises(error, match=re.escape(message)):
         TrainingEngine.from_recipe(
             _recipe(), lora=LoraConfig(rank=8, alpha=16.0), spawn_async_save_worker=False, **kwargs
         )

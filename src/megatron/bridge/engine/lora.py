@@ -17,7 +17,8 @@ Construction follows Bridge's own PEFT setup (``_create_peft_pre_wrap_hook`` in 
 the pretrained base weights are loaded into the bare model, LoRA then wraps the target modules and
 freezes every base parameter, and only afterwards are DDP and the optimizer built, so both hold the
 adapters alone. A LoRA engine therefore loads ``checkpoint_path`` inside its pre-wrap hook, as the value
-head does, instead of after the build.
+head does, instead of after the build, and applies LoRA there with Bridge's PEFT hook
+(``peft.utils.create_peft_hook``).
 
 Routing stays the base model's. No router is a LoRA target, which is checked against the modules the
 target names and wildcards resolve to, and the router state that ``finalize_model_grads`` updates even
@@ -43,8 +44,8 @@ from megatron.bridge.engine.checkpoint import load_pretrained_weights
 from megatron.bridge.engine.datum import LORA_EXPERT_ADAPTER_LAYOUTS, LoraConfig
 from megatron.bridge.engine.recipes.base import TrainingRecipe, is_multimodal
 from megatron.bridge.peft.lora import LoRA
+from megatron.bridge.peft.utils import create_peft_hook
 from megatron.bridge.peft.walk_utils import walk
-from megatron.bridge.training.setup import _apply_peft_transformation
 
 
 PreWrapHook = Callable[[list[MegatronModule]], list[MegatronModule]]
@@ -104,11 +105,12 @@ def build_lora(config: LoraConfig, recipe: TrainingRecipe) -> LoRA:
 def make_lora_hook(recipe: TrainingRecipe, peft: LoRA, checkpoint_path: str) -> PreWrapHook:
     """Pre-wrap hook: check the routers, load the base weights into the bare model, then apply LoRA.
 
-    On a vision-language model, plain target names are first kept off the parts the recipe freezes
-    (``_scope_to_trained_parts``). The router checks then run on the bare model: no router may match a
-    target pattern, and quantile balancing is rejected. The base load runs with no PEFT in the checkpoint
-    view, so every base tensor is read; LoRA then wraps the targets, freezes the base and records the
-    adapter parameters it saves (``set_params_to_save``). Last, the routers' expert-bias updates are
+    LoRA itself is applied by Bridge's PEFT hook (``create_peft_hook``), which wraps the targets, freezes
+    the base and records the adapter parameters it saves (``set_params_to_save``). The engine's own steps
+    run around it. On a vision-language model, plain target names are first kept off the parts the recipe
+    freezes (``_scope_to_trained_parts``). The router checks then run on the bare model: no router may
+    match a target pattern, and quantile balancing is rejected. The base load runs with no PEFT in the
+    checkpoint view, so every base tensor is read. Last, after LoRA, the routers' expert-bias updates are
     switched off.
 
     Args:
@@ -120,11 +122,13 @@ def make_lora_hook(recipe: TrainingRecipe, peft: LoRA, checkpoint_path: str) -> 
         The hook to register on ``recipe.model``.
     """
 
+    apply_lora = create_peft_hook(peft)
+
     def hook(model: list[MegatronModule]) -> list[MegatronModule]:
         _scope_to_trained_parts(peft, recipe, model)
         _check_routers(peft, model)
         load_pretrained_weights(recipe, model, None, checkpoint_path)
-        model = _apply_peft_transformation(peft, model)
+        model = apply_lora(model)
         _freeze_expert_bias(model)
         return model
 
