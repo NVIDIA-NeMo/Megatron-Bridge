@@ -196,6 +196,35 @@ class TestCreatePgCollectionFunction:
         assert result.dp_cp_gtp_remat is result.dp_cp
         assert result.dp_cp_gtp_remat is not result.dp
 
+    @patch("megatron.bridge.training.initialize.HyperCommGrid")
+    @patch("torch.distributed.get_world_size", return_value=8)
+    @patch("torch.distributed.new_subgroups_by_enumeration")
+    def test_create_pg_collection_sets_expt_dp_gtp_remat(
+        self, mock_subgroups, mock_world_size, mock_hyper_grid, mock_model_config
+    ):
+        """expt_dp_gtp_remat is the expert grid's dp group, distinct from the dense dp group."""
+        from megatron.bridge.training.initialize import _create_pg_collection
+
+        mock_model_config.expert_model_parallel_size = 4
+        grid_groups = {}
+
+        def make_grid(**kwargs):
+            groups = grid_groups.setdefault(tuple(kwargs["dim_names"]), {})
+            grid = MagicMock()
+            grid.create_pg.side_effect = lambda dims: groups.setdefault(tuple(dims), MagicMock())
+            grid._gen_rank_enum.return_value = [[0], [1], [2], [3], [4], [5], [6], [7]]
+            return grid
+
+        mock_hyper_grid.side_effect = make_grid
+        mock_subgroups.return_value = (MagicMock(), [])
+
+        result = _create_pg_collection(mock_model_config, num_distributed_optimizer_instances=1)
+
+        expert_dp_group = grid_groups[("tp", "ep", "dp", "pp")][("dp",)]
+        assert result.expt_dp_gtp_remat is expert_dp_group
+        assert result.expt_dp_gtp_remat is result.expt_dp
+        assert result.expt_dp_gtp_remat is not result.dp
+
 
 class TestCreateDistTrainPgsFunction:
     """Tests for the _create_dist_train_pgs function."""
