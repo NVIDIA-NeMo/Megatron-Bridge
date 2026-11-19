@@ -85,6 +85,9 @@ from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
 from megatron.bridge.perf_recipes.qwen.gb300.reduced_scale import (
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_graph_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config,
 )
 from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (

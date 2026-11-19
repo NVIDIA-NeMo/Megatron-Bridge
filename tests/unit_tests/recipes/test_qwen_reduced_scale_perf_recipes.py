@@ -18,6 +18,9 @@ from scripts.common.benchmark_parallelism import data_parallel_size, topology_fr
 from megatron.bridge.perf_recipes.qwen import (
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_graph_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config,
 )
 
@@ -79,3 +82,22 @@ def test_qwen3_235b_16gpu_gb300_bf16_zero2_variant() -> None:
     assert cfg.train.micro_batch_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 16
+
+
+def test_qwen3_235b_16gpu_gb300_bf16_recompute_variants() -> None:
+    selective = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config()
+    assert selective.model.recompute_granularity == "selective"
+    assert selective.model.recompute_modules == ["moe_act"]
+    assert selective.model.cuda_graph_impl == "none"
+
+    no_recompute = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config()
+    assert no_recompute.model.recompute_granularity is None
+    assert no_recompute.model.recompute_modules == []
+
+    graph = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_graph_config()
+    assert graph.model.recompute_granularity == "selective"
+    assert graph.model.recompute_modules == ["moe_act"]
+    assert graph.model.cuda_graph_impl == "transformer_engine"
+    assert graph.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
+    assert graph.model.use_te_rng_tracker is True
+    assert graph.rng.te_rng_tracker is True

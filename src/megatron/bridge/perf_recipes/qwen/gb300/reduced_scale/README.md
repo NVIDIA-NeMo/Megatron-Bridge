@@ -20,5 +20,13 @@ validated topology and memory policy but uses `optim_grads` ZeRO-2 sharding.
 It is the performance candidate when the additional replicated-parameter
 memory fits.
 
+Three diagnostic variants isolate the remaining activation-memory choices:
+
+- `..._zero2_selective_config` uses eager execution and recomputes only
+  `moe_act`.
+- `..._zero2_no_recompute_config` is the eager no-recompute control.
+- `..._zero2_selective_graph_config` adds TE scoped graphs to the selective
+  candidate.
+
 All reduced-scale recipes retain GBS=2048 from the 64-GPU template. Override
 `train.global_batch_size` when running the GBS 16, 256, or 1024 experiments.

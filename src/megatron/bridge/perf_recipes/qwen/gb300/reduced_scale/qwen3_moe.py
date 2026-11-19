@@ -105,8 +105,41 @@ def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config() -> ConfigContainer:
     return cfg
 
 
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config() -> ConfigContainer:
+    """16-GPU ZeRO-2 candidate with selective expert-activation recompute."""
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config()
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = ["moe_act"]
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config() -> ConfigContainer:
+    """16-GPU ZeRO-2 eager control without activation recompute."""
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config()
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = []
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_graph_config() -> ConfigContainer:
+    """16-GPU ZeRO-2 selective-recompute candidate with TE scoped graphs."""
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config()
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
+    return cfg
+
+
 __all__ = [
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_graph_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config",
 ]
