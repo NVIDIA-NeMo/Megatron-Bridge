@@ -103,7 +103,8 @@ def test_mlp_applies_gate_and_down_multipliers():
     torch.testing.assert_close(output_bias, torch.tensor([[[0.5, 0.5]]]))
 
 
-def test_self_attention_applies_key_multiplier():
+@pytest.mark.parametrize("kwargs", [{}, {"head_wise_gate": False}])
+def test_self_attention_applies_key_multiplier(kwargs):
     attention = object.__new__(FalconH1SelfAttention)
     object.__setattr__(attention, "config", SimpleNamespace(key_multiplier=3.0))
     query = torch.tensor([1.0])
@@ -111,11 +112,19 @@ def test_self_attention_applies_key_multiplier():
     value = torch.tensor([4.0])
 
     with patch.object(SelfAttention, "get_query_key_value_tensors", return_value=(query, key, value)):
-        scaled_query, scaled_key, scaled_value = attention.get_query_key_value_tensors(torch.zeros(1, 1, 1))
+        scaled_query, scaled_key, scaled_value = attention.get_query_key_value_tensors(torch.zeros(1, 1, 1), **kwargs)
 
     torch.testing.assert_close(scaled_query, query)
     torch.testing.assert_close(scaled_key, torch.tensor([6.0]))
     torch.testing.assert_close(scaled_value, value)
+
+
+def test_self_attention_rejects_unsupported_head_wise_gate():
+    attention = object.__new__(FalconH1SelfAttention)
+    with patch.object(SelfAttention, "get_query_key_value_tensors") as parent:
+        with pytest.raises(ValueError, match="does not support head-wise gating"):
+            attention.get_query_key_value_tensors(torch.zeros(1, 1, 1), head_wise_gate=True)
+        parent.assert_not_called()
 
 
 def test_parallel_layer_normalizes_once_before_branch_input_multipliers():
