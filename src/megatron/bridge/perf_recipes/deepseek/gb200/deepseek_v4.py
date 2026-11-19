@@ -121,6 +121,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
+    # Each manual collection walks every tracked Python object; host RSS stays flat at this interval.
+    cfg.train.manual_gc_interval = 500
 
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

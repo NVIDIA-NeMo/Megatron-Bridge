@@ -197,6 +197,19 @@ def _uses_model_builder(bridge: AutoBridge) -> bool:
     return getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False)
 
 
+def _pad_vocab_for_tensor_parallelism(config, tp: int) -> None:
+    """Pad the vocabulary when tensor parallelism does not divide it.
+
+    Megatron splits the embedding and output layer across tensor-parallel ranks, so a vocabulary
+    that ``tp`` does not divide fails with ``AssertionError: <vocab> is not divisible by <tp>``.
+    Import pads those rows and export trims them again, so the checkpoint round-trips exactly.
+    Vocabularies that ``tp`` divides stay unpadded.
+    """
+    vocab_size = getattr(config, "vocab_size", None)
+    if vocab_size and vocab_size % tp and hasattr(config, "should_pad_vocab"):
+        config.should_pad_vocab = True
+
+
 def _configure_model_provider(
     model_provider: GPTModelProvider,
     *,
@@ -209,6 +222,7 @@ def _configure_model_provider(
 ) -> None:
     """Apply distributed parallelism and dtype settings to a model provider."""
     model_provider.tensor_model_parallel_size = tp
+    _pad_vocab_for_tensor_parallelism(model_provider, tp)
     model_provider.pipeline_model_parallel_size = pp
     model_provider.expert_model_parallel_size = ep
     model_provider.expert_tensor_parallel_size = etp
@@ -230,6 +244,7 @@ def _configure_model_config(
 ) -> None:
     """Apply distributed parallelism and dtype settings to a builder config."""
     _configure_model_provider(model_config.transformer, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype, use_cpu=use_cpu)
+    _pad_vocab_for_tensor_parallelism(model_config, tp)
 
 
 def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:

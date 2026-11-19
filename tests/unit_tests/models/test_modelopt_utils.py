@@ -1351,17 +1351,6 @@ def _mxfp4_weight_only_linear(out_features, in_features):
     return module
 
 
-def _exports_weight_only_mxfp4():
-    try:
-        return weight_export.get_quantized_weight_export_spec(_mxfp4_weight_only_linear(32, 32)) is not None
-    except NotImplementedError:
-        return False
-
-
-# TODO: Drop once nvidia-modelopt packs weight-only MXFP4 in its functional export (NVIDIA/Model-Optimizer#3221).
-_requires_weight_only_mxfp4 = pytest.mark.skipif(
-    not _exports_weight_only_mxfp4(), reason="nvidia-modelopt cannot export weight-only MXFP4"
-)
 _GPT_OSS_PROJECTIONS = {
     # HF name: mapping, Megatron name, (out, in) of each expert's Megatron weight
     "gate_up_proj": (GPTOSSMLPGateUpProjMapping, "linear_fc1", (64, 96)),
@@ -1383,7 +1372,6 @@ def _gpt_oss_expert_tasks(projection, factory):
     return module, tasks
 
 
-@_requires_weight_only_mxfp4
 @pytest.mark.parametrize("projection", _GPT_OSS_PROJECTIONS)
 def test_gpt_oss_experts_export_openai_mxfp4_blocks(projection):
     from modelopt.torch.quantization.qtensor import MXFP4QTensor
@@ -1421,7 +1409,6 @@ def test_gpt_oss_experts_export_openai_mxfp4_blocks(projection):
     torch.testing.assert_close(loaded, expected.to(loaded.dtype), rtol=0, atol=0)
 
 
-@_requires_weight_only_mxfp4
 def test_gpt_oss_openai_mxfp4_export_rejects_other_quantized_layers():
     module, tasks = _gpt_oss_expert_tasks("down_proj", _mxfp4_weight_only_linear)
     dense = _fp8_linear()
@@ -1434,7 +1421,6 @@ def test_gpt_oss_openai_mxfp4_export_rejects_other_quantized_layers():
         modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
 
 
-@_requires_weight_only_mxfp4
 @pytest.mark.parametrize("expert", [0, -1])
 def test_gpt_oss_openai_mxfp4_export_rejects_unquantized_experts(expert):
     # The last expert's hook packs the whole projection, so cover it and another one.
@@ -1878,6 +1864,8 @@ def test_shard_writer_rejects_duplicate_names(tmp_path):
         (("q_proj", "k_proj", "v_proj"), "input_scale", False),
         (("gate_proj", "up_proj"), "weight_scale_2", False),
         (("q_a_proj", "kv_a_proj_with_mqa"), "input_scale", False),
+        (("g_proj", "q_a_proj", "kv_a_proj_with_mqa"), "weight_scale_2", False),
+        (("wq_a", "wkv"), "input_scale", False),
         (("q_proj", "o_proj"), "input_scale", True),  # Not fused: different scales are fine.
     ],
 )

@@ -8,6 +8,7 @@ This directory provides a recipe and instructions for supervised fine-tuning (SF
 checkpoint with Megatron Bridge, covering data preparation, training, and export to Hugging Face format. The
 recipe runs on 16 nodes with four GB300 GPUs per node.
 A second recipe runs the same fine-tuning on 16 nodes with four GB200 GPUs per node.
+A recipe for H100 runs on 16 nodes with eight GPUs per node.
 
 ## Requirements
 
@@ -29,17 +30,20 @@ A second recipe runs the same fine-tuning on 16 nodes with four GB200 GPUs per n
   The recipe builds the model from its `config.json` and starts from its weights.
 * **GPUs**: the full model trains on 16 nodes of 4 GB300 GPUs (see [Hardware](#hardware)).
   On 16 nodes of 4 GB200 GPUs, use the GB200 recipe (see [GB200](#gb200-the-full-model-on-16-nodes)).
+  On H100 it trains on 16 nodes of 8 GPUs (see [H100](#h100-the-full-model-on-16-nodes)).
 
 ## Recipe
 
 The recipe is in `megatron.bridge.recipes.ernie.ernie55` and trains with the ERNIE 5.5 forward step
 (`--step_func ernie55_step`).
 The GB200 recipe is in `megatron.bridge.recipes.ernie.gb200.ernie55` and trains with the same step.
+The H100 recipe is in `megatron.bridge.recipes.ernie.h100.ernie55`.
 
 |Recipe|GPUs|Parallelism|Row length|Global batch|Use it for|
 |:---|:---|:---|:---|:---|:---|
 |`ernie55_sft_64gpu_gb200_bf16_config`|16 x 4|TP1 PP1 CP8 EP64|16384|32|Fine-tuning the full model on GB200 from `$ERNIE55_HF_PATH`|
 |`ernie55_sft_64gpu_gb300_bf16_config`|16 x 4|TP1 PP1 CP64 EP64|262144|2|Fine-tuning the full model from `$ERNIE55_HF_PATH`|
+|`ernie55_sft_128gpu_h100_bf16_config`|16 x 8|TP1 PP8 CP1 EP16|4096|32|Fine-tuning the full model on H100 from `$ERNIE55_HF_PATH`|
 
 * The `sft` recipe needs `$ERNIE55_HF_PATH` (or the recipe's `hf_path` argument). Without either, it builds a
   placeholder config with no weights, and fine-tuning stops with an error when it starts (`slurm_train.sh` checks
@@ -88,6 +92,7 @@ match the dataset settings.
 The recipe makes each sample its own row and splits samples longer than 262144 tokens. A sample with a token id at
 or above the model's `vocab_size` raises a `ValueError` when training first reads it, not when the dataset is built.
 The GB200 recipe packs samples into 16384-token rows instead, and splits samples longer than a row.
+The H100 recipe packs several samples into a row of at most 4096 tokens and splits longer samples.
 
 ### 2. Train
 
@@ -164,6 +169,48 @@ What differs from the GB300 recipe, and why:
   the value needs two layers of quotes, one for the shell and one for the override parser, which reads a bare comma
   as a sweep: `'dist.distributed_backend="cpu:gloo,cuda:nccl"'`.
 
+#### H100: the full model on 16 nodes
+
+`ernie55_sft_128gpu_h100_bf16_config` fine-tunes the full model on 16 nodes of 8 H100 GPUs (80 GB each). Pass the
+recipe to [slurm_train.sh](slurm_train.sh), and ask SLURM for 8 tasks and 8 GPUs per node and for the run's time:
+
+```bash
+RECIPE=ernie55_sft_128gpu_h100_bf16_config \
+ERNIE55_HF_PATH=/path/to/ernie55_hf DATA_PATH=/path/to/train.jsonl \
+CONTAINER_IMAGE=/path/to/image.sqsh MEGATRON_LM_PATH=/path/to/Megatron-LM \
+MEGATRON_BRIDGE_PATH=/path/to/Megatron-Bridge WORKSPACE=/path/to/workspace CONTAINER_MOUNTS=/path:/path \
+    sbatch --ntasks-per-node=8 --gpus-per-node=8 --time=16:00:00 \
+    --account=<account> --partition=<partition> --qos=<qos> \
+    examples/models/ernie55/slurm_train.sh
+```
+
+* **Parallelism.** TP1 PP8 CP1 EP16: eight pipeline stages of 16 ranks each, with EP16 across a stage's ranks. The
+  recipe sets `model.pipeline_dtype=torch.float32`.
+* **Rows.** Several samples are packed into a row of at most 4096 tokens, and a longer sample is split into rows.
+* **Schedule.** A step holds at most 32 x 4096 tokens, a quarter of the 2 x 262144 of a GB300 step, so the recipe
+  runs four times the steps: 8260 by default, with 412 warmup steps and a cosine decay over 8260 steps. The last
+  checkpoint is `iter_0008260`.
+* **Run time.** At the 5.3 to 5.7 s per step of the validation runs, the 8260 steps take about 12 to 13 hours. The
+  recipe saves once, at the end. The script asks for 4 hours, hence `--time` in the command above.
+* **Segments.** Where a job cannot run that long, cut the run into segments that also save the optimizer state:
+  add `EXTRA_OVERRIDES="checkpoint.save_optim=true"` to every submission and set `TRAIN_ITERS` to the step where
+  the segment ends. A segment saves only at its end, so it has to fit the job's time limit: at about 650 steps an
+  hour, 2000 steps fit the script's 4 hours (2000, 4000, 6000, 8000 and then 8260). A resubmission then continues
+  the weights, the optimizer and the schedule from the last saved step. Such a checkpoint is about 2.8 TB
+  (2.6 TiB), five times the weights alone. Without the optimizer state, the default, a resubmission continues the
+  weights and the step count only: the warmup and the cosine decay start again.
+* **Global batch.** Every rank runs two micro-batches per step. With more of them, the pipeline schedule keeps more
+  forward passes in flight on the first stages, and a global batch of 128 (eight per rank) runs out of memory
+  there. To train on more tokens, raise the number of steps.
+* **Memory.** The GPUs run close to their 80 GB, the last pipeline stage closest: it also holds the output head
+  and the MTP module. Ranks, mostly of the last stage, can log `memory allocation failed with OOM` warnings from
+  PyTorch's allocator. In the validation runs the allocator then freed cached blocks and the allocation succeeded:
+  no step failed.
+* **FlashMLA.** The recipe keeps the cuDNN DSA backend, whose sparse forward is FlashMLA's, so the image needs
+  FlashMLA built with its SM90 kernels. `docker/Dockerfile.ci` sets `FLASH_MLA_DISABLE_SM90=1` in both places
+  where it builds FlashMLA; an image for H100 must build FlashMLA without it.
+* **Export.** On H100, run the command of the next section with 32 ranks and `--ep 32` (4 nodes of 8 GPUs).
+
 ### 3. Export to Hugging Face
 
 Convert a saved step back with `scripts/conversion/run_conversion.py export`, passing the original checkpoint as
@@ -216,7 +263,7 @@ the adapters of the adapted modules.
 ## Hardware
 
 The recipes are validated on NVIDIA Blackwell (GB200 at SM100, GB300 at SM103). Every component also supports
-Hopper (SM90), but SM90 is not validated.
+Hopper (SM90), and the H100 recipe is validated on H100 (see [H100](#h100-the-full-model-on-16-nodes)).
 
 |Component|Architectures|Function|
 |:---|:---|:---|

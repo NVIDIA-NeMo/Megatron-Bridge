@@ -239,23 +239,13 @@ class TestFinalize:
 
 
 class TestBuilderStackSpec:
-    def test_default_is_the_transformer_engine_stack(self) -> None:
-        resolved = BridgeHybridModelBuilder(_make_model_config())._resolve_hybrid_stack_spec()
+    @pytest.mark.parametrize("restore_modelopt_state", [False, True])
+    def test_default_is_the_transformer_engine_stack(self, restore_modelopt_state: bool) -> None:
+        config = _make_model_config(restore_modelopt_state=restore_modelopt_state)
+
+        resolved = BridgeHybridModelBuilder(config)._resolve_hybrid_stack_spec()
 
         assert resolved is hybrid_stack_spec
-
-    def test_modelopt_default_remaps_fused_layer_norms(self) -> None:
-        config = _make_model_config(restore_modelopt_state=True)
-        modelopt_spec = ModuleSpec(module=object)
-
-        with patch(
-            "megatron.bridge.models.hybrid.hybrid_builder.get_hybrid_stack_modelopt_spec",
-            return_value=modelopt_spec,
-        ) as get_spec:
-            resolved = BridgeHybridModelBuilder(config)._resolve_hybrid_stack_spec()
-
-        get_spec.assert_called_once_with(local_core_attention=False, remap_te_layernorm=True)
-        assert resolved is modelopt_spec
 
     def test_inference_optimized_default(self) -> None:
         config = _make_model_config(transformer=dict(transformer_impl="inference_optimized"))

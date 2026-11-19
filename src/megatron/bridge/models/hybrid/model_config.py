@@ -65,6 +65,9 @@ class BridgeHybridModelConfig(ModelConfigOverrideMixin, HybridModelConfig, Model
 
     builder: ClassVar[str] = "megatron.bridge.models.hybrid.BridgeHybridModelBuilder"
     transformer_config_class: ClassVar[type[TransformerConfig]] = TransformerConfig
+    # Dev's AttnRes validation reads the pattern from the transformer, while the builder
+    # still consumes the outer field. Main has only the outer field.
+    _mirrored_transformer_fields: ClassVar[frozenset[str]] = frozenset({"hybrid_layer_pattern"})
 
     hybrid_stack_spec: (
         ModuleSpec | Callable[[], ModuleSpec] | Callable[["BridgeHybridModelConfig"], ModuleSpec] | None

@@ -111,7 +111,11 @@ from megatron.bridge.training.utils.train_utils import (
     training_log,
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
-from megatron.bridge.utils.cuda_graph import get_vision_cuda_graph_seq_length, is_full_iteration_cuda_graph
+from megatron.bridge.utils.cuda_graph import (
+    # MCore dev still exports this helper under its pre-rename name; the wrapper resolves either.
+    get_vision_cuda_graph_seq_length as get_vision_te_cuda_graph_seq_length,
+)
+from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
 from megatron.bridge.utils.mcore_fsdp import FullyShardedDataParallelV1, FullyShardedDataParallelV2
 
 
@@ -303,7 +307,7 @@ def train(
             if unwrapped is not None and hasattr(unwrapped, "vision_model") and unwrapped.vision_model is not None:
                 vision_model_config = unwrapped.vision_model.config
                 if vision_model_config.cuda_graph_impl == "transformer_engine":
-                    vision_seq_length = get_vision_cuda_graph_seq_length(vision_model_config)
+                    vision_seq_length = get_vision_te_cuda_graph_seq_length(vision_model_config)
                     _vision_cg_kwargs: dict[str, Any] = dict(
                         model=model,
                         vision_config=vision_model_config,

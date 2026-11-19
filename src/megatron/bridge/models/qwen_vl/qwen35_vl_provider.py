@@ -569,6 +569,8 @@ def _qwen35_provider_model_config(provider: GPTModelProvider) -> Qwen35VLModelCo
     transformer_class = Qwen35VLModelConfig.transformer_config_class
     transformer_fields = {item.name for item in fields(transformer_class) if item.init}
     kwargs = {name: getattr(provider, name) for name in outer_fields | transformer_fields if hasattr(provider, name)}
+    # Preserve unset CP inputs instead of treating resolved defaults as explicit choices.
+    kwargs.update(provider._inferred_cp_inputs())
     kwargs.pop("transformer_layer_spec", None)
     configure_qwen35_hybrid(
         kwargs,
