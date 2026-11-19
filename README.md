@@ -232,6 +232,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 
 | Family | Supported variants |
 |----------------|--------------------|
+| **Apertus** | [Apertus 8B / 70B, Apertus 1.5 language model](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/apertus) (Apertus 1.5 requires a transformers release with Apertus 1.5) |
 | [**BAGEL**](docs/models/bagel/bagel.md) | BAGEL-7B-MoT (requires the tested MCore `dev` revision and `bagel` extra) |
 | [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 / Ling MoE V2 (Bailing) |
 | [**Beam**](docs/models/beam/beam.md) | Beam-1.0-501B-A23B |
