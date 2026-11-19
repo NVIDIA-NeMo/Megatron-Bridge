@@ -23,10 +23,15 @@ import yaml
 from megatron.core.transformer.moe.moe_logging import MoEMetricsTracker
 
 from megatron.bridge.engine import LoraConfig, TrainingEngine
-from megatron.bridge.engine.checkpoint import _checkpoint_state, load_engine_state, save_engine_state
+from megatron.bridge.engine.checkpoint import (
+    _checkpoint_state,
+    load_engine_state,
+    load_pretrained_weights,
+    save_engine_state,
+)
 from megatron.bridge.engine.engine import Topology
 from megatron.bridge.engine.export import ExportState, export_hf_adapter
-from megatron.bridge.engine.lora import build_lora, make_lora_hook
+from megatron.bridge.engine.lora import build_lora
 from megatron.bridge.engine.recipes.base import BRIDGE_LORA_TARGET_MODULES, TrainingRecipe
 from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.peft.lora import LoRA
@@ -106,22 +111,27 @@ def test_training_recipe_defaults_to_bridge_lora_targets_per_instance():
 # ---- the pre-wrap hook and Bridge's LoRA on real (CPU) modules -----------------------------------
 
 
-def test_lora_hook_loads_the_base_into_the_bare_model_before_applying_lora(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        "megatron.bridge.engine.lora.load_pretrained_weights",
-        lambda recipe, model, optimizer, path: calls.append(("load", model, optimizer, path)),
-    )
-    wrapped = [_Block()]
-    # LoRA is applied by Bridge's own PEFT hook, built for this engine's LoRA, and nothing else runs.
-    monkeypatch.setattr(
-        "megatron.bridge.engine.lora.create_peft_hook",
-        lambda peft: lambda model: calls.append(("lora", peft, model)) or wrapped,
-    )
-    recipe, peft, bare = _recipe(), build_lora(LoraConfig(rank=2, alpha=4.0), _recipe()), [_Block()]
-    assert make_lora_hook(recipe, peft, "/base")(bare) is wrapped
-    # No optimizer exists yet: its fp32 masters are built later from the loaded (frozen) base and adapters.
-    assert calls == [("load", bare, None, "/base"), ("lora", peft, bare)]
+def test_base_load_into_a_lora_model_sees_only_the_base_weights(monkeypatch):
+    seen = {}
+
+    class _RecordingManager:
+        def load(self, context):
+            seen["keys"] = sorted(context.model[0].state_dict())
+            seen["params"] = [name for name, _ in context.model[0].named_parameters()]
+
+    prefix = "megatron.bridge.engine.checkpoint."
+    monkeypatch.setattr(prefix + "_engine_checkpoint_config", lambda path: SimpleNamespace(finalize=lambda: None))
+    monkeypatch.setattr(prefix + "_checkpoint_state", lambda recipe, config: None)
+    monkeypatch.setattr(prefix + "create_checkpoint_manager", lambda config: _RecordingManager())
+    peft = build_lora(LoraConfig(rank=2, alpha=4.0), _recipe())
+    model = create_peft_hook(peft)([_Block()])
+    load_pretrained_weights(_recipe(), model, None, "/base", peft=peft)
+    # During the load the model looks like the base: the base's state-dict keys and no adapter parameters.
+    assert seen["keys"] == sorted(_Block().state_dict())
+    assert not any(".adapter." in name for name in seen["params"])
+    # Afterwards the adapters are back and still the only trainable parameters.
+    trainable = {name for name, parameter in model[0].named_parameters() if parameter.requires_grad}
+    assert trainable == peft.params_to_save and len(trainable) == 4
 
 
 class _Block(torch.nn.Module):
@@ -202,22 +212,21 @@ def _vision_language_model() -> torch.nn.Module:
     return root
 
 
-def _wrapped_with_lora(monkeypatch, *, targets=None, **freeze) -> list[str]:
-    """Run the LoRA hook on the toy vision-language model; return the linears LoRA wrapped."""
-    monkeypatch.setattr("megatron.bridge.engine.lora.load_pretrained_weights", lambda *args: None)
+def _wrapped_with_lora(*, targets=None, **freeze) -> list[str]:
+    """Apply the engine's LoRA to the toy vision-language model; return the linears LoRA wrapped."""
     recipe = _recipe(QWEN35_TARGETS, vision_config=object(), **freeze)
     peft = build_lora(LoraConfig(rank=2, alpha=4.0, target_modules=targets), recipe)
-    model = make_lora_hook(recipe, peft, "/base")([_vision_language_model()])
+    model = create_peft_hook(peft)([_vision_language_model()])
     return sorted(name for name, module in model[0].named_modules() if type(module).__name__ == "LoRALinear")
 
 
-def test_vision_language_lora_matches_plain_names_everywhere_and_patterns_as_given(monkeypatch):
+def test_vision_language_lora_matches_plain_names_everywhere_and_patterns_as_given():
     frozen_vision = {"freeze_vision_model": True, "freeze_vision_projection": True}
     # The recipe's freeze flags do not steer the adapters: plain names reach every part ...
-    assert _wrapped_with_lora(monkeypatch, **frozen_vision) == sorted((*_LANGUAGE, *_VISION, *_PROJECTION))
+    assert _wrapped_with_lora(**frozen_vision) == sorted((*_LANGUAGE, *_VISION, *_PROJECTION))
     # ... and patterns keep them on the language model.
     language_only = [f"language_model.*.{name}" for name in QWEN35_TARGETS]
-    assert _wrapped_with_lora(monkeypatch, targets=language_only, **frozen_vision) == sorted(_LANGUAGE)
+    assert _wrapped_with_lora(targets=language_only, **frozen_vision) == sorted(_LANGUAGE)
 
 
 # ---- engine construction ------------------------------------------------------------------------
@@ -260,7 +269,7 @@ def test_lora_engine_appends_its_hook_last_and_hands_the_lora_to_build(monkeypat
     assert isinstance(built["peft"], LoRA) and built["peft"].dim == 8
     assert built["peft"].target_modules == QWEN35_TARGETS
     assert built["hooks"][0] is user_hook and len(built["hooks"]) == 2
-    assert "make_lora_hook" in built["hooks"][1].__qualname__
+    assert built["hooks"][1].__qualname__ == "create_peft_hook.<locals>.hook"  # Bridge's hook, nothing else
     assert built["checkpoint_path"] == "/base" and built["runtime"] == "runtime"
 
 
@@ -272,7 +281,9 @@ def _build_engine(monkeypatch, *, peft, checkpoint_path="/base"):
     monkeypatch.setattr(prefix + "_build_distributed_model", lambda recipe, pg_collection: ["chunk"])
     monkeypatch.setattr(prefix + "get_megatron_optimizer", lambda **kwargs: "optimizer")
     monkeypatch.setattr(prefix + "get_standard_config_overrides", lambda config: None)
-    monkeypatch.setattr(prefix + "load_pretrained_weights", lambda *args: calls["loads"].append(args[1:]))
+    monkeypatch.setattr(
+        prefix + "load_pretrained_weights", lambda *args, **kwargs: calls["loads"].append((*args[1:], kwargs))
+    )
     monkeypatch.setattr(prefix + "get_model_config", lambda chunk: SimpleNamespace(finalize_model_grads_func="fin"))
     monkeypatch.setattr(
         prefix + "_update_model_config_funcs", lambda *args, **kwargs: calls["config_funcs"].append(kwargs)
@@ -304,18 +315,19 @@ def _build_engine(monkeypatch, *, peft, checkpoint_path="/base"):
     return engine, calls
 
 
-def test_build_with_lora_leaves_the_load_to_the_hook_and_installs_the_expert_adapter_sync(monkeypatch):
+def test_build_with_lora_loads_the_base_after_the_build_and_installs_the_expert_adapter_sync(monkeypatch):
     peft = object()
     engine, calls = _build_engine(monkeypatch, peft=peft)
     assert calls["registered"] == ["hook"]
-    assert calls["loads"] == []  # the LoRA hook loaded the base into the bare model already
+    # LoRA is already on the model (its pre-wrap hook); the base loads once, after the build, adapters hidden.
+    assert calls["loads"] == [(["chunk"], "optimizer", "/base", {"peft": peft})]
     assert [kwargs["peft_enabled"] for kwargs in calls["config_funcs"]] == [True]
     assert engine._peft is peft and engine._finalize_model_grads_func == "fin"
 
 
 def test_build_without_lora_loads_after_the_build_as_before(monkeypatch):
     engine, calls = _build_engine(monkeypatch, peft=None)
-    assert calls["loads"] == [(["chunk"], "optimizer", "/base")]
+    assert calls["loads"] == [(["chunk"], "optimizer", "/base", {"peft": None})]
     assert [kwargs["peft_enabled"] for kwargs in calls["config_funcs"]] == [False]
     assert engine._peft is None
 

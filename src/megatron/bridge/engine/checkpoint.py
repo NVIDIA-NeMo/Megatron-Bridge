@@ -27,6 +27,7 @@ starts, so the tracker also vouches for it. ``load_state`` accepts ``<root>`` (l
 
 from __future__ import annotations
 
+import contextlib
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -40,6 +41,7 @@ from megatron.core.transformer import MegatronModule
 
 from megatron.bridge.engine.datum import CheckpointHandle
 from megatron.bridge.engine.recipes.base import TrainingRecipe
+from megatron.bridge.peft.adapter_wrapper import hide_adapters
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.checkpointing import (
@@ -207,6 +209,8 @@ def load_pretrained_weights(
     model: list[MegatronModule],
     optimizer: Any | None,
     checkpoint_path: str,
+    *,
+    peft: PEFT | None = None,
 ) -> None:
     """Load model weights from a Megatron (torch_dist) or HF checkpoint; optimizer and RNG state are not loaded.
 
@@ -215,18 +219,23 @@ def load_pretrained_weights(
     given the optimizer. Without it the masters keep their initialization values and the first
     ``optim_step`` would overwrite the model from them. Loading into a bare model before the optimizer
     exists (``optimizer=None``) is fine too: the masters are then built from the loaded weights.
+
+    With ``peft`` (a LoRA engine, whose model already holds its adapters), the adapters are hidden for the
+    load (``peft.adapter_wrapper.hide_adapters``): the checkpoint, which has none, then maps onto the base
+    weights exactly as for a model without LoRA, and the adapters keep their initial values.
     """
     checkpoint_config = _engine_checkpoint_config(checkpoint_path)
     checkpoint_config.finalize()
     manager = create_checkpoint_manager(checkpoint_config)
-    manager.load(
-        CheckpointLoadContext(
-            state=_checkpoint_state(recipe, checkpoint_config),
-            model=model,
-            optimizer=optimizer,
-            opt_param_scheduler=None,
+    with hide_adapters(model) if peft is not None else contextlib.nullcontext():
+        manager.load(
+            CheckpointLoadContext(
+                state=_checkpoint_state(recipe, checkpoint_config),
+                model=model,
+                optimizer=optimizer,
+                opt_param_scheduler=None,
+            )
         )
-    )
     sync_hybrid_device_optimizer_fp32_master_copies(optimizer)
 
 

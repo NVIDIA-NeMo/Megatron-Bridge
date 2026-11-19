@@ -67,7 +67,7 @@ from megatron.bridge.engine.datum import (
     check_datums,
 )
 from megatron.bridge.engine.export import ExportState, export_hf_adapter, export_hf_weights, make_export_state
-from megatron.bridge.engine.lora import build_lora, make_lora_hook
+from megatron.bridge.engine.lora import build_lora
 from megatron.bridge.engine.offload import HostState, check_movable, offload_to_cpu, reload_to_cuda
 from megatron.bridge.engine.optim import finalize_and_step, zero_gradients
 from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe, is_multimodal
@@ -76,6 +76,7 @@ from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.engine.schedule import run_forward_backward, run_forward_only, uses_mrope
 from megatron.bridge.engine.value_head import apply_value_head_model_settings, make_value_head_hook
 from megatron.bridge.peft.lora import LoRA
+from megatron.bridge.peft.utils import create_peft_hook
 from megatron.bridge.training.config import RerunStateMachineConfig
 from megatron.bridge.training.initialize import init_rerun_state, torch_dist_init
 from megatron.bridge.training.setup import (
@@ -302,9 +303,10 @@ class TrainingEngine:
                 to ``value_loss``. One recipe serves the actor and the critic.
             trainable: Build the optimizer and gradient buffers. ``False`` yields a frozen scoring engine.
             lora: Train LoRA adapters on a frozen base instead of the full model (``output_head="lm"``,
-                ``trainable=True`` and a ``checkpoint_path`` with the base weights are required). The base
-                is loaded and LoRA applied before DDP and the optimizer are built, so both hold the
-                adapters only. The config becomes Bridge's ``LoRA``, applied with Bridge's PEFT hook.
+                ``trainable=True`` and a ``checkpoint_path`` with the base weights are required). The config
+                becomes Bridge's ``LoRA``, which Bridge's PEFT hook applies to the bare model before DDP and
+                the optimizer are built, so both hold the adapters only; the base weights are then loaded as
+                for a full-weight engine, with the adapters hidden for the load.
                 ``forward_only(disable_adapters=True)`` then scores the base model (the usual RL
                 reference, with no second engine; ``LoraConfig`` notes MoE expert biases), ``save_state``
                 saves the adapters and their settings, and ``export`` merges them into the base weights
@@ -365,9 +367,8 @@ class TrainingEngine:
             # Loads the checkpoint into the bare model, then swaps the head; _build skips its own load.
             hooks.append(make_value_head_hook(recipe, checkpoint_path))
         if peft is not None:
-            # Loads the base into the bare model, then applies LoRA before DDP and the optimizer exist;
-            # _build skips its own load.
-            hooks.append(make_lora_hook(recipe, peft, checkpoint_path))
+            # Applies LoRA to the bare model before DDP and the optimizer exist; _build then loads the base.
+            hooks.append(create_peft_hook(peft))
         runtime = _acquire_runtime(recipe)
         self._build(
             recipe,
@@ -442,9 +443,10 @@ class TrainingEngine:
             sequence_parallel=runtime.topology.tp > 1 and bool(getattr(recipe.model, "sequence_parallel", False)),
         )
 
-        if checkpoint_path is not None and output_head != "value" and peft is None:
-            # The value-head and LoRA pre-wrap hooks load the checkpoint into the bare model instead.
-            load_pretrained_weights(recipe, self._model, self._optimizer, checkpoint_path)
+        if checkpoint_path is not None and output_head != "value":
+            # The value-head hook loads the checkpoint into the bare model instead, before it swaps the head. A
+            # LoRA model already has its adapters, which the load hides so the base checkpoint maps onto it.
+            load_pretrained_weights(recipe, self._model, self._optimizer, checkpoint_path, peft=peft)
 
         # Bridge installs the schedule hooks on the model config (finalize_model_grads_func, grad_scale_func,
         # and the overlap hooks). The engine keeps only the finalizer: run_forward_backward suppresses it
