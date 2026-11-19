@@ -1,0 +1,112 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Reduced-scale GB300 performance recipes for Qwen3-235B-A22B."""
+
+from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
+    qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config,
+)
+from megatron.bridge.training.config import ConfigContainer
+
+
+_HYBRID_EP_DOMAIN_SIZE_ENV = "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"
+
+
+def _set_hybridep_domain_size(cfg: ConfigContainer, domain_size: int) -> None:
+    """Set the HybridEP rank count for the reduced allocation."""
+    cfg.env_vars = {
+        **cfg.env_vars,
+        _HYBRID_EP_DOMAIN_SIZE_ENV: domain_size,
+    }
+
+
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
+    """Qwen3 235B-A22B pretrain: 32× GB300, BF16, PP=2, EP=16.
+
+    This is a reduced-scale derivative of the canonical 64-GPU recipe. It
+    retains the sequence length, global batch size, precision, kernels, and
+    benchmark schedule. MBS=1 is required because MBS=2 was observed to run
+    out of memory on this topology.
+    """
+    cfg = qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config()
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.train.micro_batch_size = 1
+
+    _set_hybridep_domain_size(cfg, 16)
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config() -> ConfigContainer:
+    """Qwen3 235B-A22B pretrain: 16× GB300, BF16, EP=16, ZeRO-3.
+
+    Megatron-FSDP shards optimizer state, gradients, and parameters. Full
+    activation recompute and eager execution limit non-model-state memory.
+    The recipe does not enable CPU offload, FP8, or reduced-precision
+    optimizer states.
+    """
+    cfg = qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config()
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.train.micro_batch_size = 1
+
+    cfg.dist.use_megatron_fsdp = True
+    cfg.ddp.use_megatron_fsdp = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.expert_data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.keep_fp8_transpose_cache = False
+    cfg.ddp.average_in_collective = False
+    cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+    cfg.model.init_model_with_meta_device = True
+
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+    cfg.model.recompute_modules = None
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = []
+
+    _set_hybridep_domain_size(cfg, 16)
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config() -> ConfigContainer:
+    """Qwen3 235B-A22B pretrain: 16× GB300, BF16, EP=16, ZeRO-2.
+
+    This performance candidate retains the validated 16-GPU ZeRO-3 recipe's
+    topology, recompute policy, and eager execution while keeping parameters
+    replicated. Gradients and optimizer states remain sharded.
+    """
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config()
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads"
+    cfg.ddp.expert_data_parallel_sharding_strategy = "optim_grads"
+    return cfg
+
+
+__all__ = [
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config",
+]
