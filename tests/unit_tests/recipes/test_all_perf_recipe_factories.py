@@ -86,12 +86,9 @@ def _reject_unsupported_dsv4_recipe(recipe_factory: Callable[..., object]) -> bo
     declared_fields = {field.name for field in fields(DeepSeekV4HybridModelProvider)}
     required = set(_MCORE_CAPABILITIES)
     required.update(_DEV_MCORE_CAPABILITIES if "o_groups" in declared_fields else _MAIN_MCORE_CAPABILITIES)
-    from megatron.bridge.training.config import DistributedDataParallelConfig
-
-    ddp_fields = {field.name for field in fields(DistributedDataParallelConfig)}
-    if required <= declared_fields and "use_layer_wise_param_layout" in ddp_fields:
+    if required <= declared_fields:
         return False
-    with pytest.raises(RuntimeError, match="require.*(MCore|compact Muon)"):
+    with pytest.raises(RuntimeError, match="require.*MCore"):
         recipe_factory()
     return True
 

@@ -168,46 +168,48 @@ The earlier 50-step GB300 runs used the private `dsv4` revision
 They completed with finite reported losses and gradient norms and no skipped or
 NaN iterations; this is execution evidence, not convergence or numerical parity.
 
-Both eager and attention-graph benchmarks require the native-main integration
-revision
-[`9f48284e46ecfbc06a574a800c491ee0c672c7c9`](https://github.com/malay-nagda/Megatron-LM/commit/9f48284e46ecfbc06a574a800c491ee0c672c7c9)
-(based on main
-`c1ad819d07cb946620341a317b8d06e74207e0f1`). It contains:
+Both eager and attention-graph benchmarks run on MCore `main` with
+[MCore #7337](https://github.com/NVIDIA/Megatron-LM/pull/7337) merged in. #7337
+adds attention graph support around the mHC wrappers and makes mHC's direct
+projection-weight reads wait for an overlapped parameter gather. The recipes
+reject an MCore without it. A conflict-free merge of main
+`c1ad819d07cb946620341a317b8d06e74207e0f1` with #7337 at
+`12880406160688146b19733996d0ede8bd3a2726`, with no other changes, is
+[`28c439772712240602a28123b462d8e374bec67f`](https://github.com/malay-nagda/Megatron-LM/commit/28c439772712240602a28123b462d8e374bec67f).
+Use its full SHA for nemo-ci's `--mcore-ref`, and mount this Bridge revision and
+that MCore source explicitly; changing the Bridge source alone does not replace
+the image's baked-in MCore.
 
-- [MCore #7337](https://github.com/NVIDIA/Megatron-LM/pull/7337) at
-  `12880406160688146b19733996d0ede8bd3a2726`, including mHC projection parameter
-  readiness for overlapped gathering and attention graph support.
-- [MCore #5479](https://github.com/NVIDIA/Megatron-LM/pull/5479) at
-  `9dcc305d7d27282c52a384d8a80be62a5170db0a`, integrated with main's current DDP
-  and optimizer lifecycle to keep compact Muon buffers and sharded fallback Adam.
+Open [MCore #5479](https://github.com/NVIDIA/Megatron-LM/pull/5479) is optional.
+With it, Muon keeps compact buffers while fallback Adam stays sharded
+(`ddp.use_distributed_optimizer=True`), as in the reference logs. Without it,
+configuration finalization sets `ddp.use_distributed_optimizer=False` and
+LayerWise owns both in its compact layout. That costs optimizer memory per rank;
+the amount has not been measured. Native indexer scoring uses BF16.
 
-Use the full integration SHA for nemo-ci's `--mcore-ref`. Bare main and the older
-main-plus-#7337 target are insufficient: the recipes reject missing support
-rather than changing the optimizer layout. Native indexer scoring uses BF16.
-
-Use the MoK Rubin/Blackwell image built in pipeline 82972924:
-`nvcr.io/nvidian/nemo:dgxctestingtemp-nemofw-nightly.83236778`, whose immutable
-image reference is
-`nvcr.io/nvidian/nemo@sha256:505040c980d2408d50a831056a76e3e3e4886f3a04c8b80a405c903bb2d5f73b`.
-Mount this Bridge revision and the selected MCore source explicitly; changing
-the Bridge source alone does not replace the image's baked-in MCore.
-Compatible Transformer Engine, HybridEP/MoK, fused mHC, cuDNN DSA, and
-emerging-optimizers implementations are required.
+GB300 needs no special image: the regular nightly's MoK build covers SM100 and
+SM103. Rubin needs a MoK build with SM107 kernels. The image from pipeline
+82972924 (`nvcr.io/nvidian/nemo:dgxctestingtemp-nemofw-nightly.83236778`, MoK
+`31a3dd0e`) stalls in the first MoK forward on VRNVL72, with this recipe and
+with the release-based DSv4 recipe, so do not use it for Rubin. A candidate fix
+is in [MoK #10](https://github.com/QiZhangNV/mixture-of-kittens/pull/10) and
+[Bridge #6687](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6687); it is
+not yet validated. Compatible Transformer Engine, HybridEP/MoK, fused mHC,
+cuDNN DSA, and emerging-optimizers implementations are required.
 
 The adapter also retains the development API used with MCore
 `264817a74075a0c4b003723054c3ae71020058ad`. It selects declared dataclass fields
 and resolves main's static hybrid spec or development's spec factory.
 Native main uses **BF16 indexer scoring**; development retains its compact
 MXFP8 indexer. Both runtimes retain model MXFP8 and FP8 parameter gathering,
-`optimizer.overlap_param_gather=True`,
-`ddp.overlap_param_gather=True`, and `ddp.use_distributed_optimizer=True`.
+`optimizer.overlap_param_gather=True` and `ddp.overlap_param_gather=True`.
 Muon remains layer-wise (`optimizer.use_distributed_optimizer=False`,
-`use_layer_wise_distributed_optimizer=True`) with compact parameter layout;
-the shared DDP flag retains sharding for fallback Adam. It does not change Muon
-to the ordinary distributed Adam optimizer. Optimizer-step gather overlap stays
+`use_layer_wise_distributed_optimizer=True`) with compact parameter layout.
+Where MCore has #5479, the shared DDP flag retains sharding for fallback Adam;
+it does not change Muon to the ordinary distributed Adam optimizer. Optimizer-step gather overlap stays
 disabled because it is incompatible with this LayerWise/MXFP8-buffer-reuse path.
 
-The native-main runtime still has these differences:
+The main plus #7337 runtime still has these differences:
 
 - Native CSA indexer scoring uses BF16 and has no indexer precision selector;
   model training remains MXFP8. The development MXFP8 indexer port is not required.
@@ -221,6 +223,7 @@ The native-main runtime still has these differences:
   optimization is absent; this matters for full PP4/VPP4, not PP1 proxy traffic.
 - Grouped output projection uses main's existing implementation. The separate
   BatchedLinear optimization is not part of this runtime.
+- Without #5479, fallback Adam state is not sharded across data-parallel ranks.
 
 Configuration tests do not exercise GPU kernels. For a functional run, verify
 finite completed LM/MTP/auxiliary losses and gradient norms, no skipped/NaN
@@ -299,7 +302,7 @@ token stream or the general variable-length `dp_balanced` data scheduler.
 
 ### Eager Pro functional tests
 
-Use the same integrated native-main runtime as the graph benchmarks for these
+Use the same main plus #7337 runtime as the graph benchmarks for these
 explicit variants. Eager execution also requires #7337's mHC projection
 readiness check so direct weight reads wait for overlapped parameter gathering.
 

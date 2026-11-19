@@ -47,7 +47,6 @@ from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
 )
 from megatron.bridge.training.config import (
     ConfigContainer,
-    DistributedDataParallelConfig,
     _validate_and_sync_distributed_optimizer_settings,
 )
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
@@ -70,8 +69,6 @@ def _build_recipe(recipe_factory: Callable[[], ConfigContainer], *, attention_gr
     missing = sorted((_required_capabilities(attention_graphs=attention_graphs) | set(api_fields)) - available)
     if missing:
         pytest.skip(f"DSv4 runtime support required; missing declared fields: {', '.join(missing)}")
-    if "use_layer_wise_param_layout" not in {item.name for item in fields(DistributedDataParallelConfig)}:
-        pytest.skip("DSv4 runtime requires compact Muon with sharded fallback Adam (MCore #5479).")
     return recipe_factory()
 
 
@@ -217,14 +214,17 @@ def test_pro_log_optimizer_and_execution_contract(
     assert cfg.optimizer.optimizer == "muon"
     assert cfg.optimizer.muon_coefficient_type == "deepseekv4"
     assert cfg.optimizer.muon_num_ns_steps == 10
-    # Configuration normalization must preserve the reference settings, including
-    # compact Muon ownership and ordinary distributed fallback Adam buffers.
+    # Configuration normalization must preserve compact Muon ownership. MCore #5479 adds
+    # the DDP layout field that also keeps fallback Adam sharded; main without it does not.
+    sharded_fallback_adam = "use_layer_wise_param_layout" in {item.name for item in fields(cfg.ddp)}
     for _ in range(2):
         _validate_and_sync_distributed_optimizer_settings(cfg)
         assert cfg.optimizer.use_distributed_optimizer is False
         assert cfg.optimizer.use_layer_wise_distributed_optimizer is True
-        assert cfg.optimizer.use_layer_wise_param_layout is cfg.ddp.use_layer_wise_param_layout is False
-        assert cfg.ddp.use_distributed_optimizer is True
+        assert cfg.optimizer.use_layer_wise_param_layout is False
+        if sharded_fallback_adam:
+            assert cfg.ddp.use_layer_wise_param_layout is False
+        assert cfg.ddp.use_distributed_optimizer is sharded_fallback_adam
         assert cfg.ddp.overlap_param_gather is cfg.optimizer.overlap_param_gather is True
     assert cfg.comm_overlap.overlap_param_gather is True
     assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is False

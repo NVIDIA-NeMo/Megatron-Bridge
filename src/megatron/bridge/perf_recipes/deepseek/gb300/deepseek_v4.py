@@ -72,8 +72,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Configure the 61-block + MTP, 256-GPU Pro benchmark.
 
-    Requires the native-main runtime with compact Muon/sharded Adam and mHC
-    parameter readiness; see the example runtime pins. Native indexer scoring is BF16.
+    Requires MCore main plus mHC graph and parameter-readiness support (#7337);
+    see the example for runtime pins. Native indexer scoring is BF16.
     Uses forced load balancing and fixed synthetic THD packs for performance
     correlation, not convergence validation. No Hugging Face download is needed.
     """
@@ -84,7 +84,7 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config() -> ConfigContaine
     """Run full Pro eagerly with mHC recompute and overlapped parameter gathering.
 
     Keeps the 61-block + MTP model, batch contract and optimizer layout.
-    Requires the same native-main runtime and BF16 indexer as graph mode.
+    Requires the same main plus #7337 runtime and BF16 indexer as graph mode.
     """
     return _deepseek_v4_pro_benchmark_config(attention_graphs=False)
 
@@ -215,13 +215,10 @@ def _deepseek_v4_pro_benchmark_config(*, attention_graphs: bool) -> ConfigContai
     cfg.optimizer.use_distributed_optimizer = False
     cfg.optimizer.use_layer_wise_distributed_optimizer = True
     cfg.optimizer.use_layer_wise_param_layout = False
-    if "use_layer_wise_param_layout" not in {item.name for item in fields(cfg.ddp)}:
-        raise RuntimeError(
-            "The DSv4 performance recipes require the compact Muon/Adam DDP layout "
-            "support from https://github.com/NVIDIA/Megatron-LM/pull/5479. "
-            "See examples/models/deepseek_v4/README.md for the native-main runtime."
-        )
-    cfg.ddp.use_layer_wise_param_layout = False
+    # MCore #5479 adds this DDP field to shard fallback Adam beside compact Muon. Main without
+    # it keeps both in LayerWise's compact buffers: more optimizer memory, same training.
+    if "use_layer_wise_param_layout" in {item.name for item in fields(cfg.ddp)}:
+        cfg.ddp.use_layer_wise_param_layout = False
     cfg.optimizer.muon_coefficient_type = "deepseekv4"
     cfg.optimizer.muon_split_qkv = True
     cfg.optimizer.adam_beta1 = 0.9
@@ -234,7 +231,8 @@ def _deepseek_v4_pro_benchmark_config(*, attention_graphs: bool) -> ConfigContai
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
     cfg.scheduler.lr_warmup_init = 2e-5
     cfg.scheduler.start_weight_decay = cfg.scheduler.end_weight_decay = 0.1
-    # Compact Muon buffers use all-reduce; fallback Adam retains distributed sharding.
+    # With MCore #5479, fallback Adam keeps distributed sharding. Configuration finalization
+    # clears this flag on main without it, where LayerWise owns every buffer.
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.overlap_param_gather = cfg.optimizer.overlap_param_gather = True
     cfg.optimizer.overlap_param_gather_with_optimizer_step = False
