@@ -88,6 +88,88 @@ All configuration and state information are accessible through the injected `sta
 
 For complete implementation examples, see {py:func}`bridge.training.gpt_step.forward_step`.
 
+### GPT Output Processing
+
+The public GPT `forward_step` accepts keyword-only `output_processor` and
+`output_processor_context` arguments. They expose Megatron Core's existing GPT
+output-processing contract without replacing Bridge's batch preparation, packing,
+parallelism handling, or timers. Bridge forwards them directly to the model or
+`build_schedule_plan`; Core runs the processor only on post-process stages.
+Without either argument, the model call and default loss are unchanged.
+
+The processor receives keyword arguments from Core, including `hidden_states`,
+`output_layer`, `output_weight`, `compute_language_model_loss`, `scale_logits`,
+prepared `labels` and `loss_mask`, `packed_seq_params`, and `context`. Use Core's
+callable contract, including accepting additional keywords, rather than a model
+pre-hook. A processor returning the usual per-token losses can use the default
+loss callable. Other output tensors require a compatible loss callable returned
+by your forward-step wrapper.
+
+For example, this processor applies a temperature to logits and returns
+sequence-major losses; the wrapper restores the batch-major layout expected by
+the standard masked loss, retaining its reduction and reporting behavior:
+
+```python
+from functools import partial
+
+from megatron.bridge.training.finetune import finetune
+from megatron.bridge.training.gpt_step import forward_step
+
+
+def temperature_losses(
+    *,
+    hidden_states,
+    output_layer,
+    output_weight,
+    labels,
+    compute_language_model_loss,
+    scale_logits,
+    runtime_gather_output,
+    context,
+    **kwargs,
+):
+    logits, _ = output_layer(
+        hidden_states, weight=output_weight, runtime_gather_output=runtime_gather_output
+    )
+    losses = compute_language_model_loss(labels, scale_logits(logits) / context)
+    return losses.transpose(0, 1)
+
+
+def sequence_major_loss(losses, *, token_loss):
+    return token_loss(losses.transpose(0, 1).contiguous())
+
+
+def custom_forward_step(state, data_iterator, model, return_schedule_plan=False):
+    output, token_loss = forward_step(
+        state,
+        data_iterator,
+        model,
+        return_schedule_plan,
+        output_processor=temperature_losses,
+        output_processor_context=0.8,
+    )
+    return output, partial(sequence_major_loss, token_loss=token_loss)
+
+
+finetune(cfg, forward_step_func=custom_forward_step)
+```
+
+If no loss adaptation is needed, bind the processor directly with
+`partial(forward_step, output_processor=my_processor)`. A wrapper can supply
+different context on each invocation without accessing private Bridge helpers.
+Context is opaque and passed by reference: Bridge does not read extra dataset
+fields, move tensors, broadcast metadata, shard it across parallel ranks, or pack
+it. The caller must align tensor metadata with Core's prepared inputs and keep
+context valid until any deferred schedule-plan execution completes.
+
+The same forward step runs during evaluation. Select a different processor in
+your wrapper if processing should be training-only. The pinned Core GPT model
+supports both ordinary forward and schedule-plan forwarding; models that do not
+accept these arguments raise an error rather than silently bypassing them.
+This interface does not change distributed loss normalization, guarantee arbitrary
+processors work with all packing/parallelism modes, or extend
+`forward_step_modelopt`.
+
 ## Loss Calculation and Reduction
 
 The loss function returned by the forward step can follow different patterns based on your needs:

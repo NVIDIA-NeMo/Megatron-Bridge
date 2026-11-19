@@ -13,11 +13,13 @@
 # limitations under the License.
 
 from functools import partial
-from unittest.mock import MagicMock, Mock, patch
+from types import SimpleNamespace
+from unittest.mock import ANY, MagicMock, Mock, patch
 
 import modelopt.torch.distill as mtd
 import pytest
 import torch
+from megatron.core.models.gpt import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.moe.router import TopKRouter
 
@@ -32,6 +34,7 @@ from megatron.bridge.training.gpt_step import (
     _patch_mcore_schedule_plan_padding_mask,
     _prepare_packed_padding_mask,
     _validate_packed_moe_cuda_graph,
+    forward_step,
     get_batch,
     get_packed_seq_params,
 )
@@ -184,6 +187,153 @@ class _VpStageWrapper:
 
     def __call__(self, **kwargs):
         return self.module(**kwargs)
+
+
+@pytest.mark.unit
+class TestOutputProcessing:
+    @pytest.fixture
+    def step_inputs(self, monkeypatch):
+        state = SimpleNamespace(
+            cfg=_make_cfg(),
+            timers=_NoopTimer(),
+            straggler_timer=_NoopTimer(),
+        )
+        state.cfg.rerun_state_machine = SimpleNamespace(check_for_nan_in_loss=False, check_for_spiky_loss=False)
+        config = SimpleNamespace(mtp_num_layers=0, overlap_moe_expert_parallel_comm=True)
+        batch = (
+            torch.tensor([[1, 2, 3, 4]]),
+            torch.tensor([[2, 3, 4, 5]]),
+            torch.tensor([[0.0, 1.0, 1.0, 1.0]]),
+            None,
+            torch.arange(4).unsqueeze(0),
+            None,
+        )
+        get_batch_mock = Mock(return_value=batch)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_batch", get_batch_mock)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: config)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection())
+        return state, get_batch_mock
+
+    @pytest.mark.parametrize("return_schedule_plan", [False, True])
+    @pytest.mark.parametrize("with_processor", [False, True])
+    @pytest.mark.parametrize("context", [None, 0, {"microbatch": 1}])
+    def test_public_forward_step_forwards_optional_arguments(
+        self, step_inputs, return_schedule_plan, with_processor, context
+    ):
+        state, get_batch_mock = step_inputs
+        model = _RecordingModel()
+        data_iterator = _Iterator({})
+        processor = Mock() if with_processor else None
+
+        output, loss_function = forward_step(
+            state,
+            data_iterator,
+            model,
+            return_schedule_plan,
+            output_processor=processor,
+            output_processor_context=context,
+        )
+
+        assert output is model.output
+        expected_keys = {"input_ids", "position_ids", "attention_mask", "labels", "loss_mask"}
+        if return_schedule_plan:
+            expected_keys.update(("packed_seq_params", "padding_mask"))
+        if with_processor or context is not None:
+            expected_keys.update(("output_processor", "output_processor_context"))
+            assert model.forward_kwargs["output_processor"] is processor
+            assert model.forward_kwargs["output_processor_context"] is context
+        assert model.forward_kwargs.keys() == expected_keys
+        assert model.forward_kwargs["labels"] is get_batch_mock.return_value[1]
+        assert model.forward_kwargs["loss_mask"] is get_batch_mock.return_value[2]
+        assert loss_function.args[0] is get_batch_mock.return_value[2]
+        assert loss_function.keywords == {"check_for_nan_in_loss": False, "check_for_spiky_loss": False}
+        get_batch_mock.assert_called_once_with(data_iterator, state.cfg, False, pg_collection=ANY, vp_stage=None)
+        if processor is not None:
+            processor.assert_not_called()
+
+    @pytest.mark.parametrize("return_schedule_plan", [False, True])
+    def test_context_is_per_invocation(self, step_inputs, return_schedule_plan):
+        state, _ = step_inputs
+        model = _RecordingModel()
+        step = partial(forward_step, output_processor=Mock())
+        contexts = [object(), object()]
+        calls = []
+
+        for context in contexts:
+            step(state, _Iterator({}), model, return_schedule_plan, output_processor_context=context)
+            calls.append(model.forward_kwargs)
+
+        for call, context in zip(calls, contexts):
+            assert call["output_processor_context"] is context
+
+        step(state, _Iterator({}), model, return_schedule_plan)
+        assert model.forward_kwargs["output_processor_context"] is None
+        forward_step(state, _Iterator({}), model, return_schedule_plan)
+        assert "output_processor" not in model.forward_kwargs
+        assert "output_processor_context" not in model.forward_kwargs
+
+    @pytest.mark.parametrize("post_process", [False, True])
+    def test_core_processor_outputs_and_gradients(self, step_inputs, monkeypatch, post_process):
+        state, get_batch_mock = step_inputs
+        hidden_states = torch.arange(8, dtype=torch.float32).reshape(4, 1, 2).requires_grad_()
+        reference_hidden_states = hidden_states.detach().clone().requires_grad_()
+        context = {"scale": 2.0}
+
+        class CorePostprocessModel(_RecordingModel):
+            def __init__(self):
+                super().__init__(output=hidden_states)
+                self.post_process = post_process
+                self.share_embeddings_and_output_weights = False
+                self.config = SimpleNamespace(mtp_num_layers=0)
+                self.output_layer = Mock()
+                self.compute_language_model_loss = Mock()
+                self._scale_logits = Mock()
+
+            def __call__(self, **kwargs):
+                self.forward_kwargs = kwargs
+                return GPTModel._postprocess(
+                    self,
+                    hidden_states=self.output,
+                    rotary_pos_emb=None,
+                    rotary_pos_cos=None,
+                    rotary_pos_sin=None,
+                    **kwargs,
+                )
+
+        model = CorePostprocessModel()
+        processor = Mock(
+            side_effect=lambda *, hidden_states, context, **kwargs: (
+                hidden_states.square().sum(dim=-1).transpose(0, 1) * context["scale"]
+            )
+        )
+        data_iterator = _Iterator({})
+        if not post_process:
+            _set_middle_pp_stage(monkeypatch)
+            monkeypatch.setattr("megatron.bridge.training.gpt_step.get_batch", get_batch)
+
+        output, _ = forward_step(
+            state,
+            data_iterator,
+            model,
+            output_processor=processor,
+            output_processor_context=context,
+        )
+
+        if post_process:
+            processor.assert_called_once()
+            assert processor.call_args.kwargs["context"] is context
+            assert processor.call_args.kwargs["labels"] is get_batch_mock.return_value[1]
+            assert processor.call_args.kwargs["loss_mask"] is get_batch_mock.return_value[2]
+            expected = reference_hidden_states.square().sum(dim=-1).transpose(0, 1) * context["scale"]
+        else:
+            processor.assert_not_called()
+            assert output is hidden_states
+            assert not data_iterator._done
+            expected = reference_hidden_states
+        torch.testing.assert_close(output, expected)
+        output.sum().backward()
+        expected.sum().backward()
+        torch.testing.assert_close(hidden_states.grad, reference_hidden_states.grad)
 
 
 class TestGetBatch:
