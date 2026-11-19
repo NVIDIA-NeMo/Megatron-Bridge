@@ -85,11 +85,16 @@ the text recipe. Missing:
   (`init_adapter_slot`, `load_adapter`). The engine still needs a config for several adapters, an adapter
   per `Datum` with micro-batches ordered by adapter, and per-adapter optimizer state, checkpoints and
   export.
-- **User-supplied adapters**: training starts from fresh adapters or from the engine's own checkpoint.
-  Starting from an adapter the user brings (for RL as a service) needs a `lora=` option naming its
-  source, a check that its rank, alpha, targets and expert layout match the `LoraConfig`, and an HF PEFT
-  import: Bridge loads Megatron adapter checkpoints (`load_peft_adapter_checkpoint`) and exports HF
-  adapters, but has no HF adapter import.
+- **User-supplied adapters** (for RL as a service): users run one base model with different adapters
+  and manage those adapters in their own way. The adapter code stays Bridge's; a user's own adapter
+  implementation would need a fork of Bridge. Today an engine trains one adapter set, fresh or resumed
+  from its own checkpoint, and `export(adapter_only=True)` already hands it out. Missing: loading
+  adapter weights the user supplies into a running engine and swapping them for another set without
+  rebuilding the base (Bridge's `MultiLoRA` already loads and clears adapters per slot), with a check
+  that their rank, alpha, targets and expert layout match the `LoraConfig`; optimizer state kept per
+  adapter across swaps; and an HF PEFT import for adapters trained elsewhere (Bridge loads Megatron
+  adapter checkpoints with `load_peft_adapter_checkpoint` and exports HF adapters, but has no HF adapter
+  import).
 - **Adapter-only refit** (`TODO(lora-refit)`): the examples refresh vllm with merged weights,
   `bf16(W + s B A)`, which drops update elements below half a bf16 step of W. Refreshing vllm with the
   adapters instead needs a refresh that loads adapter tensors without reloading the weights, the expert
