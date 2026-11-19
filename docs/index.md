@@ -14,6 +14,7 @@ performance-summary-archive.md
 :caption: Guides
 :hidden:
 
+unified-megatron.md
 parallelisms.md
 performance-guide.md
 recipe-usage.md
