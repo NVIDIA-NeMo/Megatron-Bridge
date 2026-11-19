@@ -289,6 +289,8 @@ def test_pro_log_optimizer_and_execution_contract(
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
     assert cfg.comm_overlap.delay_wgrad_compute is False
     assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
+    # Legacy NCCL backend: PyTorch 26.11's default nccl2 breaks MoK's barrier and Muon's parameter gather.
+    assert cfg.env_vars["TORCH_DIST_USE_NCCL2"] == 0
 
 
 @pytest.mark.parametrize(

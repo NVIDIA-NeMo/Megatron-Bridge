@@ -188,14 +188,33 @@ LayerWise owns both in its compact layout. That costs optimizer memory per rank;
 the amount has not been measured. Native indexer scoring uses BF16.
 
 GB300 needs no special image: the regular nightly's MoK build covers SM100 and
-SM103. Rubin needs a MoK build with SM107 kernels. The image from pipeline
-82972924 (`nvcr.io/nvidian/nemo:dgxctestingtemp-nemofw-nightly.83236778`, MoK
-`31a3dd0e`) stalls in the first MoK forward on VRNVL72, with this recipe and
-with the release-based DSv4 recipe, so do not use it for Rubin. A candidate fix
-is in [MoK #10](https://github.com/QiZhangNV/mixture-of-kittens/pull/10) and
-[Bridge #6687](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6687); it is
-not yet validated. Compatible Transformer Engine, HybridEP/MoK, fused mHC,
-cuDNN DSA, and emerging-optimizers implementations are required.
+SM103. Rubin needs a MoK build with SM107 kernels, such as the image from
+pipeline 82972924 (`nvcr.io/nvidian/nemo:dgxctestingtemp-nemofw-nightly.83236778`,
+MoK `31a3dd0e`). Compatible Transformer Engine, HybridEP/MoK, fused mHC, cuDNN
+DSA, and emerging-optimizers implementations are required.
+
+PyTorch 26.11 (`2.15.0a0+fd23299d96.nv26.11`, the base of that image) makes
+`nccl2` the default `nccl` backend, and its snapshot has two defects these
+recipes hit. Both are fixed upstream but not in that image:
+
+- An async barrier followed by `block_current_stream()` deadlocks
+  ([pytorch#202783](https://github.com/pytorch/pytorch/pull/202783)). MoK's
+  workspace setup makes that call, so training stalls in the first MoK forward.
+- `all_gather` fails with `shape '[N]' is invalid for input of size M` when its
+  first two output tensors are empty
+  ([pytorch#200585](https://github.com/pytorch/pytorch/pull/200585)). LayerWise
+  parameter gathering passes one slot per rank, and most ranks own nothing in a
+  given bucket.
+
+The Pro benchmark recipes therefore export `TORCH_DIST_USE_NCCL2=0`, which
+selects the legacy NCCL backend. A value set by the launcher takes precedence.
+With that setting and `NCCL_NVLS_ENABLE=0`, the VRNVL72 eager proxy gets past
+the parameter gather. Separately,
+[MoK #10](https://github.com/QiZhangNV/mixture-of-kittens/pull/10) replaces
+MoK's async barrier with a blocking one, pinned by
+[Bridge #6687](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6687);
+whether the unpatched MoK works on the legacy backend is untested. Remove the
+setting once the image carries both upstream fixes.
 
 The adapter also retains the development API used with MCore
 `264817a74075a0c4b003723054c3ae71020058ad`. It selects declared dataclass fields

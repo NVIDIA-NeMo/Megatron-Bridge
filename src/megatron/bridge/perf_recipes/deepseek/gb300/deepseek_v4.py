@@ -284,6 +284,11 @@ def _deepseek_v4_pro_benchmark_config(*, attention_graphs: bool) -> ConfigContai
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
+    # Not from the measured scripts. PyTorch 26.11 makes nccl2 the default "nccl" backend, and
+    # that snapshot deadlocks MoK's async barrier (pytorch#202783) and fails the LayerWise
+    # parameter gather when a bucket's first two ranks own nothing (pytorch#200585). Select the
+    # legacy backend until the image carries both upstream fixes.
+    cfg.env_vars["TORCH_DIST_USE_NCCL2"] = 0
     return cfg
 
 
