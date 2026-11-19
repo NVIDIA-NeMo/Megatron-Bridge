@@ -137,9 +137,10 @@ uv run python scripts/performance/setup_experiment.py \
 
 ##### Data arguments
 
-- `--data`: Dataset type to use (`mock`, `rp2`, `squad`, `squad_packed`). Default `mock`.
+- `--data`: Dataset type to use (`mock`, `rp2`, `squad`, `squad_packed`, `c4`, `gov_report`). Default `mock`.
 - `--dataset_paths`: Dataset paths (for rp2 dataset). Accepts multiple paths.
-- `--dataset_root`: Dataset root directory (for squad datasets).
+- `--dataset_root`: Dataset root directory (for squad, squad_packed, and gov_report datasets).
+- GovReport: run `python scripts/performance/download_gov_report.py --data_dir /data/gov_report`, then pass `--data gov_report --dataset_root /data/gov_report`. This downloads the public Hugging Face snapshot `regisss/scrolls_gov_report_preprocessed_mlperf_2` and writes packed `train.npy` / `validation.npy`.
 - `--index_mapping_dir`: Index mapping directory (for rp2 dataset).
 - `--dataset_name`: Dataset name (deprecated).
 - `--packed_sequence`: Enable packed sequences.

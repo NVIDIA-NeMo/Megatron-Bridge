@@ -41,6 +41,7 @@ from megatron.bridge.utils.cuda_graph import (
 )
 from utils.datasets import (
     create_c4_dataset_config,
+    create_gov_report_dataset_config,
     create_mock_dataset_config,
     create_rp2_dataset_config,
     create_squad_dataset_config,
@@ -588,6 +589,18 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         if recipe.model.cuda_graph_impl != "none":
             recipe.dataset.offline_packing_specs.pad_cu_seqlens = True
         recipe.dataset.dataset_kwargs = {"pad_to_max_length": True}
+    elif args.data == "gov_report":
+        if not args.dataset_root:
+            raise ValueError("--dataset-root is required for gov_report dataset")
+        recipe.dataset = create_gov_report_dataset_config(
+            dataset_root=args.dataset_root,
+            seq_length=args.seq_length if args.seq_length is not None else recipe.model.seq_length,
+            seed=getattr(recipe.dataset, "seed", 1234) or 1234,
+            max_train_samples=getattr(recipe.dataset, "max_train_samples", None),
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=recipe.dataset.pin_memory,
+            persistent_workers=recipe.dataset.persistent_workers,
+        )
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
     if args.hidden_size is not None:

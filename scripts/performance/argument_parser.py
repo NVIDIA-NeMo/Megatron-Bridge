@@ -330,7 +330,7 @@ def parse_cli_args():
         "--data",
         type=str,
         default="mock",
-        choices=["mock", "rp2", "squad", "squad_packed", "c4"],
+        choices=["mock", "rp2", "squad", "squad_packed", "c4", "gov_report"],
         help="Dataset type to use",
     )
     data_args.add_argument(
@@ -348,7 +348,11 @@ def parse_cli_args():
         help="C4 train shard indices to blend (e.g. 6 for the 8b dataset; 6 7 for the full dataset). Default: [6].",
     )
     data_args.add_argument("--dataset_paths", nargs="*", help="Dataset paths (for rp2 dataset)")
-    data_args.add_argument("--dataset_root", type=str, help="Dataset root directory (for squad datasets)")
+    data_args.add_argument(
+        "--dataset_root",
+        type=str,
+        help="Dataset root directory (for squad, squad_packed, and gov_report datasets)",
+    )
     data_args.add_argument("--index_mapping_dir", type=str, help="Index mapping directory (for rp2 dataset)")
     data_args.add_argument("--dataset_name", type=str, help="Dataset name (deprecated)")
     data_args.add_argument("--packed_sequence", action="store_true", help="Use packed sequences")

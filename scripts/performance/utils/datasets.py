@@ -116,6 +116,63 @@ def create_c4_dataset_config(
     )
 
 
+def create_gov_report_dataset_config(
+    *,
+    dataset_root: str,
+    seq_length: int,
+    seed: int,
+    max_train_samples: int | None,
+    num_workers: int,
+    pin_memory: bool,
+    persistent_workers: bool,
+):
+    """Create a packed SCROLLS GovReport dataset config for Llama 2 PEFT.
+
+    Expects the packed MLPerf-format artifacts produced by
+    ``scripts/performance/download_gov_report.py``:
+
+      ``<dataset_root>/train.npy``
+      ``<dataset_root>/validation.npy``
+    """
+    from pathlib import Path
+
+    from megatron.bridge.data.builders import GPTSFTDatasetConfig
+    from megatron.bridge.data.packing import PackedSequenceSpecs
+
+    root = Path(dataset_root)
+    train_path = root / "train.npy"
+    val_path = root / "validation.npy"
+    missing = [str(path) for path in (train_path, val_path) if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "GovReport packed files not found: "
+            + ", ".join(missing)
+            + ". Download them with scripts/performance/download_gov_report.py "
+            + f"--data_dir {root}"
+        )
+
+    return GPTSFTDatasetConfig(
+        seq_length=seq_length,
+        dataset_root=root,
+        seed=seed,
+        do_validation=True,
+        do_test=False,
+        enable_offline_packing=True,
+        offline_packing_specs=PackedSequenceSpecs(
+            packed_sequence_size=seq_length,
+            packed_train_data_path=train_path,
+            packed_val_data_path=val_path,
+        ),
+        dataset_kwargs={"return_cu_seqlen": False},
+        dataloader_type="batch",
+        max_train_samples=max_train_samples,
+        num_workers=num_workers,
+        data_sharding=True,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+    )
+
+
 def create_squad_dataset_config(
     dataset_root, seq_length, packed=False, pad_seq_to_mult=1, num_workers=2, pin_memory=True, persistent_workers=False
 ):

@@ -44,7 +44,12 @@ def _get_diffusion_step(model_family_name: str):
 
 def _apply_training_argparse_overrides(config, args):
     """Apply all training argparse values to ConfigContainer fields."""
-    from utils.datasets import create_mock_dataset_config, create_rp2_dataset_config, create_squad_dataset_config
+    from utils.datasets import (
+        create_gov_report_dataset_config,
+        create_mock_dataset_config,
+        create_rp2_dataset_config,
+        create_squad_dataset_config,
+    )
     from utils.utils import apply_argparse_overrides
 
     is_diffusion = args.model_family_name in DIFFUSION_FAMILIES
@@ -122,6 +127,18 @@ def _apply_training_argparse_overrides(config, args):
                 seq_length=args.seq_length or 8192,
                 packed=True,
                 pad_seq_to_mult=pad_seq_to_mult,
+            )
+        elif args.data == "gov_report":
+            if not args.dataset_root:
+                raise ValueError("--dataset-root is required for gov_report dataset")
+            config.dataset = create_gov_report_dataset_config(
+                dataset_root=args.dataset_root,
+                seq_length=args.seq_length or 8192,
+                seed=getattr(config.dataset, "seed", 1234) or 1234,
+                max_train_samples=getattr(config.dataset, "max_train_samples", None),
+                num_workers=getattr(config.dataset, "num_workers", 4),
+                pin_memory=getattr(config.dataset, "pin_memory", True),
+                persistent_workers=getattr(config.dataset, "persistent_workers", True),
             )
         else:
             raise ValueError(f"Unknown dataset type: {args.data}")
