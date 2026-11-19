@@ -31,6 +31,7 @@ from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinea
 
 from megatron.bridge.peft import utils as peft_utils
 from megatron.bridge.peft.utils import (
+    LEGACY_GDN_IN_PROJ_ADAPTER_TP,
     GroupedExpertLinearAdapter,
     ParallelLinearAdapter,
     SharedOuterGroupedExpertAdapter,
@@ -45,8 +46,10 @@ from megatron.bridge.peft.utils import (
     init_method_normal,
     is_expert_linear,
     is_grouped_expert_linear,
+    legacy_gdn_in_proj_adapter_metadata,
     mark_expert_parallel_replicated,
     pad_seq_to_mult,
+    set_gdn_in_proj_adapter_splits,
     unpad_seq_to_mult,
     wildcard_match,
 )
@@ -1474,6 +1477,151 @@ class TestParallelLinearAdapter:
         assert sharded_weight.global_shape == (2, 2)
         assert sharded_weight.replica_id == (0, 1, 3)
         assert "adapter.linear_in._extra_state" in result
+
+
+# A GDN in_proj with global output sections q, k, v, z, beta, alpha and a rank-3 adapter.
+GDN_SECTIONS = (8, 8, 16, 16, 4, 4)
+GDN_NAMES = ("query", "key", "value", "z", "beta", "alpha")
+GDN_PREFIX = "decoder.layers.0.self_attention.in_proj.adapter."
+GDN_KEY = f"{GDN_PREFIX}linear_out.weight"
+
+
+def _gdn_rows(tp_size: int, tp_rank: int) -> torch.Tensor:
+    """The adapter's linear_out rows on one rank: [q_r k_r v_r z_r beta_r alpha_r]."""
+    whole = torch.arange(sum(GDN_SECTIONS) * 3, dtype=torch.float32).reshape(-1, 3)
+    return torch.cat([section.chunk(tp_size)[tp_rank] for section in whole.split(GDN_SECTIONS)])
+
+
+@patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+@patch("megatron.bridge.peft.utils.RowParallelLinear")
+class TestGDNInProjAdapterCheckpoint:
+    """GDN in_proj adapters save linear_out per output section, like the base in_proj.weight (#6974)."""
+
+    @staticmethod
+    def _adapter(mock_col_linear, tp_size, tp_rank, data=None):
+        rows = _gdn_rows(tp_size, tp_rank) if data is None else data
+        linear_in, linear_out = Mock(), Mock()
+        linear_in.sharded_state_dict.return_value = {}
+        linear_out.sharded_state_dict.return_value = {
+            GDN_KEY: ShardedTensor.from_rank_offsets(GDN_KEY, rows, (0, tp_rank, tp_size), replica_id=(0, 0, 0))
+        }
+        mock_col_linear.side_effect = [linear_in, linear_out]
+        adapter = ParallelLinearAdapter(
+            in_features=4,
+            out_features=rows.shape[0],
+            dim=3,
+            base_linear_name="decoder.layers.0.self_attention.in_proj",
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        adapter.gdn_in_proj_split = (tuple(size // tp_size for size in GDN_SECTIONS), GDN_NAMES)
+        return adapter
+
+    def test_linear_out_is_saved_per_section_and_loads_at_any_tp(self, mock_row_linear, mock_col_linear):
+        saved = {}
+        for tp_rank in range(2):
+            factory = self._adapter(mock_col_linear, 2, tp_rank).sharded_state_dict(prefix=GDN_PREFIX)[GDN_KEY]
+            assert isinstance(factory, ShardedTensorFactory)
+            for shard in factory.build():
+                whole = saved.setdefault(shard.key, torch.zeros(shard.global_shape))
+                whole[shard.global_offset[0] : shard.global_offset[0] + shard.local_shape[0]] = shard.data
+
+        # One tensor per section, in global row order, as Megatron Core saves the base in_proj.weight.
+        assert sorted(saved) == sorted(f"{GDN_KEY}.{name}" for name in GDN_NAMES)
+        for name, section in zip(GDN_NAMES, _gdn_rows(1, 0).split(GDN_SECTIONS)):
+            torch.testing.assert_close(saved[f"{GDN_KEY}.{name}"], section)
+
+        for tp_size, tp_rank in ((1, 0), (4, 3)):
+            target = torch.zeros(sum(GDN_SECTIONS) // tp_size, 3)
+            factory = self._adapter(mock_col_linear, tp_size, tp_rank, data=target).sharded_state_dict(
+                prefix=GDN_PREFIX
+            )[GDN_KEY]
+            loaded = [
+                saved[shard.key][shard.global_offset[0] : shard.global_offset[0] + shard.local_shape[0]]
+                for shard in factory.build()
+            ]
+            torch.testing.assert_close(factory.merge_fn(loaded), _gdn_rows(tp_size, tp_rank))
+
+    def test_legacy_checkpoint_at_its_own_tp_keeps_the_old_tensor(self, mock_row_linear, mock_col_linear):
+        adapter = self._adapter(mock_col_linear, 2, 1)
+        metadata = {LEGACY_GDN_IN_PROJ_ADAPTER_TP: {GDN_KEY: 2}}
+
+        sharded = adapter.sharded_state_dict(prefix=GDN_PREFIX, metadata=metadata)[GDN_KEY]
+
+        assert isinstance(sharded, ShardedTensor)
+        assert sharded.key == GDN_KEY
+        assert sharded.global_offset == (sum(GDN_SECTIONS) // 2, 0)
+
+    def test_legacy_checkpoint_loads_at_another_tp(self, mock_row_linear, mock_col_linear):
+        # The old layout at TP 2: row block r holds rank r's rows.
+        old = torch.cat([_gdn_rows(2, 0), _gdn_rows(2, 1)])
+        metadata = {LEGACY_GDN_IN_PROJ_ADAPTER_TP: {GDN_KEY: 2}}
+
+        for tp_size, tp_rank in ((1, 0), (4, 0), (4, 3)):
+            target = torch.zeros(sum(GDN_SECTIONS) // tp_size, 3)
+            factory = self._adapter(mock_col_linear, tp_size, tp_rank, data=target).sharded_state_dict(
+                prefix=GDN_PREFIX, metadata=metadata
+            )[GDN_KEY]
+            assert isinstance(factory, ShardedTensorFactory)
+            shard = factory.build()
+            # Every rank reads the whole old tensor under its old key; tensor-parallel rank 0 is the main replica.
+            assert shard.key == GDN_KEY
+            assert shard.global_shape == shard.local_shape == tuple(old.shape)
+            assert all(r == 0 for r in shard.replica_id) == (tp_rank == 0)
+            torch.testing.assert_close(factory.merge_fn(old.clone()), _gdn_rows(tp_size, tp_rank))
+
+    def test_adapter_without_gdn_split_is_unchanged(self, mock_row_linear, mock_col_linear):
+        adapter = self._adapter(mock_col_linear, 2, 0)
+        adapter.gdn_in_proj_split = None
+
+        assert isinstance(adapter.sharded_state_dict(prefix=GDN_PREFIX)[GDN_KEY], ShardedTensor)
+
+    def test_set_gdn_in_proj_adapter_splits(self, mock_row_linear, mock_col_linear):
+        gdn_adapter = self._adapter(mock_col_linear, 2, 0)
+        mamba_adapter = self._adapter(mock_col_linear, 2, 0)
+        gdn_adapter.gdn_in_proj_split = mamba_adapter.gdn_in_proj_split = None
+        gdn, mamba = nn.Module(), nn.Module()
+        gdn.in_proj_split_sections, gdn.in_proj_split_names = [4, 4, 8, 8, 2, 2], list(GDN_NAMES)
+        gdn.in_proj, mamba.in_proj = nn.Module(), nn.Module()
+        gdn.in_proj.adapter, mamba.in_proj.adapter = gdn_adapter, mamba_adapter
+        model = nn.Module()
+        model.layers = nn.ModuleList([gdn, mamba])
+
+        set_gdn_in_proj_adapter_splits([model])
+
+        assert gdn_adapter.gdn_in_proj_split == ((4, 4, 8, 8, 2, 2), GDN_NAMES)
+        assert mamba_adapter.gdn_in_proj_split is None
+
+    def test_legacy_metadata_maps_old_keys_to_their_tp(self, mock_row_linear, mock_col_linear, monkeypatch):
+        from torch.distributed import checkpoint as dcp
+        from torch.distributed.checkpoint.metadata import ChunkStorageMetadata, TensorProperties, TensorStorageMetadata
+
+        def tensor(size, row_chunks):
+            rows = size[0] // row_chunks
+            chunks = [
+                ChunkStorageMetadata(offsets=torch.Size([i * rows, 0]), sizes=torch.Size([rows, size[1]]))
+                for i in range(row_chunks)
+            ]
+            return TensorStorageMetadata(TensorProperties(dtype=torch.float32), torch.Size(size), chunks)
+
+        state_dict_metadata = {
+            GDN_KEY: tensor((56, 3), 4),
+            "decoder.layers.1.self_attention.in_proj.adapter.linear_out.weight.query": tensor((8, 3), 2),
+            "decoder.layers.0.self_attention.in_proj.adapter.linear_in.weight": tensor((3, 4), 1),
+        }
+        reader = Mock()
+        reader.read_metadata.return_value = SimpleNamespace(state_dict_metadata=state_dict_metadata)
+        monkeypatch.setattr(dcp, "FileSystemReader", Mock(return_value=reader))
+
+        model = nn.Module()
+        model.adapter = self._adapter(mock_col_linear, 2, 0)
+        assert legacy_gdn_in_proj_adapter_metadata([model], "/checkpoint") == {
+            LEGACY_GDN_IN_PROJ_ADAPTER_TP: {GDN_KEY: 4}
+        }
+
+        # Models without a GDN in_proj adapter do not read the checkpoint metadata.
+        model.adapter.gdn_in_proj_split = None
+        assert legacy_gdn_in_proj_adapter_metadata([model], "/checkpoint") == {}
+        assert dcp.FileSystemReader.call_count == 1
 
 
 class TestExpertParallelReplicatedGradSync:
