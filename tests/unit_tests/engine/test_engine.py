@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 from megatron.core.transformer.moe.moe_logging import MoEMetricsTracker, get_moe_metrics_tracker
+from megatron.core.transformer.moe.router_replay import RouterReplay
 
 from megatron.bridge.engine import AdamParams, Datum, ForwardBackwardOutput, TrainingEngine, topology_from_recipe
 from megatron.bridge.engine.accumulation import AccumulationWindow
@@ -63,6 +64,30 @@ def _prepared(mapping) -> PreparedMicrobatch:
         packed_seq_params=None,
         mapping=mapping,
     )
+
+
+def test_router_replay_layers_use_the_recipes_layer_index():
+    RouterReplay.clear_global_router_replay_instances()
+    try:
+        routers = [RouterReplay() for _ in range(3)]
+        for router, number in zip(routers, (2, 4, 6)):
+            router.layer_number = number
+        engine = _unbuilt_engine()
+        engine._router_replay = RouterReplayState(routers)
+        engine._recipe = SimpleNamespace(router_replay=True, router_replay_layer_index=None)
+        assert engine.router_replay_layers == [1, 3, 5]
+
+        engine._recipe.router_replay_layer_index = lambda layer: layer // 2
+        assert engine.router_replay_layers == [0, 1, 2]
+
+        engine._recipe.router_replay_layer_index = lambda layer: 0
+        with pytest.raises(ValueError, match="router_replay_layer_index"):
+            engine.router_replay_layers
+
+        engine._recipe.router_replay = False
+        assert engine.router_replay_layers == []
+    finally:
+        RouterReplay.clear_global_router_replay_instances()
 
 
 def test_check_supported_accepts_detached_mtp():

@@ -157,6 +157,15 @@ _35B_A3B_ENV_VARS = {
 }
 
 
+def qwen35_hf_layer_index(megatron_layer_index: int) -> int:
+    """HF layer that a zero-based Megatron decoder layer index belongs to.
+
+    Bridge lays out each HF layer as two Megatron layers, the attention or GDN layer and then its MLP
+    (``megatron.bridge.models.qwen.modeling_qwen35.hybrid.qwen35_hybrid_pattern``).
+    """
+    return megatron_layer_index // 2
+
+
 def _apply_35b_a3b_execution_settings(model: ModelConfig, *, seq_length: int, mtp_detach_heads: bool) -> None:
     """Set the TP1/CP8/EP16 long-context execution settings shared by the 35B-A3B recipes."""
     model.gdn_kernel_backend = "transformer_engine"
@@ -226,4 +235,5 @@ def _rl_recipe(
         # Bridge's defaults cover the full-attention layers and the MoE experts; the GatedDeltaNet
         # linear-attention layers project through in_proj and out_proj instead. The router is never a target.
         lora_target_modules=[*BRIDGE_LORA_TARGET_MODULES, "in_proj", "out_proj"],
+        router_replay_layer_index=qwen35_hf_layer_index,
     )

@@ -17,6 +17,14 @@ def test_linear_for_last_layer_matches_megatron_output_contract():
     assert bias is None
 
 
+def test_linear_for_last_layer_accepts_the_output_dtype_megatron_core_passes():
+    layer = LinearForLastLayer(input_size=3, output_size=2, sequence_parallel=False, output_in_fp32=False).bfloat16()
+    hidden = torch.ones(4, 3, dtype=torch.bfloat16)
+
+    assert layer(hidden, output_dtype=None)[0].dtype == torch.bfloat16
+    assert layer(hidden, output_dtype=torch.float32)[0].dtype == torch.float32
+
+
 def test_linear_for_last_layer_gathers_sequence_parallel_output():
     tp_group = object()
     layer = LinearForLastLayer(
