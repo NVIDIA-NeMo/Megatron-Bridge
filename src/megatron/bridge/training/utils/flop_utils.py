@@ -1721,6 +1721,8 @@ def num_floating_point_operations(
         if len(main) % 2 == 0 and all(main[i : i + 2] in ("D-", "DE") for i in range(0, len(main), 2)):
             cfg = copy.copy(cfg)
             cfg.model = copy.copy(cfg.model)
+            if hasattr(cfg.model, "transformer"):
+                cfg.model.transformer = copy.copy(cfg.model.transformer)
             cfg.model.num_layers = len(main) // 2
             cfg.model.moe_layer_freq = [int(main[i] == "E") for i in range(1, len(main), 2)]
             return transformer_flops()
