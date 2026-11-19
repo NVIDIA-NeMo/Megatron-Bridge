@@ -21,7 +21,12 @@ from megatron.bridge.perf_recipes.qwen import (
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_graph_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config,
+    qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config,
+    qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config,
+    qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config,
 )
 
 
@@ -101,3 +106,33 @@ def test_qwen3_235b_16gpu_gb300_bf16_recompute_variants() -> None:
     assert graph.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
     assert graph.model.use_te_rng_tracker is True
     assert graph.rng.te_rng_tracker is True
+
+
+def test_qwen3_235b_16gpu_gb300_bf16_tp2_candidates() -> None:
+    full = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_config()
+    assert full.model.tensor_model_parallel_size == 2
+    assert full.model.pipeline_model_parallel_size == 1
+    assert full.model.expert_model_parallel_size == 16
+    assert full.model.sequence_parallel is True
+    assert data_parallel_size(num_gpus=16, topology=topology_from_config(full.model)) == 8
+    assert full.model.recompute_granularity == "full"
+
+    selective = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_config()
+    assert selective.model.recompute_granularity == "selective"
+    assert selective.model.recompute_modules == ["moe_act"]
+
+
+def test_qwen3_235b_32gpu_gb300_bf16_pp1_candidates() -> None:
+    tp1 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config()
+    assert tp1.model.tensor_model_parallel_size == 1
+    assert tp1.model.pipeline_model_parallel_size == 1
+    assert tp1.model.expert_model_parallel_size == 32
+    assert data_parallel_size(num_gpus=32, topology=topology_from_config(tp1.model)) == 32
+
+    tp2 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config()
+    assert tp2.model.tensor_model_parallel_size == 2
+    assert tp2.model.sequence_parallel is True
+    assert data_parallel_size(num_gpus=32, topology=topology_from_config(tp2.model)) == 16
+
+    tp2_mbs2 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config()
+    assert tp2_mbs2.train.micro_batch_size == 2

@@ -135,11 +135,58 @@ def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_graph_config() -> 
     return cfg
 
 
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_config() -> ConfigContainer:
+    """16-GPU ZeRO-2 full-recompute control with TP=2 and sequence parallelism."""
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config()
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.sequence_parallel = True
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_config() -> ConfigContainer:
+    """16-GPU TP=2 candidate with selective expert-activation recompute."""
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_config()
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = ["moe_act"]
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config() -> ConfigContainer:
+    """32-GPU PP=1/EP=32 candidate at TP=1 and MBS=1."""
+    cfg = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config()
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 32
+    _set_hybridep_domain_size(cfg, 32)
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config() -> ConfigContainer:
+    """32-GPU PP=1/EP=32 candidate with TP=2, SP, and MBS=1."""
+    cfg = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config()
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.sequence_parallel = True
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config() -> ConfigContainer:
+    """32-GPU TP=2/PP=1/EP=32 candidate with MBS=2."""
+    cfg = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config()
+    cfg.train.micro_batch_size = 2
+    return cfg
+
+
 __all__ = [
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_graph_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config",
 ]

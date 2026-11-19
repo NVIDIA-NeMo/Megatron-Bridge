@@ -18,7 +18,12 @@ from megatron.bridge.perf_recipes.qwen.gb300.reduced_scale.qwen3_moe import (
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_graph_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config,
+    qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config,
+    qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config,
+    qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config,
 )
 
 
@@ -28,5 +33,10 @@ __all__ = [
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_graph_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config",
 ]
