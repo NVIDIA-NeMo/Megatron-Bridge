@@ -20,6 +20,7 @@ auto-generate its causal mask) and the HF path uses torch.ones_like(input_ids, d
 
 import os
 import sys
+import types
 from collections.abc import Callable
 from datetime import timedelta
 from types import SimpleNamespace
@@ -139,6 +140,35 @@ class TestComparisonFailureHandling:
             args=(str(tmp_path / "comparison-rendezvous"),),
             nprocs=2,
         )
+
+    def test_failed_comparison_exits_without_process_group_teardown(self, monkeypatch):
+        # Rank 0 alone rejects the reference while the other ranks wait in the HF logits
+        # broadcast. A teardown on rank 0 would wait for them, so the error must end the run.
+        error = ValueError("HF reference logits were produced from different input token IDs")
+        destroy_process_group = MagicMock()
+        monkeypatch.setattr(compare, "maybe_initialize_distributed", lambda: None)
+        monkeypatch.setattr(compare, "compare_models_one_step", MagicMock(side_effect=error))
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "destroy_process_group", destroy_process_group)
+
+        with pytest.raises(ValueError) as raised:
+            compare.main(["--hf_model_path", "org/model", "--prompt", "hello"])
+
+        assert raised.value is error
+        destroy_process_group.assert_not_called()
+
+    def test_successful_comparison_tears_down_process_group(self, monkeypatch):
+        compare_models_one_step = MagicMock()
+        destroy_process_group = MagicMock()
+        monkeypatch.setattr(compare, "maybe_initialize_distributed", lambda: None)
+        monkeypatch.setattr(compare, "compare_models_one_step", compare_models_one_step)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "destroy_process_group", destroy_process_group)
+
+        compare.main(["--hf_model_path", "org/model", "--prompt", "hello", "--fail-on-mismatch"])
+
+        assert compare_models_one_step.call_args.args[0].fail_on_mismatch is True
+        destroy_process_group.assert_called_once_with()
 
     @pytest.mark.parametrize("fail_on_mismatch", [False, True])
     @pytest.mark.parametrize(
@@ -791,3 +821,106 @@ class TestCompareMaskHandling:
         assert "tp_plan" not in load_kwargs
         assert "tp_size" not in load_kwargs
         loaded_model.to.assert_called_once_with("cuda")
+
+
+# NemotronH helper -> (kernel, package) that transformers binds when causal_conv1d and mamba_ssm are installed.
+_NEMOTRON_H_KERNELS = {
+    "causal_conv1d_fn": ("causal_conv1d_fn", "causal_conv1d"),
+    "causal_conv1d_update": ("causal_conv1d_update", "causal_conv1d"),
+    "mamba2_chunk_scan": ("mamba_chunk_scan_combined", "mamba_ssm"),
+    "mamba2_selective_state_update": ("selective_state_update", "mamba_ssm"),
+    "mamba2_split_conv1d_scan_combined": ("mamba_split_conv1d_scan_combined", "mamba_ssm"),
+}
+
+
+def _small_nemotron_h():
+    from transformers import NemotronHConfig, NemotronHForCausalLM
+
+    torch.manual_seed(0)
+    config = NemotronHConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        vocab_size=128,
+        max_position_embeddings=64,
+        layers_block_type=["mamba", "attention", "moe", "mamba"],
+        mamba_num_heads=4,
+        mamba_head_dim=16,
+        ssm_state_size=16,
+        n_groups=2,
+        n_routed_experts=4,
+        num_experts_per_tok=2,
+        moe_intermediate_size=32,
+        moe_shared_expert_intermediate_size=64,
+        num_nextn_predict_layers=0,
+    )
+    return NemotronHForCausalLM(config).to(torch.bfloat16).eval()
+
+
+def _bind_cuda_only_kernels(monkeypatch, modeling_nemotron_h):
+    """Bind NemotronH's Mamba helpers as transformers does when causal_conv1d and mamba_ssm are installed."""
+    from transformers.integrations import use_kernel_func_from_hub_with_fallback
+
+    def cuda_only_kernel(*args, **kwargs):
+        raise RuntimeError("Expected x.is_cuda() to be true, but got false.")
+
+    for package in ("causal_conv1d", "mamba_ssm"):
+        monkeypatch.setitem(sys.modules, package, types.ModuleType(package))
+    for helper, (kernel, package) in _NEMOTRON_H_KERNELS.items():
+        setattr(sys.modules[package], kernel, cuda_only_kernel)
+        reference = getattr(modeling_nemotron_h, helper).__wrapped__
+        monkeypatch.setattr(
+            modeling_nemotron_h, helper, use_kernel_func_from_hub_with_fallback(kernel, package)(reference)
+        )
+
+
+@pytest.mark.unit
+class TestCpuReferenceKernelFallbacks:
+    """A CPU HF reference must not reach the CUDA-only kernels transformers binds at import."""
+
+    def test_cpu_reference_runs_mamba_helpers_in_pytorch(self, monkeypatch):
+        from transformers.models.nemotron_h import modeling_nemotron_h
+
+        model = _small_nemotron_h()
+        input_ids = torch.tensor([[3, 17, 42, 5, 99, 64, 7]])
+
+        def last_token_logits():
+            with torch.no_grad():
+                attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+                return model(input_ids=input_ids, attention_mask=attention_mask).logits[0, -1]
+
+        with monkeypatch.context() as torch_only:
+            for helper in _NEMOTRON_H_KERNELS:
+                torch_only.setattr(modeling_nemotron_h, helper, getattr(modeling_nemotron_h, helper).__wrapped__)
+            expected = last_token_logits()
+        _bind_cuda_only_kernels(monkeypatch, modeling_nemotron_h)
+        with pytest.raises(RuntimeError, match="is_cuda"):
+            last_token_logits()
+
+        hf_logits, hf_next_token, *_ = _run_hf_inference(model, input_ids, None, None, MagicMock())
+
+        assert torch.isfinite(hf_logits).all()
+        torch.testing.assert_close(hf_logits, expected, rtol=0, atol=0)
+        assert hf_next_token.item() == expected.argmax().item()
+        with pytest.raises(RuntimeError, match="is_cuda"):
+            last_token_logits()
+
+    def test_non_cpu_reference_keeps_package_kernels(self, monkeypatch):
+        from transformers.models.nemotron_h import modeling_nemotron_h
+
+        _bind_cuda_only_kernels(monkeypatch, modeling_nemotron_h)
+
+        class AcceleratorReference(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight = torch.nn.Parameter(torch.ones(4, 2, device="meta"))
+
+            def forward(self, input_ids, attention_mask):
+                modeling_nemotron_h.causal_conv1d_fn(torch.zeros(1, 4, 2, device="meta"), self.weight)
+                return SimpleNamespace(logits=torch.zeros(1, input_ids.shape[1], 8))
+
+        with pytest.raises(RuntimeError, match="is_cuda"):
+            _run_hf_inference(AcceleratorReference(), torch.tensor([[1, 2]]), None, None, MagicMock())

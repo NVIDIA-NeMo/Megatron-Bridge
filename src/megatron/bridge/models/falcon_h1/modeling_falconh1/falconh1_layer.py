@@ -100,7 +100,11 @@ class FalconH1SelfAttention(SelfAttention):
         key_value_states: torch.Tensor | None = None,
         output_gate: bool = False,
         split_qkv: bool = True,
+        *,
+        head_wise_gate: bool = False,
     ):
+        if head_wise_gate:
+            raise ValueError("Falcon H1 attention does not support head-wise gating.")
         qkv = super().get_query_key_value_tensors(
             hidden_states,
             key_value_states,

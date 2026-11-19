@@ -130,11 +130,14 @@ jobs:
                   rm -f -- "$RUNNER_TEMP/fern-preview/$path" ;;
               esac
             done < "$RUNNER_TEMP/fern-deleted-paths"
-            # Navigation, components and tooling stay on the trusted branch.
+            # Site configuration, components and tooling stay on the trusted branch.
             (cd pr-source && find "$ROOT" -regextype posix-extended -type f \
               -regex "$CONTENT" ! -path '*/.*' ! -path '*/components/*' \
               -exec cp --parents -- '{}' "$RUNNER_TEMP/fern-preview/" \;)
           done
+          # Include approved nightly navigation so new PR pages are reachable.
+          cp pr-source/docs/fern/versions/nightly.yml \
+            "$RUNNER_TEMP/fern-preview/docs/fern/versions/nightly.yml"
           printf '%s\n' '{"organization":"nvidia","version":"5.40.0"}' \
             > "$RUNNER_TEMP/fern-preview/docs/fern/fern.config.json"
 

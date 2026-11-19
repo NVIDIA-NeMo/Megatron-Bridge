@@ -56,7 +56,7 @@ from megatron.core.transformer.cuda_graphs import (
     CudaGraphManager,
     TECudaGraphHelper,
     VisionTECudaGraphHelper,
-    get_vision_cuda_graph_seq_length,
+    get_vision_te_cuda_graph_seq_length,
 )
 from megatron.core.transformer.cuda_graphs import (
     delete_cuda_graphs as delete_local_cuda_graphs,
@@ -306,7 +306,7 @@ def train(
             if unwrapped is not None and hasattr(unwrapped, "vision_model") and unwrapped.vision_model is not None:
                 vision_model_config = unwrapped.vision_model.config
                 if vision_model_config.cuda_graph_impl == "transformer_engine":
-                    vision_seq_length = get_vision_cuda_graph_seq_length(vision_model_config)
+                    vision_seq_length = get_vision_te_cuda_graph_seq_length(vision_model_config)
                     _vision_cg_kwargs: dict[str, Any] = dict(
                         model=model,
                         vision_config=vision_model_config,
