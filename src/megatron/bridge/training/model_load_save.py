@@ -647,11 +647,11 @@ def save_megatron_model(
 
     # Builder-backed models retain their complete outer ModelConfig for
     # checkpoint reconstruction. Legacy provider models expose their provider
-    # through ``config`` as before. Models built by a provider carry it inside their wrappers.
+    # through ``config`` as before, or as ``model_config`` when they build through a builder.
     model_config = getattr(model[0], "model_config", None)
     if not isinstance(model_config, ModelConfig):
         model_config = getattr(unwrap_model(model[0]), "model_config", None)
-    if not isinstance(model_config, ModelConfig):
+    if not isinstance(model_config, (ModelConfig, ModelProviderMixin)):
         model_config = get_model_config(model[0])
 
     if not isinstance(model_config, (ModelConfig, ModelProviderMixin)):

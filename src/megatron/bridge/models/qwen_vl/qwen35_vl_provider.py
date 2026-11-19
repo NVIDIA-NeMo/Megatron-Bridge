@@ -269,8 +269,8 @@ class Qwen35VLModelProvider(GPTModelProvider):
         builder.model_class = getattr(self, "MODEL_CLASS", None)
         pg = self._pg_collection or ProcessGroupCollection.use_mpu_process_groups()
         model = builder.build_model(pg, pre_process, post_process, vp_stage)
-        # Lets save_megatron_model write the builder config, as for AutoBridge-built models.
-        model.model_config = config
+        # save_megatron_model saves the provider itself, keeping its HF source and subclass fields.
+        model.model_config = self
         return model
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> HybridModel:
@@ -517,8 +517,8 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         builder.model_class = getattr(self, "MODEL_CLASS", None)
         pg = self._pg_collection or ProcessGroupCollection.use_mpu_process_groups()
         model = builder.build_model(pg, pre_process, post_process, vp_stage)
-        # Lets save_megatron_model write the builder config, as for AutoBridge-built models.
-        model.model_config = config
+        # save_megatron_model saves the provider itself, keeping its HF source and subclass fields.
+        model.model_config = self
         return model
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> HybridModel:
