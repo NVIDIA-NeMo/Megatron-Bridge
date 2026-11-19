@@ -124,8 +124,7 @@ no-build-isolation-package = [
 ]
 prerelease = "allow"
 # Transformers 5.15 still passes cls= to RobertaProcessing; this prerelease renamed it.
-# pyarrow 26 requires NumPy>=2 at import time but declares no numpy dependency, while
-# nvdlfw-inspect==0.2.1 ([tensor-inspect]) pins numpy==1.26.4.
+# pyarrow 26 requires NumPy>=2 at import time but declares no numpy dependency.
 # Keep httpx on the stable 0.28 line on every platform. With prerelease = "allow", uv otherwise
 # picks httpx 1.0.devN (with an older wandb) in whichever platform fork it resolves first, which
 # can be linux/aarch64.
@@ -247,7 +246,7 @@ parquet = [
     "pyarrow>=14.0.0",
 ]
 tensor-inspect = [
-    "nvdlfw-inspect==0.2.1",
+    "nvdlfw-inspect==0.2.2",
 ]
 te = [
     "megatron-core[te]",
