@@ -16,7 +16,7 @@ We have two repositories under the “Megatron” name: Megatron-LM and Megatron
 ```{figure} images/unified-megatron/nemotron-pretraining.png
 :alt: Nemotron pretraining uses megatron.training and megatron.core within Megatron-LM.
 :align: center
-:width: 100%
+:width: 70%
 
 Nemotron Pretraining Example
 ```
