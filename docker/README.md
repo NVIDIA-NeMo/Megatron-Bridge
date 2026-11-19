@@ -236,7 +236,7 @@ docker build \
 | `APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH` | Set to `True` to apply the torch.library finalizer patch; `False` for base images it does not apply against (e.g. Rubin) |
 | `INSTALL_DEEPEP` | Set to `True` to build and install DeepEP and nvshmem |
 | `DEEPEP_COMMIT` | DeepEP git commit SHA |
-| `MOK_COMMIT` | Full Mixture of Kittens source commit SHA; defaults to `31a3dd0e994abd3b2fa20876baada30a7e5d9ee5` |
+| `MOK_COMMIT` | Full Mixture of Kittens source commit SHA; defaults to `9e0ddd540b395973b2823bbf3a783f489a1b38b2` |
 | `MOK_ARCH` | GPU targets in each CPU platform's MoK wheel: `ALL` (default, Blackwell and Rubin), `SM100` (GB200/B200), `SM103` (GB300/B300), or `SM107` (Rubin) |
 | `REINSTALL_NVSHMEM` | Set to `True` to reinstall nvshmem (`nvidia-nvshmem-cu13`) over the base image version; only applied when `INSTALL_DEEPEP=True` |
 | `MCORE_TRIGGERED_TESTING` | Skip uv lockfile check for cross-version Megatron-LM testing |
