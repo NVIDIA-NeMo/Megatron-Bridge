@@ -92,6 +92,7 @@ class ModelConfigOverrideMixin:
     """
 
     transformer_config_class: ClassVar[type[TransformerConfig]]
+    _mirrored_transformer_fields: ClassVar[frozenset[str]] = frozenset()
 
     def __setattr__(self, name: str, value: Any, /) -> None:
         """Assign a declared outer or nested field and reject phantom fields."""
@@ -107,6 +108,8 @@ class ModelConfigOverrideMixin:
 
         if name == "transformer" or name in model_fields:
             object.__setattr__(self, name, value)
+            if name in self._mirrored_transformer_fields and name in transformer_fields:
+                setattr(transformer, name, value)
         elif name in transformer_fields:
             setattr(transformer, name, value)
         elif name == "builder" or name.startswith("_") or hasattr(descriptor, "__set__"):

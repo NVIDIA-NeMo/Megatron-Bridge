@@ -464,3 +464,101 @@ def test_first_skipped_iteration_preserves_cuda_graph_hook_bootstrap(monkeypatch
     assert state.train_state.step == 3
     assert graph_state["created"] is True
     helper.cuda_graph_set_manual_hooks.assert_called_once()
+
+
+def test_train_sizes_vision_te_cuda_graph_helper_from_mcore(monkeypatch):
+    """The vision TE CUDA graph helper uses MCore's vision capture length and the training pg_collection."""
+    from megatron.bridge.training import train as train_module
+
+    class _StopAfterVisionHelper(Exception):
+        pass
+
+    config = SimpleNamespace(
+        train=SimpleNamespace(
+            manual_gc=False,
+            check_weight_hash_across_dp_replicas_interval=None,
+            micro_batch_size=2,
+        ),
+        validation=SimpleNamespace(),
+        dataset=None,
+        profiling=None,
+        straggler=None,
+        ddp=SimpleNamespace(use_megatron_fsdp=False, overlap_param_gather=False),
+        optimizer=SimpleNamespace(
+            optimizer="adam",
+            use_distributed_optimizer=False,
+            use_layer_wise_distributed_optimizer=False,
+        ),
+        model=SimpleNamespace(vision_cuda_graph_impl="transformer_engine"),
+    )
+    state = SimpleNamespace(
+        cfg=config,
+        train_state=SimpleNamespace(step=0, floating_point_operations_so_far=0),
+        timers=Mock(),
+        straggler_timer=Mock(),
+        energy_monitor=None,
+        nvrx_straggler_manager=None,
+    )
+    model = [Mock()]
+    vision_model_config = SimpleNamespace(cuda_graph_impl="transformer_engine")
+    unwrapped = SimpleNamespace(vision_model=SimpleNamespace(config=vision_model_config))
+    pg_collection = SimpleNamespace(pp=SimpleNamespace(size=lambda: 1))
+    seq_length_calls = []
+    helper_kwargs = {}
+
+    def get_vision_te_cuda_graph_seq_length(vision_config):
+        seq_length_calls.append(vision_config)
+        return 1029
+
+    class RecordingVisionTECudaGraphHelper:
+        def __init__(
+            self,
+            model,
+            vision_config,
+            vision_seq_length,
+            micro_batch_size,
+            num_microbatches=1,
+            pg_collection=None,
+        ):
+            helper_kwargs.update(
+                model=model,
+                vision_config=vision_config,
+                vision_seq_length=vision_seq_length,
+                micro_batch_size=micro_batch_size,
+                num_microbatches=num_microbatches,
+                pg_collection=pg_collection,
+            )
+            raise _StopAfterVisionHelper
+
+    monkeypatch.setattr(train_module, "get_model_config", lambda _model: SimpleNamespace(cuda_graph_impl=None))
+    monkeypatch.setattr(train_module.flop_utils, "requires_global_flops_reduce", lambda _dataset: False)
+    monkeypatch.setattr(train_module, "prepare_forward_step_func", lambda *args: Mock())
+    monkeypatch.setattr(train_module, "get_rerun_state_machine", lambda: SimpleNamespace(current_iteration=0))
+    monkeypatch.setattr(train_module, "get_num_microbatches", lambda: 4)
+    monkeypatch.setattr(train_module, "should_disable_forward_pre_hook", lambda *args: False)
+    monkeypatch.setattr(train_module, "get_attr_wrapped_model", lambda *args, **kwargs: unwrapped)
+    monkeypatch.setattr(train_module, "get_vision_te_cuda_graph_seq_length", get_vision_te_cuda_graph_seq_length)
+    monkeypatch.setattr(train_module, "VisionTECudaGraphHelper", RecordingVisionTECudaGraphHelper)
+
+    with pytest.raises(_StopAfterVisionHelper):
+        train_module.train(
+            forward_step_func=Mock(),
+            model=model,
+            optimizer=Mock(),
+            scheduler=Mock(),
+            train_data_iterator=None,
+            valid_data_iterator=None,
+            global_state=state,
+            checkpoint_manager=Mock(),
+            pg_collection=pg_collection,
+        )
+
+    assert seq_length_calls == [vision_model_config]
+    assert helper_kwargs == {
+        "model": model,
+        "vision_config": vision_model_config,
+        "vision_seq_length": 1029,
+        "micro_batch_size": 2,
+        "num_microbatches": 4,
+        "pg_collection": pg_collection,
+    }
