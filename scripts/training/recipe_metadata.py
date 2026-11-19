@@ -94,6 +94,8 @@ RECIPE_FORWARD_STEPS = {
     "deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config": "dsv4_step",
     "deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config": "dsv4_step",
     "deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config": "dsv4_step",
+    "deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config": "dsv4_step",
+    "deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config": "dsv4_step",
     # Inkling2's text recipes keep the LLM step; its image-text recipes feed images through the VLM step.
     "inkling2_small_peft_32gpu_gb200_bf16_multimodal_config": "vlm_step",
     "inkling2_small_sft_128gpu_gb200_bf16_multimodal_config": "vlm_step",

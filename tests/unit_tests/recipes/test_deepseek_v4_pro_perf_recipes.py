@@ -32,6 +32,8 @@ from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config,
+    deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config,
+    deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config,
 )
 from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import (
     _DEV_MCORE_CAPABILITIES,
@@ -80,8 +82,18 @@ def _build_recipe(recipe_factory: Callable[[], ConfigContainer], *, attention_gr
         (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config, 256, 61, 4, 4, False),
         (deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config, 64, 16, 1, None, False),
         (deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config, 64, 16, 1, None, False),
+        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config, 256, 61, 4, 4, True),
+        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config, 256, 61, 4, 4, False),
     ],
-    ids=["full-pro", "proxy", "full-pro-eager", "proxy-eager", "rubin-proxy-eager"],
+    ids=[
+        "full-pro",
+        "proxy",
+        "full-pro-eager",
+        "proxy-eager",
+        "rubin-proxy-eager",
+        "rubin-full-pro",
+        "rubin-full-pro-eager",
+    ],
 )
 def test_pro_log_model_and_batch_contract(
     recipe_factory: Callable[[], ConfigContainer],
@@ -133,8 +145,10 @@ def test_pro_log_model_and_batch_contract(
     [
         (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, True),
         (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config, False),
+        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config, True),
+        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config, False),
     ],
-    ids=["graphs", "eager"],
+    ids=["graphs", "eager", "rubin-graphs", "rubin-eager"],
 )
 def test_full_pro_pipeline_chunks_match_logged_logical_blocks(recipe_factory, attention_graphs) -> None:
     cfg = _build_recipe(recipe_factory, attention_graphs=attention_graphs)
@@ -193,6 +207,42 @@ def test_proxy_preserves_parent_settings_outside_depth_and_pipeline(
 
 
 @pytest.mark.parametrize(
+    ("gb300_factory", "rubin_factory", "attention_graphs"),
+    [
+        (
+            deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
+            deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config,
+            True,
+        ),
+        (
+            deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config,
+            deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config,
+            False,
+        ),
+    ],
+    ids=["graphs", "eager"],
+)
+def test_rubin_full_pro_differs_from_gb300_only_in_mok_comm_sms(
+    gb300_factory, rubin_factory, attention_graphs
+) -> None:
+    gb300 = _build_recipe(gb300_factory, attention_graphs=attention_graphs)
+    rubin = _build_recipe(rubin_factory, attention_graphs=attention_graphs)
+
+    # No full-model Rubin run has been measured, so everything else is carried over from GB300.
+    assert rubin.model.moe_megakernel_backend_config == {
+        **gb300.model.moe_megakernel_backend_config,
+        "fwd_num_comm_sms": 40,
+        "bwd_num_comm_sms": 40,
+    }
+    assert {key: value for key, value in vars(rubin.model).items() if key != "moe_megakernel_backend_config"} == {
+        key: value for key, value in vars(gb300.model).items() if key != "moe_megakernel_backend_config"
+    }
+    for field in fields(gb300):
+        if field.name != "model":
+            assert getattr(rubin, field.name) == getattr(gb300, field.name), field.name
+
+
+@pytest.mark.parametrize(
     ("recipe_factory", "attention_graphs", "comm_sms"),
     [
         (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, True, 28),
@@ -200,8 +250,18 @@ def test_proxy_preserves_parent_settings_outside_depth_and_pipeline(
         (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config, False, 28),
         (deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config, False, 28),
         (deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config, False, 40),
+        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config, True, 40),
+        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config, False, 40),
     ],
-    ids=["full-pro", "proxy", "full-pro-eager", "proxy-eager", "rubin-proxy-eager"],
+    ids=[
+        "full-pro",
+        "proxy",
+        "full-pro-eager",
+        "proxy-eager",
+        "rubin-proxy-eager",
+        "rubin-full-pro",
+        "rubin-full-pro-eager",
+    ],
 )
 def test_pro_log_optimizer_and_execution_contract(
     recipe_factory: Callable[[], ConfigContainer], attention_graphs: bool, comm_sms: int
@@ -300,8 +360,9 @@ def test_pro_log_optimizer_and_execution_contract(
         (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config, 256, "gb300", "eager", 122, 4, False),
         (deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config, 64, "gb300", "proxy_eager", 32, 1, False),
         (deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config, 64, "vrnvl72", "proxy_eager", 32, 1, False),
+        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config, 256, "vrnvl72", "eager", 122, 4, False),
     ],
-    ids=["proxy", "full-pro-eager", "proxy-eager", "rubin-proxy-eager"],
+    ids=["proxy", "full-pro-eager", "proxy-eager", "rubin-proxy-eager", "rubin-full-pro-eager"],
 )
 def test_benchmark_variants_are_available_through_performance_selector(
     monkeypatch: pytest.MonkeyPatch, recipe_factory, num_gpus, gpu, variant, num_layers, pp, attention_graphs

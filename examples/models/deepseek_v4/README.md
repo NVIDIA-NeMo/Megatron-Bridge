@@ -269,8 +269,9 @@ their initial weights are not reproduced by the updated recipes.
 | `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config` | 256 | 61 | 1 / 16 / 64 | 4 / 4 | 256 / 1 |
 | `deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config` | 64 | 16 | 1 / 16 / 64 | 1 / none | 256 / 1 |
 | `deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config` | 64 | 16 | 1 / 16 / 64 | 1 / none | 256 / 1 |
+| `deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config` | 256 | 61 | 1 / 16 / 64 | 4 / 4 | 256 / 1 |
 
-All three retain the Pro widths, expert count, one MTP module, 65,536-token sequence
+All four retain the Pro widths, expert count, one MTP module, 65,536-token sequence
 length, MXFP8 parameter gathering, and Muon with the `deepseekv4` coefficients
 and ten Newton–Schulz iterations. Each main logical block contains one attention
 layer and one MoE layer, so MCore reports 122 and 32 main physical layers,
@@ -313,6 +314,12 @@ For the Rubin proxy, select
 same model and training contract, with MoK communication SMs set to 40/40 from
 the Rubin reference, compared with GB300's 28/28.
 
+For the full model on Rubin, select
+`deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config`. It is the GB300 full
+recipe with the same 40/40 communication SMs. No full-model Rubin run has been
+measured, so its pipeline split and SM counts are carried over rather than
+matched to a log.
+
 The launchers select `dsv4_step` automatically for these recipes. The
 synthetic dataset emits fixed THD packed metadata, including boundaries on
 intermediate pipeline stages, with one full-length sequence per microbatch.
@@ -330,6 +337,7 @@ readiness check so direct weight reads wait for overlapped parameter gathering.
 | `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config` | `eager` |
 | `deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config` | `proxy_eager` |
 | `deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config` | `proxy_eager` |
+| `deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config` | `eager` |
 
 For the performance launcher's Rubin proxy, retain your allocation, image and
 source-mount arguments and use this model selection:
@@ -338,6 +346,8 @@ source-mount arguments and use this model selection:
 -m deepseek -mr deepseek_v4_pro -g vrnvl72 -c fp8_mx -ng 64 \
   --task pretrain --config_variant proxy_eager
 ```
+
+For the full Rubin model, use `-ng 256` with `--config_variant eager`.
 
 Keep the flat performance recipe path (`--use_recipes` omitted). Remove explicit
 CUDA-graph or parameter-gather-overlap overrides from an earlier launch so they

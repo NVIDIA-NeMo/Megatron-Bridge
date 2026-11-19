@@ -73,6 +73,8 @@ def _reject_unsupported_dsv4_recipe(recipe_factory: Callable[..., object]) -> bo
         "deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config",
         "deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config",
         "deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config",
+        "deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config",
+        "deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config",
     }:
         return False
 
