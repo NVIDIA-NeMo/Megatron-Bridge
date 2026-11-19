@@ -1421,6 +1421,42 @@ def test_gpt_oss_openai_mxfp4_export_rejects_other_quantized_layers():
         modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
 
 
+@pytest.mark.parametrize("kv_format", ["FP8", "NVFP4"])
+def test_gpt_oss_openai_mxfp4_export_rejects_kv_quantization(kv_format):
+    from modelopt.torch.quantization.config import QuantizerAttributeConfig
+    from modelopt.torch.quantization.nn import TensorQuantizer
+
+    experts, tasks = _gpt_oss_expert_tasks("down_proj", _mxfp4_weight_only_linear)
+    model = torch.nn.Module()
+    model.experts = experts
+    model.self_attention = torch.nn.Module()
+    attention = torch.nn.Module()
+    model.self_attention.core_attention = attention
+    for axis in ("k", "v"):
+        config = {"num_bits": (4, 3), "axis": None}
+        if kv_format == "NVFP4":
+            config.update(num_bits=(2, 1), block_sizes={-1: 16, "type": "dynamic", "scale_bits": (4, 3)})
+        quantizer = TensorQuantizer(QuantizerAttributeConfig(**config))
+        quantizer.amax = 448.0
+        setattr(attention, f"{axis}_bmm_quantizer", quantizer)
+    linear = torch.nn.Linear(4, 8, bias=False)
+    model.self_attention.linear_qkv = linear
+    mapping = QKVMapping(
+        "decoder.layers.0.self_attention.linear_qkv.weight",
+        "model.layers.0.self_attn.q_proj.weight",
+        "model.layers.0.self_attn.k_proj.weight",
+        "model.layers.0.self_attn.v_proj.weight",
+    )
+    tasks.append(
+        replace(
+            _task(mapping, linear, global_name=mapping.megatron_param), param_name="self_attention.linear_qkv.weight"
+        )
+    )
+
+    with pytest.raises(NotImplementedError, match="native MXFP4 format does not support KV-cache"):
+        modelopt_utils.build_modelopt_export_plan(tasks, model=[model])
+
+
 @pytest.mark.parametrize("expert", [0, -1])
 def test_gpt_oss_openai_mxfp4_export_rejects_unquantized_experts(expert):
     # The last expert's hook packs the whole projection, so cover it and another one.
@@ -1703,7 +1739,7 @@ def test_four_rank_capture_failure_topologies(tmp_path):
 
 
 def test_auto_bridge_can_reuse_a_prepared_plan():
-    task = SimpleNamespace(name="task", global_param_name="model.weight")
+    task = SimpleNamespace(name="task", global_param_name="model.weight", export_hook=None)
     plan = modelopt_utils.ModelOptExportPlan([task], {"quantized_layers": {}}, frozenset(), {})
 
     class FakeBridge:
