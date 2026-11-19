@@ -169,10 +169,10 @@ def test_rotary_graph_inputs_without_eager_warmup(qwen35_graph_process_groups, m
     try:
         helper.create_cudagraphs()
         assert helper.graphs_created()
-        graphs = layer.cuda_graphs
+        graphs = layer.te_cuda_graphs
         eager_outputs = []
         for rotary in positions:
-            layer.cuda_graphs = []
+            layer.te_cuda_graphs = []
             try:
                 model.zero_grad_buffer()
                 x = hidden.clone().requires_grad_(True)
@@ -183,7 +183,7 @@ def test_rotary_graph_inputs_without_eager_warmup(qwen35_graph_process_groups, m
                 expected_param_grads = {name: p.main_grad.detach().clone() for name, p in layer.named_parameters()}
                 eager_outputs.append(expected)
             finally:
-                layer.cuda_graphs = graphs
+                layer.te_cuda_graphs = graphs
 
             model.zero_grad_buffer()
             x = hidden.clone().requires_grad_(True)
@@ -268,7 +268,7 @@ def test_hybrid_graph_replay_preserves_mtp_fp8_gradients(qwen35_graph_process_gr
             if step == 1:
                 helper.create_cudagraphs()
                 assert helper.graphs_created()
-                assert any(layer.cuda_graphs for layer in helper.flattened_callables)
+                assert any(layer.te_cuda_graphs for layer in helper.flattened_callables)
 
             model.zero_grad_buffer()
             model.set_is_first_microbatch()

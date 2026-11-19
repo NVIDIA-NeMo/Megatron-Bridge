@@ -500,6 +500,33 @@ class TestGemma4DenseSelfAttention:
         torch.testing.assert_close(raw_key, mixed[..., 8:10])
         assert realtime_calls == [True]
 
+    @pytest.mark.parametrize("shared", [False, True])
+    def test_unsplit_qkv_keeps_keyword_arguments_on_dev(self, monkeypatch, shared):
+        mixed = torch.randn(2, 1, 1, 8)
+        splits = [4, 2, 2]
+
+        def get_qkv(
+            self, hidden_states, key_value_states=None, output_gate=False, head_wise_gate=False, split_qkv=True
+        ):
+            assert not output_gate
+            assert not head_wise_gate
+            assert not split_qkv
+            return mixed, splits
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.get_query_key_value_tensors", get_qkv
+        )
+        attn = self._make_attention_for_methods()
+        attn.is_kv_shared_layer = shared
+        result = attn.get_query_key_value_tensors(torch.zeros(2, 1, 4), head_wise_gate=False, split_qkv=False)
+        assert result[0] is mixed
+        assert result[1] is splits
+
+    def test_head_wise_gate_is_rejected_for_gemma(self):
+        attn = self._make_attention_for_methods()
+        with pytest.raises(ValueError, match="does not support head-wise gating"):
+            attn.get_query_key_value_tensors(torch.zeros(2, 1, 4), head_wise_gate=True)
+
     def test_shared_layer_reuses_source_kv_when_available(self, monkeypatch):
         query = torch.ones(2, 1, 1, 2)
         fallback_key = torch.full_like(query, 2.0)

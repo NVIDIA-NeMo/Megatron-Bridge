@@ -831,10 +831,7 @@ def _make_export_hook(
             yield HFWeightTuple(hf_name, tensor)
             return
         prefix = hf_name.removesuffix(".weight")
-        # TODO: Drop the float32 cast once nvidia-modelopt includes NVIDIA/Model-Optimizer#3005: earlier
-        # versions round a per-tensor FP8 weight in its own dtype, unlike fake quantization.
-        dtype = torch.float32 if getattr(state, "quantization_format", None) == "fp8" else tensor.dtype
-        exported = export_quantized_weight_tensors(tensor, state, dtype)
+        exported = export_quantized_weight_tensors(tensor, state, tensor.dtype)
 
         for relative_name, exported_tensor in exported.items():
             exported_name = hf_name if relative_name == "weight" else f"{prefix}.{relative_name}"
@@ -1174,7 +1171,8 @@ def prepare_modelopt_export_tasks(plan: ModelOptExportPlan) -> list[WeightConver
 _FUSED_SIBLING_PROJECTIONS = (
     frozenset({"q_proj", "k_proj", "v_proj"}),
     frozenset({"gate_proj", "up_proj"}),
-    frozenset({"q_a_proj", "kv_a_proj_with_mqa"}),
+    frozenset({"q_a_proj", "kv_a_proj_with_mqa", "g_proj"}),  # MLA, with Kimi-K3's gate
+    frozenset({"wq_a", "wkv"}),  # DeepSeek-V4's MLA
 )
 _SHARED_SIBLING_SCALES = ("weight_scale_2", "input_scale")
 _EXPORTED_QUANTIZER = re.compile(r"(?:^|\.)(?:\w*weight_quantizer|input_quantizer)(?:\.\d+)?$")

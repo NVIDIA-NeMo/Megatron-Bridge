@@ -72,6 +72,8 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.rng.te_rng_tracker is True
     assert cfg.rerun_state_machine.check_for_nan_in_loss is False
     assert cfg.ddp.check_for_nan_in_grad is False
+    assert cfg.train.manual_gc is True
+    assert cfg.train.manual_gc_interval == 500
 
     assert cfg.model.moe_expert_rank_capacity_factor == 1.5
     assert cfg.model.moe_pad_experts_for_cuda_graph_inference is True
@@ -136,6 +138,8 @@ def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
     assert is_full_iteration_cuda_graph(cfg.model)
+    # The GB200 entry point's manual GC interval is not part of the shared builder.
+    assert cfg.train.manual_gc_interval == 10
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
 
 
