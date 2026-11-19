@@ -5,10 +5,6 @@ navigation:
 - page: NeMo Megatron Bridge
   path: ./nightly/pages/index.mdx
   slug: ""
-- page: Unified Megatron-LM
-  path: ./nightly/unified-megatron.mdx
-  slug: unified-megatron
-  hidden: true
 - section: Performance
   contents:
   - page: Performance
@@ -17,6 +13,9 @@ navigation:
     path: ./nightly/pages/performance-summary-archive.mdx
 - section: Guides
   contents:
+  - page: Unified Megatron-LM
+    path: ./nightly/unified-megatron.mdx
+    slug: unified-megatron
   - page: Parallelisms Guide
     path: ./nightly/pages/parallelisms.mdx
   - page: Performance Tuning Guide
