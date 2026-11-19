@@ -18,6 +18,8 @@ import pytest
 import torch
 
 from megatron.bridge.perf_recipes.deepseek import (
+    deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_config,
+    deepseek_v3_pretrain_256gpu_b200_fp8mx_ep16_ncclep_fullcg_config,
     deepseek_v3_pretrain_256gpu_b300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config,
     deepseek_v3_pretrain_256gpu_gb200_nvfp4_config,
@@ -216,10 +218,54 @@ def test_deepseek_v3_gb200_nvfp4_memory_mitigations() -> None:
     assert cfg.model.recompute_modules == ["mla_up_proj", "mlp"]
 
 
-def test_deepseek_v3_b300_mxfp8_preserves_r050_hybridep_settings() -> None:
+def test_deepseek_v3_b300_mxfp8_preserves_r050_settings_with_ncclep() -> None:
     cfg = deepseek_v3_pretrain_256gpu_b300_fp8mx_config()
 
-    _assert_full_iteration_hybridep_mxfp8(cfg)
+    _assert_full_iteration_hybridep_mxfp8(cfg, dispatcher_backend="ncclep")
+    assert cfg.model.moe_use_grouped_tensor is True
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert cfg.env_vars.keys().isdisjoint(
+        {
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
+            "NVLINK_DOMAIN_SIZE",
+            "USE_MNNVL",
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("recipe", "ep_size", "cuda_graph_impl", "pull_push"),
+    [
+        (deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_config, 8, "transformer_engine", 1),
+        (deepseek_v3_pretrain_256gpu_b200_fp8mx_ep16_ncclep_fullcg_config, 16, "full_iteration", 0),
+    ],
+)
+def test_deepseek_v3_b200_ncclep_graph_and_memory_settings(recipe, ep_size, cuda_graph_impl, pull_push) -> None:
+    cfg = recipe()
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_use_grouped_tensor is False
+    assert cfg.model.expert_model_parallel_size == ep_size
+    assert cfg.model.pipeline_model_parallel_size == 8
+    assert cfg.model.virtual_pipeline_model_parallel_size == 2
+    assert cfg.train.global_batch_size == 4096
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.cuda_graph_impl == cuda_graph_impl
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == pull_push
+    assert cfg.model.recompute_modules == ["mla_up_proj", "mlp", "core_attn"]
+    if cuda_graph_impl == "full_iteration":
+        assert cfg.model.cuda_graph_scope == []
+        assert cfg.model.moe_expert_rank_capacity_factor == 1.2
+        assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+        assert cfg.comm_overlap.delay_wgrad_compute is True
+        assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == (
+            "expandable_segments:True,graph_capture_record_stream_reuse:True"
+        )
+    else:
+        assert cfg.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
+        assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
 
 
 def test_deepseek_v4_pro_gb300_matches_r050_performance_config() -> None:
