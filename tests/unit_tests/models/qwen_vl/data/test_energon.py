@@ -177,13 +177,15 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
 
     def test_process_vision(self):
         # Mock processor behavior
-        self.image_processor.return_value = {
-            "image_grid_thw": torch.tensor([[1, 28, 28]]),
+        grid = torch.tensor([[1, 28, 28]])
+        self.image_processor.image_processor.return_value = {
+            "image_grid_thw": grid,
             "video_grid_thw": None,
         }
         res = process_vision(self.image_processor, images=[1], videos=None)
         self.assertIn("image_grid_thw", res)
         self.assertIn("video_grid_thw", res)
+        self.assertTrue(torch.equal(res["image_grid_thw"], grid))
 
     def test_encode_sample(self):
         sample = ChatMLSample(
@@ -577,6 +579,9 @@ class TestQwenVLTaskEncoderLimits(unittest.TestCase):
         # Configure the processor so that, IF we got to it, encoding would succeed.
         # The point of this test is that we should *not* get to it.
         self.image_processor.side_effect = AssertionError("processor must not be called when sample is skipped")
+        self.image_processor.image_processor.side_effect = AssertionError(
+            "processor must not be called when sample is skipped"
+        )
 
         enc = self._make_encoder(max_num_images=2)
         sample = self._make_sample(n_images=3)
@@ -617,7 +622,7 @@ class TestQwenVLTaskEncoderLimits(unittest.TestCase):
         self.assertIsInstance(encoded, QwenVLTaskSample)
 
     def test_max_visual_tokens_skip_when_exceeded(self):
-        self.image_processor.return_value = {"image_grid_thw": torch.tensor([[1, 28, 28]])}
+        self.image_processor.image_processor.return_value = {"image_grid_thw": torch.tensor([[1, 28, 28]])}
         enc = self._make_encoder(max_visual_tokens=100)
         sample = self._make_sample(n_images=1)
 
@@ -678,6 +683,34 @@ class TestProcessVisionVideoBranch(unittest.TestCase):
 
         self.assertIn("video_grid_thw", res)
         self.assertIsNotNone(res["video_grid_thw"])
+
+
+class TestProcessVisionImageBranch(unittest.TestCase):
+    """Verify that process_vision routes images through processor.image_processor without text."""
+
+    def test_image_processor_called_without_text(self):
+        grid = torch.tensor([[1, 28, 28]])
+        processor = MagicMock(
+            side_effect=ValueError(
+                "The total number of <|image_pad|> tokens in the prompts should be the same as the number of images"
+            )
+        )
+        processor.image_processor = MagicMock(return_value={"image_grid_thw": grid, "pixel_values": torch.randn(4, 3)})
+
+        images = [Image.new("RGB", (4, 4), color="red")]
+        res = process_vision(processor, images=images, videos=None, min_pixels=3136, max_pixels=12845056)
+
+        processor.assert_not_called()
+        processor.image_processor.assert_called_once()
+        kwargs = processor.image_processor.call_args.kwargs
+        self.assertIs(kwargs.get("images"), images)
+        self.assertEqual(kwargs.get("return_tensors"), "pt")
+        self.assertEqual(kwargs.get("min_pixels"), 3136)
+        self.assertEqual(kwargs.get("max_pixels"), 12845056)
+        self.assertNotIn("text", kwargs)
+
+        self.assertIs(res["image_grid_thw"], grid)
+        self.assertIsNone(res["video_grid_thw"])
 
 
 if __name__ == "__main__":
