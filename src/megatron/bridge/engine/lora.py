@@ -43,7 +43,9 @@ def build_lora(config: LoraConfig, recipe: TrainingRecipe) -> LoRA:
     ``config.target_modules=None`` takes ``recipe.lora_target_modules``. ``config.expert_adapters`` picks
     Bridge's layout for grouped MoE expert linears (``share_expert_adapters`` and
     ``experts_shared_outer_loras``); whatever a layout replicates across expert-parallel ranks is summed
-    there by the gradient sync the engine installs. Bridge's other LoRA settings keep their defaults.
+    there by the gradient sync the engine installs. ``config.freeze_routing`` and
+    ``config.skip_frozen_modules`` become Bridge LoRA's options of the same names. Bridge's other LoRA
+    settings keep their defaults.
 
     Args:
         config: The user's adapter settings.
@@ -80,4 +82,6 @@ def build_lora(config: LoraConfig, recipe: TrainingRecipe) -> LoRA:
         dropout=config.dropout,
         share_expert_adapters=share_expert_adapters,
         experts_shared_outer_loras=experts_shared_outer_loras,
+        freeze_routing=config.freeze_routing,
+        skip_frozen_modules=config.skip_frozen_modules,
     )

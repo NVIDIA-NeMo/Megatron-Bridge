@@ -308,7 +308,7 @@ class TrainingEngine:
                 the optimizer are built, so both hold the adapters only; the base weights are then loaded as
                 for a full-weight engine, with the adapters hidden for the load.
                 ``forward_only(disable_adapters=True)`` then scores the base model (the usual RL
-                reference, with no second engine; ``LoraConfig`` notes MoE expert biases), ``save_state``
+                reference, with no second engine; exactly so with ``LoraConfig.freeze_routing``), ``save_state``
                 saves the adapters and their settings, and ``export`` merges them into the base weights
                 unless ``adapter_only=True``.
             hooks: Extra pre-wrap hooks run after the Bridge-registered ones.

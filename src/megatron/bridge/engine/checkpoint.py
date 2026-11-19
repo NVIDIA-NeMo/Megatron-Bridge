@@ -133,8 +133,9 @@ class _CheckpointConfigView:
 def _lora_settings(peft: PEFT | None) -> dict[str, Any] | None:
     """The LoRA settings a checkpoint records, named as in ``LoraConfig``; ``None`` without LoRA.
 
-    Rank and targets also show in the adapter tensors, but alpha and the dropout do not, and Bridge's PEFT
-    resume ignores checkpoint adapters the engine has no target for.
+    Rank and targets also show in the adapter tensors, but alpha, the dropout and the two routing and
+    frozen-module switches do not, and Bridge's PEFT resume ignores checkpoint adapters the engine has no
+    target for.
     """
     if peft is None:
         return None
@@ -151,6 +152,8 @@ def _lora_settings(peft: PEFT | None) -> dict[str, Any] | None:
         "dropout": float(peft.dropout),
         "target_modules": [str(name) for name in peft.target_modules],
         "expert_adapters": expert_adapters,
+        "freeze_routing": bool(peft.freeze_routing),
+        "skip_frozen_modules": bool(peft.skip_frozen_modules),
     }
 
 

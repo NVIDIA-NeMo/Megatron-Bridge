@@ -62,6 +62,13 @@ def test_build_lora_lowers_rank_alpha_dropout_and_takes_the_recipe_targets():
     # Bridge's default: one adapter shared by the local experts of a grouped expert linear, whose gradient
     # the expert-parallel sync installed with peft_enabled=True sums.
     assert peft.share_expert_adapters and not peft.experts_shared_outer_loras
+    # On in the engine (off in Bridge's LoRA): routing stays the base model's, frozen parts get no adapters.
+    assert peft.freeze_routing and peft.skip_frozen_modules
+
+
+def test_build_lora_passes_the_routing_and_frozen_module_switches_to_bridge():
+    peft = build_lora(LoraConfig(rank=8, alpha=16.0, freeze_routing=False, skip_frozen_modules=False), _recipe())
+    assert not peft.freeze_routing and not peft.skip_frozen_modules
 
 
 @pytest.mark.parametrize(
@@ -212,21 +219,47 @@ def _vision_language_model() -> torch.nn.Module:
     return root
 
 
-def _wrapped_with_lora(*, targets=None, **freeze) -> list[str]:
-    """Apply the engine's LoRA to the toy vision-language model; return the linears LoRA wrapped."""
+# The parts Bridge's Qwen3-VL model freezes for each recipe flag (``Qwen3VLModel.freeze``), which the
+# Qwen3.5-VL builder calls when it builds the model, before the pre-wrap hooks run.
+_FROZEN_BY_FLAG = {
+    "freeze_language_model": ("language_model.",),
+    "freeze_vision_model": ("vision_model.decoder.layers.",),
+    "freeze_vision_projection": ("vision_model.merger.", "vision_model.decoder.deepstack_merger_list."),
+}
+
+
+def _wrapped_with_lora(*, targets=None, skip_frozen_modules=True, **freeze) -> list[str]:
+    """Freeze the toy vision-language model as the builder does, apply the engine's LoRA, and return the
+    linears LoRA wrapped."""
     recipe = _recipe(QWEN35_TARGETS, vision_config=object(), **freeze)
-    peft = build_lora(LoraConfig(rank=2, alpha=4.0, target_modules=targets), recipe)
-    model = create_peft_hook(peft)([_vision_language_model()])
-    return sorted(name for name, module in model[0].named_modules() if type(module).__name__ == "LoRALinear")
+    model = _vision_language_model()
+    for flag, prefixes in _FROZEN_BY_FLAG.items():
+        for name, parameter in model.named_parameters():
+            if freeze.get(flag) and name.startswith(prefixes):
+                parameter.requires_grad = False
+    config = LoraConfig(rank=2, alpha=4.0, target_modules=targets, skip_frozen_modules=skip_frozen_modules)
+    wrapped = create_peft_hook(build_lora(config, recipe))([model])
+    return sorted(name for name, module in wrapped[0].named_modules() if type(module).__name__ == "LoRALinear")
 
 
-def test_vision_language_lora_matches_plain_names_everywhere_and_patterns_as_given():
+def test_vision_language_lora_keeps_the_adapters_off_the_parts_the_recipe_freezes():
     frozen_vision = {"freeze_vision_model": True, "freeze_vision_projection": True}
-    # The recipe's freeze flags do not steer the adapters: plain names reach every part ...
-    assert _wrapped_with_lora(**frozen_vision) == sorted((*_LANGUAGE, *_VISION, *_PROJECTION))
+    assert _wrapped_with_lora(**frozen_vision) == sorted(_LANGUAGE)
+    assert _wrapped_with_lora(freeze_language_model=True) == sorted((*_VISION, *_PROJECTION))
+    assert _wrapped_with_lora() == sorted((*_LANGUAGE, *_VISION, *_PROJECTION))  # nothing frozen
+    with pytest.raises(ValueError, match="nothing would be trained"):
+        _wrapped_with_lora(freeze_language_model=True, **frozen_vision)
+
+
+def test_vision_language_lora_without_skipping_matches_plain_names_everywhere_and_patterns_as_given():
+    frozen_vision = {"freeze_vision_model": True, "freeze_vision_projection": True}
+    # As in Bridge's default LoRA, the freeze flags then do not steer the adapters: plain names reach every
+    # part ...
+    everywhere = _wrapped_with_lora(skip_frozen_modules=False, **frozen_vision)
+    assert everywhere == sorted((*_LANGUAGE, *_VISION, *_PROJECTION))
     # ... and patterns keep them on the language model.
     language_only = [f"language_model.*.{name}" for name in QWEN35_TARGETS]
-    assert _wrapped_with_lora(targets=language_only, **frozen_vision) == sorted(_LANGUAGE)
+    assert _wrapped_with_lora(targets=language_only, skip_frozen_modules=False, **frozen_vision) == sorted(_LANGUAGE)
 
 
 # ---- engine construction ------------------------------------------------------------------------
@@ -474,6 +507,8 @@ def test_checkpoints_record_the_lora_settings(checkpoint_calls, tmp_path):
             "dropout": 0.1,
             "target_modules": ["linear_qkv", "*.in_proj"],
             "expert_adapters": "shared",
+            "freeze_routing": True,
+            "skip_frozen_modules": True,
         }
     with open(tmp_path / "full" / "iter_0000003" / "run_config.yaml") as handle:
         assert yaml.safe_load(handle)["lora"] is None
@@ -487,6 +522,8 @@ def test_checkpoints_record_the_lora_settings(checkpoint_calls, tmp_path):
         # Fewer targets: Bridge's non-strict resume would drop the saved in_proj adapters without a word.
         (LoraConfig(rank=8, alpha=16.0, target_modules=["linear_qkv", "in_proj"]), LoraConfig(rank=8, alpha=16.0)),
         (LoraConfig(rank=8, alpha=16.0), LoraConfig(rank=8, alpha=16.0, expert_adapters="per_expert")),
+        (LoraConfig(rank=8, alpha=16.0), LoraConfig(rank=8, alpha=16.0, freeze_routing=False)),
+        (LoraConfig(rank=8, alpha=16.0, skip_frozen_modules=False), LoraConfig(rank=8, alpha=16.0)),
         (LoraConfig(rank=8, alpha=16.0), None),
         (None, LoraConfig(rank=8, alpha=16.0)),
     ],
