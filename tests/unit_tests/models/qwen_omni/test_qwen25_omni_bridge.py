@@ -109,3 +109,35 @@ class TestQwen25OmniBridgeExportPassthrough:
         result = list(Qwen25OmniBridge().stream_weights_megatron_to_hf([], pretrained))
 
         assert [item.param_name for item in result] == ["thinker.lm_head.weight"]
+
+    @pytest.mark.parametrize(
+        "thinker_device, cpu",
+        [("meta", False), ("cpu", False), ("cpu", True)],
+        ids=["device_thinker_cpu_false", "cpu_thinker_cpu_false", "cpu_thinker_cpu_true"],
+    )
+    def test_passthrough_weights_follow_export_device(
+        self, monkeypatch: pytest.MonkeyPatch, thinker_device: str, cpu: bool
+    ) -> None:
+        """Passthrough tensors land on the mapped export device when cpu=False and on CPU when cpu=True."""
+        talker = torch.tensor([2.0], dtype=torch.bfloat16)
+        token2wav = torch.tensor([3.0], dtype=torch.bfloat16)
+        tensors = {"talker.codec_head.weight": talker, "token2wav.code2wav_dit_model.proj.weight": token2wav}
+
+        def device_events(*_args, cpu: bool = True, **_kwargs):
+            weight = torch.tensor([1.0], dtype=torch.bfloat16, device=thinker_device)
+            yield from HFWeightTuple("thinker.lm_head.weight", weight).iter_finalized(cpu=cpu)
+            yield None
+
+        monkeypatch.setattr(MegatronModelBridge, "_stream_weight_events_megatron_to_hf", device_events)
+        monkeypatch.setattr(Qwen25OmniBridge, "_should_emit_hf_passthrough", lambda *_args, **_kwargs: True)
+
+        groups = list(Qwen25OmniBridge()._stream_weight_groups_megatron_to_hf([], _pretrained(tensors), cpu=cpu))
+
+        expected = torch.device("cpu") if cpu else torch.device(thinker_device)
+        weights = [item.weight for group in groups for item in group]
+        assert [weight.device for weight in weights] == [expected] * 3
+        assert all(weight.dtype == torch.bfloat16 for weight in weights)
+        if expected.type == "cpu":
+            torch.testing.assert_close(weights[1], talker, rtol=0, atol=0)
+            torch.testing.assert_close(weights[2], token2wav, rtol=0, atol=0)
+            assert torch.cat(weights).shape == (3,)
