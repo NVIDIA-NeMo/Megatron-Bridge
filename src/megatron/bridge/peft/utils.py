@@ -58,6 +58,10 @@ ModelHook = Callable[[ModelList], ModelList | None]
 CheckpointPath = str | Path
 
 _LEGACY_SHARED_EXPERT_ADAPTER_CHECKPOINT_ATTR = "use_legacy_shared_expert_adapter_checkpoint"
+# Sharded state dict metadata entry that maps each GDN ``in_proj`` adapter ``linear_out`` key a checkpoint saved
+# before the per-section split to the tensor-parallel size it was saved at (see legacy_gdn_in_proj_adapter_metadata).
+LEGACY_GDN_IN_PROJ_ADAPTER_TP = "legacy_gdn_in_proj_adapter_tp"
+_GDN_IN_PROJ_ADAPTER_OUT_SUFFIX = ".in_proj.adapter.linear_out.weight"
 
 
 TEColumnParallelLinear, HAVE_TE_COL_LINEAR = safe_import_from(
@@ -294,6 +298,122 @@ def enable_legacy_shared_expert_adapter_loading(
                 enabled = True
 
     return enabled
+
+
+def _module_roots(model: nn.Module | list[nn.Module]) -> list[nn.Module]:
+    """The ``nn.Module`` chunks of a model given as one module or a list of chunks."""
+
+    return [root for root in (model if isinstance(model, list) else [model]) if isinstance(root, nn.Module)]
+
+
+def set_gdn_in_proj_adapter_splits(model: nn.Module | list[nn.Module]) -> None:
+    """Give each GDN-family ``in_proj`` adapter the output sections of its layer.
+
+    Megatron Core saves the base ``in_proj.weight`` of a GatedDeltaNet, GatedDeltaNet2 or KimiDeltaAttention
+    layer as one tensor per output section (the layer's ``in_proj_split_sections`` and ``in_proj_split_names``),
+    so that checkpoint does not depend on the tensor-parallel size. The adapter's ``linear_out`` holds the same
+    per-rank rows, and :meth:`ParallelLinearAdapter.sharded_state_dict` saves it the same way once it knows them.
+
+    Args:
+        model: Model module or model chunks, after the PEFT transform has wrapped their linears.
+    """
+
+    for root in _module_roots(model):
+        for module in root.modules():
+            sections = getattr(module, "in_proj_split_sections", None)
+            names = getattr(module, "in_proj_split_names", None)
+            adapter = getattr(getattr(module, "in_proj", None), "adapter", None)
+            if sections is not None and names is not None and isinstance(adapter, ParallelLinearAdapter):
+                adapter.gdn_in_proj_split = (tuple(sections), tuple(names))
+
+
+def legacy_gdn_in_proj_adapter_metadata(
+    model: nn.Module | list[nn.Module], checkpoint_path: str | Path
+) -> dict[str, dict[str, int]]:
+    """Sharded state dict metadata for GDN ``in_proj`` adapters saved before the per-section split.
+
+    Before the split, a GDN ``in_proj`` adapter's ``linear_out.weight`` was saved as one tensor whose row blocks
+    are the ranks' ``[q_r k_r v_r ...]`` rows at the training tensor-parallel size, so it does not load correctly
+    at another size. The returned entry maps each such key in the checkpoint to that size (its number of row
+    chunks). Pass it in the ``metadata`` of the model's ``sharded_state_dict`` so these adapters load the old
+    tensor and put its rows in place.
+
+    Args:
+        model: Model module or model chunks, with PEFT applied.
+        checkpoint_path: Distributed (torch_dist) checkpoint directory to inspect.
+
+    Returns:
+        ``{LEGACY_GDN_IN_PROJ_ADAPTER_TP: {key: tensor_parallel_size}}``, or an empty dict when the model has no
+        GDN ``in_proj`` adapter or the checkpoint has no tensor saved in the old layout.
+    """
+
+    roots = _module_roots(model)
+    if not any(getattr(module, "gdn_in_proj_split", None) is not None for root in roots for module in root.modules()):
+        return {}
+
+    from torch.distributed.checkpoint import FileSystemReader
+    from torch.distributed.checkpoint.metadata import TensorStorageMetadata
+
+    try:
+        state_dict_metadata = FileSystemReader(str(checkpoint_path)).read_metadata().state_dict_metadata
+    except Exception as err:  # e.g. a checkpoint format other than torch_dist
+        logger.warning(f"Could not read tensor metadata from {checkpoint_path} to check GDN in_proj adapters: {err}")
+        return {}
+
+    legacy_tp = {}
+    for key, item in state_dict_metadata.items():
+        if key.endswith(_GDN_IN_PROJ_ADAPTER_OUT_SUFFIX) and isinstance(item, TensorStorageMetadata):
+            row_axis = len(item.size) - 2
+            legacy_tp[key] = len({chunk.offsets[row_axis] for chunk in item.chunks})
+    return {LEGACY_GDN_IN_PROJ_ADAPTER_TP: legacy_tp} if legacy_tp else {}
+
+
+def _legacy_gdn_in_proj_linear_out_factory(
+    sh_ten: ShardedTensor, split_sections: Tuple[int, ...], saved_tp_size: int
+) -> ShardedTensorFactory:
+    """Load a GDN ``in_proj`` adapter ``linear_out`` saved in the old layout at another tensor-parallel size.
+
+    In the old layout, row block ``r`` of the saved tensor holds rank ``r``'s ``[q_r k_r v_r ...]`` rows at
+    ``saved_tp_size``. Every rank reads the whole tensor, puts each section back together, and keeps its own rows
+    at the current size.
+    """
+
+    row_axis = sh_ten.prepend_axis_num
+    tp_size = sh_ten.axis_fragmentations[row_axis]
+    tp_rank = sh_ten.global_offset[row_axis] // sh_ten.local_shape[row_axis]
+    global_sections = [size * tp_size for size in split_sections]
+    if any(size % saved_tp_size for size in global_sections):
+        raise ValueError(
+            f"{sh_ten.key}: the sections {global_sections} of the old adapter layout do not divide by the "
+            f"tensor-parallel size it was saved at ({saved_tp_size})"
+        )
+    saved_sections = [size // saved_tp_size for size in global_sections]
+    prepend_offsets = [
+        (axis, sh_ten.global_offset[axis], sh_ten.axis_fragmentations[axis]) for axis in range(row_axis)
+    ]
+
+    @torch.no_grad()
+    def build_fn(key: str, t: torch.Tensor, replica_id: Any, flattened_range: Optional[slice]) -> ShardedTensor:
+        if flattened_range is not None:
+            raise NotImplementedError(
+                f"{key}: loading a flattened optimizer state saved in the old GDN in_proj adapter layout at another "
+                f"tensor-parallel size is not supported; resume at tensor-parallel size {saved_tp_size}"
+            )
+        whole = torch.empty((sum(global_sections), *t.shape[1:]), dtype=t.dtype, device=t.device)
+        # Every rank reads the whole tensor; only tensor-parallel rank 0 holds the main replica.
+        if tp_rank > 0:
+            replica_id = (*(replica_id if isinstance(replica_id, tuple) else (replica_id,)), tp_rank)
+        return ShardedTensor.from_rank_offsets(
+            key, whole, *prepend_offsets, replica_id=replica_id, prepend_axis_num=row_axis
+        )
+
+    @torch.no_grad()
+    def merge_fn(whole: torch.Tensor) -> torch.Tensor:
+        rank_blocks = [block.split(saved_sections, dim=0) for block in whole.chunk(saved_tp_size, dim=0)]
+        sections = [torch.cat(parts, dim=0) for parts in zip(*rank_blocks)]
+        return torch.cat([section.chunk(tp_size, dim=0)[tp_rank] for section in sections], dim=0)
+
+    return ShardedTensorFactory(sh_ten.key, sh_ten.data, build_fn, merge_fn, sh_ten.replica_id)
 
 
 def _get_process_group(pg_collection: ProcessGroupCollection | None, *names: str) -> object | None:
@@ -1205,6 +1325,8 @@ class ParallelLinearAdapter(nn.Module):
         self.sequence_parallel_input_regather = sequence_parallel_input_regather
         self._sequence_parallel_input_regather_fallback_logged = False
         self.use_legacy_shared_expert_adapter_checkpoint = False
+        # (sections, names) of a GDN-family in_proj base layer, set by set_gdn_in_proj_adapter_splits.
+        self.gdn_in_proj_split: Optional[Tuple[Tuple[int, ...], Tuple[str, ...]]] = None
 
         # megatron_gpt_peft_models will provide this arg, but deprecated ones do not.
         # in case this arg is not provided, use the dummy default config.
@@ -1816,12 +1938,40 @@ class ParallelLinearAdapter(nn.Module):
                             0,  # split along dimension 0
                         )
 
+        # GDN-family in_proj: Megatron Core saves the base in_proj.weight as one tensor per output section, so the
+        # checkpoint does not depend on the TP size. linear_out holds the same per-rank rows; save it the same way.
+        out_key = f"{prefix}linear_out.weight"
+        if self.gdn_in_proj_split is not None and isinstance(linear_out_sd.get(out_key), ShardedTensor):
+            linear_out_sd[out_key] = self._gdn_in_proj_linear_out_sharded(linear_out_sd[out_key], metadata)
+
         if self.is_expert:
             self._set_expert_replica_ids(linear_in_sd, linear_out_sd)
 
         sharded_state_dict.update(linear_in_sd)
         sharded_state_dict.update(linear_out_sd)
         return sharded_state_dict
+
+    def _gdn_in_proj_linear_out_sharded(
+        self, sh_ten: ShardedTensor, metadata: Optional[Dict]
+    ) -> ShardedTensor | ShardedTensorFactory:
+        """Save a GDN-family ``in_proj`` adapter's ``linear_out.weight`` per output section, as its base layer.
+
+        A checkpoint saved before this split holds the tensor in the old layout. When ``metadata`` names it (see
+        :func:`legacy_gdn_in_proj_adapter_metadata`), load that layout: as is at the tensor-parallel size it was
+        saved at, otherwise with the rows put back in place.
+        """
+        split_sections, split_names = self.gdn_in_proj_split
+        if sh_ten.local_shape[0] != sum(split_sections):
+            return sh_ten
+
+        saved_tp_size = ((metadata or {}).get(LEGACY_GDN_IN_PROJ_ADAPTER_TP) or {}).get(sh_ten.key)
+        if saved_tp_size is None:
+            from megatron.core.ssm.mamba_mixer import _split_tensor_factory
+
+            return _split_tensor_factory(sh_ten, list(split_sections), list(split_names), 0)
+        if saved_tp_size == sh_ten.axis_fragmentations[sh_ten.prepend_axis_num]:
+            return sh_ten
+        return _legacy_gdn_in_proj_linear_out_factory(sh_ten, split_sections, saved_tp_size)
 
 
 def _divide_exact(value: int, divisor: int, name: str) -> int:

@@ -75,6 +75,7 @@ from modelopt.torch.opt.plugins import (
 from torch.distributed.tensor import DTensor
 
 from megatron.bridge.peft.base import PEFT
+from megatron.bridge.peft.utils import legacy_gdn_in_proj_adapter_metadata
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
@@ -2465,6 +2466,8 @@ def _load_model_weights_from_checkpoint(
     checkpoint_data_group = _checkpoint_dp_cp_group(pg_collection)
     sharded_sd_metadata = dict(sharded_sd_metadata or {})
     sharded_sd_metadata["dp_cp_group"] = checkpoint_data_group
+    # GDN in_proj LoRA tensors saved before they were split per output section.
+    sharded_sd_metadata.update(legacy_gdn_in_proj_adapter_metadata(model, checkpoint_path))
     model_sd_kwargs = dict(metadata=sharded_sd_metadata)
     sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs, pg_collection=pg_collection)
 
@@ -3159,6 +3162,9 @@ def _load_checkpoint_from_path(
             else:
                 saved_keys = dist_checkpointing.load_tensors_metadata(checkpoint_name).keys()
             sharded_sd_metadata["legacy_grad_dtypes"] = _get_legacy_grad_dtypes(saved_keys)
+        if ckpt_type != CheckpointType.LOCAL:
+            # GDN in_proj LoRA tensors saved before they were split per output section.
+            sharded_sd_metadata.update(legacy_gdn_in_proj_adapter_metadata(model, checkpoint_name))
         optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
         model_sd_kwargs = dict(metadata=sharded_sd_metadata)
 

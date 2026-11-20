@@ -24,6 +24,7 @@ from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.recompute import maybe_enable_recompute_inputs_grad
+from megatron.bridge.peft.utils import set_gdn_in_proj_adapter_splits
 from megatron.bridge.peft.walk_utils import walk
 
 
@@ -189,6 +190,8 @@ class PEFT(ABC):
         self.freeze_model(model, training=training)
 
         self._walk_model(model, self.transform, exclusions=exclusions)
+        # GDN in_proj adapters save their linear_out per output section, as the base layer does.
+        set_gdn_in_proj_adapter_splits(model)
 
         if training:
             maybe_enable_recompute_inputs_grad(model)
