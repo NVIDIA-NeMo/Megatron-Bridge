@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import os
+import subprocess
+import sys
 import tempfile
 import warnings
 from pathlib import Path
@@ -586,6 +588,117 @@ def test_torch_dist_init_resets_default_logging_ranks(lazy):
                 assert get_default_log_ranks() == (0,)
     finally:
         set_default_log_ranks(original)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("lazy", [False, True])
+def test_torch_dist_init_binds_autograd_worker_context_after_device_setup(lazy: bool) -> None:
+    """The autograd worker gets its CUDA context once distributed initialization has set the device."""
+    from megatron.bridge.training.initialize import torch_dist_init
+
+    calls = Mock()
+    with (
+        patch("megatron.bridge.training.initialize._initialize_distributed", return_value=Mock()) as init_dist,
+        patch("megatron.bridge.training.initialize._bind_cuda_context_on_autograd_worker") as bind,
+        patch("megatron.bridge.training.initialize._set_random_seed") as set_seed,
+        patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0),
+        patch("megatron.bridge.training.initialize.parallel_state"),
+    ):
+        calls.attach_mock(init_dist, "init_dist")
+        calls.attach_mock(bind, "bind")
+        calls.attach_mock(set_seed, "set_seed")
+        model = SimpleNamespace(
+            num_moe_experts=None, cuda_graph_impl="none", tp_comm_overlap=False, tensor_model_parallel_size=1
+        )
+        result = torch_dist_init(model, SimpleNamespace(lazy_mpu_init=lazy), Mock(), 1, 1, None, None, False)
+        if lazy:
+            bind.assert_not_called()
+            result()
+
+    called = [name for name, _, _ in calls.mock_calls if name in ("init_dist", "bind", "set_seed")]
+    assert called == ["init_dist", "bind", "set_seed"]
+
+
+# Runs in a fresh process, so PyTorch's autograd worker threads start clean. A custom autograd function makes its
+# backward the first CUDA work of the GPU-0 worker, as a recomputed norm is at the start of a pipeline stage's backward.
+_AUTOGRAD_WORKER_PROBE = r"""
+import ctypes
+import sys
+
+import torch
+
+from megatron.bridge.training.initialize import _bind_cuda_context_on_autograd_worker
+
+
+torch.cuda.set_device(0)
+libcuda = ctypes.CDLL("libcuda.so.1")
+
+
+def current_context():
+    context = ctypes.c_void_p()
+    libcuda.cuCtxGetCurrent(ctypes.byref(context))
+    return context.value
+
+
+try:
+    import transformer_engine.pytorch as te
+except ImportError:
+    norm = None
+else:
+    norm = te.ops.RMSNorm(1024, device="cuda", dtype=torch.bfloat16)
+    tokens = torch.randn(256, 1024, device="cuda", dtype=torch.bfloat16)
+    norm(tokens)  # The main thread compiles and loads the norm kernel, as a training forward pass does.
+
+if sys.argv[1] == "bind":
+    _bind_cuda_context_on_autograd_worker()
+
+seen = {}
+
+
+class FirstInBackward(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, tensor):
+        return tensor.clone()
+
+    @staticmethod
+    def backward(ctx, grad):
+        seen["context"] = current_context()
+        if norm is not None:
+            try:
+                norm(tokens)
+                seen["norm"] = "ok"
+            except RuntimeError as exc:
+                seen["norm"] = str(exc).replace("\n", " ")
+        return grad
+
+
+leaf = torch.ones(1, device="cuda", requires_grad=True)
+FirstInBackward.apply(leaf).sum().backward()
+print("CONTEXT", seen["context"] is not None)
+print("NORM", seen.get("norm", "skipped"))
+"""
+
+
+def _probe_autograd_worker(mode: str) -> tuple[bool, str]:
+    result = subprocess.run(
+        [sys.executable, "-c", _AUTOGRAD_WORKER_PROBE, mode], capture_output=True, text=True, timeout=600
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    fields = dict(line.split(" ", 1) for line in result.stdout.splitlines() if line.startswith(("CONTEXT ", "NORM ")))
+    return fields["CONTEXT"] == "True", fields["NORM"]
+
+
+@pytest.mark.unit
+@pytest.mark.run_only_on("gpu")
+def test_bind_cuda_context_on_autograd_worker_lets_te_norm_run_first_in_backward() -> None:
+    """After the warm-up, the GPU-0 autograd worker holds a CUDA context and a TE norm can be its first work."""
+    has_context, _ = _probe_autograd_worker("none")
+    if has_context:
+        pytest.skip("PyTorch's GPU-0 autograd worker already holds a CUDA context without the warm-up")
+
+    has_context, norm = _probe_autograd_worker("bind")
+    assert has_context
+    assert norm in ("ok", "skipped"), norm
 
 
 @pytest.mark.unit
