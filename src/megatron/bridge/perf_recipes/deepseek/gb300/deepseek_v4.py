@@ -151,15 +151,8 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
-    """DeepSeek V4 Pro pretrain: 256× GB300, BF16, eager PP4/VPP4/EP64.
-
-    Preserves the MXFP8 benchmark's full model, batch, forced routing and Adam
-    precision: FP32 master weights with BF16 main gradients and Adam moments.
-    Uses selective MLA/mHC/MoE-block recompute without offload or CUDA graphs,
-    whose combination is unsupported by the native HybridModel runtime.
-    This synthetic-data performance benchmark is not a convergence recipe.
-    """
+def _deepseek_v4_pro_pretrain_256gpu_bf16_common() -> ConfigContainer:
+    """Build the eager BF16 variant shared by GB300 and VR NVL72."""
     cfg = _deepseek_v4_pro_pretrain_256gpu_gb300_common()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.quant_recipe = None
@@ -177,6 +170,19 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = []
     cfg.model.fine_grained_offloading_max_inflight_offloads = None
+    return cfg
+
+
+def deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
+    """DeepSeek V4 Pro pretrain: 256× GB300, BF16, eager PP4/VPP4/EP64.
+
+    Preserves the MXFP8 benchmark's full model, batch, forced routing and Adam
+    precision: FP32 master weights with BF16 main gradients and Adam moments.
+    Uses selective MLA/mHC/MoE-block recompute without offload or CUDA graphs,
+    whose combination is unsupported by the native HybridModel runtime.
+    This synthetic-data performance benchmark is not a convergence recipe.
+    """
+    cfg = _deepseek_v4_pro_pretrain_256gpu_bf16_common()
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
