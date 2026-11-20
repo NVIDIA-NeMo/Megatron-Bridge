@@ -127,6 +127,7 @@ def build_test_config(
             override_opt_param_scheduler=True,
         ),
         optimizer=OptimizerConfig(
+            use_layer_wise_param_layout=False,
             optimizer="adam",
             bf16=True,
             fp16=False,
@@ -166,6 +167,8 @@ def build_test_config(
             vocab_size=131072,
         ),
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save=save_dir,
             load=save_dir,
             save_interval=save_interval,

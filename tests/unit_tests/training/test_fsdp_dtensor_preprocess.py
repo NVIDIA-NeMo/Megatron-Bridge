@@ -228,9 +228,13 @@ class TestLoadValidatesModelKeys:
 class TestFsdpDtensorLoadConfig:
     def test_strictness_knob_is_inherited_not_redeclared(self):
         """No bespoke config field: the check rides on the existing megatron-core knob."""
-        assert CheckpointConfig().dist_ckpt_strictness == "assume_ok_unexpected"
-        assert "strict_fsdp_dtensor_model_load" not in CheckpointConfig().__dataclass_fields__
-
-    def test_partial_load_remains_the_default(self):
-        """The new check is what makes a partial load safe, so partial stays the default."""
-        assert CheckpointConfig().strict_fsdp_dtensor_load is False
+        assert (
+            CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False).dist_ckpt_strictness
+            == "assume_ok_unexpected"
+        )
+        assert (
+            "strict_fsdp_dtensor_model_load"
+            not in CheckpointConfig(
+                use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False
+            ).__dataclass_fields__
+        )

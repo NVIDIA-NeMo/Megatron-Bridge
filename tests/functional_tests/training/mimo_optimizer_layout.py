@@ -128,6 +128,7 @@ def build(
     original = {id(p): name for name, p in model.named_parameters()}
     model = _cast_model_dtype_except_fp32_marked([model], torch.bfloat16)[0]
     optimizer_config = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer=optimizer_name,
         use_distributed_optimizer=mode != "replicated",
         bf16=True,
@@ -276,7 +277,8 @@ def step(
 
 def checkpoint(model: MimoModel, optimizer: MimoOptimizer, path: Path, *, loading: bool) -> None:
     metadata = _build_sharded_state_dict_metadata(
-        _uses_distributed_optimizer(optimizer.config, optimizer), CheckpointConfig(ckpt_format="torch_dist")
+        _uses_distributed_optimizer(optimizer.config, optimizer),
+        CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, ckpt_format="torch_dist"),
     )
     model_sd = model.sharded_state_dict(metadata=metadata)
     state = {

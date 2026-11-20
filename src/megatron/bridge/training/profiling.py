@@ -19,8 +19,7 @@ from typing import Optional
 
 import torch
 import torch.profiler
-
-from megatron.bridge.training.config import ProfilingConfig
+from megatron.training.config import ProfilingConfig
 
 
 # Type alias for NVTX context manager

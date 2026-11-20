@@ -135,7 +135,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         train.train_iters=$TRAIN_ITERS \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
         train.micro_batch_size=$MICRO_BATCH_SIZE \
-        train.eval_iters=$EVAL_ITERS \
+        validation.eval_iters=$EVAL_ITERS \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
         checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \

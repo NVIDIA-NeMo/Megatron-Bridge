@@ -689,7 +689,7 @@ def _build_config(
         dataset=data_provider,
         logger=logger_cfg,
         tokenizer=TokenizerConfig(),
-        checkpoint=CheckpointConfig(),
+        checkpoint=CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False),
     )
     cfg.rng.seed = seed
     cfg.ddp.overlap_grad_reduce = False
@@ -894,6 +894,7 @@ def main():
         f"adam_beta1={args.adam_beta1}, adam_beta2={args.adam_beta2}, clip_grad={args.clip_grad}"
     )
     bridge_opt_config = BridgeOptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="adam",
         lr=args.lr,
         min_lr=args.min_lr,

@@ -180,13 +180,15 @@ def _build_config() -> ConfigContainer:
         # Two micro-batches per step exercise the per-microbatch MTP loss scaling.
         train=TrainingConfig(micro_batch_size=1, global_batch_size=2, train_iters=_TRAIN_ITERS),
         model=megatron_mimo_provider,
-        optimizer=OptimizerConfig(bf16=True, use_distributed_optimizer=True, lr=1e-3, min_lr=0.0),
+        optimizer=OptimizerConfig(
+            use_layer_wise_param_layout=False, bf16=True, use_distributed_optimizer=True, lr=1e-3, min_lr=0.0
+        ),
         scheduler=SchedulerConfig(start_weight_decay=0.0, end_weight_decay=0.0),
         # The batches come from _build_data_iterators; this only carries the sequence length.
         dataset=MockMegatronMIMOProvider(seq_length=_SEQ_LENGTH),
         logger=LoggerConfig(),
         tokenizer=TokenizerConfig(),
-        checkpoint=CheckpointConfig(),
+        checkpoint=CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False),
     )
 
 

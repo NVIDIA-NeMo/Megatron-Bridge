@@ -197,10 +197,10 @@ def _apply_training_argparse_overrides(config, args):
 
     # Validation configuration for convergence
     if args.max_steps <= 100:
-        config.train.eval_interval = args.max_steps
-        config.train.eval_iters = 0  # Disable evaluation for short convergence runs
+        config.validation.eval_interval = args.max_steps
+        config.validation.eval_iters = 0  # Disable evaluation for short convergence runs
     else:
-        config.train.eval_interval = 800
+        config.validation.eval_interval = 800
 
     if args.max_steps > 100:
         config.scheduler.lr_warmup_iters = int(0.01 * args.max_steps)

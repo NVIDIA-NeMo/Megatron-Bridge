@@ -847,7 +847,9 @@ class TestSaveCheckpointAndTime:
         from megatron.bridge.training.config import OptimizerConfig
 
         state, _ = self._make_state()
-        state.cfg.optimizer = OptimizerConfig(optimizer=name, use_layer_wise_distributed_optimizer=layerwise)
+        state.cfg.optimizer = OptimizerConfig(
+            use_layer_wise_param_layout=False, optimizer=name, use_layer_wise_distributed_optimizer=layerwise
+        )
         manager = Mock()
         with patch("megatron.bridge.training.train.force_param_sync") as sync:
             save_checkpoint_and_time(state, [Mock()], Mock(), Mock(), 0.0, checkpoint_manager=manager)

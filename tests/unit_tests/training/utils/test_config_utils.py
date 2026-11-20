@@ -1300,62 +1300,32 @@ class TestConfigContainerBackwardCompat:
         assert result.value == 42
 
 
-def test_create_ddp_config_builds_and_finalizes(monkeypatch) -> None:
-    class _FakeDDPConfig:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.finalized = False
-
-        def finalize(self):
-            self.finalized = True
-
-    monkeypatch.setattr(
-        "megatron.bridge.training.config.DistributedDataParallelConfig",
-        _FakeDDPConfig,
-    )
+def test_create_ddp_config_builds_and_finalizes() -> None:
+    from megatron.core.distributed import DistributedDataParallelConfig
 
     ddp_config = create_ddp_config(
         use_distributed_optimizer=False,
         use_megatron_fsdp=True,
         overrides={"overlap_grad_reduce": False},
     )
-
-    assert ddp_config.kwargs == {
-        "use_distributed_optimizer": True,
-        "check_for_nan_in_grad": True,
-        "use_megatron_fsdp": True,
-        "data_parallel_sharding_strategy": "optim_grads_params",
-        "overlap_grad_reduce": False,
-    }
-    assert ddp_config.finalized is True
+    assert type(ddp_config) is DistributedDataParallelConfig
+    assert ddp_config.use_distributed_optimizer is True
+    assert ddp_config.check_for_nan_in_grad is True
+    assert ddp_config.use_megatron_fsdp is True
+    assert ddp_config.overlap_grad_reduce is False
+    assert ddp_config.expert_data_parallel_sharding_strategy == "optim_grads_params"
 
 
 def test_create_ddp_config_returns_none_when_not_wrapping() -> None:
     assert create_ddp_config(wrap_with_ddp=False) is None
 
 
-def test_create_ddp_config_can_skip_finalization(monkeypatch) -> None:
-    class _FakeDDPConfig:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.finalized = False
-
-        def finalize(self):
-            self.finalized = True
-
-    monkeypatch.setattr(
-        "megatron.bridge.training.config.DistributedDataParallelConfig",
-        _FakeDDPConfig,
-    )
-
+def test_create_ddp_config_can_skip_finalization() -> None:
     ddp_config = create_ddp_config(
         use_distributed_optimizer=False,
         overrides={"check_for_nan_in_grad": True},
         finalize=False,
     )
-
-    assert ddp_config.kwargs == {
-        "use_distributed_optimizer": False,
-        "check_for_nan_in_grad": True,
-    }
-    assert ddp_config.finalized is False
+    assert ddp_config.use_distributed_optimizer is False
+    assert ddp_config.check_for_nan_in_grad is True
+    assert ddp_config.expert_data_parallel_sharding_strategy is None

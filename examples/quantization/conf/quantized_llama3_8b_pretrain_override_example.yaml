@@ -23,10 +23,12 @@ model:
   context_parallel_size: 1
   gradient_accumulation_fusion: False
 
+validation:
+  eval_iters: 0
+
 train:
   train_iters: 20
   global_batch_size: 8
-  eval_iters: 0 
 
 scheduler:
   lr_warmup_iters: 10

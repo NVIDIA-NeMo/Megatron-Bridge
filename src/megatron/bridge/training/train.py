@@ -69,6 +69,10 @@ from megatron.core.utils import (
     nvtx_range_pop,
     nvtx_range_push,
 )
+from megatron.training.utils import (
+    logical_and_across_model_parallel_group,
+    reduce_max_stat_across_model_parallel_group,
+)
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
@@ -109,9 +113,7 @@ from megatron.bridge.training.utils.optimizer_utils import uses_distributed_opti
 from megatron.bridge.training.utils.train_utils import (
     accumulate_zero_token_step,
     calc_params_l2_norm,
-    logical_and_across_model_parallel_group,
     prepare_forward_step_func,
-    reduce_max_stat_across_model_parallel_group,
     training_log,
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
@@ -1028,15 +1030,15 @@ def train_step(
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
     if train_config.check_optimizer_step_success:
-        update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
+        update_successful = logical_and_across_model_parallel_group(update_successful, group=pg_collection.mp)
 
     # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
     # so we must gather across mp ranks
     if not train_config.skip_sync_grad_norm_across_mp:
-        grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
+        grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, group=pg_collection.mp)
 
     if optim_config.log_num_zeros_in_grad:
-        num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad, mp_group=pg_collection.mp)
+        num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad, group=pg_collection.mp)
 
     # Update learning rate.
     if update_successful:

@@ -31,6 +31,7 @@ Example::
 import os
 
 from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.training.config import RNGConfig, ValidationConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
@@ -42,10 +43,8 @@ from megatron.bridge.training.config import (
     DistributedInitConfig,
     GPTDatasetConfig,
     LoggerConfig,
-    RNGConfig,
     TokenizerConfig,
     TrainingConfig,
-    ValidationConfig,
 )
 
 
@@ -114,6 +113,8 @@ def vanilla_gpt_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
             vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE,
         ),
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save_interval=500,
             save=checkpoint_dir,
             ckpt_format="torch_dist",

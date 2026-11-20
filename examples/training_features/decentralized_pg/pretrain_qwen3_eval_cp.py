@@ -93,6 +93,7 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.utils import get_model_config, get_pg_rank
+from megatron.training.config import ValidationConfig
 
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.data.utils import get_dataset_provider
@@ -361,14 +362,13 @@ def main() -> None:
     train_cfg = TrainingConfig(
         train_iters=args.train_iters,
         # Disable auto-eval inside train(); we call evaluate manually after.
-        eval_interval=args.train_iters + 1,
-        eval_iters=1,
         global_batch_size=args.global_batch_size,
         micro_batch_size=args.micro_batch_size,
         exit_signal_handler=True,
     )
 
     optimizer_cfg = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="adam",
         bf16=True,
         use_distributed_optimizer=True,
@@ -415,11 +415,17 @@ def main() -> None:
 
     tokenizer_cfg = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=10000)
     logger_cfg = LoggerConfig(log_interval=1, tensorboard_dir=tensorboard_dir)
-    checkpoint_cfg = CheckpointConfig(save_interval=args.train_iters + 1, save=checkpoint_dir)
+    checkpoint_cfg = CheckpointConfig(
+        use_persistent_ckpt_worker=True,
+        strict_fsdp_dtensor_load=False,
+        save_interval=args.train_iters + 1,
+        save=checkpoint_dir,
+    )
     rng_cfg = RNGConfig(seed=1234)
 
     cfg = ConfigContainer(
         model=model_cfg,
+        validation=ValidationConfig(eval_interval=args.train_iters + 1, eval_iters=1),
         train=train_cfg,
         optimizer=optimizer_cfg,
         scheduler=scheduler_cfg,

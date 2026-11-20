@@ -162,6 +162,7 @@ class TestPretrain:
             ),
             validation=ValidationConfig(eval_interval=100, eval_iters=0),
             optimizer=OptimizerConfig(
+                use_layer_wise_param_layout=False,
                 optimizer="adam",
                 bf16=True,
                 fp16=False,
@@ -199,7 +200,9 @@ class TestPretrain:
             ),
             logger=LoggerConfig(log_interval=1),
             tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=128),
-            checkpoint=CheckpointConfig(save=None, load=None),
+            checkpoint=CheckpointConfig(
+                use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False, save=None, load=None
+            ),
             rng=RNGConfig(seed=1234),
         )
 
@@ -280,6 +283,7 @@ class TestPretrain:
                     eval_iters=2,
                 ),
                 optimizer=OptimizerConfig(
+                    use_layer_wise_param_layout=False,
                     optimizer="adam",
                     bf16=True,
                     fp16=False,
@@ -330,6 +334,8 @@ class TestPretrain:
                     vocab_size=10000,
                 ),
                 checkpoint=CheckpointConfig(
+                    use_persistent_ckpt_worker=True,
+                    strict_fsdp_dtensor_load=False,
                     save_interval=40,
                     save=checkpoint_dir,
                     ckpt_format="torch_dist",
@@ -429,6 +435,7 @@ class TestPretrain:
                 eval_micro_batch_size=eval_micro_batch_size,
             ),
             optimizer=OptimizerConfig(
+                use_layer_wise_param_layout=False,
                 optimizer="adam",
                 bf16=True,
                 fp16=False,
@@ -479,6 +486,8 @@ class TestPretrain:
                 vocab_size=10000,
             ),
             checkpoint=CheckpointConfig(
+                use_persistent_ckpt_worker=True,
+                strict_fsdp_dtensor_load=False,
                 ckpt_format="torch_dist",
             ),
             rng=RNGConfig(seed=1234),
@@ -549,6 +558,7 @@ class TestPretrain:
                     eval_iters=2,
                 ),
                 optimizer=OptimizerConfig(
+                    use_layer_wise_param_layout=False,
                     optimizer="adam",
                     bf16=True,
                     fp16=False,
@@ -599,6 +609,8 @@ class TestPretrain:
                     vocab_size=10000,
                 ),
                 checkpoint=CheckpointConfig(
+                    use_persistent_ckpt_worker=True,
+                    strict_fsdp_dtensor_load=False,
                     save_interval=100,
                     ckpt_format="torch_dist",
                 ),
@@ -685,6 +697,7 @@ class TestPretrain:
 
             # Create other configurations
             optimizer_cfg = OptimizerConfig(
+                use_layer_wise_param_layout=False,
                 optimizer="adam",
                 bf16=True,
                 fp16=False,
@@ -759,6 +772,8 @@ class TestPretrain:
                     vocab_size=10000,
                 ),
                 checkpoint=CheckpointConfig(
+                    use_persistent_ckpt_worker=True,
+                    strict_fsdp_dtensor_load=False,
                     save=checkpoint_dir,
                     ckpt_format="torch_dist",
                     fully_parallel_save=True,

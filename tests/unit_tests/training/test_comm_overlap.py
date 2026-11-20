@@ -310,7 +310,7 @@ class TestMegatronCommOverlapConfig:
             num_attention_heads=16,  # Must be divisible by TP size
         )
 
-        optimizer_cfg = OptimizerConfig()
+        optimizer_cfg = OptimizerConfig(use_layer_wise_param_layout=False)
         ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=True)
 
         with patch("torch.cuda.get_device_capability", return_value=(9, 0)):
@@ -344,7 +344,7 @@ class TestMegatronCommOverlapConfig:
             num_attention_heads=16,  # Must be divisible by TP size
         )
 
-        optimizer_cfg = OptimizerConfig()
+        optimizer_cfg = OptimizerConfig(use_layer_wise_param_layout=False)
         ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=True)
 
         with patch("torch.cuda.get_device_capability", return_value=(8, 0)):
@@ -373,7 +373,7 @@ class TestMegatronCommOverlapConfig:
             sequence_parallel=False,
         )
 
-        optimizer_cfg = OptimizerConfig()
+        optimizer_cfg = OptimizerConfig(use_layer_wise_param_layout=False)
         ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
 
         # Store original values
@@ -419,7 +419,7 @@ class TestMegatronCommOverlapConfig:
             num_attention_heads=16,
         )
 
-        optimizer_cfg = OptimizerConfig()
+        optimizer_cfg = OptimizerConfig(use_layer_wise_param_layout=False)
         ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
 
         with patch("torch.cuda.get_device_capability", return_value=(9, 0)):
@@ -449,7 +449,7 @@ class TestMegatronCommOverlapConfig:
             num_attention_heads=16,
         )
 
-        optimizer_cfg = OptimizerConfig()
+        optimizer_cfg = OptimizerConfig(use_layer_wise_param_layout=False)
         ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
 
         with patch("torch.cuda.get_device_capability", return_value=(9, 0)):
@@ -491,7 +491,7 @@ class TestMegatronCommOverlapConfig:
             num_attention_heads=16,
         )
 
-        optimizer_cfg = OptimizerConfig()
+        optimizer_cfg = OptimizerConfig(use_layer_wise_param_layout=False)
         ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
 
         with patch("torch.cuda.get_device_capability", return_value=(9, 0)):
@@ -918,7 +918,7 @@ class TestMegatronCommOverlapConfigWithModelConfig:
             num_attention_heads=16,  # Must be divisible by TP size
         )
 
-        optimizer_cfg = OptimizerConfig()
+        optimizer_cfg = OptimizerConfig(use_layer_wise_param_layout=False)
         ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=True)
 
         with patch("torch.cuda.get_device_capability", return_value=(9, 0)):

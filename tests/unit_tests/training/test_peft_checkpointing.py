@@ -520,7 +520,9 @@ class TestPEFTCheckpointLoading:
         mock_state = Mock(spec=GlobalState)
         mock_cfg = Mock(spec=ConfigContainer)
         mock_cfg.peft = MockPEFT()
-        mock_cfg.optimizer = OptimizerConfig(optimizer="adam", use_distributed_optimizer=False)
+        mock_cfg.optimizer = OptimizerConfig(
+            use_layer_wise_param_layout=False, optimizer="adam", use_distributed_optimizer=False
+        )
         mock_cfg.checkpoint = Mock(spec=CheckpointConfig)
         mock_cfg.checkpoint.pretrained_checkpoint = "/path/to/pretrained"
         mock_cfg.checkpoint.load = "/path/to/checkpoint"
@@ -647,7 +649,9 @@ class TestPEFTCheckpointLoading:
         mock_state = Mock(spec=GlobalState)
         mock_cfg = Mock(spec=ConfigContainer)
         mock_cfg.peft = None  # No PEFT
-        mock_cfg.optimizer = OptimizerConfig(optimizer="adam", use_distributed_optimizer=False)
+        mock_cfg.optimizer = OptimizerConfig(
+            use_layer_wise_param_layout=False, optimizer="adam", use_distributed_optimizer=False
+        )
         mock_cfg.checkpoint = Mock(spec=CheckpointConfig)
         mock_cfg.checkpoint.pretrained_checkpoint = None
         mock_cfg.checkpoint.load = "/path/to/checkpoint"
@@ -790,7 +794,9 @@ class TestPEFTCheckpointLoading:
         mock_cfg = Mock(spec=ConfigContainer)
         mock_cfg.peft = MockPEFT()
         mock_cfg.checkpoint = Mock(spec=CheckpointConfig)
-        mock_cfg.optimizer = OptimizerConfig(optimizer="adam", use_distributed_optimizer=False)
+        mock_cfg.optimizer = OptimizerConfig(
+            use_layer_wise_param_layout=False, optimizer="adam", use_distributed_optimizer=False
+        )
         mock_cfg.checkpoint.pretrained_checkpoint = "/path/to/pretrained"
         mock_cfg.checkpoint.load = "/path/to/checkpoint"
         mock_cfg.checkpoint.finetune = False
@@ -1135,7 +1141,6 @@ class TestPEFTCheckpointingIntegration:
         distributed_model = model_provider.provide_distributed_model(
             ddp_config=ddp_config,
             overlap_param_gather_with_optimizer_step=False,
-            use_torch_fsdp2=False,
             wrap_with_ddp=True,
             data_parallel_random_init=False,
         )
