@@ -75,14 +75,18 @@ def test_extra_submodules_need_their_package(import_check, monkeypatch):
     assert import_check.discover_modules(set()) == {"other": ["other"]}
 
 
-def test_failing_submodule_is_reported_although_package_imports(import_check, monkeypatch, tmp_path):
-    package = tmp_path / "skewed"
+def test_check_fails_when_only_the_protobuf_module_is_skewed(import_check, monkeypatch, tmp_path, capsys):
+    package = tmp_path / "sentencepiece"
     package.mkdir()
     (package / "__init__.py").write_text("")
-    (package / "generated_pb2.py").write_text("raise RuntimeError('gencode newer than runtime')\n")
+    (package / "sentencepiece_model_pb2.py").write_text("raise RuntimeError('gencode 7.36.1 runtime 6.33.5')\n")
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    monkeypatch.setattr(
+        import_check.md, "distributions", lambda: [_dist("sentencepiece", "sentencepiece/__init__.py")]
+    )
 
-    assert import_check.import_one("skewed", timeout=60).ok
-    result = import_check.import_one("skewed.generated_pb2", timeout=60)
-    assert not result.ok
-    assert "gencode newer than runtime" in result.detail
+    assert import_check.main([]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL  sentencepiece.sentencepiece_model_pb2" in out
+    assert "gencode 7.36.1 runtime 6.33.5" in out
+    assert "1 ok, 1 failed" in out

@@ -81,7 +81,7 @@ override-dependencies = [
     "sh==2.2.4",
     "jupyter-core==5.8.1",
     "protobuf==6.33.5",
-    "sentencepiece==0.2.2",                    # 0.2.3's generated protobuf modules require protobuf >=7.36.1.
+    "sentencepiece==0.2.2",                    # 0.2.3's sentencepiece_model_pb2 requires protobuf >=7.36.1; remove with the protobuf pin.
     "cuda-python>=13.0.0",
     "multi-storage-client!=0.36.0",
     # 0.1.12rc0's tvm_ffi is incompatible with the TVM that tilelang vendors and

@@ -21,7 +21,9 @@ version ranges; it never exercises an import, so a nominally-satisfied
 dependency that crashes the moment it is imported slips through. This script
 closes that gap: it enumerates installed distributions, resolves each one's
 top-level importable modules, imports every module in an isolated subprocess,
-and exits non-zero if any import raises (or hangs).
+and exits non-zero if any import raises (or hangs). Submodules that importing
+their package does not load are listed in ``EXTRA_SUBMODULES`` and imported
+too.
 
 Run with no arguments to check the active interpreter's environment::
 
