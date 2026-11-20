@@ -193,6 +193,27 @@ def validate_convergence(
 
     logger.info("Starting comprehensive loss curve validation...")
 
+    # Missing reference steps or current metrics must not pass vacuous tolerance
+    # checks (or NaN comparisons) before failing at the final-loss index.
+    input_error = ""
+    if current_values.ndim != 1 or golden_values.ndim != 1:
+        input_error = "loss arrays must be one-dimensional."
+    elif len(current_values) == 0 or len(golden_values) == 0:
+        input_error = "loss arrays contain no training steps."
+    elif len(current_values) != len(golden_values) or len(current_values) != len(steps):
+        input_error = "current losses, golden losses, and step identifiers must have equal lengths."
+    elif not np.isfinite(current_values).all() or not np.isfinite(golden_values).all():
+        input_error = "current or golden losses contain missing or nonfinite values."
+    elif not 0 <= config["skip_first_percent_loss"] < 1:
+        input_error = "skip_first_percent_loss must be in [0, 1) so training steps remain for comparison."
+
+    if input_error:
+        results["passed"] = False
+        results["failed_metrics"] = ["input_data"]
+        results["summary"] = f"Invalid convergence input: {input_error}"
+        logger.error(results["summary"])
+        return results
+
     # 1. SKIP FIRST PERCENT OF LOSS POINTS (if configured)
     skip_first_n_percent = max(0, int(len(current_values) * config["skip_first_percent_loss"]))
     if skip_first_n_percent > 0:
@@ -810,6 +831,15 @@ def calc_convergence_and_performance(
         golden_train_loss[key] = value[loss_metric]
         golden_iter_time[key] = value[timing_metric]
         golden_gpu_util[key] = value.get("GPU utilization")
+
+    if not steps:
+        error_msg += (
+            f"Convergence check failed: golden values file {expected_golden_values_path} "
+            "has no training step records in the selected reference snapshot. "
+            "Restore a valid reference before comparing convergence; parsed current values have been saved.\n"
+        )
+        _logger.error(error_msg)
+        return False, error_msg, current_values
 
     # Extract golden_lm_loss and golden_iter_time lists
     _logger.info(f"Comparing {len(steps)} training steps for convergence")
