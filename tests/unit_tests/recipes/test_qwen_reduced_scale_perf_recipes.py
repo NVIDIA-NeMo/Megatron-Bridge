@@ -166,3 +166,4 @@ def test_qwen3_235b_16gpu_gb300_bf16_graph_candidates() -> None:
         assert cfg.model.cuda_graph_scope == []
         assert cfg.ddp.megatron_fsdp_cuda_graph_mode is True
         assert cfg.model.moe_paged_stash is True
+        assert cfg.model.moe_use_grouped_tensor is True

@@ -43,6 +43,7 @@ def _enable_fsdp_full_iteration_graph(cfg: ConfigContainer) -> None:
     cfg.model.gradient_accumulation_fusion = False
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.moe_paged_stash = True
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
