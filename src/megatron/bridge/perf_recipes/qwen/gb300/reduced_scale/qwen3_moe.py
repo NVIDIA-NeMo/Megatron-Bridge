@@ -30,6 +30,24 @@ def _set_hybridep_domain_size(cfg: ConfigContainer, domain_size: int) -> None:
     }
 
 
+def _enable_fsdp_full_iteration_graph(cfg: ConfigContainer) -> None:
+    """Enable the static full-iteration graph path used by Megatron-FSDP."""
+    cfg.model.cuda_graph_impl = "full_iteration"
+    cfg.model.cuda_graph_scope = []
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
+    cfg.rerun_state_machine.check_for_nan_in_loss = False
+    cfg.ddp.check_for_nan_in_grad = False
+    cfg.ddp.megatron_fsdp_cuda_graph_mode = True
+    cfg.ddp.fsdp_all_gather_in_start_param_sync = False
+    cfg.model.gradient_accumulation_fusion = False
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+
+
 def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 32× GB300, BF16, PP=2, EP=16.
 
@@ -153,6 +171,30 @@ def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_config() -> Co
     return cfg
 
 
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_graph_config() -> ConfigContainer:
+    """16-GPU TP=2 selective-recompute candidate with TE scoped graphs."""
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_config()
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_full_graph_config() -> ConfigContainer:
+    """16-GPU TP=2 ZeRO-2 full-recompute candidate with full-iteration graphs."""
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_config()
+    _enable_fsdp_full_iteration_graph(cfg)
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero3_full_graph_config() -> ConfigContainer:
+    """16-GPU TP=1 ZeRO-3 full-recompute candidate with full-iteration graphs."""
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config()
+    _enable_fsdp_full_iteration_graph(cfg)
+    return cfg
+
+
 def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config() -> ConfigContainer:
     """32-GPU PP=1/EP=32 candidate at TP=1 and MBS=1."""
     cfg = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config()
@@ -184,6 +226,20 @@ def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config() -> ConfigCon
     return cfg
 
 
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms16_config() -> ConfigContainer:
+    """32-GPU TP=1/PP=1 winner candidate with 16 HybridEP communication SMs."""
+    cfg = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config()
+    cfg.model.moe_hybridep_num_sms = 16
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms24_config() -> ConfigContainer:
+    """32-GPU TP=1/PP=1 winner candidate with 24 HybridEP communication SMs."""
+    cfg = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config()
+    cfg.model.moe_hybridep_num_sms = 24
+    return cfg
+
+
 __all__ = [
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config",
@@ -192,9 +248,14 @@ __all__ = [
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_graph_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_graph_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_full_graph_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero3_full_graph_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_mbs2_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms16_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms24_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config",
 ]

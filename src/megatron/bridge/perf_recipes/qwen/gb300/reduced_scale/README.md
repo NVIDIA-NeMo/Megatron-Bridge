@@ -36,6 +36,10 @@ TP/PP/EP mapping candidates are also provided for matched short-run tuning:
   `..._tp2_pp1_mbs2_config` remove PP bubbles and compare TP/MBS trade-offs.
 - 32-GPU `..._pp1_mbs2_config` tests the winning TP1/PP1/EP32 mapping at
   the next power-of-two micro batch size.
+- 16-GPU TP2 selective/full-recompute graph variants probe whether additional
+  TP headroom can support TE-scoped or Megatron-FSDP full-iteration graphs.
+- 32-GPU `..._pp1_sms16_config` and `..._pp1_sms24_config` tune HybridEP
+  communication SM allocation against the default 32-SM winner.
 
 All reduced-scale recipes retain GBS=2048 from the 64-GPU template. Override
 `train.global_batch_size` when running the GBS 16, 256, or 1024 experiments.

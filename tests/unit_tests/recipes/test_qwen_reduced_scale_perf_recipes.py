@@ -22,10 +22,15 @@ from megatron.bridge.perf_recipes.qwen import (
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_graph_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_full_graph_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_graph_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero3_full_graph_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_mbs2_config,
+    qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms16_config,
+    qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms24_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config,
 )
@@ -140,3 +145,24 @@ def test_qwen3_235b_32gpu_gb300_bf16_pp1_candidates() -> None:
 
     tp2_mbs2 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config()
     assert tp2_mbs2.train.micro_batch_size == 2
+
+    sms16 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms16_config()
+    sms24 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms24_config()
+    assert sms16.model.moe_hybridep_num_sms == 16
+    assert sms24.model.moe_hybridep_num_sms == 24
+
+
+def test_qwen3_235b_16gpu_gb300_bf16_graph_candidates() -> None:
+    selective_graph = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_graph_config()
+    assert selective_graph.model.cuda_graph_impl == "transformer_engine"
+    assert selective_graph.model.recompute_granularity == "selective"
+
+    for config_fn in (
+        qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_full_graph_config,
+        qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero3_full_graph_config,
+    ):
+        cfg = config_fn()
+        assert cfg.model.cuda_graph_impl == "full_iteration"
+        assert cfg.model.cuda_graph_scope == []
+        assert cfg.ddp.megatron_fsdp_cuda_graph_mode is True
+        assert cfg.model.moe_paged_stash is True
