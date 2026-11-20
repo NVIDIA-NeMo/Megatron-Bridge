@@ -204,13 +204,15 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× GB200, NVFP4 with optimizer CUDA graph, NCCL EP."""
+    """DeepSeek V3 pretrain: 256× GB200, NVFP4 with full-iteration CUDA graph, NCCL EP."""
     cfg = _build_deepseek_v3_gb200_bf16()
     cfg.mixed_precision = _perf_precision("nvfp4")
     _enable_deepseek_full_iteration(cfg)
     cfg.model.fp8_output_proj = False
     cfg.mixed_precision.fp8_dot_product_attention = True
-    _enable_optimizer_cuda_graph(cfg)
+    # The optimizer step stays eager: capturing it showed no step-time gain on the matched
+    # full-iteration A/B runs and raised peak reserved memory.
+    cfg.model.cuda_graph_use_single_mempool = True
     cfg.model.mla_down_proj_fusion = True
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.1
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
