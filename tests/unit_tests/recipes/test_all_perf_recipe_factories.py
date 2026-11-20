@@ -83,10 +83,14 @@ def _reject_unsupported_dsv4_recipe(recipe_factory: Callable[..., object]) -> bo
         _DEV_MCORE_CAPABILITIES,
         _MAIN_MCORE_CAPABILITIES,
         _MCORE_CAPABILITIES,
+        _MHC_GRAPH_SPLIT_FIELD,
     )
 
     declared_fields = {field.name for field in fields(DeepSeekV4HybridModelProvider)}
     required = set(_MCORE_CAPABILITIES)
+    # Only attention-graph variants need MCore #7337; eager ones build without it.
+    if not recipe_factory.__name__.endswith("_eager_config"):
+        required.add(_MHC_GRAPH_SPLIT_FIELD)
     required.update(_DEV_MCORE_CAPABILITIES if "o_groups" in declared_fields else _MAIN_MCORE_CAPABILITIES)
     if required <= declared_fields:
         return False

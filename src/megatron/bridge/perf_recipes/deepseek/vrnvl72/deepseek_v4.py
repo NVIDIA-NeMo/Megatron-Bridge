@@ -79,7 +79,7 @@ def deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 
 
 def deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config() -> ConfigContainer:
-    """Run the 61-block + MTP Rubin model eagerly with overlapped parameter gathering.
+    """Run the 61-block + MTP Rubin model eagerly.
 
     Carries over the GB300 eager benchmark with the Rubin proxy's communication SM
     allocation. Not measured on Rubin.
@@ -99,9 +99,10 @@ def deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContain
 
 
 def deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config() -> ConfigContainer:
-    """Run the 16-block + MTP Rubin proxy eagerly with overlapped parameter gathering.
+    """Run the 16-block + MTP Rubin proxy eagerly.
 
     Retains the full model widths, 65K sequence, CP16, Muon, MXFP8 and mHC group
-    two. Uses the same runtime and native BF16 indexer as graph mode.
+    two. Uses the native BF16 indexer, and overlaps the parameter gather only where
+    MCore has #7337.
     """
     return _use_rubin_mok_comm_sms(deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config())

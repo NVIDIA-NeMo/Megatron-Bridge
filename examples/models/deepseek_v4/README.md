@@ -168,11 +168,13 @@ The earlier 50-step GB300 runs used the private `dsv4` revision
 They completed with finite reported losses and gradient norms and no skipped or
 NaN iterations; this is execution evidence, not convergence or numerical parity.
 
-Both eager and attention-graph benchmarks run on MCore `main` with
+The attention-graph benchmarks run on MCore `main` with
 [MCore #7337](https://github.com/NVIDIA/Megatron-LM/pull/7337) merged in. #7337
 adds attention graph support around the mHC wrappers and makes mHC's direct
-projection-weight reads wait for an overlapped parameter gather. The recipes
-reject an MCore without it. A conflict-free merge of main
+projection-weight reads wait for an overlapped parameter gather. The graph
+recipes reject an MCore without it. The eager recipes also run on `main`
+without it, with the parameter gather no longer overlapped; see
+[Eager Pro functional tests](#eager-pro-functional-tests). A conflict-free merge of main
 `c1ad819d07cb946620341a317b8d06e74207e0f1` with #7337 at
 `12880406160688146b19733996d0ede8bd3a2726`, with no other changes, is
 [`28c439772712240602a28123b462d8e374bec67f`](https://github.com/malay-nagda/Megatron-LM/commit/28c439772712240602a28123b462d8e374bec67f).
@@ -220,8 +222,9 @@ The adapter also retains the development API used with MCore
 `264817a74075a0c4b003723054c3ae71020058ad`. It selects declared dataclass fields
 and resolves main's static hybrid spec or development's spec factory.
 Native main uses **BF16 indexer scoring**; development retains its compact
-MXFP8 indexer. Both runtimes retain model MXFP8 and FP8 parameter gathering,
-`optimizer.overlap_param_gather=True` and `ddp.overlap_param_gather=True`.
+MXFP8 indexer. Both runtimes retain model MXFP8 and FP8 parameter gathering.
+`optimizer.overlap_param_gather` and `ddp.overlap_param_gather` are true
+wherever MCore has #7337.
 Muon remains layer-wise (`optimizer.use_distributed_optimizer=False`,
 `use_layer_wise_distributed_optimizer=True`) with compact parameter layout.
 Where MCore has #5479, the shared DDP flag retains sharding for fallback Adam;
@@ -328,9 +331,13 @@ token stream or the general variable-length `dp_balanced` data scheduler.
 
 ### Eager Pro functional tests
 
-Use the same main plus #7337 runtime as the graph benchmarks for these
-explicit variants. Eager execution also requires #7337's mHC projection
-readiness check so direct weight reads wait for overlapped parameter gathering.
+These explicit variants run on the same main plus #7337 runtime as the graph
+benchmarks, and also on MCore `main` without #7337. Without #7337, mHC reads
+its projection weight directly and cannot wait for an overlapped parameter
+gather, so a rank could compute with the previous step's weight. The recipes
+therefore turn parameter-gather overlap off on such an MCore, and the gather
+finishes before the forward pass starts. The reference runs overlap it, so
+step time on plain `main` is not comparable with them.
 
 | Recipe | Performance selector variant |
 |--------|------------------------------|
@@ -366,14 +373,16 @@ The deliberate execution changes are:
 - `cuda_graph_impl="none"`, empty graph scopes/modules and zero graph warmup.
 - Both model and RNG TE-tracker flags are false.
 - Gather alignment is disabled. Parameter-gather overlap remains enabled in
-  both DDP and the optimizer; optimizer-step gather overlap remains disabled.
+  both DDP and the optimizer where MCore has #7337, and is disabled where it
+  does not; optimizer-step gather overlap remains disabled.
   Gradient-reduction overlap and the full model's PP overlap remain configured
   by the corresponding benchmark.
 
-The helper requires the declared mHC readiness/graph-split capability in both
-modes and sets the split false for eager execution. The benchmark no longer
-supports bare main by disabling parameter-gather overlap. Select an explicit
-eager variant before construction rather than overriding a graph recipe later.
+The helper requires the declared mHC readiness/graph-split capability for the
+graph variants. For eager variants it sets the split false where MCore
+declares it; where MCore does not, the recipe disables parameter-gather
+overlap instead. Select an explicit eager variant before construction rather
+than overriding a graph recipe later.
 
 The value two groups physical HybridStack layers for activation recomputation;
 in this attention/MoE pattern that is one logical block. It does not reduce model

@@ -28,6 +28,7 @@ from megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v4 import (
 from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import (
     FixedTHDMockDatasetConfig,
     configure_dsv4_perf_model,
+    has_mhc_param_readiness,
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.common import _pretrain_common
@@ -81,10 +82,11 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config() -> ConfigContainer:
-    """Run full Pro eagerly with mHC recompute and overlapped parameter gathering.
+    """Run full Pro eagerly with mHC recompute.
 
-    Keeps the 61-block + MTP model, batch contract and optimizer layout.
-    Requires the same main plus #7337 runtime and BF16 indexer as graph mode.
+    Keeps the 61-block + MTP model, batch contract, optimizer layout and BF16 indexer.
+    Runs on MCore main with or without #7337. Without it, parameters are gathered
+    synchronously instead of overlapped with the forward pass.
     """
     return _deepseek_v4_pro_benchmark_config(attention_graphs=False)
 
@@ -234,7 +236,11 @@ def _deepseek_v4_pro_benchmark_config(*, attention_graphs: bool) -> ConfigContai
     # With MCore #5479, fallback Adam keeps distributed sharding. Configuration finalization
     # clears this flag on main without it, where LayerWise owns every buffer.
     cfg.ddp.use_distributed_optimizer = True
-    cfg.ddp.overlap_param_gather = cfg.optimizer.overlap_param_gather = True
+    # MCore #7337 makes mHC wait for an overlapped gather before it reads its projection
+    # weight. Graph variants require #7337. Eager ones also run without it and then gather
+    # synchronously, so no rank computes with the previous step's projection weight.
+    overlap_param_gather = has_mhc_param_readiness(cfg.model)
+    cfg.ddp.overlap_param_gather = cfg.optimizer.overlap_param_gather = overlap_param_gather
     cfg.optimizer.overlap_param_gather_with_optimizer_step = False
     cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.average_in_collective = False
@@ -242,7 +248,7 @@ def _deepseek_v4_pro_benchmark_config(*, attention_graphs: bool) -> ConfigContai
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=False,
         overlap_grad_reduce=True,
-        overlap_param_gather=True,
+        overlap_param_gather=overlap_param_gather,
         overlap_param_gather_with_optimizer_step=False,
         overlap_p2p_comm=True,
         batch_p2p_comm=False,
@@ -252,7 +258,7 @@ def _deepseek_v4_pro_benchmark_config(*, attention_graphs: bool) -> ConfigContai
         delay_wgrad_compute=False,
     )
     if not attention_graphs:
-        # Eager execution retains parameter-gather overlap without graph-safe RNG tracking.
+        # Eager execution drops gather alignment and graph-safe RNG tracking.
         cfg.ddp.align_param_gather = False
         clear_cuda_graph_modules(cfg.model)
         cfg.model.use_te_rng_tracker = False

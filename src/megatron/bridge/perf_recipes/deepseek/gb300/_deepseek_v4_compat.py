@@ -39,13 +39,15 @@ _MCORE_CAPABILITIES = (
     "moe_megakernel_backend_config",
     "moe_hybridep_routing_map_mode",
     "mhc_recompute_layer_num",
-    "mhc_recompute_attn_cuda_graph_split",
     "sequence_packing_scheduler",
     "max_seqlen_per_dp_cp_rank",
     "pad_packed_seq_alignment",
     "attention_cp_layout",
     "linear_cp_layout",
 )
+# Declared by MCore #7337, which also makes mHC wait for an overlapped parameter gather before
+# it reads its projection weight. The field's presence stands for both changes.
+_MHC_GRAPH_SPLIT_FIELD = "mhc_recompute_attn_cuda_graph_split"
 _DEV_MCORE_CAPABILITIES = (
     "cuda_graph_dynamic_microbatches",
     "pipeline_p2p_fixed_shape",
@@ -75,23 +77,32 @@ def dsv4_hybrid_stack_spec(config: DeepSeekV4HybridModelProvider) -> ModuleSpec:
     return hybrid_dsv4_stack_spec(config)
 
 
+def has_mhc_param_readiness(model: DeepSeekV4HybridModelProvider) -> bool:
+    """Return whether MCore has #7337: mHC attention graphs and mHC parameter readiness."""
+    return _MHC_GRAPH_SPLIT_FIELD in {item.name for item in fields(model)}
+
+
 def configure_dsv4_perf_model(model: DeepSeekV4HybridModelProvider, *, attention_graphs: bool = True) -> None:
     """Configure native BF16 or development MXFP8 indexer scoring.
 
-    Both execution modes require mHC parameter readiness from MCore #7337 for
-    overlapped gathering. Call after choosing the main and MTP patterns.
+    Attention-graph variants require MCore #7337. Eager variants also run without
+    it; their recipe then gathers parameters synchronously, because mHC cannot wait
+    for an overlapped gather. Call after choosing the main and MTP patterns.
     """
     declared_fields = {item.name for item in fields(model)}
     development_api = "o_groups" in declared_fields
     api_fields = _DEV_MCORE_CAPABILITIES if development_api else _MAIN_MCORE_CAPABILITIES
     required_fields = set(_MCORE_CAPABILITIES + api_fields)
+    if attention_graphs:
+        required_fields.add(_MHC_GRAPH_SPLIT_FIELD)
     missing = sorted(required_fields - declared_fields)
     if missing:
         raise RuntimeError(
-            "The DSv4 performance recipes require MCore with DSv4 THD, MoK, "
-            "and mHC recompute/parameter readiness "
-            "from https://github.com/NVIDIA/Megatron-LM/pull/7337 in both eager "
-            "and attention-graph modes. See examples/models/deepseek_v4/README.md "
+            "The DSv4 performance recipes require MCore with DSv4 THD, MoK and mHC "
+            "recompute support. Attention-graph variants also require mHC graph and "
+            "parameter-readiness support from "
+            "https://github.com/NVIDIA/Megatron-LM/pull/7337; eager variants run "
+            "without it. See examples/models/deepseek_v4/README.md "
             "for runtime revisions and the native BF16 indexer difference. "
             f"The installed MCore is missing configuration fields: {', '.join(missing)}."
         )
@@ -114,7 +125,14 @@ def configure_dsv4_perf_model(model: DeepSeekV4HybridModelProvider, *, attention
     model.attention_cp_layout = "contiguous"
     model.linear_cp_layout = "contiguous"
     model.hybrid_stack_spec = dsv4_hybrid_stack_spec
-    model.mhc_recompute_attn_cuda_graph_split = attention_graphs
+    if _MHC_GRAPH_SPLIT_FIELD in declared_fields:
+        model.mhc_recompute_attn_cuda_graph_split = attention_graphs
+    else:
+        logger.warning(
+            "DSv4 eager variant on MCore without #7337: mHC cannot wait for an overlapped "
+            "parameter gather, so the recipe gathers parameters synchronously. This differs "
+            "from the reference runs. See examples/models/deepseek_v4/README.md."
+        )
     if development_api:
         model.dsa_indexer_precision = "mxfp8"
         model.o_groups = 16

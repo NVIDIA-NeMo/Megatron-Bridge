@@ -39,10 +39,12 @@ from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import (
     _DEV_MCORE_CAPABILITIES,
     _MAIN_MCORE_CAPABILITIES,
     _MCORE_CAPABILITIES,
+    _MHC_GRAPH_SPLIT_FIELD,
     FixedTHDMockDatasetConfig,
     _FixedTHDMockDataset,
     configure_dsv4_perf_model,
     dsv4_hybrid_stack_spec,
+    has_mhc_param_readiness,
 )
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
     _deepseek_v4_pro_pretrain_256gpu_gb300_common,
@@ -62,7 +64,11 @@ pytestmark = pytest.mark.unit
 
 
 def _required_capabilities(*, attention_graphs: bool) -> set[str]:
-    return set(_MCORE_CAPABILITIES)
+    # Only attention-graph variants need MCore #7337; eager ones also run on main without it.
+    required = set(_MCORE_CAPABILITIES)
+    if attention_graphs:
+        required.add(_MHC_GRAPH_SPLIT_FIELD)
+    return required
 
 
 def _build_recipe(recipe_factory: Callable[[], ConfigContainer], *, attention_graphs: bool = True) -> ConfigContainer:
@@ -277,6 +283,9 @@ def test_pro_log_optimizer_and_execution_contract(
     # Configuration normalization must preserve compact Muon ownership. MCore #5479 adds
     # the DDP layout field that also keeps fallback Adam sharded; main without it does not.
     sharded_fallback_adam = "use_layer_wise_param_layout" in {item.name for item in fields(cfg.ddp)}
+    # Without MCore #7337 mHC cannot wait for an overlapped gather, so eager variants gather synchronously.
+    overlap_param_gather = has_mhc_param_readiness(cfg.model)
+    assert overlap_param_gather or not attention_graphs
     for _ in range(2):
         _validate_and_sync_distributed_optimizer_settings(cfg)
         assert cfg.optimizer.use_distributed_optimizer is False
@@ -285,8 +294,8 @@ def test_pro_log_optimizer_and_execution_contract(
         if sharded_fallback_adam:
             assert cfg.ddp.use_layer_wise_param_layout is False
         assert cfg.ddp.use_distributed_optimizer is sharded_fallback_adam
-        assert cfg.ddp.overlap_param_gather is cfg.optimizer.overlap_param_gather is True
-    assert cfg.comm_overlap.overlap_param_gather is True
+        assert cfg.ddp.overlap_param_gather is cfg.optimizer.overlap_param_gather is overlap_param_gather
+    assert cfg.comm_overlap.overlap_param_gather is overlap_param_gather
     assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is False
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
     assert cfg.optimizer.lr == 2e-4
@@ -482,20 +491,32 @@ def test_missing_mhc_graph_split_is_rejected_before_configuration(development: b
 
 
 @pytest.mark.parametrize(
-    ("development", "missing"),
+    ("development", "missing", "attention_graphs"),
     [
-        (False, "mhc_recompute_attn_cuda_graph_split"),
-        (True, "mhc_recompute_attn_cuda_graph_split"),
-        (True, "dsa_indexer_precision"),
+        (False, "mhc_recompute_attn_cuda_graph_split", True),
+        (True, "mhc_recompute_attn_cuda_graph_split", True),
+        (True, "dsa_indexer_precision", False),
+        (True, "dsa_indexer_precision", True),
     ],
 )
-@pytest.mark.parametrize("attention_graphs", [False, True], ids=["eager", "graph"])
-def test_reference_runtime_rejects_missing_support_before_mutation(development, attention_graphs, missing):
+def test_reference_runtime_rejects_missing_support_before_mutation(development, missing, attention_graphs):
     model = _model_api_fixture(development=development, omit=missing)()
     original = vars(model).copy()
     with pytest.raises(RuntimeError, match=missing):
         configure_dsv4_perf_model(model, attention_graphs=attention_graphs)
     assert vars(model) == original
+
+
+@pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
+def test_eager_variant_accepts_mcore_without_mhc_graph_split(development: bool) -> None:
+    model = _model_api_fixture(development=development, omit="mhc_recompute_attn_cuda_graph_split")()
+
+    configure_dsv4_perf_model(model, attention_graphs=False)
+
+    # MCore without #7337: the model is configured, and the recipe must not overlap the parameter gather.
+    assert not has_mhc_param_readiness(model)
+    assert model.is_hybrid_model is True
+    assert set(vars(model)) == {item.name for item in fields(model)}
 
 
 @pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
