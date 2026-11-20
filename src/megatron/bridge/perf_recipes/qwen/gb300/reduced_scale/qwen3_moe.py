@@ -241,6 +241,16 @@ def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms24_config() -> ConfigContai
     return cfg
 
 
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk256_config() -> ConfigContainer:
+    """32-GPU TP=1/PP=1 winner candidate with 256-token combine chunks."""
+    cfg = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config()
+    cfg.env_vars = {
+        **cfg.env_vars,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 256,
+    }
+    return cfg
+
+
 __all__ = [
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config",
@@ -257,6 +267,7 @@ __all__ = [
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_mbs2_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms16_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms24_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk256_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config",
 ]

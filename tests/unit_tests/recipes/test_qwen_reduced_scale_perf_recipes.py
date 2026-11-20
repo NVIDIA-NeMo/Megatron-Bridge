@@ -27,6 +27,7 @@ from megatron.bridge.perf_recipes.qwen import (
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_graph_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero3_full_graph_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config,
+    qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk256_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_mbs2_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms16_config,
@@ -150,6 +151,9 @@ def test_qwen3_235b_32gpu_gb300_bf16_pp1_candidates() -> None:
     sms24 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms24_config()
     assert sms16.model.moe_hybridep_num_sms == 16
     assert sms24.model.moe_hybridep_num_sms == 24
+
+    chunk256 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk256_config()
+    assert chunk256.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 256
 
 
 def test_qwen3_235b_16gpu_gb300_bf16_graph_candidates() -> None:
