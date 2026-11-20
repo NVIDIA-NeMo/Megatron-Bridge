@@ -63,6 +63,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TrainingConfig,
     ValidationConfig,
+    _sync_mxfp8_reuse_grad_buf_settings,
     _validate_and_sync_distributed_optimizer_settings,
     _validate_mixed_precision_consistency,
     apply_environment_variables,
@@ -4773,6 +4774,84 @@ class TestDistributedOptimizerValidation:
                     assert expected_part in call_args
             else:
                 assert len(overlap_warnings) == 0
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        "model_fp8, ddp_reuse, optimizer_reuse, optimizer_fp8_recipe, expected_reuse, expected_fp8_recipe, warns",
+        [
+            ("e4m3", True, False, None, True, "mxfp8", True),
+            ("e4m3", False, True, None, True, "mxfp8", True),
+            ("e4m3", True, True, "tensorwise", True, "tensorwise", False),
+            (None, True, False, None, True, None, True),
+            ("e4m3", False, False, None, False, None, False),
+        ],
+    )
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_reuse_grad_buf_for_mxfp8_param_ag_sync_scenarios(
+        self,
+        mock_warn_rank_0,
+        model_fp8,
+        ddp_reuse,
+        optimizer_reuse,
+        optimizer_fp8_recipe,
+        expected_reuse,
+        expected_fp8_recipe,
+        warns,
+    ):
+        """Test reuse_grad_buf_for_mxfp8_param_ag and fp8_recipe sync into the optimizer config."""
+        gpt_model_cfg = create_test_gpt_config(fp8=model_fp8, fp8_recipe="mxfp8")
+        ddp_cfg = create_test_ddp_config(reuse_grad_buf_for_mxfp8_param_ag=ddp_reuse)
+        optimizer_cfg = create_test_optimizer_config(
+            reuse_grad_buf_for_mxfp8_param_ag=optimizer_reuse, fp8_recipe=optimizer_fp8_recipe
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            ddp_config=ddp_cfg,
+            optimizer_config=optimizer_cfg,
+        )
+
+        try:
+            _sync_mxfp8_reuse_grad_buf_settings(container)
+
+            assert container.ddp.reuse_grad_buf_for_mxfp8_param_ag is expected_reuse
+            assert container.optimizer.reuse_grad_buf_for_mxfp8_param_ag is expected_reuse
+            assert container.optimizer.fp8_recipe == expected_fp8_recipe
+
+            reuse_warnings = [
+                call
+                for call in mock_warn_rank_0.call_args_list
+                if call[0] and "reuse_grad_buf_for_mxfp8_param_ag settings were not in sync" in call[0][0]
+            ]
+            assert len(reuse_warnings) == (1 if warns else 0)
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_validate_syncs_reuse_grad_buf_for_mxfp8_param_ag(self, mock_warn_rank_0):
+        """Test ConfigContainer.validate() syncs the mxfp8 reuse flag and fp8_recipe into the optimizer config."""
+        gpt_model_cfg = create_test_gpt_config(fp8="e4m3", fp8_recipe="mxfp8")
+        ddp_cfg = create_test_ddp_config(reuse_grad_buf_for_mxfp8_param_ag=True)
+        optimizer_cfg = create_test_optimizer_config(reuse_grad_buf_for_mxfp8_param_ag=False, fp8_recipe=None)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            ddp_config=ddp_cfg,
+            optimizer_config=optimizer_cfg,
+        )
+
+        try:
+            assert container.mixed_precision is None
+            container.validate()
+
+            assert container.ddp.reuse_grad_buf_for_mxfp8_param_ag is True
+            assert container.optimizer.reuse_grad_buf_for_mxfp8_param_ag is True
+            assert container.optimizer.fp8_recipe == "mxfp8"
 
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
