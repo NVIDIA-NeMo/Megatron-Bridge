@@ -204,10 +204,9 @@ def test_deepseek_v3_nvfp4_reuses_allocations_during_cuda_graph_capture(recipe) 
 def test_deepseek_v3_gb200_nvfp4_memory_mitigations() -> None:
     cfg = deepseek_v3_pretrain_256gpu_gb200_nvfp4_config()
 
-    # The optimizer step stays eager, so it keeps the optimizer's default remainder storage.
-    assert not cfg.optimizer.optimizer_cuda_graph
+    assert cfg.optimizer.optimizer_cuda_graph is True
     assert cfg.model.cuda_graph_use_single_mempool is True
-    assert cfg.optimizer.store_param_remainders is True
+    assert cfg.optimizer.store_param_remainders is False
     assert cfg.optimizer.optimizer == "adam"
     assert cfg.optimizer.main_params_dtype == torch.float32
     assert cfg.optimizer.exp_avg_dtype == torch.bfloat16

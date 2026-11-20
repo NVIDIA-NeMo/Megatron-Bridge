@@ -66,6 +66,7 @@ pytestmark = pytest.mark.unit
 _E2E_OPTIMIZER_CUDA_GRAPH_RECIPES = (
     deepseek_v3_pretrain_256gpu_gb200_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config,
+    deepseek_v3_pretrain_256gpu_gb200_nvfp4_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
     deepseek_v3_pretrain_256gpu_gb300_nvfp4_config,
@@ -94,12 +95,8 @@ _E2E_OPTIMIZER_CUDA_GRAPH_RECIPES = (
     qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config,
 )
 
-_RECIPES_WITHOUT_OPTIMIZER_CUDA_GRAPH = (
-    # Built on the GB300 DeepSeek V4 Flash base, but not an E2E-owned tracker row.
-    deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config,
-    # Full-iteration tracker row that keeps the optimizer step eager.
-    deepseek_v3_pretrain_256gpu_gb200_nvfp4_config,
-)
+# Built on the GB300 DeepSeek V4 Flash base, but not an E2E-owned tracker row.
+_DERIVED_RECIPES_WITHOUT_OPTIMIZER_CUDA_GRAPH = (deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config,)
 
 
 @pytest.fixture(autouse=True)
@@ -125,9 +122,11 @@ def test_e2e_full_iteration_recipes_capture_optimizer_step(
     assert not math.isfinite(cfg.optimizer.grad_norm_skip_threshold)
 
 
-@pytest.mark.parametrize("recipe_factory", _RECIPES_WITHOUT_OPTIMIZER_CUDA_GRAPH, ids=lambda factory: factory.__name__)
-def test_recipes_keep_eager_optimizer_step(
+@pytest.mark.parametrize(
+    "recipe_factory", _DERIVED_RECIPES_WITHOUT_OPTIMIZER_CUDA_GRAPH, ids=lambda factory: factory.__name__
+)
+def test_derived_recipes_keep_eager_optimizer_step(
     recipe_factory: Callable[[], ConfigContainer],
 ) -> None:
-    """Recipes outside the optimizer CUDA graph policy leave the optimizer step eager."""
+    """Recipes derived from the GB300 DeepSeek V4 Flash base do not inherit the optimizer graph."""
     assert not recipe_factory().optimizer.optimizer_cuda_graph
