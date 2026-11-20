@@ -1,0 +1,7 @@
+# .github/autobot/internal-ci.yml
+# /internal-ci reads this from the default branch only, so edits take effect once merged.
+# Keys are dl/joc/nemo-ci variable names: `variables` are the defaults, `overridable` lists the keys
+# a command may set as KEY=value. Example: /internal-ci test=<test name> TEST_CLUSTER_REGEX=/eos/
+eligible_teams: [automation]
+variables: {TEST_IMAGE: "nvcr.io/nvidian/nemo:nightly", TEST_CLUSTER_REGEX: "/pretyche/", TESTS_TO_RUN_ON_THIS_COMMIT: "NONE"}
+overridable: [TEST_IMAGE, TEST_CLUSTER_REGEX, TESTS_TO_RUN_ON_THIS_COMMIT]
