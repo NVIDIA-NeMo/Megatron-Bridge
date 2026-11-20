@@ -44,12 +44,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+# Submodules to import alongside their installed top-level package, because importing the
+# package alone does not load them. sentencepiece's generated protobuf module requires a
+# minimum protobuf runtime, and transformers imports it to convert SentencePiece models.
+EXTRA_SUBMODULES: dict[str, tuple[str, ...]] = {
+    "sentencepiece": ("sentencepiece.sentencepiece_model_pb2",),
+}
+
+
 @dataclass(frozen=True)
 class ImportResult:
-    """Outcome of importing a single top-level module.
+    """Outcome of importing a single module.
 
     Attributes:
-        module: The top-level module name that was imported.
+        module: The module name that was imported.
         ok: True when the import subprocess exited cleanly.
         detail: Trailing diagnostic output when the import failed, else "".
     """
@@ -130,8 +138,12 @@ def _modules_from_top_level_txt(dist: md.Distribution) -> set[str]:
 def discover_modules(skip: set[str]) -> dict[str, list[str]]:
     """Map each importable top-level module to the distributions providing it.
 
+    A top-level module listed in ``EXTRA_SUBMODULES`` also contributes its
+    submodules from that table.
+
     Args:
-        skip: Module names to exclude from the result.
+        skip: Module names to exclude from the result. Skipping a top-level
+            module also skips its extra submodules.
 
     Returns:
         A mapping of module name to the sorted list of distribution names that
@@ -144,7 +156,9 @@ def discover_modules(skip: set[str]) -> dict[str, list[str]]:
         for module in modules:
             if module in skip:
                 continue
-            providers.setdefault(module, set()).add(name)
+            for target in (module, *EXTRA_SUBMODULES.get(module, ())):
+                if target not in skip:
+                    providers.setdefault(target, set()).add(name)
     return {module: sorted(names) for module, names in providers.items()}
 
 
@@ -155,7 +169,7 @@ def import_one(module: str, timeout: float) -> ImportResult:
     hang in one module from aborting the whole sweep.
 
     Args:
-        module: The top-level module name to import.
+        module: The module name to import.
         timeout: Seconds to allow before treating the import as hung.
 
     Returns:
