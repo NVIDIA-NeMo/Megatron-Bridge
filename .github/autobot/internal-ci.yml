@@ -1,0 +1,7 @@
+# .github/autobot/internal-ci.yml
+# /internal-ci reads this from the default branch only, so edits take effect once merged.
+# Keys are dl/joc/nemo-ci scripts/launch_pipeline.py flags without "--". `arguments` are the
+# defaults; `overridable` lists the ones a command may set, e.g. /internal-ci test-case=<name> test-cluster=eos
+eligible_teams: [automation]
+arguments: {test-cluster: pretyche, test-suites: NONE, test-image: nvcr.io/nvidian/nemo:nightly}
+overridable: [test-cluster, test-suites, test-image]
