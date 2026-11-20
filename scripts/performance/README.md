@@ -62,6 +62,35 @@ launch settings and measurement windows for GB300/VRNVL72 comparisons, and
 revalidate improvements at scale. Both proxies previously used HybridEP, so rerun
 any earlier proxy baseline before comparing.
 
+### Kimi K3 GB300 MXFP8 proxy
+
+Use `kimi_k3_pretrain_64gpu_gb300_fp8mx_proxy_config` for a reduced-depth Kimi K3
+benchmark through the Bridge training loop. It requires the pinned MCore dev
+stack (`scripts/switch_mcore.sh dev`), MoK, FLA Attention Residuals, and a
+compatible Emerging-Optimizers installation for Muon. The default MCore main
+pin does not support this recipe.
+
+```bash
+./scripts/training/train.sh \
+  --nodes 16 --gpus-per-node 4 \
+  --account ACCOUNT --partition PARTITION --container-image IMAGE \
+  --recipe kimi_k3_pretrain_64gpu_gb300_fp8mx_proxy_config --mode pretrain
+```
+
+Use a GB300 partition and a container with the required dev dependencies.
+Supply cluster-specific topology and Slurm settings through the launcher.
+The recipe retains hidden size 7168, 896 experts with top-16 routing, and 8K
+sequences, while reducing the trunk to 24 full-width blocks (48 Hybrid entries:
+`KEKEKE+E` repeated six times). It uses PP=1, EP=64, TP=CP=ETP=1, no virtual
+pipeline or MTP, GBS=2048/MBS=1, MXFP8, MoK routed experts, and per-head Muon
+with chunked optimizer-state offload.
+
+This benchmark uses random initialization, mock data, and forced balanced
+routing. Its ordinary PP1 schedule does not reproduce PP4's in-flight
+microbatches. Use it for execution checks and matched proxy performance
+comparisons; full-model memory fit, throughput, and convergence require
+separate validation.
+
 ## Setup Instructions
 
 Follow the steps below on a Slurm based login node to launch Megatron-Bridge experiments.

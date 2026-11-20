@@ -19,6 +19,9 @@ from megatron.bridge.perf_recipes.kimi.gb300.kimi_k2 import (
     kimi_k2_pretrain_256gpu_gb300_fp8mx_config,
     kimi_k2_pretrain_256gpu_gb300_nvfp4_config,
 )
+from megatron.bridge.perf_recipes.kimi.gb300.kimi_k3 import (
+    kimi_k3_pretrain_64gpu_gb300_fp8mx_proxy_config,
+)
 from megatron.bridge.perf_recipes.kimi.h100.kimi_k2 import (
     kimi_k2_pretrain_1024gpu_h100_bf16_config,
     kimi_k2_pretrain_1024gpu_h100_fp8cs_config,
