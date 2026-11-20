@@ -19,6 +19,7 @@ Checkpoint conversion and text-generation examples for MiMo causal language
 models live under
 [`examples/models/mimo`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/6a706b1c3afab4d21a6f5dd88aa6a75296d33fe2/examples/models/mimo/README.md).
 For MiMo-V2-Flash conversion and inference examples, see the [MiMo-V2-Flash examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/mimo_v2_flash/README.md).
+MiMo-V2.6-Flash is covered in [MiMo-V2.6-Flash](mimo-v2.6-flash.md).
 Heterogeneous multimodal training examples live separately under
 [`examples/megatron_mimo`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/megatron_mimo).
 
