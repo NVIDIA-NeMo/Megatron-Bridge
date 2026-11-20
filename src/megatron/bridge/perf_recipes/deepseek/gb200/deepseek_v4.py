@@ -28,7 +28,7 @@ from megatron.bridge.utils.cuda_graph import set_full_iteration_cuda_graph
 
 
 def _build_deepseek_v4_flash_gb200_fp8mx() -> ConfigContainer:
-    """Shared HybridEP MXFP8 base for the DeepSeek V4 Flash GB200 recipe and its GB300 derivative."""
+    """Shared native-expert HybridEP MXFP8 base for the DeepSeek V4 Flash GB200 and GB300 recipes."""
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config()
 
     cfg.model.tensor_model_parallel_size = 1
@@ -114,13 +114,43 @@ def _build_deepseek_v4_flash_gb200_fp8mx() -> ConfigContainer:
     return cfg
 
 
+def _enable_deepseek_v4_flash_mok(cfg: ConfigContainer) -> None:
+    """Run the Flash experts through the MoK megakernel instead of native dispatch, grouped MLP and combine.
+
+    MoK overlaps expert-parallel communication with the routed and shared expert GEMMs. The
+    selected flex dispatcher backend is not constructed, so it no longer chooses the transport.
+    Requires the Mixture-of-Kittens MCore integration build in the container. The backend options
+    are the DeepSeek V4 Pro GB300 starting point and are not yet tuned for Flash.
+    """
+    cfg.model.moe_megakernel_backend = "mok"
+    cfg.model.moe_megakernel_backend_config = {
+        "fwd_num_comm_sms": 28,
+        "bwd_num_comm_sms": 28,
+        "minibatch_size": 4096,
+        # The default macrobatch costs about 21 GB more per rank on Flash.
+        "macrobatch_size": 32768,
+        "schedule_capacity_multiplier": 0.0625,
+        "all_gather_top_experts_chunk_bytes": 2048,
+    }
+
+    # MoK owns expert padding and activation storage under the full-iteration graph.
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = False
+    cfg.model.moe_paged_stash = False
+    cfg.model.moe_expert_rank_capacity_factor = None
+
+    # MoK reads the native, non-interleaved expert weights and rejects the TE op fuser.
+    cfg.model.use_transformer_engine_op_fuser = False
+    cfg.model.moe_mlp_glu_interleave_size = None
+    cfg.model.moe_shared_expert_glu_interleave_size = None
+    # Explicit because the op fuser no longer implies it.
+    cfg.model.moe_use_grouped_tensor = True
+
+
 def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Flash pretrain: 128× GB200, MXFP8, full-iteration CUDA graph, NCCL EP."""
+    """DeepSeek V4 Flash pretrain: 128× GB200, MXFP8, full-iteration CUDA graph, MoK experts."""
     cfg = _build_deepseek_v4_flash_gb200_fp8mx()
     _enable_ncclep(cfg)
-    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
-    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
-    cfg.model.moe_use_grouped_tensor = True
+    _enable_deepseek_v4_flash_mok(cfg)
     # Each manual collection walks every tracked Python object; host RSS stays flat at this interval.
     cfg.train.manual_gc_interval = 500
 

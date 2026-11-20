@@ -34,6 +34,35 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction
 
 pytestmark = pytest.mark.unit
 
+_FLASH_MOK_BACKEND_CONFIG = {
+    "fwd_num_comm_sms": 28,
+    "bwd_num_comm_sms": 28,
+    "minibatch_size": 4096,
+    "macrobatch_size": 32768,
+    "schedule_capacity_multiplier": 0.0625,
+    "all_gather_top_experts_chunk_bytes": 2048,
+}
+
+
+def _assert_mok_experts(cfg, backend_config: dict[str, float]) -> None:
+    """MoK replaces native dispatch, grouped MLP and combine, and rejects their fusions and stash."""
+    assert cfg.model.moe_megakernel_backend == "mok"
+    assert cfg.model.moe_megakernel_backend_config == backend_config
+    assert cfg.model.moe_pad_experts_for_cuda_graph_inference is False
+    assert cfg.model.moe_paged_stash is False
+    assert cfg.model.moe_expert_rank_capacity_factor is None
+    assert cfg.model.use_transformer_engine_op_fuser is False
+    assert cfg.model.moe_mlp_glu_interleave_size is None
+    assert cfg.model.moe_shared_expert_glu_interleave_size is None
+    assert cfg.model.moe_use_grouped_tensor is True
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+    assert cfg.comm_overlap.delay_wgrad_compute is False
+    assert is_full_iteration_cuda_graph(cfg.model)
+    assert cuda_graph_module_names(cfg.model) == []
+
 
 @pytest.fixture(autouse=True)
 def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -76,14 +105,7 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.train.manual_gc is True
     assert cfg.train.manual_gc_interval == 500
 
-    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
-    assert cfg.model.moe_pad_experts_for_cuda_graph_inference is True
-    assert cfg.model.moe_paged_stash is True
-    assert cfg.model.moe_paged_stash_page_size == 64
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 0.0
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
-    assert cfg.model.moe_mlp_glu_interleave_size == 32
-    assert cfg.model.use_transformer_engine_op_fuser is True
+    _assert_mok_experts(cfg, _FLASH_MOK_BACKEND_CONFIG)
 
     assert cfg.model.csa_compress_rotary_base == 40_000
     assert cfg.model.rotary_scaling_factor == 4
@@ -138,31 +160,30 @@ def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
-    assert is_full_iteration_cuda_graph(cfg.model)
+    _assert_mok_experts(cfg, _FLASH_MOK_BACKEND_CONFIG)
     # The GB200 entry point's manual GC interval is not part of the shared builder.
     assert cfg.train.manual_gc_interval == 10
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
 
 
-def test_deepseek_v4_flash_128gpu_vrnvl72_fp8mx_disables_clamp_for_cutedsl() -> None:
+def test_deepseek_v4_flash_128gpu_vrnvl72_fp8mx_uses_mok_with_rubin_comm_sms() -> None:
     vrnvl72_cfg = deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config()
     gb300_cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
 
-    assert vrnvl72_cfg.model.activation_func_clamp_value is None
-    assert vrnvl72_cfg.model.use_transformer_engine_op_fuser is True
-    assert vrnvl72_cfg.model.moe_use_grouped_tensor is True
+    rubin_backend_config = {**_FLASH_MOK_BACKEND_CONFIG, "fwd_num_comm_sms": 40, "bwd_num_comm_sms": 40}
+    _assert_mok_experts(vrnvl72_cfg, rubin_backend_config)
+    # MoK applies the SwiGLU clamp, so Rubin keeps the model's value.
+    assert vrnvl72_cfg.model.activation_func_clamp_value is not None
+    assert vrnvl72_cfg.model.activation_func_clamp_value == gb300_cfg.model.activation_func_clamp_value
     assert vrnvl72_cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert vrnvl72_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
-    assert is_full_iteration_cuda_graph(vrnvl72_cfg.model)
-    # VRNVL72 dispatches through NCCL EP; the GB300 recipe stays on the shared HybridEP base.
+    # MoK owns dispatch on both; the inert flex backend selection still differs.
     assert vrnvl72_cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert vrnvl72_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert vrnvl72_cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
     assert gb300_cfg.model.moe_flex_dispatcher_backend == "hybridep"
 
-    gb300_cfg.model.activation_func_clamp_value = None
-    gb300_cfg.model.use_transformer_engine_op_fuser = True
-    gb300_cfg.model.moe_use_grouped_tensor = True
+    gb300_cfg.model.moe_megakernel_backend_config = rubin_backend_config
     gb300_cfg.model.moe_flex_dispatcher_backend = "ncclep"
     assert vars(vrnvl72_cfg.model) == vars(gb300_cfg.model)
     # The environments differ in dispatcher settings and Rubin's kernel policy.
@@ -195,6 +216,13 @@ def test_deepseek_v4_flash_128gpu_b300_fp8mx_config() -> None:
     assert cfg.model.batch_p2p_sync is False
     assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.5
     assert is_full_iteration_cuda_graph(cfg.model)
+    # B300 keeps the native expert path of the shared GB300 base.
+    assert cfg.model.moe_megakernel_backend is None
+    assert cfg.model.moe_megakernel_backend_config is None
+    assert cfg.model.moe_paged_stash is True
+    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+    assert cfg.model.use_transformer_engine_op_fuser is True
+    assert cfg.model.moe_mlp_glu_interleave_size == 32
     assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
