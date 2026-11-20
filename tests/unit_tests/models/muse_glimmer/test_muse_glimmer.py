@@ -20,6 +20,12 @@ from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.training.models.hybrid import HybridModelConfig
 from transformer_engine.pytorch import LayerNorm as TELayerNorm
 from transformer_engine.pytorch import RMSNorm as TERMSNorm
+from transformers.models.muse_glimmer.configuration_muse_glimmer import (
+    MuseGlimmerVisionConfig as HFMuseGlimmerVisionConfig,
+)
+from transformers.models.muse_glimmer.modeling_muse_glimmer import (
+    MuseGlimmerVisionAttention as HFMuseGlimmerVisionAttention,
+)
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -39,12 +45,14 @@ from megatron.bridge.models.muse_glimmer import (
 from megatron.bridge.models.muse_glimmer.modeling_muse_glimmer import (
     MuseGlimmerVisionAttention,
     MuseGlimmerVisionModel,
+    MuseGlimmerVisionRotaryEmbedding,
     get_muse_glimmer_hybrid_stack_spec,
 )
 from megatron.bridge.models.muse_glimmer.muse_glimmer_bridge import (
     MuseGlimmerBridge,
     MuseGlimmerQKVGMapping,
 )
+from megatron.bridge.models.muse_glimmer.muse_glimmer_config import MuseGlimmerVisionModelConfig
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations, vit_flops_from_grid_thw
 
 
@@ -416,6 +424,51 @@ def test_vision_attention_matches_eager_reference_with_finite_backward() -> None
     assert all(
         parameter.grad is not None and torch.isfinite(parameter.grad).all() for parameter in attention.parameters()
     )
+
+
+def test_vision_attention_bf16_gradients_match_hugging_face() -> None:
+    vision_config = MuseGlimmerVisionModelConfig(hidden_size=8, num_attention_heads=2)
+    previous_num_threads = torch.get_num_threads()
+    try:
+        torch.set_num_threads(1)
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(0)
+            bridge = MuseGlimmerVisionAttention(vision_config).to(dtype=torch.bfloat16).eval()
+
+            hf_config = HFMuseGlimmerVisionConfig(
+                hidden_size=vision_config.hidden_size,
+                num_attention_heads=vision_config.num_attention_heads,
+            )
+            hf_config._attn_implementation = "eager"
+            reference = HFMuseGlimmerVisionAttention(hf_config).to(dtype=torch.bfloat16).eval()
+            reference.load_state_dict(bridge.state_dict(), strict=True)
+
+            hidden_states = torch.randn(3, vision_config.hidden_size, dtype=torch.bfloat16)
+            cotangent = torch.randn_like(hidden_states)
+            cu_seqlens = torch.tensor([0, 3], dtype=torch.int32)
+            position_ids = torch.tensor([[0, 0], [1, 0], [0, 1]])
+            rotary = MuseGlimmerVisionRotaryEmbedding(vision_config)
+            position_embeddings = rotary(hidden_states, position_ids)
+
+            def run(module: torch.nn.Module) -> torch.Tensor:
+                module.zero_grad(set_to_none=True)
+                inputs = hidden_states.clone().requires_grad_()
+                output = module(inputs, cu_seqlens, position_embeddings=position_embeddings)
+                output.backward(cotangent)
+                return output.detach()
+
+            bridge_output = run(bridge)
+            reference_output = run(reference)
+
+            torch.testing.assert_close(bridge_output, reference_output, rtol=0, atol=0)
+            reference_parameters = dict(reference.named_parameters())
+            for name, parameter in bridge.named_parameters():
+                reference_gradient = reference_parameters[name].grad
+                assert parameter.grad is not None
+                assert reference_gradient is not None
+                torch.testing.assert_close(parameter.grad, reference_gradient, rtol=0, atol=0, msg=name)
+    finally:
+        torch.set_num_threads(previous_num_threads)
 
 
 @pytest.mark.run_only_on("GPU")
