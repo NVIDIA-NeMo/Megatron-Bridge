@@ -71,6 +71,7 @@ def create_c4_dataset_config(
     pin_memory=False,
     persistent_workers=True,
     index_mapping_dir=None,
+    random_seed=1234,
 ):
     """Create C4 dataset configuration for Megatron-Bridge.
 
@@ -78,19 +79,31 @@ def create_c4_dataset_config(
       <c4_root>/c4-train.en_<shard>_text_document.{bin,idx}
       <c4_root>/c4-validation-91205-samples.en_text_document.{bin,idx}
 
-    Produces a blend_per_split with (train, val, test) tuples where val and
-    test point to the same validation file (matches NVIDIA's MLPerf DSV3
-    reference layout).
+    Default ``train_shards=(6,)`` matches NVIDIA's MLPerf GPT-OSS 20B,
+    Llama 3.1 8B and DSV3 671B ``get_data()`` blends.
+    Val and test point at the same validation file.
     """
+    from pathlib import Path
+
     from megatron.bridge.training.config import GPTDatasetConfig
 
     val_prefix = f"{c4_root}/c4-validation-91205-samples.en_text_document"
     train_prefixes = [f"{c4_root}/c4-train.en_{i}_text_document" for i in train_shards]
-    train_weights = [50.0] * len(train_prefixes)
+    missing = []
+    for prefix in (*train_prefixes, val_prefix):
+        for suffix in (".bin", ".idx"):
+            path = Path(f"{prefix}{suffix}")
+            if not path.is_file():
+                missing.append(str(path))
+    if missing:
+        raise FileNotFoundError(
+            "C4 mmap files not found: "
+            + ", ".join(missing)
+            + ". Expected the MLPerf layout used by gpt_oss_20b / llama31_8b "
+            + f"under {c4_root}."
+        )
 
-    # GPTDatasetConfig.blend_per_split format: list of 3 (prefixes, weights) tuples
-    # for (train, val, test). Mirrors NVIDIA's MLPerf DSV3 reference setup with
-    # val and test pointing to the same validation file.
+    train_weights = [50] * len(train_prefixes)
     blend_per_split = [
         (train_prefixes, train_weights),
         ([val_prefix], None),
@@ -98,7 +111,7 @@ def create_c4_dataset_config(
     ]
 
     return GPTDatasetConfig(
-        random_seed=1234,
+        random_seed=random_seed,
         reset_attention_mask=False,
         reset_position_ids=False,
         eod_mask_loss=False,
@@ -110,6 +123,9 @@ def create_c4_dataset_config(
         path_to_cache=index_mapping_dir,
         data_sharding=True,
         dataloader_type="single",
+        create_attention_mask=False,
+        fast_cache_load=True,
+        defer_npy_index_mmap=True,
         num_workers=num_workers,
         pin_memory=pin_memory,
         persistent_workers=persistent_workers,

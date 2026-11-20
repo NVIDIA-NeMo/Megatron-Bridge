@@ -554,6 +554,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             c4_root=args.c4_root,
             train_shards=tuple(args.c4_train_shards),
             index_mapping_dir=args.index_mapping_dir,
+            random_seed=getattr(recipe.dataset, "random_seed", 1234) or 1234,
             num_workers=recipe.dataset.num_workers,
             pin_memory=recipe.dataset.pin_memory,
             persistent_workers=recipe.dataset.persistent_workers,

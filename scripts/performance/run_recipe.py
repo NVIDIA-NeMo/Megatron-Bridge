@@ -45,6 +45,7 @@ def _get_diffusion_step(model_family_name: str):
 def _apply_training_argparse_overrides(config, args):
     """Apply all training argparse values to ConfigContainer fields."""
     from utils.datasets import (
+        create_c4_dataset_config,
         create_gov_report_dataset_config,
         create_mock_dataset_config,
         create_rp2_dataset_config,
@@ -109,6 +110,19 @@ def _apply_training_argparse_overrides(config, args):
                 dataset_paths=args.dataset_paths,
                 seq_length=args.seq_length or 8192,
                 index_mapping_dir=args.index_mapping_dir,
+            )
+        elif args.data == "c4":
+            if not args.c4_root:
+                raise ValueError("--c4_root is required for c4 dataset")
+            config.dataset = create_c4_dataset_config(
+                seq_length=args.seq_length or getattr(config.dataset, "seq_length", 8192),
+                c4_root=args.c4_root,
+                train_shards=tuple(args.c4_train_shards),
+                index_mapping_dir=args.index_mapping_dir,
+                random_seed=getattr(config.dataset, "random_seed", 1234) or 1234,
+                num_workers=getattr(config.dataset, "num_workers", 1),
+                pin_memory=getattr(config.dataset, "pin_memory", False),
+                persistent_workers=getattr(config.dataset, "persistent_workers", True),
             )
         elif args.data == "squad":
             if not args.dataset_root:

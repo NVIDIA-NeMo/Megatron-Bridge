@@ -141,7 +141,13 @@ uv run python scripts/performance/setup_experiment.py \
 - `--dataset_paths`: Dataset paths (for rp2 dataset). Accepts multiple paths.
 - `--dataset_root`: Dataset root directory (for squad, squad_packed, and gov_report datasets).
 - GovReport: run `python scripts/performance/download_gov_report.py --data_dir /data/gov_report`, then pass `--data gov_report --dataset_root /data/gov_report`. This downloads the public Hugging Face snapshot `regisss/scrolls_gov_report_preprocessed_mlperf_2` and writes packed `train.npy` / `validation.npy`.
-- `--index_mapping_dir`: Index mapping directory (for rp2 dataset).
+- `--c4_root`: Directory with already-preprocessed MLPerf mmap C4. Expected files:
+  - `c4-train.en_<shard>_text_document.{bin,idx}`
+  - `c4-validation-91205-samples.en_text_document.{bin,idx}`
+  This is the same layout NVIDIA's MLPerf optimized `gpt_oss_20b` / `llama31_8b` / `dsv3_671b` recipes mount as `/preproc_data` (`DATADIR/8b`). The files are not downloaded by Megatron-Bridge.
+- `--c4_train_shards`: Train shard indices to blend. Default `6` (GPT-OSS 20B, Llama 3.1 8B and DSV3 671B).
+- `--index_mapping_dir`: Index mapping directory (for rp2 and c4 datasets). For C4 this is the equivalent of optimized `/npy_index`.
+- C4 also needs the llama-3.1-8b tokenizer used to preprocess the mmap files: `--tokenizer_type HuggingFaceTokenizer --tokenizer_model <c4_root>/tokenizer`.
 - `--dataset_name`: Dataset name (deprecated).
 - `--packed_sequence`: Enable packed sequences.
 - `--head_only`: Use only head data (for rp2 dataset).
