@@ -116,6 +116,48 @@ def create_c4_dataset_config(
     )
 
 
+def _gov_report_pack_metadata(seq_length: int) -> list[dict[str, int]]:
+    """Return packing metadata for official GovReport npy (one sequence per pack)."""
+    return [
+        {
+            "dataset_max_seqlen": seq_length,
+            "max_samples_per_bin": 1,
+            "min_packed_seqlen": seq_length,
+        }
+    ]
+
+
+def _ensure_gov_report_pack_metadata(*, dataset_root, seq_length: int):
+    """Write static packing metadata for CUDA-graph-compatible packed npy.
+
+    Official GovReport packs are already a single ``seq_length`` sequence per
+    row (``seq_start_id=[0]``). The metadata file is required when
+    ``pad_cu_seqlens=True``. Prefer ``dataset_root``; fall back to a temp dir
+    when that tree is read-only.
+    """
+    import json
+    import tempfile
+    from pathlib import Path
+
+    serialized = json.dumps(_gov_report_pack_metadata(seq_length))
+    candidates = [
+        Path(dataset_root) / "packed_metadata.json",
+        Path(tempfile.gettempdir()) / f"gov_report_packed_metadata_{seq_length}.json",
+    ]
+    last_error = None
+    for path in candidates:
+        try:
+            path.write_text(serialized)
+            return path
+        except OSError as error:
+            if path.is_file():
+                return path
+            last_error = error
+    raise OSError(
+        f"Unable to write GovReport packing metadata under {dataset_root} or {tempfile.gettempdir()}"
+    ) from last_error
+
+
 def create_gov_report_dataset_config(
     *,
     dataset_root: str,
@@ -151,6 +193,7 @@ def create_gov_report_dataset_config(
             + f"--data_dir {root}"
         )
 
+    metadata_path = _ensure_gov_report_pack_metadata(dataset_root=root, seq_length=seq_length)
     return GPTSFTDatasetConfig(
         seq_length=seq_length,
         dataset_root=root,
@@ -162,8 +205,10 @@ def create_gov_report_dataset_config(
             packed_sequence_size=seq_length,
             packed_train_data_path=train_path,
             packed_val_data_path=val_path,
+            packed_metadata_path=metadata_path,
+            pad_cu_seqlens=True,
         ),
-        dataset_kwargs={"return_cu_seqlen": False},
+        dataset_kwargs={"return_cu_seqlen": False, "pad_to_max_length": True},
         dataloader_type="batch",
         max_train_samples=max_train_samples,
         num_workers=num_workers,
