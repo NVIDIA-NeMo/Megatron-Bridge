@@ -30,6 +30,7 @@ if (
 
 from megatron.bridge.models.bailing import (
     BailingMoeV2Bridge,
+    BailingMoeV3Bridge,
 )
 from megatron.bridge.models.beam import (
     BeamBridge,
@@ -281,6 +282,7 @@ __all__ = [
     "RowParallelMapping",
     "AutoMapping",
     "BailingMoeV2Bridge",
+    "BailingMoeV3Bridge",
     "BertModelProvider",
     # DeepSeek Models
     "DeepSeekV3Bridge",

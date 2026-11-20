@@ -6,8 +6,10 @@ Bailing model documentation is organized by model variant.
 :hidden:
 
 ling-2.md
+ling-3.md
 ```
 
 | Variant | Guide |
 |---------|-------|
 | Ling 2.0 | [ling-2.md](ling-2.md) |
+| Ling 3.0 | [ling-3.md](ling-3.md) |

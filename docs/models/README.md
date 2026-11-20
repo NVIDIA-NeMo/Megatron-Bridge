@@ -59,6 +59,18 @@ Choose a model to inspect its recorded import/export, training, and precision co
   </section>
   <section class="verification-provider-card">
     <header class="verification-provider-heading">
+      <strong>inclusionAI</strong>
+      <span>1 model</span>
+    </header>
+    <div class="verification-provider-models">
+      <a class="verification-model-link" href="bailing/ling-3.html#verified-ling-3.0-tiny-base">
+        <strong title="inclusionAI/Ling-3.0-tiny-base">Ling-3.0-tiny-base</strong>
+        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
+      </a>
+    </div>
+  </section>
+  <section class="verification-provider-card">
+    <header class="verification-provider-heading">
       <strong>LG AI EXAONE</strong>
       <span>1 model</span>
     </header>
