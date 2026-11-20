@@ -748,7 +748,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>3,301.113 tokens/s/GPU</dd>
+            <dd>6,602.225 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
