@@ -115,12 +115,8 @@ echo "Checkpoint: ${PRETRAINED_CHECKPOINT}"
 echo "Log dir: ${LOG_DIR}"
 echo "======================================"
 
-# CLI overrides forwarded to run_recipe.py. Mirrors the parallelism / sliding-
-# window / MTP layout of the reference resume run.
-#
-# window_attn_skip_freq: 48-entry mask (one per main decoder layer) that tells
-# the attention kernel which layers should skip the sliding-window restriction.
-# It must stay in sync with the recipe's layer_types.
+# CLI overrides select the training layout and disable auxiliary MTP training.
+# Attention windows, layer types, and RoPE settings come from the HF model config.
 CLI_OVERRIDES="\
     model.seq_length=${SEQ_LENGTH} \
     model.pipeline_model_parallel_size=8 \
@@ -134,10 +130,6 @@ CLI_OVERRIDES="\
     model.moe_token_dispatcher_type=alltoall \
     model.moe_permute_fusion=False \
     model.mtp_num_layers=0 \
-    model.attention_dropout=0.0 \
-    model.rotary_percent=0.5 \
-    model.window_size=[512,0] \
-    model.window_attn_skip_freq=[0,1,1,1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1,1] \
     train.micro_batch_size=${MICRO_BATCH_SIZE} \
     train.global_batch_size=${GLOBAL_BATCH_SIZE} \
     train.train_iters=${TRAIN_ITERS} \

@@ -49,7 +49,6 @@ def step35_196b_a11b_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = True
     cfg.model.seq_length = 4096
-    cfg.model.init_method_std = 0.02
 
     # MoE Token Dispatcher settings
     # Note: moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end

@@ -122,8 +122,7 @@ CLI_OVERRIDES="\
     logger.tensorboard_dir=${LOG_DIR}/tensorboard/${TEST_NAME}/ \
     logger.wandb_project=${WANDB_PROJECT} \
     logger.wandb_exp_name=${TEST_NAME} \
-    logger.log_interval=1 \
-    tokenizer.padded_vocab_size=128896"
+    logger.log_interval=1"
 
 # ─── Launch (one srun task per GPU = one rank) ────────────────────────────────
 read -r -d '' INNER_SCRIPT <<'EOF' || true
