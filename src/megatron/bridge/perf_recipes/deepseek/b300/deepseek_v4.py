@@ -18,7 +18,7 @@ from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
 )
 from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
-    deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
+    _build_deepseek_v4_flash_gb300_fp8mx,
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
@@ -42,7 +42,7 @@ def _apply_deepseek_v4_b300_overrides(cfg: ConfigContainer) -> None:
 
 def deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× B300, MXFP8, NCCL EP."""
-    cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
+    cfg = _build_deepseek_v4_flash_gb300_fp8mx()
     _apply_deepseek_v4_b300_overrides(cfg)
     _enable_ncclep(cfg)
     cfg.env_vars = {

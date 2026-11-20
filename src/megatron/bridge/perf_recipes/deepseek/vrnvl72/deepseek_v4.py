@@ -22,15 +22,20 @@ from megatron.bridge.training.config import ConfigContainer
 
 
 def deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Flash pretrain: 128× VRNVL72, MXFP8, NCCL EP (alias of GB300)."""
+    """DeepSeek V4 Flash pretrain: 128× VRNVL72, MXFP8, MoK experts (derived from GB300).
+
+    MoK applies the model's SwiGLU clamp, so the recipe no longer drops it for Rubin's grouped
+    GLU kernel. Requires a Rubin-capable MoK build.
+    """
     cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
     _enable_ncclep(cfg)
 
-    # Rubin's grouped GLU kernel does not support DeepSeek V4's SwiGLU clamp parameters. This is a
-    # benchmark-only override that preserves the lower-memory CutDSL fusion and full CUDA graph.
-    cfg.model.activation_func_clamp_value = None
-    cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.moe_use_grouped_tensor = True
+    # Communication SM allocation from the DeepSeek V4 Pro Rubin benchmark; GB300 uses 28/28.
+    cfg.model.moe_megakernel_backend_config = {
+        **cfg.model.moe_megakernel_backend_config,
+        "fwd_num_comm_sms": 40,
+        "bwd_num_comm_sms": 40,
+    }
 
     # Keep the VRNVL72 launch environment explicit instead of inheriting it from GB300.
     cfg.env_vars = {
