@@ -182,6 +182,10 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         # Attention value scale
         provider.attention_value_scale = hf_config.attention_value_scale
 
+        # The HF model has no dropout and its config has no dropout fields
+        provider.hidden_dropout = 0.0
+        provider.attention_dropout = 0.0
+
         if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
             mtp_indices = set()
             for k in hf_pretrained.state.source.get_all_keys():
