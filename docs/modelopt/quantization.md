@@ -142,6 +142,9 @@ only.
 - `--export-dir` - Output directory for the quantized HuggingFace checkpoint
 - `--export-extra-modules` - Also export EAGLE / Medusa heads, through ModelOpt's Megatron exporter (TP=1 only)
 
+`scripts/conversion/convert.sh export --device gpu` writes the same quantized checkpoint, without the fallback (see
+[the conversion launcher](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/conversion/README.md)).
+
 From Python, save a quantized model directly:
 
 ```python
