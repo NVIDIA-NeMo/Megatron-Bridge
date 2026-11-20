@@ -1021,6 +1021,9 @@ def _bind_cuda_context_on_autograd_worker() -> None:
     in a pipeline stage that ends in an MoE layer, then fails with "CUDA Error: invalid device context".
     A one-element backward pass makes the worker's first CUDA call a kernel launch through the CUDA
     runtime, which binds the GPU's primary context to the worker for the rest of the process.
+
+    Remove this once Bridge pins a Transformer Engine whose RTC helpers in ``common/util/rtc.cpp``
+    (the occupancy query and the function-attribute setters) call ``cuda_driver::ensure_context_exists()``.
     """
     if not torch.cuda.is_available():
         return

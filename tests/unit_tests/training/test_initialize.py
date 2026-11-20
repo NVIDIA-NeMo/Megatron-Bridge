@@ -574,6 +574,7 @@ def test_torch_dist_init_resets_default_logging_ranks(lazy):
         set_default_log_ranks({0, 4})
         with (
             patch("megatron.bridge.training.initialize._initialize_distributed", return_value=Mock()),
+            patch("megatron.bridge.training.initialize._bind_cuda_context_on_autograd_worker"),
             patch("megatron.bridge.training.initialize._set_random_seed"),
             patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0),
             patch("megatron.bridge.training.initialize.parallel_state"),
@@ -620,14 +621,13 @@ def test_torch_dist_init_binds_autograd_worker_context_after_device_setup(lazy: 
 
 
 # Runs in a fresh process, so PyTorch's autograd worker threads start clean. A custom autograd function makes its
-# backward the first CUDA work of the GPU-0 worker, as a recomputed norm is at the start of a pipeline stage's backward.
+# backward the first CUDA work of the GPU-0 worker, as a recomputed norm is at the start of a pipeline stage's
+# backward. Only "bind" mode imports Bridge.
 _AUTOGRAD_WORKER_PROBE = r"""
 import ctypes
 import sys
 
 import torch
-
-from megatron.bridge.training.initialize import _bind_cuda_context_on_autograd_worker
 
 
 torch.cuda.set_device(0)
@@ -650,6 +650,8 @@ else:
     norm(tokens)  # The main thread compiles and loads the norm kernel, as a training forward pass does.
 
 if sys.argv[1] == "bind":
+    from megatron.bridge.training.initialize import _bind_cuda_context_on_autograd_worker
+
     _bind_cuda_context_on_autograd_worker()
 
 seen = {}
