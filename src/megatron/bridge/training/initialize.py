@@ -557,7 +557,11 @@ def _create_pg_collection(
         tp_dp_cp=tp_dp_cp_pg,
         dp=dp_pg,
         dp_cp=dp_cp_pg,
+        # GTP is rejected with decentralized process groups, so gtp_remat_size is 1.
+        dp_cp_gtp_remat=dp_cp_pg,
         expt_dp=expt_dp_pg,
+        # Expert GTP is rejected as well. TE grouped-expert checkpointing reads this group for replica ids.
+        expt_dp_gtp_remat=expt_dp_pg,
         intra_dp_cp=dp_cp_pg,
         intra_expt_dp=intra_expt_dp_pg if intra_expt_dp_pg is not None else expt_dp_pg,
         inter_dist_opt=inter_dist_opt_pg,
