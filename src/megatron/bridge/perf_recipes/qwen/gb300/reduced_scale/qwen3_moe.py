@@ -162,6 +162,13 @@ def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config() -> ConfigContainer:
     return cfg
 
 
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_mbs2_config() -> ConfigContainer:
+    """32-GPU TP=1/PP=1/EP=32 winner candidate with MBS=2."""
+    cfg = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config()
+    cfg.train.micro_batch_size = 2
+    return cfg
+
+
 def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config() -> ConfigContainer:
     """32-GPU PP=1/EP=32 candidate with TP=2, SP, and MBS=1."""
     cfg = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config()
@@ -187,6 +194,7 @@ __all__ = [
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_mbs2_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config",
 ]
