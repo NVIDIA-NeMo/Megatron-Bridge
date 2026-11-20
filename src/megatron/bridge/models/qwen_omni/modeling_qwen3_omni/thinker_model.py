@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
+from typing import TypeVar, cast
+
 import torch
 from megatron.core import InferenceParams, tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
@@ -153,6 +156,9 @@ def _normalize_visual_outputs(outputs: object) -> tuple[torch.Tensor, list[torch
     else:
         deepstack_features = outputs[1:]
     return hidden_states, _as_feature_list(deepstack_features)
+
+
+OutputT = TypeVar("OutputT")
 
 
 class Qwen3OmniThinkerModel(MegatronModule):
@@ -383,8 +389,20 @@ class Qwen3OmniThinkerModel(MegatronModule):
         input_features: torch.Tensor | None = None,
         feature_attention_mask: torch.Tensor | None = None,
         audio_feature_lengths: torch.Tensor | None = None,
+        output_processor: Callable[..., OutputT] | None = None,
+        output_processor_context: object | None = None,
         **kwargs,
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | OutputT:
+        """Forward multimodal inputs and preserve the output processor result.
+
+        Args:
+            output_processor: Optional Core postprocess callback. A callback may
+                return a structured result rather than full vocabulary logits.
+            output_processor_context: Opaque caller context forwarded unchanged.
+
+        Returns:
+            Native logits/loss without a processor, or the processor result.
+        """
         if inference_params is not None:
             raise NotImplementedError("Qwen3-Omni Megatron inference is not implemented yet.")
         if packed_seq_params is not None:
@@ -575,17 +593,23 @@ class Qwen3OmniThinkerModel(MegatronModule):
                 sequence_parallel=self.config.sequence_parallel,
             )
 
-        return self.language_model(
-            input_ids=None if combined_embeddings is not None else input_ids,
-            position_ids=position_ids,
-            attention_mask=attention_mask,
-            decoder_input=combined_embeddings,
-            labels=labels,
-            inference_params=inference_params,
-            packed_seq_params=packed_seq_params,
-            runtime_gather_output=runtime_gather_output,
-            extra_block_kwargs=extra_block_kwargs,
-            loss_mask=loss_mask,
-            visual_pos_masks=visual_pos_masks,
-            deepstack_visual_embeds=deepstack_visual_embeds,
+        # nn.Module.__call__ is untyped; preserve its hooks and the forwarded callback result.
+        return cast(
+            torch.Tensor | OutputT,
+            self.language_model(
+                input_ids=None if combined_embeddings is not None else input_ids,
+                position_ids=position_ids,
+                attention_mask=attention_mask,
+                decoder_input=combined_embeddings,
+                labels=labels,
+                inference_params=inference_params,
+                packed_seq_params=packed_seq_params,
+                runtime_gather_output=runtime_gather_output,
+                extra_block_kwargs=extra_block_kwargs,
+                loss_mask=loss_mask,
+                visual_pos_masks=visual_pos_masks,
+                deepstack_visual_embeds=deepstack_visual_embeds,
+                output_processor=output_processor,
+                output_processor_context=output_processor_context,
+            ),
         )
