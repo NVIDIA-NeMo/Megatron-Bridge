@@ -1483,6 +1483,13 @@ class MegatronModelBridge(
             return False
 
         hf_param = getattr(task.mapping, "hf_param", None)
+        if not isinstance(hf_param, str):
+            return False
+        # Token embedding rows are vocabulary rows whatever the HF checkpoint calls the tensor,
+        # e.g. Nemotron-H's ``backbone.embeddings.weight`` or DeepSeek-V4's ``embed.weight``.
+        if global_param_name.endswith("embedding.word_embeddings.weight"):
+            return True
+        # An output layer can also be a non-vocabulary head, such as a classification ``score``.
         vocab_hf_param_suffixes = (
             "embed_tokens.weight",
             "word_embeddings.weight",
@@ -1490,7 +1497,7 @@ class MegatronModelBridge(
             "head.weight",
             "predictions.bias",
         )
-        return isinstance(hf_param, str) and hf_param.endswith(vocab_hf_param_suffixes)
+        return hf_param.endswith(vocab_hf_param_suffixes)
 
     def _truncate_vocab_padding(
         self,
