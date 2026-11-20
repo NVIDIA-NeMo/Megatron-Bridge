@@ -161,6 +161,13 @@ RUN GO_GIT_VERSION=5.19.2 && \
         -o "${WANDB_CORE_BIN}" ./cmd/wandb-core/ && \
     rm -rf /tmp/wandb-src /tmp/go /tmp/gopath
 
+# This image supports Python Ray workloads; remove the optional Java runtime.
+# Removing the directory also prevents Ray from advertising Java worker support.
+RUN rm -rf /opt/venv/lib/python3.12/site-packages/ray/jars
+
+RUN --mount=type=bind,source=docker/common/check_vllm.py,target=/tmp/check_vllm.py \
+    /usr/bin/python3 /tmp/check_vllm.py
+
 ##############################################################################
 ##
 ## Finalize FW container
@@ -169,7 +176,9 @@ RUN GO_GIT_VERSION=5.19.2 && \
 
 WORKDIR /workspace
 
-RUN python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json
+# Drop cached wheels that still contain the original Ray archive.
+RUN python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json && \
+    uv cache clean
 
 ARG NVIDIA_BUILD_ID
 ENV NVIDIA_BUILD_ID=${NVIDIA_BUILD_ID:-<unknown>}
