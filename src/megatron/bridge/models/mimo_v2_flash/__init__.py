@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from megatron.bridge.models.mimo_v2_flash.mimo_v2_bridge import MiMoV2Bridge  # noqa: F401
 from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_bridge import MiMoV2FlashBridge  # noqa: F401
 from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_provider import MiMoV2FlashModelProvider  # noqa: F401
 
 
 __all__ = [
+    "MiMoV2Bridge",
     "MiMoV2FlashBridge",
     "MiMoV2FlashModelProvider",
 ]
