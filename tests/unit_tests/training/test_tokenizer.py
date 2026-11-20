@@ -146,6 +146,31 @@ class TestTokenizers:
 
         assert mock_snapshot_download.call_args.kwargs["local_files_only"] is hf_hub_offline
 
+    @pytest.mark.parametrize(
+        ("hf_hub_offline", "local_files_only"),
+        [(False, True), (True, False)],
+    )
+    @patch("megatron.bridge.training.tokenizers.tokenizer.build_mcore_tokenizer")
+    @patch("huggingface_hub.snapshot_download")
+    def test_build_hf_tokenizer_resolves_revision_custom_local_files_only(
+        self, mock_snapshot_download, mock_build_mcore_tokenizer, monkeypatch, hf_hub_offline, local_files_only
+    ):
+        """An explicit local_files_only override wins over the process wide offline flag."""
+        monkeypatch.setattr("huggingface_hub.constants.HF_HUB_OFFLINE", hf_hub_offline)
+        mock_snapshot_download.return_value = "/cache/snapshots/b968826d"
+        mock_build_mcore_tokenizer.return_value = sentinel.tokenizer
+        config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="Qwen/Qwen3-8B",
+            hf_tokenizer_kwargs={
+                "revision": "b968826d",
+                "local_files_only": local_files_only,
+            },
+        )
+        assert build_tokenizer(config) is sentinel.tokenizer
+        mock_snapshot_download.assert_called_once()
+        assert mock_snapshot_download.call_args.kwargs["local_files_only"] is local_files_only
+
     @patch("megatron.bridge.training.tokenizers.tokenizer.build_mcore_tokenizer")
     @patch("huggingface_hub.snapshot_download")
     def test_build_tokenizer_skips_snapshot_resolution_without_remote_hf_revision(

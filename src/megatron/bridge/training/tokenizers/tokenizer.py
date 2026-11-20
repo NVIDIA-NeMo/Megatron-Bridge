@@ -103,14 +103,19 @@ def _resolve_hf_tokenizer_revision(config: TokenizerConfig) -> TokenizerConfig:
     from huggingface_hub import snapshot_download
     from huggingface_hub.constants import HF_HUB_OFFLINE
 
-    # When offline, read the snapshot from the local cache. For a full commit hash, huggingface_hub 2.0-2.1
-    # otherwise lists the repo tree even under HF_HUB_OFFLINE and raises OfflineModeIsEnabled.
+    # Respect an explicit local_files_only override from the tokenizer
+    # kwargs; when absent, follow the process wide offline flag.
+    if "local_files_only" in hf_tokenizer_kwargs:
+        local_files_only = bool(hf_tokenizer_kwargs["local_files_only"])
+    else:
+        local_files_only = bool(HF_HUB_OFFLINE)
+
     snapshot_path = snapshot_download(
         repo_id=tokenizer_model,
         revision=revision,
-        local_files_only=HF_HUB_OFFLINE,
         allow_patterns=list(_HF_TOKENIZER_SNAPSHOT_ALLOW_PATTERNS),
         ignore_patterns=list(_HF_MODEL_WEIGHT_IGNORE_PATTERNS),
+        local_files_only=local_files_only,
     )
 
     resolved_config = copy(config)
