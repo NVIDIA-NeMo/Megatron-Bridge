@@ -1,6 +1,6 @@
 # Qwen3.8-Flash-Next image SFT
 
-**Selected configuration: TP4 with HybridEP and fusions.** A 100-step native
+**EARLY, UNOPTIMIZED recipe: TP4 with HybridEP and fusions.** A 100-step native
 training run completed with finite loss. Same-input numerical differences from
 the earlier configuration remain unresolved; this is functional training
 evidence, not a parity result. Historical loss curves remain valid.
@@ -132,3 +132,36 @@ loss difference **0.008722812** and preclip gradient-norm difference **28.2429**
 Differences began at step one and remain unexplained. Finite training and faster
 measured execution do not establish numerical equivalence. Recomputation stays
 disabled; this recipe does not claim qualified shared-expert recomputation.
+
+## Text-only frozen-PLE Muon recipe
+
+The **EARLY, UNOPTIMIZED** library recipe
+[`qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config`](../../../../src/megatron/bridge/recipes/qwen/gb200/qwen38_flash_next.py)
+uses the same language model with `text_only=True`, full 4K sequences,
+TP2/SP, EP32, ETP1, PP1/CP1, MBS1/GBS32 on 32 GB200 GPUs. Only the hashed
+n-gram tables are frozen and EP-sharded. PLE projections, norms, convolution,
+and other language parameters stay trainable. Natural routing, HybridEP and
+MoE fusions are enabled; forced balancing, recomputation and CUDA graphs are off.
+
+Select this recipe with the standard `scripts/training/train.sh` launcher,
+`--nodes 8 --gpus-per-node 4 --mode pretrain`, an indexed text prefix through
+`dataset.data_path`, and the pinned HF snapshot through `--pretrained_checkpoint`.
+Set `OMP_NUM_THREADS=8` in the external runtime environment to match the measured
+host-thread configuration. The expert group must fit a supported NVLink domain.
+Use the same pinned config/tokenizer revision as image SFT. Initialize a fresh
+optimizer; do not resume optimizer state created with trainable n-gram tables.
+
+The recipe runs 15 updates with five-step LR warmup, LR 1e-4, zero weight decay,
+clip 1, and layer-wise distributed Muon with duplicated full-matrix TP
+orthogonalization. Muon uses momentum 0.95, five Newton-Schulz steps,
+`unit_rms_norm` scaling with factor 0.2, and unsplit QKV; eligible non-Muon
+parameters use Adam. Evaluation and checkpoint saving are disabled. This is a
+performance bring-up schedule, not a convergence recommendation.
+
+The [verification card](../../../model_verification_cards/qwen3.8-flash-next/card.yaml)
+records the natural-routing run's provisional **40.88 TFLOP/s/GPU**, **4.214 s/update**
+and **971.97 tokens/s/GPU** over updates 11-15. Incomplete final audit retention
+prevents promoting that result to verified. A complete rerun and profiling are
+pending. These are estimated model FLOPs, not hardware-counter throughput; at
+4K the QSA estimate uses a dense surrogate and excludes optimizer work. The
+historical image-SFT loss curve is unaffected by the recipe's performance status.

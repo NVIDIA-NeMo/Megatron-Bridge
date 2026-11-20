@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-"""Qwen3.8-Flash-Next image SFT with the measured TP4/HybridEP configuration."""
+"""EARLY, UNOPTIMIZED Qwen3.8-Flash-Next image SFT with TP4/HybridEP."""
 
 from megatron.bridge.data.builders.energon import EnergonDatasetConfig, QwenVLEnergonTaskEncoderConfig
 from megatron.bridge.models import AutoBridge
@@ -36,7 +36,7 @@ def qwen38_flash_next_sft_64gpu_gb200_bf16_config(
     *,
     hf_path: str = "Qwen/Qwen3.8-Flash-Next",
 ) -> ConfigContainer:
-    """Return full-model image SFT on 64 GB200 GPUs with TP4/SP and EP64.
+    """Return EARLY, UNOPTIMIZED image SFT on 64 GB200 GPUs with TP4/SP and EP64.
 
     This configuration completed 100 native-loader steps with HybridEP and
     fusions. Same-input numerical differences from the earlier TP8 baseline

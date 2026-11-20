@@ -23,6 +23,9 @@ from .gb200.qwen35 import (
     qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config,
 )
 
+# Qwen3.8 GB200 text model
+from .gb200.qwen38_flash_next import qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config
+
 # Qwen2 models
 from .qwen2 import (
     qwen2_1p5b_peft_config,
@@ -104,6 +107,7 @@ from .qwen35 import qwen35_text_9b_pretrain_config, qwen35_text_35b_a3b_pretrain
 
 
 __all__ = [
+    "qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config",
     # Qwen2 models
     "qwen2_500m_pretrain_config",
     "qwen2_1p5b_pretrain_config",

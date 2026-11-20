@@ -7,7 +7,9 @@ summary: >
   an 8,192-sample Nemotron-Image-Training-v3 ECD subset. A separate historical
   run completed 5,349 steps; its loss curve remains valid. Historical
   language-only import and ten-step pretraining observations are retained
-  separately. HF numerical parity,
+  separately. An EARLY, UNOPTIMIZED 4K text-only frozen-PLE Muon recipe
+  now uses TP2/SP and EP32. Its natural-routing throughput remains provisional
+  because the measurement lost part of its final audit records. HF numerical parity,
   checkpoint roundtrips, resume, and numerical equivalence of the optimized
   configuration remain unverified.
 verification_index:
@@ -96,6 +98,31 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
+        The current public recipe is
+        qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config:
+        full 48-layer text-only model, sequence 4096, TP2/SP, EP32/ETP1,
+        PP1/CP1, MBS1/GBS32, BF16 and FP32 gradient reduction, HybridEP with
+        MoE fusions, frozen EP-sharded n-gram tables and layer-wise distributed
+        Muon. PLE projections, normalization and convolution remain trainable.
+        CUDA graphs and recomputation are disabled. The recipe is EARLY,
+        UNOPTIMIZED; optimizer state is initialized afresh from model weights.
+        The run reused the bounded Salesforce/wikitext indexed text described
+        below, not image data. A full-checkpoint run on 2026-11-03 completed
+        15 updates: loss
+        1.932210684 to 1.706202507, with finite gradients and no skipped updates
+        in the 15 surviving final rank audits. Its producer reported 4214.13945 ms,
+        40.87683 estimated model TFLOP/s/GPU and 971.96594 tokens/s/GPU over
+        updates 11-15. These are provisional five-update observations, not the
+        final-ten metrics required by this card: storage publication failed and
+        17 of 32 final rank audits were lost. Do not promote this item to verified
+        without a complete rerun. A separate synthetic forced-routing diagnostic
+        retained all 32 audits and measured 4320.14744 ms and 39.87379 estimated
+        model TFLOP/s/GPU over five updates; it does not qualify natural-routing
+        training quality. Both runs used the full model at source commit
+        d425842218dfce43fb3a0c8602cb750bd135270b plus private recipe configuration
+        now represented by the public recipe. The QSA FLOP estimate at 4K is a
+        dense surrogate and excludes Muon work, selection, norms, lookups,
+        convolution and communication; tokens/s and update time are primary.
         Historical language-only full-checkpoint training completed ten steps
         on 32 GB200 GPUs at TP8/SP, EP32, ETP1/PP1/CP1, sequence 512, MBS1/GBS4,
         Adam LR 1e-6 and zero weight decay. Salesforce/wikitext train,
