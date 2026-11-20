@@ -78,6 +78,37 @@ When Megatron FSDP is enabled, Bridge also adjusts some settings
 automatically, including disabling `average_in_collective` and several
 buffer-reuse optimizations that do not match the FSDP path.
 
+### Separate all-gather communicator
+
+For Megatron FSDP configurations that overlap parameter all-gather with gradient
+reduce-scatter, enable a second communicator over the same replica ranks:
+
+```python
+cfg.dist.create_all_gather_group = True
+```
+
+In the standard MPU path, Core initialization creates the groups. In the
+decentralized path, Bridge creates them from its explicit grid. Both populate
+`ProcessGroupCollection.dp_cp_ag`; with expert parallelism
+it also populates `ProcessGroupCollection.expt_dp_ag`. This works with both the
+standard MCore process-group initialization and `use_decentralized_pg=True`.
+Non-default expert rank ordering and offsets also require the separate
+[Core topology correction](https://github.com/NVIDIA/Megatron-LM/pull/5754).
+
+Core returns a complete `ProcessGroupCollection`, including ordinary groups and
+the optional AG groups; Bridge passes that collection to the model. The standard
+initializer returns a collection even with the AG flag off. This integration requires
+the collection-return API from [Core #9482](https://github.com/NVIDIA/Megatron-LM/pull/9482).
+Merge that Core change and adopt it through Bridge's normal dependency update before
+merging this integration; this PR does not change Bridge's Core dependency pins.
+Ordinary groups still come from the existing MPU bootstrap, and AG handles have no MPU accessor. When reusing an
+initialized standard Core grid with this option, pass the retained collection as `pg_collection` to
+`initialize_megatron`; otherwise initialization fails rather than allocating duplicates.
+
+The option only creates and wires the communicators. The FSDP/optimizer overlap
+configuration must still select parameter-gather overlap for them to provide a
+performance benefit.
+
 ## Compatibility and Caveats
 
 At the configuration level, Megatron FSDP is intended to work with:

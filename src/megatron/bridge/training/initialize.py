@@ -70,6 +70,7 @@ def initialize_megatron(
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     restart_store: Optional[torch.distributed.Store] = None,
+    pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> Callable[[], None] | ProcessGroupCollection | None:
     """Initialize Megatron core components and distributed setup.
 
@@ -83,6 +84,7 @@ def initialize_megatron(
         get_embedding_ranks: Optional function to determine embedding layer ranks.
         get_position_embedding_ranks: Optional function to determine position embedding ranks.
         restart_store: Optional store for in-process restart.
+        pg_collection: Retained collection when reusing an initialized standard Core grid.
 
     Returns:
         An optional callable to finish MPU initialization if lazy_mpu_init is True,
@@ -145,6 +147,7 @@ def initialize_megatron(
         skip_mpu_initialization=skip_mpu_initialization,
         restart_store=restart_store,
         use_inprocess_restart=use_inprocess_restart,
+        pg_collection=pg_collection,
     )
 
     # Compile dataset helpers after distributed initialization
@@ -176,6 +179,7 @@ def torch_dist_init(
     skip_mpu_initialization: bool,
     restart_store: Optional[torch.distributed.Store] = None,
     use_inprocess_restart: bool = False,
+    pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> Callable[[], None] | ProcessGroupCollection | None:
     """Initialize torch.distributed and dependent components.
 
@@ -202,6 +206,7 @@ def torch_dist_init(
     set_default_log_ranks({0})
 
     def finish_mpu_init() -> ProcessGroupCollection:
+        nonlocal pg_collection
         # Pytorch distributed.
         pg_collection = _initialize_distributed(
             model_config=model_config.transformer
@@ -213,6 +218,7 @@ def torch_dist_init(
             get_position_embedding_ranks=get_position_embedding_ranks,
             restart_store=restart_store,
             use_inprocess_restart=use_inprocess_restart,
+            pg_collection=pg_collection,
         )
 
         # Random seeds for reproducibility.
@@ -413,6 +419,7 @@ def _create_pg_collection(
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
+    create_all_gather_group: bool = False,
     world_size: int = None,
     rank_offset: int = None,
     save_grid: bool = False,
@@ -505,7 +512,7 @@ def _create_pg_collection(
     embd_pg = None
     pos_embd_pg = None
     # Enumerate ranks per PP group
-    pp_rank_lists = grid._gen_rank_enum(["pp"])
+    pp_rank_lists = grid.get_rank_enum(["pp"])
     # Determine embedding ranks for each pp group
     embedding_rank_lists: list[list[int]] = []
     pos_embedding_rank_lists: list[list[int]] = []
@@ -540,6 +547,29 @@ def _create_pg_collection(
         # combine tp-ep-pp ranks across the intra-partial DP slice.
         intra_dist_opt_pg = expert_grid.create_pg(["tp", "ep", inner_dp_dim, "pp"])
 
+    # Separate communicators let parameter all-gather overlap gradient reduce-scatter.
+    dp_cp_ag_pg = None
+    expt_dp_ag_pg = None
+    if create_all_gather_group:
+        # create_pg rejects duplicate dimensions; use the public rank enumeration
+        # to create another communicator with the existing group's membership.
+        dp_cp_rank_lists = grid.get_rank_enum(["dp", "cp"])
+        if dp_cp_rank_lists:
+            dp_cp_ag_pg, _ = torch.distributed.new_subgroups_by_enumeration(
+                dp_cp_rank_lists,
+                backend="nccl",
+                group_desc="DATA_PARALLEL_GROUP_WITH_CP_AG",
+            )
+
+        if ep_size > 1:
+            expt_dp_rank_lists = expert_grid.get_rank_enum(dp_group_dims)
+            if expt_dp_rank_lists:
+                expt_dp_ag_pg, _ = torch.distributed.new_subgroups_by_enumeration(
+                    expt_dp_rank_lists,
+                    backend="nccl",
+                    group_desc="EXPERT_DATA_PARALLEL_GROUP_AG",
+                )
+
     # Build ProcessGroupCollection with available groups.
     pg_collection = ProcessGroupCollection(
         tp=tp_pg,
@@ -557,7 +587,9 @@ def _create_pg_collection(
         tp_dp_cp=tp_dp_cp_pg,
         dp=dp_pg,
         dp_cp=dp_cp_pg,
+        dp_cp_ag=dp_cp_ag_pg,
         expt_dp=expt_dp_pg,
+        expt_dp_ag=expt_dp_ag_pg,
         intra_dp_cp=dp_cp_pg,
         intra_expt_dp=intra_expt_dp_pg if intra_expt_dp_pg is not None else expt_dp_pg,
         inter_dist_opt=inter_dist_opt_pg,
@@ -573,6 +605,7 @@ def _create_dist_train_pgs(
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
+    create_all_gather_group: bool = False,
 ) -> DistTrainProcessGroupCollection:
     """Create process group collections for vision and language models for dist train."""
     vision_model_config = copy(model_config)
@@ -595,6 +628,7 @@ def _create_dist_train_pgs(
         world_size=model_config.dist_train.vision_world_size,
         rank_offset=0,
         save_grid=True,
+        create_all_gather_group=create_all_gather_group,
     )
     language_pg_collection = _create_pg_collection(
         language_model_config,
@@ -604,6 +638,7 @@ def _create_dist_train_pgs(
         world_size=model_config.dist_train.language_world_size,
         rank_offset=model_config.dist_train.vision_world_size,
         save_grid=True,
+        create_all_gather_group=create_all_gather_group,
     )
     grid_dict = {"vision_module": vision_model_config.grid, "language_module": language_model_config.grid}
 
@@ -709,6 +744,7 @@ def _initialize_distributed(
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
     restart_store: Optional[torch.distributed.Store] = None,
     use_inprocess_restart: bool = False,
+    pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> ProcessGroupCollection:
     """Initialize torch.distributed and core model parallel."""
 
@@ -786,6 +822,8 @@ def _initialize_distributed(
             raise RuntimeError("GTP requires TransformerEngine >= 2.19.")
 
     if dist_config.use_decentralized_pg:
+        if pg_collection is not None:
+            raise ValueError("A retained pg_collection is only supported for the standard Core grid")
         # Use HyperCommGrid to create local parallel groups passed through functions
         # instead of relying on mcore's global parallel state (mpu) variables.
         parallel_state._set_global_memory_buffer()
@@ -795,6 +833,7 @@ def _initialize_distributed(
                 num_distributed_optimizer_instances,
                 get_embedding_ranks=get_embedding_ranks,
                 get_position_embedding_ranks=get_position_embedding_ranks,
+                create_all_gather_group=dist_config.create_all_gather_group,
             )
             return pg_collection
         pg_collection = _create_pg_collection(
@@ -802,6 +841,7 @@ def _initialize_distributed(
             num_distributed_optimizer_instances,
             get_embedding_ranks=get_embedding_ranks,
             get_position_embedding_ranks=get_position_embedding_ranks,
+            create_all_gather_group=dist_config.create_all_gather_group,
         )
         if get_rank_safe() == 0:
             tp = int(model_config.tensor_model_parallel_size)
@@ -814,6 +854,8 @@ def _initialize_distributed(
         # Use the original mcore parallel_state.initialize_model_parallel approach
         if parallel_state.model_parallel_is_initialized():
             print("model parallel is already initialized")
+            if pg_collection is None:
+                pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         else:
             # Guard for main/dev branch submodule compatibility while Bridge pins
             # MCore commits across the Dynamic CP rename.
@@ -834,7 +876,7 @@ def _initialize_distributed(
                 if parameter in _init_mp_params:
                     _optional_kwargs[parameter] = getattr(model_config, attribute, 1)
 
-            parallel_state.initialize_model_parallel(
+            pg_collection = parallel_state.initialize_model_parallel(
                 tensor_model_parallel_size=model_config.tensor_model_parallel_size,
                 pipeline_model_parallel_size=model_config.pipeline_model_parallel_size,
                 virtual_pipeline_model_parallel_size=model_config.virtual_pipeline_model_parallel_size,
@@ -851,6 +893,7 @@ def _initialize_distributed(
                 get_position_embedding_ranks=get_position_embedding_ranks,
                 create_gloo_process_groups=dist_config.use_gloo_process_groups,
                 use_sharp=dist_config.use_sharp,
+                create_all_gather_group=dist_config.create_all_gather_group,
                 high_priority_stream_groups=dist_config.high_priority_stream_groups,
                 sharp_enabled_group=dist_config.sharp_enabled_group,
                 **_optional_kwargs,
@@ -864,8 +907,15 @@ def _initialize_distributed(
                     f"> initialized pipeline model parallel with size "
                     f"{parallel_state.get_pipeline_model_parallel_world_size()}"
                 )
-        # Return a ProcessGroupCollection using mpu process groups
-        return ProcessGroupCollection.use_mpu_process_groups()
+
+        if dist_config.create_all_gather_group:
+            needs_expert_ag = (getattr(model_config, "expert_model_parallel_size", 1) or 1) > 1
+            if pg_collection.dp_cp_ag is None or (needs_expert_ag and pg_collection.expt_dp_ag is None):
+                raise RuntimeError(
+                    "All-gather groups were requested but are missing from the process-group collection. "
+                    "Pass the retained caller-owned pg_collection when reusing its parallel state."
+                )
+        return pg_collection
 
 
 def _set_random_seed(
