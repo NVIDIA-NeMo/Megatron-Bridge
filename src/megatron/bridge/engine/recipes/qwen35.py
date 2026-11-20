@@ -29,7 +29,7 @@ from megatron.training.models.base import ModelConfig
 from transformers import AutoConfig
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.engine.recipes.base import TrainingRecipe
+from megatron.bridge.engine.recipes.base import BRIDGE_LORA_TARGET_MODULES, TrainingRecipe
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import DistributedDataParallelConfig, OptimizerConfig, RNGConfig
 from megatron.bridge.training.mixed_precision import bf16_mixed
@@ -223,4 +223,7 @@ def _rl_recipe(
         pad_to_max_length=pad_to_max_length,
         hf_path=hf_path,
         hf_revision=hf_revision,
+        # Bridge's defaults cover the full-attention layers and the MoE experts; the GatedDeltaNet
+        # linear-attention layers project through in_proj and out_proj instead. The router is never a target.
+        lora_target_modules=[*BRIDGE_LORA_TARGET_MODULES, "in_proj", "out_proj"],
     )

@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import datetime
+import importlib
 import os
+import re
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import megatron.core.parallel_state as parallel_state
@@ -21,7 +24,9 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+from megatron.core.distributed.finalize_model_grads import _update_router_expert_bias
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.moe.router import TopKRouter
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft import canonical_lora as canonical_lora_module
@@ -1680,3 +1685,141 @@ class TestVLMLoRA:
                 )
             for param in model.language_model.parameters():
                 assert param.requires_grad == (not freeze_language), f"Language params wrong for config {test_cases}"
+
+
+class _CpuRouter(TopKRouter):
+    """A Megatron-Core ``TopKRouter`` for ``isinstance`` and the finalize update, built without its CUDA
+    buffers and config; ``expert_bias`` and ``qb_beta`` are what the two balancing modes register."""
+
+    def __init__(self, *, expert_bias: bool = False, quantile_balancing: bool = False):
+        nn.Module.__init__(self)
+        self.weight = nn.Parameter(torch.zeros(2, 4))
+        self.frozen_expert_bias = False
+        self.expert_bias = torch.zeros(2) if expert_bias else None
+        self.local_tokens_per_expert = torch.tensor([3, 1]) if expert_bias else None
+        self.qb_beta = torch.zeros(2) if quantile_balancing else None
+
+
+class _MoeLayer(nn.Module):
+    def __init__(self, router: _CpuRouter):
+        super().__init__()
+        self.self_attention = nn.Module()
+        self.self_attention.linear_qkv = nn.Linear(4, 6, bias=False)
+        self.mlp = nn.Module()
+        self.mlp.router = router
+        self.mlp.linear_fc1 = nn.Linear(4, 8, bias=False)
+
+
+class TestLoRAFreezeRouting:
+    """``freeze_routing`` keeps MoE routing the base model's while the adapters train."""
+
+    @pytest.mark.parametrize("pattern", ["router", "*.rout*", "mlp.r*", "*"])
+    def test_rejects_targets_that_resolve_to_a_router(self, pattern):
+        layer = _MoeLayer(_CpuRouter())
+        lora = LoRA(target_modules=["linear_qkv", pattern], dim=2, alpha=4, freeze_routing=True)
+        with pytest.raises(ValueError, match=re.escape("matches 1 router(s), e.g. mlp.router")):
+            lora([layer], training=True)
+        # Refused before anything was wrapped or frozen.
+        assert type(layer.self_attention.linear_qkv) is nn.Linear
+        assert all(parameter.requires_grad for parameter in layer.parameters())
+
+    def test_rejects_a_quantile_balancing_qb_beta(self):
+        lora = LoRA(target_modules=["linear_qkv"], dim=2, alpha=4, freeze_routing=True)
+        with pytest.raises(NotImplementedError, match="quantile-balancing qb_beta"):
+            lora([_MoeLayer(_CpuRouter(quantile_balancing=True))], training=True)
+
+    def test_freezes_the_expert_bias_against_megatron_cores_update(self, monkeypatch):
+        # Megatron-Core's update reduces the token counts across ranks; here every update adds 1. (The package
+        # re-exports the finalize function under its module's name, so patch the module object.)
+        monkeypatch.setattr(
+            importlib.import_module("megatron.core.distributed.finalize_model_grads"),
+            "get_updated_expert_bias",
+            lambda tokens, bias, rate, tp_dp_cp_group=None: bias + 1.0,
+        )
+        config = SimpleNamespace(moe_router_bias_update_rate=1e-3)
+        router = _CpuRouter(expert_bias=True)
+        lora = LoRA(target_modules=["linear_qkv", "linear_fc1"], dim=2, alpha=4, freeze_routing=True)
+        model = lora([_MoeLayer(router)], training=True)
+        assert model[0].mlp.router is router and router.training and router.frozen_expert_bias
+        assert isinstance(model[0].mlp.linear_fc1, LoRALinear)  # LoRA itself was applied
+        _update_router_expert_bias(model, config)
+        assert torch.equal(router.expert_bias, torch.zeros(2))
+        # Bridge's default leaves routing training: the same update moves the bias.
+        default = LoRA(target_modules=["linear_qkv", "linear_fc1"], dim=2, alpha=4)
+        unfrozen = default([_MoeLayer(_CpuRouter(expert_bias=True))], training=True)
+        assert not unfrozen[0].mlp.router.frozen_expert_bias
+        _update_router_expert_bias(unfrozen, config)
+        assert torch.equal(unfrozen[0].mlp.router.expert_bias, torch.ones(2))
+
+
+class _TwoTowers(nn.Module):
+    """The same linear names in two parts, as a vision tower repeats the language model's layer names."""
+
+    def __init__(self):
+        super().__init__()
+        for part in ("language", "vision"):
+            tower = nn.Module()
+            tower.linear_qkv = nn.Linear(4, 6, bias=False)
+            tower.linear_fc1 = nn.Linear(4, 8, bias=False)
+            self.add_module(part, tower)
+
+
+def _lora_wrapped(model: nn.Module) -> list[str]:
+    return sorted(name for name, module in model.named_modules() if isinstance(module, LoRALinear))
+
+
+class TestLoRASkipFrozenModules:
+    """``skip_frozen_modules`` keeps the adapters off the modules frozen before LoRA was applied."""
+
+    def test_leaves_out_the_modules_frozen_before_lora(self):
+        model = _TwoTowers()
+        model.vision.requires_grad_(False)  # as a recipe's freeze flag does when the model is built
+        LoRA(target_modules=["linear_qkv", "linear_fc1"], dim=2, alpha=4, skip_frozen_modules=True)(model)
+        assert _lora_wrapped(model) == ["language.linear_fc1", "language.linear_qkv"]
+        trainable = sorted(name for name, parameter in model.named_parameters() if parameter.requires_grad)
+        assert trainable == [
+            "language.linear_fc1.adapter.linear_in.weight",
+            "language.linear_fc1.adapter.linear_out.weight",
+            "language.linear_qkv.adapter.linear_in.weight",
+            "language.linear_qkv.adapter.linear_out.weight",
+        ]
+
+    def test_is_off_by_default(self):
+        model = _TwoTowers()
+        model.vision.requires_grad_(False)
+        LoRA(target_modules=["linear_qkv", "linear_fc1"], dim=2, alpha=4)(model)
+        assert _lora_wrapped(model) == [
+            "language.linear_fc1",
+            "language.linear_qkv",
+            "vision.linear_fc1",
+            "vision.linear_qkv",
+        ]
+
+    def test_raises_when_every_matched_module_was_frozen(self):
+        model = _TwoTowers()
+        model.vision.requires_grad_(False)
+        lora = LoRA(target_modules=["vision.*"], dim=2, alpha=4, skip_frozen_modules=True)
+        with pytest.raises(ValueError, match="left out all 2 module.*nothing would be trained"):
+            lora(model)
+
+    def test_only_warns_on_a_pipeline_stage_left_without_adapters(self, monkeypatch, caplog):
+        # Another stage may hold the trained part, so one stage without adapters is not an error.
+        monkeypatch.setattr(parallel_state, "model_parallel_is_initialized", lambda: True)
+        monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_world_size", lambda: 2)
+        model = _TwoTowers()
+        model.vision.requires_grad_(False)
+        with caplog.at_level("WARNING", logger="megatron.bridge.peft.lora"):
+            LoRA(target_modules=["vision.*"], dim=2, alpha=4, skip_frozen_modules=True)(model)
+        assert _lora_wrapped(model) == []
+        assert "this pipeline stage holds no adapters" in caplog.text
+
+    def test_reads_what_is_frozen_on_each_call(self):
+        lora = LoRA(target_modules=["linear_qkv"], dim=2, alpha=4, skip_frozen_modules=True)
+        frozen_vision = _TwoTowers()
+        frozen_vision.vision.requires_grad_(False)
+        lora(frozen_vision)
+        trained_everywhere = _TwoTowers()
+        lora(trained_everywhere)
+        assert _lora_wrapped(frozen_vision) == ["language.linear_qkv"]
+        assert _lora_wrapped(trained_everywhere) == ["language.linear_qkv", "vision.linear_qkv"]
+        assert lora._frozen_before_peft == set() and lora._skipped_frozen == []

@@ -294,21 +294,54 @@ class NormalizationPolicy(str, Enum):
 
 @dataclass
 class LoraConfig:
-    """LoRA adapter settings for a trainable engine. Not supported yet: ``from_recipe(lora=...)`` raises.
+    """LoRA adapter settings for a trainable language-model engine (``from_recipe(lora=...)``).
+
+    Lowered to Bridge's ``LoRA`` by ``megatron.bridge.engine.lora.build_lora`` and applied with Bridge's
+    PEFT hook: ``rank`` becomes its ``dim`` and the adapter output is scaled by ``alpha / rank``. The
+    base model is frozen, so the gradient buffers, the optimizer and ``save_state`` hold the adapters
+    only; ``forward_only(disable_adapters=True)`` scores the base model, and ``export`` merges the
+    adapters into the base weights unless ``adapter_only=True``. With ``freeze_routing`` on (the default)
+    MoE routing stays the base model's, so ``disable_adapters`` scores exactly the base model and an
+    adapter-only export holds everything training changed. ``save_state`` records these settings and
+    ``load_state`` requires them to match.
 
     Attributes:
         rank: strict. Adapter rank.
-        alpha: strict. Adapter scaling.
-        target_modules: strict. Megatron linear-module names the adapters attach to.
-        dropout: strict. Adapter dropout.
+        alpha: strict. Adapter scaling numerator; the adapter output is scaled by ``alpha / rank``.
+        target_modules: strict. Megatron module names or ``*`` wildcards the adapters attach to, matched
+            as Bridge's LoRA matches them, or ``None`` for the recipe's ``lora_target_modules``. A plain
+            name matches its module anywhere: on a vision-language model also in the vision tower and
+            the patch mergers (``skip_frozen_modules`` leaves out the parts the recipe freezes). Patterns
+            such as ``language_model.*.linear_qkv`` keep the adapters on the language model.
+        dropout: strict. Adapter dropout probability, in ``[0, 1)``.
+        expert_adapters: strict. Layout of the adapters on grouped MoE expert linears, one of Bridge's
+            three (``LORA_EXPERT_ADAPTER_LAYOUTS``): ``"shared"`` (Bridge's default: one adapter used by
+            every expert), ``"per_expert"`` (one adapter per expert) or ``"outer_shared"`` (the gate/up
+            ``lora_A`` and down ``lora_B`` shared across experts, the other two factors per expert).
+        freeze_routing: strict. Bridge LoRA's ``freeze_routing``: keep MoE routing the base model's. No
+            router may be a target, a router with a quantile-balancing ``qb_beta`` is rejected, and the
+            routers' expert bias stops updating. Off, as in Bridge's default LoRA, routers can be targets
+            and an expert bias keeps updating (saved with the adapters, left out of an adapter-only export).
+        skip_frozen_modules: strict. Bridge LoRA's ``skip_frozen_modules``: leave out the target modules
+            that were frozen before LoRA was applied, such as the parts a vision-language recipe's
+            ``freeze_*`` flags freeze, so the adapters go only where the recipe trains.
     """
 
     rank: int
     alpha: float
-    target_modules: list[str] = field(
-        default_factory=lambda: ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
-    )
+    target_modules: list[str] | None = None
     dropout: float = 0.0
+    expert_adapters: str = "shared"
+    freeze_routing: bool = True
+    skip_frozen_modules: bool = True
+
+
+# LoraConfig.expert_adapters -> Bridge LoRA's (share_expert_adapters, experts_shared_outer_loras).
+LORA_EXPERT_ADAPTER_LAYOUTS: dict[str, tuple[bool, bool]] = {
+    "shared": (True, False),
+    "per_expert": (False, False),
+    "outer_shared": (True, True),
+}
 
 
 @dataclass

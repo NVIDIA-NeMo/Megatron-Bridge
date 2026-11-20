@@ -21,10 +21,10 @@ import torch.nn as nn
 from megatron.core import parallel_state
 from megatron.core.optimizer import OptimizerConfig, ParamKey, get_standard_config_overrides
 from megatron.core.optimizer_param_scheduler import ParamGroupOverride
-from megatron.core.transformer.moe.router import TopKRouter
+from megatron.core.transformer.moe.router import Router, TopKRouter
 from megatron.core.utils import unwrap_model
 
-from megatron.bridge.peft.base import PEFT
+from megatron.bridge.peft.base import PEFT, ModelType
 from megatron.bridge.peft.lora_layers import (
     LinearAdapter,
     LoRALinear,
@@ -47,6 +47,21 @@ from megatron.bridge.peft.utils import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _model_chunks(model: ModelType) -> list[nn.Module]:
+    """The modules ``PEFT._walk_model`` walks: a list's chunks, a DDP model's module, or the model itself."""
+    if isinstance(model, list):
+        return list(model)
+    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+        return [model.module]
+    return [model]
+
+
+def _is_frozen(module: nn.Module) -> bool:
+    """Whether ``module`` has parameters and trains none of them."""
+    parameters = list(module.parameters())
+    return bool(parameters) and not any(parameter.requires_grad for parameter in parameters)
 
 
 def get_lora_plus_config_overrides(
@@ -140,6 +155,19 @@ class LoRA(PEFT, ModuleMatcher):
             #21466). Default False preserves the adapter layout selected by
             ``share_expert_adapters``.
         use_transformer_engine_op_fuser (bool): Enable Transformer Engine fusion only for LoRA wrappers.
+        freeze_routing (bool): Keep MoE routing exactly the base model's while the adapters train. LoRA then
+            raises if a target resolves to a router, or if a router keeps a quantile-balancing ``qb_beta``
+            (Megatron-Core updates it with no switch to stop it), and sets every router's
+            ``frozen_expert_bias``, so ``finalize_model_grads`` stops moving the expert bias (aux-loss-free
+            or global-batch quantile balancing). Disabling the adapters then gives back the base model
+            exactly, and the adapters hold everything training changed. Defaults to False: routers can be
+            targets and the expert bias keeps updating.
+        skip_frozen_modules (bool): Leave out the target modules whose parameters were all frozen before LoRA
+            was applied, such as the parts a vision-language model's ``freeze_language_model``,
+            ``freeze_vision_model`` and ``freeze_vision_projection`` freeze when it is built, so adapters
+            go only where the recipe trains. Raises if every matched module was frozen; with pipeline
+            parallelism, a stage left without adapters only logs a warning, as other stages may hold them.
+            Defaults to False: every matched module gets an adapter.
     """
 
     target_modules: List[str] = field(
@@ -158,6 +186,98 @@ class LoRA(PEFT, ModuleMatcher):
     share_expert_adapters: bool = True
     experts_shared_outer_loras: bool = False
     use_transformer_engine_op_fuser: bool = False
+    freeze_routing: bool = False
+    skip_frozen_modules: bool = False
+
+    # Runtime state of one ``__call__`` for ``skip_frozen_modules``; not serialized.
+    _frozen_before_peft: set[int] = field(default_factory=set, init=False, repr=False)
+    _skipped_frozen: list[str] = field(default_factory=list, init=False, repr=False)
+
+    def __call__(self, model: ModelType, training: bool = True) -> ModelType:
+        """Apply LoRA to the model, honoring ``freeze_routing`` and ``skip_frozen_modules``.
+
+        The routing checks run before any module is wrapped; which modules are frozen is read before
+        ``PEFT.__call__`` freezes the base, so it reflects what the model trained before LoRA.
+
+        Args:
+            model: The model or list of model chunks to adapt.
+            training: Whether the model will be trained.
+
+        Returns:
+            The model with LoRA applied.
+
+        Raises:
+            ValueError: With ``freeze_routing``, if a target resolves to an MoE router; with
+                ``skip_frozen_modules`` and no pipeline parallelism, if every module the targets matched
+                was frozen.
+            NotImplementedError: With ``freeze_routing``, if a router keeps a quantile-balancing ``qb_beta``.
+        """
+        if self.freeze_routing:
+            self._check_routing_can_stay_base(model)
+        if self.skip_frozen_modules:
+            self._frozen_before_peft = {
+                id(module) for chunk in _model_chunks(model) for module in chunk.modules() if _is_frozen(module)
+            }
+        try:
+            model = super().__call__(model, training=training)
+            skipped = list(self._skipped_frozen)
+        finally:
+            self._frozen_before_peft = set()
+            self._skipped_frozen = []
+        if skipped and not any(
+            isinstance(module, (LoRALinear, LoRATopKRouter))
+            for chunk in _model_chunks(model)
+            for module in chunk.modules()
+        ):
+            message = (
+                f"skip_frozen_modules left out all {len(skipped)} module(s) target_modules={list(self.target_modules)} "
+                f"matched, because they were frozen before LoRA (e.g. {skipped[0]})"
+            )
+            if (
+                parallel_state.model_parallel_is_initialized()
+                and parallel_state.get_pipeline_model_parallel_world_size() > 1
+            ):
+                logger.warning("%s: this pipeline stage holds no adapters.", message)
+            else:
+                raise ValueError(f"{message}: nothing would be trained.")
+        if self.freeze_routing:
+            for chunk in _model_chunks(model):
+                for module in chunk.modules():
+                    if hasattr(module, "frozen_expert_bias"):
+                        module.frozen_expert_bias = True
+        return model
+
+    def _check_routing_can_stay_base(self, model: ModelType) -> None:
+        """Raise if a target resolves to an MoE router or a router keeps a quantile-balancing ``qb_beta``.
+
+        Matching goes through ``match``, so names and wildcards resolve as they will when LoRA wraps the
+        model (``PEFT.__call__`` then resets the match bookkeeping this walk records).
+        """
+        self._init_target_match_state()
+        matched: list[str] = []
+        quantile_balanced: list[str] = []
+
+        def check(module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
+            if isinstance(module, Router):
+                full_name = f"{prefix}.{name}" if prefix else str(name)
+                if self.match(module, name, prefix) is not None:
+                    matched.append(full_name)
+                if getattr(module, "qb_beta", None) is not None:
+                    quantile_balanced.append(full_name)
+            return module
+
+        self._walk_model(model, check)
+        if matched:
+            raise ValueError(
+                f"freeze_routing keeps MoE routing the base model's, but target_modules={list(self.target_modules)} "
+                f"matches {len(matched)} router(s), e.g. {matched[0]}."
+            )
+        if quantile_balanced:
+            raise NotImplementedError(
+                "freeze_routing does not support routers with a quantile-balancing qb_beta: finalize_model_grads "
+                f"updates it during training (e.g. {quantile_balanced[0]}), so routing would drift from the base "
+                "model."
+            )
 
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
@@ -178,6 +298,9 @@ class LoRA(PEFT, ModuleMatcher):
 
         if (ans := self.match(module, name, prefix)) is not None:
             _, full_name = ans
+            if id(module) in self._frozen_before_peft:
+                self._skipped_frozen.append(full_name)
+                return module
             if isinstance(module, nn.Linear) and not is_modelopt_linear(module):
                 adapter = LinearAdapter(
                     module,

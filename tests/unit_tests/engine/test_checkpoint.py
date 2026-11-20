@@ -74,6 +74,7 @@ def _engine_with_window(open_window: bool) -> TrainingEngine:
     engine._window = AccumulationWindow()
     engine._pending_save = None
     engine._async_checkpoint_state = None
+    engine._peft = None
     if open_window:
         engine._window.add(num_loss_tokens=1, num_samples=1, loss_sum=0.0)
     return engine
@@ -99,7 +100,8 @@ def test_save_and_load_state_delegate_and_track_pending_saves(monkeypatch):
     waits = []
     saves = []
 
-    def fake_save(recipe, model, optimizer, *, step, root, user_state, async_save, async_state, pg_collection):
+    def fake_save(recipe, model, optimizer, *, step, root, user_state, async_save, async_state, pg_collection, peft):
+        assert peft is None
         saves.append((step, root, user_state, async_save))
         waiter = (lambda: waits.append(root)) if async_save else None
         return CheckpointHandle(path=f"{root}/iter_{step:07d}", _waiter=waiter)
@@ -107,7 +109,7 @@ def test_save_and_load_state_delegate_and_track_pending_saves(monkeypatch):
     monkeypatch.setattr("megatron.bridge.engine.engine.save_engine_state", fake_save)
     monkeypatch.setattr(
         "megatron.bridge.engine.engine.load_engine_state",
-        lambda recipe, model, optimizer, *, path: (9, {"from": path}),
+        lambda recipe, model, optimizer, *, path, peft: (9, {"from": path}),
     )
     first = engine.save_state("/a", user_state={"k": 1}, async_save=True)
     assert first.path == "/a/iter_0000003" and engine._pending_save is first

@@ -44,7 +44,8 @@ import torch
 import yaml
 
 import megatron.bridge.engine.recipes as recipes
-from megatron.bridge.engine import TrainingEngine
+from megatron.bridge.engine import LoraConfig, TrainingEngine
+from megatron.bridge.engine.datum import LORA_EXPERT_ADAPTER_LAYOUTS
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 from megatron.bridge.utils.common_utils import print_rank_0
 
@@ -61,8 +62,37 @@ def _parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--hardware", default=None, help="GPU family for --model, e.g. GB300 (default: detect)")
     parser.add_argument("--checkpoint", default=None, help="Pretrained Megatron/HF checkpoint for both engines")
     parser.add_argument("--skip-reference", action="store_true", help="Only build the trainable actor")
+    parser.add_argument("--lora-rank", type=int, default=0, help="Build the actor with LoRA of this rank (0: off)")
+    parser.add_argument("--lora-alpha", type=float, default=64.0, help="LoRA scaling numerator (alpha / rank)")
+    parser.add_argument(
+        "--lora-expert-adapters",
+        choices=sorted(LORA_EXPERT_ADAPTER_LAYOUTS),
+        default="shared",
+        help="LoRA layout on grouped MoE expert linears (LoraConfig.expert_adapters)",
+    )
     args, overrides = parser.parse_known_args()
     return args, overrides
+
+
+def _lora(args: argparse.Namespace) -> LoraConfig | None:
+    if not args.lora_rank:
+        return None
+    return LoraConfig(rank=args.lora_rank, alpha=args.lora_alpha, expert_adapters=args.lora_expert_adapters)
+
+
+def _check_lora_actor(model: list[torch.nn.Module]) -> None:
+    """A LoRA actor trains its adapters only; print how many adapters each target family received."""
+    trainable = [name for chunk in model for name, p in chunk.named_parameters() if p.requires_grad]
+    stray = [name for name in trainable if ".adapter." not in name]
+    if not trainable or stray:
+        raise RuntimeError(f"LoRA actor: {len(trainable)} trainable tensors, non-adapter ones: {stray[:5]}")
+    families: dict[str, int] = {}
+    for name in trainable:
+        if name.endswith("linear_in.weight") or name.endswith(".linear_in.weight0"):
+            base = name.split(".adapter.")[0]
+            family = ".".join(part for part in base.split(".")[-2:] if not part.isdigit())
+            families[family] = families.get(family, 0) + 1
+    print_rank_0(f"[actor] LoRA: {len(trainable)} trainable tensors, all adapters; adapters per module: {families}")
 
 
 def _count_params(model: list[torch.nn.Module]) -> tuple[int, int]:
@@ -125,13 +155,16 @@ def _make_builder(args: argparse.Namespace, overrides: list[str]):
                 checkpoint_path=args.checkpoint,
                 overrides=override_dict,
                 trainable=trainable,
+                lora=_lora(args) if trainable else None,
             )
 
         return build
     recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
     if overrides:
         recipe = process_config_with_overrides(recipe, cli_overrides=overrides)
-    return lambda trainable: TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=trainable)
+    return lambda trainable: TrainingEngine.from_recipe(
+        recipe, checkpoint_path=args.checkpoint, trainable=trainable, lora=_lora(args) if trainable else None
+    )
 
 
 def main() -> None:
@@ -149,6 +182,8 @@ def main() -> None:
     print_rank_0(
         f"[actor] optimizer={type(actor.optimizer).__name__}; param checksum={_param_checksum(actor.model):.6e}"
     )
+    if args.lora_rank:
+        _check_lora_actor(actor.model)
 
     actor_chunk_ref = weakref.ref(actor.model[0])
     if args.skip_reference:

@@ -78,7 +78,9 @@ takes the value per step.
 
 - `--save-at N --save-dir ROOT [--async-save]` saves an engine checkpoint after step N;
   `--resume-from ROOT` continues a run (the data cursor travels in `user_state`).
-- `--export-dir DIR` writes an HF checkpoint at the end and verifies it.
+- `--export-dir DIR` writes an HF checkpoint at the end and verifies it. With `--lora-rank` it also
+  writes and checks an adapter-only export in `DIR-adapter`, which records `--base-model-name-or-path`
+  (the HF model `--checkpoint` holds) as the adapters' base.
 - `--check-accumulation` runs the strict accumulation gate instead: one update as 1 call versus 4
   calls from identical state, comparing gradient buffers, gradient norms and master parameters.
 
@@ -175,6 +177,11 @@ Takes every `grpo_vllm.py` argument plus:
 
 Round lines are `[ppo] {...}` and add `value_abs_error`, `value_clipped_fraction`,
 `critic_grad_norms` and `kl_per_token`.
+
+`--lora-rank R --lora-alpha A` (both RL examples) trains LoRA adapters on the frozen policy instead of
+its full weights; the agreed setting is rank 32 with alpha 64. The weight refresh still sends vllm full
+tensors, with the adapters merged in. In `ppo_vllm.py` no reference engine is built: the policy scores
+the reference with `forward_only(disable_adapters=True)`, after the critic's update.
 
 ## Shared modules
 

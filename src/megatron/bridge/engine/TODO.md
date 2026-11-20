@@ -6,7 +6,8 @@ name or from a recipe, THD packing with CP sharding, `forward_only` logprobs and
 `forward_backward` with the predefined losses (cross entropy, importance sampling, PPO clip, value
 loss) and custom losses, gradient accumulation across calls, `optim_step`, synchronous and asynchronous
 checkpoints, HF export (directory and streaming), `cpu()`/`cuda()`, rollout routing replay for MoE
-models, several engines sharing one runtime.
+models, LoRA on the policy (adapter-only checkpoints, merged or adapter-only export), several engines
+sharing one runtime.
 
 ## Construction and recipes
 
@@ -73,12 +74,60 @@ the text recipe. Missing:
 
 ## LoRA
 
-- `lora=` on construction and `forward_only(disable_adapters=True)` raise (`TODO(lora)`). Agreed design:
-  Bridge `LoRA` applied through a pre-wrap hook after the base weights load, targets = Bridge's default
-  four linears plus the GDN `in_proj`/`out_proj`, router excluded, default rank 32 / alpha 64, the
-  expert-adapter gradient sync for expert parallelism, adapter-only checkpoints, merged weights in the
-  streaming export, and the reference model in the examples becoming the policy with adapters off.
-  Adapter-only refit of the inference engine is a follow-up.
+- **LoRA on the critic** (`TODO(lora-critic)`): `lora=` with `output_head="value"` raises. Bridge's LoRA
+  freezes every base parameter, the newly built value head included, and the adapter-only checkpoint
+  keeps trainable tensors only, so the head has to be unfrozen after LoRA is applied and recorded with
+  the adapters. The value-head and LoRA hooks would also each load the base, so a LoRA critic needs a
+  single load (base weights, then the value head, then LoRA). `ppo_vllm.py` needs a critic option too.
+- **Multi-LoRA**: an engine trains one adapter set. Bridge's `MultiLoRA` (`peft/multi_lora.py`) already
+  wraps each target with several adapter slots, picks the slot per token segment
+  (`set_tokens_per_adapter_slot`, with slot routing through the MoE dispatcher) and manages the slots
+  (`init_adapter_slot`, `load_adapter`). The engine still needs a config for several adapters, an adapter
+  per `Datum` with micro-batches ordered by adapter, and per-adapter optimizer state, checkpoints and
+  export.
+- **User-supplied adapters** (for RL as a service): users run one base model with different adapters
+  and manage those adapters in their own way. The adapter code stays Bridge's; a user's own adapter
+  implementation would need a fork of Bridge. Today an engine trains one adapter set, fresh or resumed
+  from its own checkpoint, and `export(adapter_only=True)` already hands it out. Missing: loading
+  adapter weights the user supplies into a running engine and swapping them for another set without
+  rebuilding the base (Bridge's `MultiLoRA` already loads and clears adapters per slot), with a check
+  that their rank, alpha, targets and expert layout match the `LoraConfig`; optimizer state kept per
+  adapter across swaps; and an HF PEFT import for adapters trained elsewhere (Bridge loads Megatron
+  adapter checkpoints with `load_peft_adapter_checkpoint` and exports HF adapters, but has no HF adapter
+  import).
+- **Adapter-only refit** (`TODO(lora-refit)`): the examples refresh vllm with merged weights,
+  `bf16(W + s B A)`, which drops update elements below half a bf16 step of W. Refreshing vllm with the
+  adapters instead needs a refresh that loads adapter tensors without reloading the weights, the expert
+  adapters in a layout vllm loads (vllm 0.29 applies LoRA to Qwen3.5, GDN projections and MoE experts
+  included, with per-expert adapters by default and outer-shared ones with `enable_moe_shared_loras`;
+  Bridge's adapter export has the per-expert, 3D and shared-outer forms), and its decode cost and
+  train/inference gap measured against merged refit.
+- **Unmerged export of outer-shared expert adapters** (`TODO(lora-outer-shared-export)`):
+  `export(adapter_only=True)` raises for `expert_adapters="outer_shared"`. Bridge's shared-outer adapter
+  export names each expert's own factor after that expert's HF tensor, and a checkpoint that packs its
+  experts (Qwen3.5) has one such name for all of them, so the PEFT conversion keeps one expert. It needs
+  the stacked form the other layouts get: one `[experts, ...]` tensor per packed name.
+- **Adapter conversion planning** is redone on every merged streaming export: Bridge rebuilds the
+  adapter tasks, and only the base conversion tasks are cached.
+- **FP32 adapters** (`lora_dtype`): Bridge's `LoRA.lora_dtype` reaches only adapters on plain
+  `torch.nn.Linear`. Adapters on Megatron layers are built in the model's `params_dtype`, and
+  `Float16Module` casts every tensor not marked `keep_in_fp32`, so FP32 adapters need Bridge's adapters to
+  support them first (FP32 weights marked `keep_in_fp32`, and a cast of the BF16 input in their forward).
+  `LoraConfig` does not expose it until then.
+- **LoRA+** (a per-group `max_lr` ratio on `lora_B`) is not reachable from the engine, and
+  `apply_adam_params` scales by `lr_mult` only, so wiring it needs the ratio rule too.
+- **Routing state under LoRA**: `LoraConfig.freeze_routing` (on by default; Bridge's
+  `LoRA.freeze_routing`) holds MoE routing at the base model's. With it off, as in Bridge's default LoRA,
+  a router's expert bias keeps updating (Bridge saves it with the adapters), and so does quantile
+  balancing's `qb_beta`, which Bridge's adapter checkpoint does not keep: on such models
+  `forward_only(disable_adapters=True)` then scores the base weights with the moved state, and
+  `export(adapter_only=True)` leaves that state out.
+- **Vision-language freeze flags**: LoRA freezes every base weight whatever the recipe's `freeze_*`
+  flags say; `LoraConfig.skip_frozen_modules` (on by default; Bridge's `LoRA.skip_frozen_modules`) keeps
+  the adapters off the parts they freeze. Training the unfrozen parts in full is not reachable: Bridge's
+  `VLMLoRA`, which does that, reads a `vision_projection` module that Bridge's Qwen3-VL model does not
+  have.
+- **Not run on GPU yet:** LoRA on the vision-language recipe.
 
 ## State, export and placement
 
