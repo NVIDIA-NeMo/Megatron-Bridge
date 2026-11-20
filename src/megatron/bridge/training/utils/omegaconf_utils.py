@@ -531,8 +531,11 @@ def _restore_excluded_fields(config_obj: Any, excluded_fields: Dict[str, Any]) -
 
             field_name = path_parts[-1]
 
-            # Restore the original callable
-            setattr(current_obj, field_name, original_value)
+            # Restore the original callable; dictionary entries are tracked as "<field>.<key>".
+            if isinstance(current_obj, dict):
+                current_obj[field_name] = original_value
+            else:
+                setattr(current_obj, field_name, original_value)
             logger.debug(f"Restored callable field: {field_path}")
 
         except (AttributeError, TypeError) as e:

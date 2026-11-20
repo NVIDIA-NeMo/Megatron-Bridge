@@ -81,6 +81,14 @@ class ConfigWithCallable:
 
 
 @dataclasses.dataclass
+class ConfigWithDictOfCallables:
+    """Config whose dictionary field holds a callable that OmegaConf must exclude."""
+
+    funcs: Dict[str, Any] = dataclasses.field(default_factory=lambda: {"scale": dummy_function, "value": 42})
+    name: str = "test"
+
+
+@dataclasses.dataclass
 class NestedConfig:
     """Nested config for testing."""
 
@@ -489,6 +497,14 @@ class TestRestoreExcludedFields:
         _restore_excluded_fields(config, excluded)
 
         assert config.with_callable.activation_func == original_func
+
+    def test_dict_entry_restoration(self):
+        """A callable excluded from a dictionary field is restored into that dictionary."""
+        config = ConfigWithDictOfCallables(funcs={"value": 42})
+
+        _restore_excluded_fields(config, {"root.funcs.scale": dummy_function})
+
+        assert config.funcs == {"scale": dummy_function, "value": 42}
 
     def test_invalid_path_handling(self):
         """Test handling of invalid field paths."""
@@ -1111,6 +1127,15 @@ class TestOverridesError:
 # Integration tests
 class TestIntegration:
     """Integration tests for the complete workflow."""
+
+    def test_overrides_keep_callables_in_dict_fields(self):
+        """Overriding any field keeps callables that a dictionary field holds."""
+        config = ConfigWithDictOfCallables()
+
+        process_config_with_overrides(config, cli_overrides=["name=updated"])
+
+        assert config.name == "updated"
+        assert config.funcs == {"scale": dummy_function, "value": 42}
 
     def test_full_workflow(self):
         """Test the complete workflow from dataclass to overrides."""
