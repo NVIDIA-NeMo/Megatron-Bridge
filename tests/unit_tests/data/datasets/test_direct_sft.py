@@ -1,5 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
+import pickle
+
 import pytest
 import torch
 
@@ -134,3 +136,20 @@ def test_direct_sft_dataset_collate_returns_tensors():
     )
 
     assert dataset.collate_fn([dataset[0]])["tokens"].tolist() == [[1, 2]]
+
+
+def test_direct_sft_collate_fn_is_picklable_for_spawned_workers():
+    """DataLoader workers started with "spawn" receive the collate by pickling; a closure cannot be pickled."""
+    dataset = DirectSFTDataset(
+        base_examples=[_example()],
+        target_length=2,
+        processor=_Processor(),
+        collate_impl=_custom_collate,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    restored = pickle.loads(pickle.dumps(dataset.collate_fn))
+
+    assert restored([dataset[0]]) == dataset.collate_fn([dataset[0]])
+    assert restored([dataset[0]]) == {"enable_in_batch_packing": True, "in_batch_packing_pad_to_multiple_of": 4}

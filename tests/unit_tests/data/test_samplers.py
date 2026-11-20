@@ -165,6 +165,28 @@ def test_prefetch_factor_applies_only_to_worker_loaders(
     assert dataloader.prefetch_factor == expected
 
 
+@pytest.mark.parametrize(
+    ("num_workers", "context", "expected"),
+    [(0, None, None), (0, "spawn", None), (2, None, None), (2, "spawn", "spawn"), (2, "forkserver", "forkserver")],
+)
+def test_multiprocessing_context_applies_only_to_worker_loaders(
+    num_workers: int, context: str | None, expected: str | None
+) -> None:
+    """multiprocessing_context reaches worker-backed loaders; PyTorch rejects it without workers."""
+    dataloader = build_pretraining_data_loader(
+        dataset=_RandomValueDataset(),
+        consumed_samples=0,
+        dataloader_type="single",
+        micro_batch_size=1,
+        num_workers=num_workers,
+        data_sharding=False,
+        multiprocessing_context=context,
+    )
+
+    actual = dataloader.multiprocessing_context
+    assert (actual.get_start_method() if actual is not None else None) == expected
+
+
 def test_cyclic_sampler_non_sharded_tail_keeps_data_parallel_epochs_aligned() -> None:
     """Every DP rank must cross a truncated cyclic epoch on the same step."""
 
