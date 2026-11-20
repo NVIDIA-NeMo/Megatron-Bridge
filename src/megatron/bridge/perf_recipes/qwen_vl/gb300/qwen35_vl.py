@@ -371,8 +371,8 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     # Vision-encoder CUDA graph. The cap (vision patches per microbatch) is the largest real-data vision sequence
     # measured at MBS 1 plus 5%; the 784-patch mock images fit and are padded to it on every replay. Raise it with
-    # MBS or images per sample. As in the VRNVL72 recipes, the graphed encoder runs without the 2D rotary embedding,
-    # and images that share a microbatch attend to each other and to the padding.
+    # MBS or images per sample. The graphed encoder applies the 2D rotary embedding (a static graph input refilled
+    # on every replay), and images that share a microbatch attend to each other and to the padding.
     cfg.model.vision_cuda_graph_impl = "transformer_engine"
     cfg.model.vision_cuda_graph_scope = ["attn", "mlp"]
     cfg.model.max_vision_cuda_graph_seq_length = 1029

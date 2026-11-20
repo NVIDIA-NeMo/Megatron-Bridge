@@ -198,6 +198,11 @@ def process_omni_inputs(processor, video_path: Optional[str], prompt: str, use_a
         # Extract audios, images, videos from messages
         audios, images, videos = process_mm_info(messages, use_audio_in_video=use_audio_in_video)
 
+        processor_kwargs = {}
+        if use_audio_in_video and audios:
+            # Audio decoded from videos[i] has no placeholder in the prompt; tell the processor its source.
+            processor_kwargs["audio_from_video_indices"] = list(range(len(audios)))
+
         # Process inputs with video (and optionally audio)
         inputs = processor(
             text=text,
@@ -207,6 +212,7 @@ def process_omni_inputs(processor, video_path: Optional[str], prompt: str, use_a
             return_tensors="pt",
             padding=True,
             use_audio_in_video=use_audio_in_video,
+            **processor_kwargs,
         )
 
         return {

@@ -141,7 +141,9 @@ class Ernie55Config(PretrainedConfig):
         o_groups: H-layer grouped output projection groups.
         o_lora_rank: H-layer grouped output projection rank per group.
         use_qk_norm: Whether the q/kv latents are RMS-normalized (ERNIE 5.5: ``True``).
-        rope_theta: RoPE base of the D layers and their indexer.
+        rope_theta: RoPE base of the D layers and their indexer. A config with ``rope_scaling`` carries it in
+            ``rope_parameters["rope_theta"]`` as well (transformers 5 stores ``rope_scaling`` under that name), so
+            that a saved ``config.json`` has it where transformers 5 readers look for it.
         compress_rope_theta: RoPE base of the H layers.
         hca_rope_type: H-layer RoPE type; ``"rope"`` is plain RoPE.
         rotary_scaling_factor: YaRN factor of the H layers when ``hca_rope_type`` is YaRN; ``None`` (absent)
@@ -334,6 +336,12 @@ class Ernie55Config(PretrainedConfig):
         self.vha_rank = vha_rank
         kwargs.setdefault("architectures", [ERNIE55_ARCHITECTURE])
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
+        # transformers 5 keeps ``rope_scaling`` as ``rope_parameters``, and readers written against it take the RoPE
+        # base from ``rope_parameters["rope_theta"]``. PretrainedConfig moves the base there only when ``rope_theta``
+        # is among its kwargs, and here it is a named argument. The top-level key, the one Bridge reads, decides.
+        rope_parameters = getattr(self, "rope_parameters", None)
+        if isinstance(rope_parameters, dict) and rope_theta is not None:
+            self.rope_parameters = {**rope_parameters, "rope_theta": rope_theta}
 
 
 class Ernie55LegacyConfig(Ernie55Config):
