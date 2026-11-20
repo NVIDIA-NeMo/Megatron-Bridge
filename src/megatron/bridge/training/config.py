@@ -504,6 +504,15 @@ class TrainingConfig(MTrainTrainingConfig):
     skip_sync_grad_norm_across_mp: bool = False
     """Skips syncing the grad norm across the model parallel group."""
 
+    cuda_memory_fraction: float | None = None
+    """Cap PyTorch's caching allocator at this fraction of each GPU's memory, in (0, 1].
+
+    The rest stays available to allocations outside PyTorch. NCCL creates some communicators lazily, for example
+    the model-parallel group's at the end of the first training step or a new group size under dynamic context
+    parallelism, after the allocator may have grown to nearly all device memory; variable-length batches fragment
+    its cache further. With a cap, the allocator releases cached blocks instead of growing, so those allocations
+    succeed. ``None`` leaves the allocator uncapped."""
+
     # ---------------- Validation config. ----------------
 
     eval_iters: int | None = None
@@ -517,6 +526,8 @@ class TrainingConfig(MTrainTrainingConfig):
 
     def finalize(self) -> None:
         """Validate training mode specification and calculate train_iters from train_samples if needed."""
+        if self.cuda_memory_fraction is not None and not 0 < self.cuda_memory_fraction <= 1:
+            raise ValueError(f"cuda_memory_fraction must be in (0, 1], got {self.cuda_memory_fraction}.")
         has_train_iters = self.train_iters is not None
         has_train_samples = self.train_samples is not None
         has_num_epochs = self.num_epochs is not None
@@ -1025,6 +1036,11 @@ class InProcessRestartConfig:
     """Directory for monitor process log files. If None, monitor process logging is disabled."""
 
 
+_GLOBAL_BATCH_PACKING_HYBRID_SYMBOLS = frozenset("G*-E|/")
+"""``hybrid_layer_pattern`` symbols global-batch packing runs on: Gated DeltaNet, attention, MLP and MoE
+positions, plus the pipeline-stage and MTP separators."""
+
+
 # ---------------- Container config (standalone top-level config) ----------------
 @dataclass(kw_only=True)
 class ConfigContainer(Container):
@@ -1338,9 +1354,16 @@ class ConfigContainer(Container):
         if getattr(model, "virtual_pipeline_model_parallel_size", None) not in (None, 1):
             raise ValueError(f"{feature} does not yet support virtual pipeline parallelism.")
         if getattr(model, "is_hybrid_model", False):
-            raise ValueError(
-                f"{feature} does not yet support Mamba hybrid models (packed boundaries are not propagated to SSM layers)."
-            )
+            # Megatron-Core's hybrid stack propagates packed boundaries and the runtime CP group through its
+            # Gated DeltaNet, attention, MLP and MoE positions (Qwen3.5), not through Mamba or other mixers.
+            pattern = getattr(model, "hybrid_layer_pattern", None) or ""
+            unsupported = sorted(set(pattern) - _GLOBAL_BATCH_PACKING_HYBRID_SYMBOLS)
+            if not pattern or unsupported:
+                raise ValueError(
+                    f"{feature} supports hybrid models built only from Gated DeltaNet, attention, MLP and MoE "
+                    f"layers (hybrid_layer_pattern symbols G, *, - and E); got symbols {unsupported or pattern!r}. "
+                    "Packed boundaries are not propagated to other layer types, such as Mamba."
+                )
         if getattr(self.ddp, "use_megatron_fsdp", False):
             raise ValueError(f"{feature} is not supported with Megatron FSDP.")
         if getattr(model, "max_seqlen_per_dp_cp_rank", None) is None:
@@ -1368,8 +1391,13 @@ class ConfigContainer(Container):
                 raise ValueError(
                     f"model.min_dynamic_context_parallel_size must be a power of two in [1, dp * cp = {pool}], got {min_cp}."
                 )
+            self._validate_dynamic_cp_gated_delta_net_heads(pool)
         capacity = pool * model.max_seqlen_per_dp_cp_rank
         seq_length = getattr(self.dataset, "seq_length", None) or model.seq_length
+        offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
+        if getattr(self.dataset, "enable_offline_packing", False) and offline_packing_specs is not None:
+            # A sequence of an offline packed row can be as long as the row.
+            seq_length = max(seq_length, offline_packing_specs.packed_sequence_size)
         if capacity < seq_length:
             raise ValueError(
                 f"Bin capacity too small: {pool} ranks x max_seqlen_per_dp_cp_rank "
@@ -1377,7 +1405,33 @@ class ConfigContainer(Container):
                 "could never be scheduled."
             )
         if seq_length > model.seq_length:
-            raise ValueError(f"dataset.seq_length={seq_length} exceeds model.seq_length={model.seq_length}.")
+            raise ValueError(
+                f"Samples of up to {seq_length} tokens (dataset.seq_length or the offline packed row length) exceed "
+                f"model.seq_length={model.seq_length}."
+            )
+
+    def _validate_dynamic_cp_gated_delta_net_heads(self, pool: int) -> None:
+        """Require Gated DeltaNet's heads to split over the largest dynamic CP group, the whole ``dp * cp`` pool.
+
+        Megatron-Core's Gated DeltaNet shards its key and value heads across the context-parallel group of a
+        microbatch, and rejects at model construction a pool whose size does not divide them.
+        """
+        model = self.model
+        has_gated_delta_net = "G" in (getattr(model, "hybrid_layer_pattern", None) or "") or getattr(
+            model, "experimental_attention_variant", None
+        ) in ("gdn", "gated_delta_net")
+        if not has_gated_delta_net:
+            return
+        tp_size = getattr(model, "tensor_model_parallel_size", None) or 1
+        for name in ("linear_num_key_heads", "linear_num_value_heads"):
+            heads = getattr(model, name, None)
+            if heads is not None and (heads // tp_size) % pool:
+                raise ValueError(
+                    f"Dynamic context parallelism can run a bin on the whole dp * cp pool of {pool} ranks, but Gated "
+                    f"DeltaNet splits its {heads // tp_size} heads per tensor-parallel rank (model.{name}={heads}) "
+                    "across the bin's group. Use a dp * cp pool that divides them, for example fewer GPUs per job, "
+                    "or static context parallelism (model.dynamic_context_parallel=False)."
+                )
 
     def _apply_global_batch_packing_padding(self, collate_padding_multiple: int) -> None:
         """Push the CP alignment multiple to the dataset that yields unpacked samples."""
@@ -1484,11 +1538,11 @@ class ConfigContainer(Container):
 
         if enable_offline_packing and enable_in_batch_packing:
             raise ValueError("enable_offline_packing and enable_in_batch_packing are mutually exclusive.")
-        if enable_global_batch_packing and (
-            enable_offline_packing or enable_in_batch_packing or enable_energon_packing
-        ):
+        # Offline packing combines with global-batch packing: each packed row yields its sequences, and the
+        # scheduler re-bins them. In-batch and Energon packing already emit THD bins.
+        if enable_global_batch_packing and (enable_in_batch_packing or enable_energon_packing):
             raise ValueError(
-                "enable_global_batch_packing is mutually exclusive with offline, in-batch, and Energon packing: "
+                "enable_global_batch_packing is mutually exclusive with in-batch and Energon packing: "
                 "the scheduler packs unpacked samples itself."
             )
         if not enable_global_batch_packing and (
