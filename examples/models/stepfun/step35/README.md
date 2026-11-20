@@ -122,9 +122,11 @@ Before launching, ensure the following environment variables are set:
   matching `layer_types`),
 * offloads the optimizer to CPU (`optimizer.use_precision_aware_optimizer=true`,
   `optimizer.optimizer_cpu_offload=true`, `optimizer.optimizer_offload_fraction=1.0`)
-  because at 64 GPUs expert data parallel is 1, so weights, gradients and
-  optimizer state together exceed 80 GB per GPU (the offloaded state needs
-  several hundred GB of host memory per node), and
+  because at 64 GPUs expert data parallel is 1, so routed-expert optimizer
+  state is unsharded: persistent weights, gradients and optimizer state take
+  about 69 GB per GPU, and the training peak with activations and MoE
+  workspaces does not fit in 80 GB (the offloaded state needs several
+  hundred GB of host memory per node), and
 * loads the pre-converted Megatron checkpoint as a fine-tune source
   (`checkpoint.finetune=true`, `load_optim=false`, `load_rng=false`,
   `exit_on_missing_checkpoint=true`).
