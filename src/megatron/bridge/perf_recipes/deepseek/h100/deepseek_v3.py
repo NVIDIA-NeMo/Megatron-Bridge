@@ -158,9 +158,14 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8sc_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 64× H100, BF16 (1024-GPU layout with legacy-scaled GBS)."""
+    """DeepSeek V3 pretrain proxy: 13 decoder layers on 64× H100, BF16, PP=1, EP=64."""
     cfg = deepseek_v3_pretrain_1024gpu_h100_bf16_config()
     cfg.train.global_batch_size = 1024
+    cfg.model.num_layers = 13
+    cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -187,14 +192,16 @@ def deepseek_v3_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 64× H100, FP8 current-scaling (standard tensorwise)."""
+    """DeepSeek V3 pretrain proxy: 13 decoder layers on 64× H100, FP8 current-scaling, PP=1, EP=64."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     _deepseek_v3_common(cfg)
 
+    cfg.model.num_layers = 13
+    cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
     cfg.model.tensor_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_size = 8
-    cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
     cfg.model.sequence_parallel = True
@@ -206,7 +213,7 @@ def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.comm_overlap.overlap_grad_reduce = False
 
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|(tt|)*30mL")
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
     cfg.train.global_batch_size = 1024
