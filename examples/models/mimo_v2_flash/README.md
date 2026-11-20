@@ -91,3 +91,68 @@ Prompt: What is artificial intelligence?
 Generated: <model's continuation of the prompt>
 =======================================
 ```
+
+## MiMo-V2.6-Flash
+
+[MiMo-V2.6-Flash-RL](https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Flash-RL) (`MiMoV2ForCausalLM`, `model_type: mimo_v2`) has the same language model as MiMo-V2-Flash, MTP layers included, and is converted by `MiMoV26Bridge`, which reuses the MiMo-V2-Flash bridge. Only the checkpoint format differs:
+
+- `self_attn.qkv_proj` is one FP8 tensor stored as `num_key_value_heads` slices of `[Q | K | V]`, with 128x128 block scales that restart at each slice.
+- Routed experts are packed MXFP4 (E2M1 values with one E8M0 `weight_scale` per 32 values).
+- The dense and MTP MLPs are FP8 with 128x128 block scales, as in MiMo-V2-Flash.
+- The vision, audio and speech-embedding weights are not converted.
+
+Import dequantizes these weights to BF16. Export writes the source format back: weights that are MXFP4 or FP8 in the source checkpoint are requantized with its scale layout, `qkv_proj` is rebuilt slice by slice, the vision, audio and speech-embedding tensors are copied unchanged from the source checkpoint, and the source `quantization_config` is kept. Export therefore needs the source checkpoint (`--hf-model`), and `--export-weight-dtype` is not supported.
+
+### Hardware Requirements
+
+The routed experts take about 605 GB in BF16. One node of 8 GPUs with at least 141 GB each (for example B200) fits the model with `TP=1, PP=1, EP=8, ETP=1`. With 80 GB GPUs, use 2 nodes and shard the experts further, as for MiMo-V2-Flash above. The MiMo-V2-Flash restrictions apply: no context parallelism, and TP at most `min(num_key_value_heads, swa_num_key_value_heads)` = 4.
+
+### Checkpoint Conversion
+
+Import the Hugging Face checkpoint into a Megatron checkpoint:
+
+```bash
+./scripts/conversion/convert.sh import \
+  --executor slurm --device gpu \
+  --nodes 1 --gpus-per-node 8 \
+  --account ACCOUNT --partition PARTITION --time 02:00:00 \
+  --container-image /path/to/megatron-bridge.sqsh \
+  --mount /workspace \
+  --mount /path/to/Megatron-Bridge:/opt/Megatron-Bridge \
+  --env HF_TOKEN \
+  --hf-model XiaomiMiMo/MiMo-V2.6-Flash-RL \
+  --megatron-path /workspace/models/mimo-v2.6-flash \
+  --tp 1 --pp 1 --ep 8 --etp 1 \
+  --trust-remote-code
+```
+
+Export it back to the Hugging Face source format:
+
+```bash
+./scripts/conversion/convert.sh export \
+  --executor slurm --device gpu \
+  --nodes 1 --gpus-per-node 8 \
+  --account ACCOUNT --partition PARTITION --time 02:00:00 \
+  --container-image /path/to/megatron-bridge.sqsh \
+  --mount /workspace \
+  --mount /path/to/Megatron-Bridge:/opt/Megatron-Bridge \
+  --env HF_TOKEN \
+  --hf-model XiaomiMiMo/MiMo-V2.6-Flash-RL \
+  --megatron-path /workspace/models/mimo-v2.6-flash/iter_0000000 \
+  --hf-path /workspace/models/mimo-v2.6-flash-hf \
+  --tp 1 --pp 1 --ep 8 --etp 1 \
+  --no-distributed-save \
+  --trust-remote-code
+```
+
+Forward any `srun` options your cluster requires with `--srun-arg=ARG`, as described in the [conversion launcher README](../../../scripts/conversion/README.md).
+
+### Expected output
+
+The export writes every tensor of the source checkpoint into the same shard layout and fails if any is missing, since strict export is the default. Compared with the source checkpoint:
+
+- BF16 and FP32 weights are identical.
+- MXFP4 expert weights decode to identical values with identical scales. A zero may be stored as +0 where the source stores -0.
+- FP8 weights keep their FP8 codes. Their scales are recomputed from the BF16 weights, so decoded values can differ by up to about 0.4% of a tensor's largest value.
+
+The exported checkpoint keeps the source `config.json` fields, including `quantization_config`, so it loads in the same inference engines as the original checkpoint.
