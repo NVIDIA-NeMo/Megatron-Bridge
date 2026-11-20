@@ -64,5 +64,6 @@ class TestQwen2AudioSftOverrides:
         mbs = int(overrides["train.micro_batch_size"])
         gbs = int(overrides["train.global_batch_size"])
         assert overrides["dataset.enable_in_batch_packing"] == "true"
+        assert mbs == 2
         assert mbs >= 2
         assert gbs % (mbs * _script_default("NPROC")) == 0
