@@ -339,7 +339,7 @@ items:
         final_loss: 0.7121329
         last_10_steps_step_time_ms_avg: 36521.260
         last_10_steps_model_tflops_per_gpu_avg: 37.640
-        last_10_steps_tokens_per_second_per_gpu_avg: 448.623
+        last_10_steps_tokens_per_second_per_gpu_avg: 448.615
       expected_result: >
         On 16 GB200s at this item's Bridge commit, the immutable-revision Tulu3
         run completed exactly 100 full-SFT steps at sequence length 8192,

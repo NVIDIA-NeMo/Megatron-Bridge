@@ -5138,7 +5138,7 @@
             "initial_loss": 1.173371,
             "last_10_steps_model_tflops_per_gpu_avg": 37.64,
             "last_10_steps_step_time_ms_avg": 36521.26,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 448.623
+            "last_10_steps_tokens_per_second_per_gpu_avg": 448.615
           },
           "precision": "bf16",
           "source_pointer": "items.sft.GB200",
