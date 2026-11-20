@@ -13,15 +13,15 @@
 # limitations under the License.
 """LoRA engines (``from_recipe(lora=LoraConfig(...))``) over Bridge's ``LoRA``.
 
-The engine only converts a ``LoraConfig`` into Bridge's ``LoRA`` (``build_lora``) and registers Bridge's PEFT
-hook (``peft.utils.create_peft_hook``) as a pre-wrap hook, so targets match, the base is frozen and
-checkpoints keep the adapters exactly as in Bridge's own LoRA training.
+The engine only converts a ``LoraConfig`` into Bridge's ``LoRA`` (``build_lora``) and applies it with
+Bridge's PEFT hook (``peft.utils.create_peft_hook``), so targets match, the base is frozen and checkpoints
+keep the adapters exactly as in Bridge's own LoRA training.
 
-The hook runs on the bare model, before DDP and the optimizer are built, so both hold the adapters alone. The
-base weights are loaded after the build by the same call as a full-weight engine's, with the adapters hidden
-for the load (``peft.adapter_wrapper.hide_adapters``) so the base checkpoint maps onto the base weights alone.
-LoRA can go on before the base is loaded because its adapters do not read the base weights when they are
-built.
+Construction follows Bridge's PEFT setup (``_create_peft_pre_wrap_hook`` in ``training/setup.py``): the
+pretrained base weights are loaded into the bare model, LoRA then wraps the target modules and freezes
+every base parameter, and only afterwards are DDP and the optimizer built, so both hold the adapters
+alone. A LoRA engine therefore loads ``checkpoint_path`` in a pre-wrap hook registered before Bridge's
+PEFT hook, as the value head does, instead of after the build.
 
 The rest of the engine needs three LoRA facts: ``finalize_model_grads`` must also sum the gradients of
 expert adapters that are replicated across expert-parallel ranks (``peft_enabled`` when Bridge installs

@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 import torch
@@ -288,40 +286,3 @@ class AdapterWrapper(nn.Module):
                 _plain_module_sharded_state_dict(self.adapter, f"{prefix}adapter.", sharded_offsets)
             )
         return sharded_state_dict
-
-
-@contextmanager
-def hide_adapters(model: nn.Module | list[nn.Module]) -> Iterator[None]:
-    """Hide the adapter of every :class:`AdapterWrapper` while base weights load into a model with PEFT applied.
-
-    Inside the context each wrapper holds an empty module in place of its adapter, so the model's state dict,
-    sharded state dict and parameters list the base weights alone, under the names they had before PEFT: a
-    pretrained base checkpoint (Megatron or HF) then loads as into a model without adapters. The adapters are
-    put back unchanged on exit, also when the load raises. MultiLoRA hides its adapter slots with its own
-    ``multi_lora_layers.hide_adapters``.
-
-    Loading the base after PEFT suits methods whose adapters do not read the base weights when they are built,
-    such as LoRA. DoRA sets its magnitude from the base weight when it wraps a layer, so it needs the base
-    loaded first.
-
-    Args:
-        model: A module or a list of model chunks, wrapped (DDP, Float16Module) or not.
-
-    Yields:
-        Nothing; the adapters are hidden until the context exits.
-    """
-    chunks = model if isinstance(model, list) else [model]
-    wrappers = [
-        module
-        for chunk in chunks
-        for module in chunk.modules()
-        if isinstance(module, AdapterWrapper) and "adapter" in module._modules
-    ]
-    adapters = [wrapper._modules["adapter"] for wrapper in wrappers]
-    for wrapper in wrappers:
-        wrapper._modules["adapter"] = nn.Module()
-    try:
-        yield
-    finally:
-        for wrapper, adapter in zip(wrappers, adapters):
-            wrapper._modules["adapter"] = adapter

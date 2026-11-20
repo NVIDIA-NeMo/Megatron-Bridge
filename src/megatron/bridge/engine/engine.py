@@ -303,10 +303,9 @@ class TrainingEngine:
                 to ``value_loss``. One recipe serves the actor and the critic.
             trainable: Build the optimizer and gradient buffers. ``False`` yields a frozen scoring engine.
             lora: Train LoRA adapters on a frozen base instead of the full model (``output_head="lm"``,
-                ``trainable=True`` and a ``checkpoint_path`` with the base weights are required). The config
-                becomes Bridge's ``LoRA``, which Bridge's PEFT hook applies to the bare model before DDP and
-                the optimizer are built, so both hold the adapters only; the base weights are then loaded as
-                for a full-weight engine, with the adapters hidden for the load.
+                ``trainable=True`` and a ``checkpoint_path`` with the base weights are required). The base
+                is loaded and LoRA applied before DDP and the optimizer are built, so both hold the adapters
+                only. The config becomes Bridge's ``LoRA``, applied with Bridge's PEFT hook.
                 ``forward_only(disable_adapters=True)`` then scores the base model (the usual RL
                 reference, with no second engine; exactly so with ``LoraConfig.freeze_routing``), ``save_state``
                 saves the adapters and their settings, and ``export`` merges them into the base weights
@@ -367,8 +366,13 @@ class TrainingEngine:
             # Loads the checkpoint into the bare model, then swaps the head; _build skips its own load.
             hooks.append(make_value_head_hook(recipe, checkpoint_path))
         if peft is not None:
-            # Applies LoRA to the bare model before DDP and the optimizer exist; _build then loads the base.
-            hooks.append(create_peft_hook(peft))
+            # Loads the base into the bare model, then applies LoRA, before DDP and the optimizer exist; _build
+            # skips its own load.
+            def load_base(model: list[MegatronModule]) -> list[MegatronModule]:
+                load_pretrained_weights(recipe, model, None, checkpoint_path)
+                return model
+
+            hooks += [load_base, create_peft_hook(peft)]
         runtime = _acquire_runtime(recipe)
         self._build(
             recipe,
@@ -443,10 +447,9 @@ class TrainingEngine:
             sequence_parallel=runtime.topology.tp > 1 and bool(getattr(recipe.model, "sequence_parallel", False)),
         )
 
-        if checkpoint_path is not None and output_head != "value":
-            # The value-head hook loads the checkpoint into the bare model instead, before it swaps the head. A
-            # LoRA model already has its adapters, which the load hides so the base checkpoint maps onto it.
-            load_pretrained_weights(recipe, self._model, self._optimizer, checkpoint_path, peft=peft)
+        if checkpoint_path is not None and output_head != "value" and peft is None:
+            # The value-head and LoRA pre-wrap hooks load the checkpoint into the bare model instead.
+            load_pretrained_weights(recipe, self._model, self._optimizer, checkpoint_path)
 
         # Bridge installs the schedule hooks on the model config (finalize_model_grads_func, grad_scale_func,
         # and the overlap hooks). The engine keeps only the finalizer: run_forward_backward suppresses it

@@ -27,7 +27,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from megatron.bridge.peft.adapter_wrapper import AdapterWrapper, hide_adapters
+from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora_layers import LoRALinear
 
@@ -595,32 +595,3 @@ class TestPlainLinearShardedStateDict:
         assert torch.allclose(rewrapped.to_wrap.bias, wrapped.to_wrap.bias)
         assert torch.allclose(rewrapped.adapter.linear_in.weight, wrapped.adapter.linear_in.weight)
         assert torch.allclose(rewrapped.adapter.linear_out.weight, wrapped.adapter.linear_out.weight)
-
-
-class _ShardedLinear(nn.Linear):
-    """A base linear with its own sharded layout, as Megatron's parallel linears have."""
-
-    def sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
-        return {f"{prefix}weight": "base-shard"}
-
-
-def test_hide_adapters_shows_only_the_base_weights_and_restores_the_adapters():
-    adapter = nn.Linear(4, 2, bias=False)
-    model = nn.Sequential(ConcreteAdapterWrapper(_ShardedLinear(4, 4), adapter))
-    assert sorted(model.state_dict()) == ["0.adapter.weight", "0.bias", "0.weight"]
-    with hide_adapters([model]):
-        # What a base-checkpoint load sees: the base's keys and parameters, as before PEFT.
-        assert sorted(model.state_dict()) == ["0.bias", "0.weight"]
-        assert model[0].sharded_state_dict(prefix="0.") == {"0.weight": "base-shard"}
-        assert all("adapter" not in name for name, _ in model.named_parameters())
-    assert model[0].adapter is adapter
-    assert sorted(model.state_dict()) == ["0.adapter.weight", "0.bias", "0.weight"]
-
-
-def test_hide_adapters_restores_the_adapters_when_the_load_raises():
-    adapter = nn.Linear(4, 2, bias=False)
-    wrapper = ConcreteAdapterWrapper(nn.Linear(4, 4), adapter)
-    with pytest.raises(RuntimeError, match="load failed"):
-        with hide_adapters(wrapper):
-            raise RuntimeError("load failed")
-    assert wrapper.adapter is adapter
