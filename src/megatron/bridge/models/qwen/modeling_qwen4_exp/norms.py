@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Grouped RMSNorm with bounded FP32 reduction workspaces."""
+"""Grouped RMSNorm with an optional fused forward and bounded FP32 backward."""
 
 from typing import cast
 
@@ -21,7 +21,74 @@ from torch import Tensor
 from torch.autograd.function import FunctionCtx, once_differentiable
 
 
+try:
+    import triton
+    import triton.language as tl
+except ImportError:
+    triton = None
+    tl = None
+
+
 _WORKSPACE_BYTES = 64 * 1024 * 1024
+
+
+# Specialization of _gr_fwd_norm_kernel (HAS_GATE=False, ZERO_CENTERED=True):
+# NVIDIA/Megatron-LM PR #7553, commit 53ff95854b024e36ce7b51a61e65d43d3ced8dac.
+# https://github.com/NVIDIA/Megatron-LM/pull/7553
+# Preserve its fixed tiles; no autotuning or write-gate/full-GR fusion is involved.
+_NORM_BM, _NORM_BC, _NORM_WARPS = 8, 128, 8
+
+if triton is not None:
+
+    @triton.jit
+    def _grouped_rmsnorm_fwd_kernel(
+        x_ptr,
+        weight_ptr,
+        rstd_ptr,
+        output_ptr,
+        rows_count,
+        eps,
+        GROUPS: tl.constexpr,
+        CHANNELS: tl.constexpr,
+        BM: tl.constexpr,
+        BC: tl.constexpr,
+    ):
+        width: tl.constexpr = GROUPS * CHANNELS
+        rows = tl.program_id(0) * BM + tl.arange(0, BM)
+        group = tl.program_id(1)
+        row_mask = rows < rows_count
+        base = rows[:, None] * width + group * CHANNELS
+        squares = tl.zeros([BM, BC], dtype=tl.float32)
+        for start in range(0, CHANNELS, BC):
+            channels = start + tl.arange(0, BC)
+            mask = row_mask[:, None] & (channels[None, :] < CHANNELS)
+            values = tl.load(x_ptr + base + channels[None, :], mask=mask, other=0.0).to(tl.float32)
+            squares += values * values
+        rstd = tl.rsqrt(tl.sum(squares, axis=1) / CHANNELS + eps)
+        tl.store(rstd_ptr + rows * GROUPS + group, rstd, mask=row_mask)
+        for start in range(0, CHANNELS, BC):
+            channels = start + tl.arange(0, BC)
+            channel_mask = channels < CHANNELS
+            mask = row_mask[:, None] & channel_mask[None, :]
+            values = tl.load(x_ptr + base + channels[None, :], mask=mask, other=0.0).to(tl.float32)
+            gain = tl.load(weight_ptr + group * CHANNELS + channels, mask=channel_mask, other=0.0).to(tl.float32)
+            gain = gain + 1.0
+            normalized = values * rstd[:, None] * gain[None, :]
+            tl.store(output_ptr + base + channels[None, :], normalized.to(output_ptr.dtype.element_ty), mask=mask)
+
+
+def _can_use_triton(x: Tensor, weight: Tensor) -> bool:
+    return (
+        triton is not None
+        and x.is_cuda
+        and torch.version.hip is None
+        and 0 < x.numel() < 2**31  # Kernel offsets use signed 32-bit indexing.
+        and x.is_contiguous()
+        and weight.is_contiguous()
+        and x.device == weight.device
+        and x.dtype in (torch.float16, torch.bfloat16, torch.float32)
+        and weight.dtype in (torch.float16, torch.bfloat16, torch.float32)
+    )
 
 
 def norm_chunk_rows(width: int, workspace_bytes: int) -> int:
@@ -43,13 +110,32 @@ class _GroupedRMSNorm(torch.autograd.Function):
         chunk = norm_chunk_rows(width, workspace_bytes)
         output = torch.empty_like(rows)
         rstd = torch.empty(rows.shape[0], groups, 1, dtype=torch.float32, device=x.device)
-        gain = (1.0 + weight.float()).reshape(groups, channels)
-        for start in range(0, rows.shape[0], chunk):
-            end = min(start + chunk, rows.shape[0])
-            values = rows[start:end].float().reshape(-1, groups, channels)
-            scale = torch.rsqrt(values.square().mean(-1, keepdim=True) + eps)
-            rstd[start:end] = scale
-            output[start:end] = (values * scale * gain).flatten(-2).to(x.dtype)
+        if _can_use_triton(x, weight):
+            # Keep eager's separate FP32 product/add rounding. The tiled sum order
+            # still differs from torch.mean; both save FP32 rstd for the same backward.
+            with torch.cuda.device(x.device):
+                _grouped_rmsnorm_fwd_kernel[(triton.cdiv(rows.shape[0], _NORM_BM), groups)](
+                    rows,
+                    weight,
+                    rstd,
+                    output,
+                    rows.shape[0],
+                    eps,
+                    GROUPS=groups,
+                    CHANNELS=channels,
+                    BM=_NORM_BM,
+                    BC=_NORM_BC,
+                    num_warps=_NORM_WARPS,
+                    enable_fp_fusion=False,
+                )
+        else:
+            gain = (1.0 + weight.float()).reshape(groups, channels)
+            for start in range(0, rows.shape[0], chunk):
+                end = min(start + chunk, rows.shape[0])
+                values = rows[start:end].float().reshape(-1, groups, channels)
+                scale = torch.rsqrt(values.square().mean(-1, keepdim=True) + eps)
+                rstd[start:end] = scale
+                output[start:end] = (values * scale * gain).flatten(-2).to(x.dtype)
         ctx.save_for_backward(x, weight, rstd)
         ctx.groups = groups
         ctx.chunk = chunk
@@ -89,7 +175,9 @@ def grouped_rmsnorm(
 
     Saves the activation and one FP32 inverse RMS per stream instead of the
     token-sized FP32 products that eager autograd retains. Weight gradients
-    accumulate in FP32; chunking changes only their reduction order.
+    accumulate in FP32; chunking changes only their reduction order. Contiguous
+    CUDA inputs optionally use a fixed-tile Triton forward, whose FP32 reduction
+    order can differ from the eager fallback. Backward always uses the saved rstd.
     """
     if x.ndim < 1 or groups < 1 or x.shape[-1] < 1 or x.shape[-1] % groups:
         raise ValueError("Input width must be positive and divisible by the residual stream count.")
