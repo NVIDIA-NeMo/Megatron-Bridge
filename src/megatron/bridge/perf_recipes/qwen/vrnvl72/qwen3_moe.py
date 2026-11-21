@@ -13,6 +13,8 @@
 # limitations under the License.
 """VRNVL72 performance recipes for Qwen3 MoE."""
 
+import torch
+
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen.common import ConfigContainer
 from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
@@ -51,6 +53,122 @@ def qwen3_235b_a22b_pretrain_256gpu_vrnvl72_bf16_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
+
+
+def _build_qwen3_235b_a22b_vrnvl72_bf16_benchmark(
+    *,
+    tensor_model_parallel_size: int,
+    pipeline_model_parallel_size: int,
+    expert_model_parallel_size: int,
+    micro_batch_size: int,
+    global_batch_size: int,
+    optimizer_moments_dtype: torch.dtype,
+) -> ConfigContainer:
+    """Build one measured VRNVL72 BF16 benchmark point with a shared execution contract."""
+    cfg = qwen3_235b_a22b_pretrain_256gpu_vrnvl72_bf16_config()
+
+    cfg.model.tensor_model_parallel_size = tensor_model_parallel_size
+    cfg.model.pipeline_model_parallel_size = pipeline_model_parallel_size
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.expert_model_parallel_size = expert_model_parallel_size
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = tensor_model_parallel_size > 1
+
+    cfg.train.micro_batch_size = micro_batch_size
+    cfg.train.global_batch_size = global_batch_size
+
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = []
+
+    # Main parameters and main gradients remain FP32. Moments are BF16 on the
+    # capacity-constrained 16-GPU cases and FP32 on the 32-GPU cases.
+    cfg.optimizer.exp_avg_dtype = optimizer_moments_dtype
+    cfg.optimizer.exp_avg_sq_dtype = optimizer_moments_dtype
+
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.dist.use_megatron_fsdp = False
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_16gpu_vrnvl72_bf16_gbs16_config() -> ConfigContainer:
+    """Qwen3 235B-A22B benchmark: 16× VRNVL72, BF16, GBS16."""
+    return _build_qwen3_235b_a22b_vrnvl72_bf16_benchmark(
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=2,
+        expert_model_parallel_size=8,
+        micro_batch_size=1,
+        global_batch_size=16,
+        optimizer_moments_dtype=torch.bfloat16,
+    )
+
+
+def qwen3_235b_a22b_pretrain_16gpu_vrnvl72_bf16_gbs256_config() -> ConfigContainer:
+    """Qwen3 235B-A22B benchmark: 16× VRNVL72, BF16, GBS256."""
+    return _build_qwen3_235b_a22b_vrnvl72_bf16_benchmark(
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=2,
+        expert_model_parallel_size=8,
+        micro_batch_size=1,
+        global_batch_size=256,
+        optimizer_moments_dtype=torch.bfloat16,
+    )
+
+
+def qwen3_235b_a22b_pretrain_16gpu_vrnvl72_bf16_gbs1024_config() -> ConfigContainer:
+    """Qwen3 235B-A22B benchmark: 16× VRNVL72, BF16, GBS1024."""
+    return _build_qwen3_235b_a22b_vrnvl72_bf16_benchmark(
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=2,
+        expert_model_parallel_size=8,
+        micro_batch_size=1,
+        global_batch_size=1024,
+        optimizer_moments_dtype=torch.bfloat16,
+    )
+
+
+def qwen3_235b_a22b_pretrain_32gpu_vrnvl72_bf16_gbs16_config() -> ConfigContainer:
+    """Qwen3 235B-A22B benchmark: 32× VRNVL72, BF16, GBS16."""
+    return _build_qwen3_235b_a22b_vrnvl72_bf16_benchmark(
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=1,
+        expert_model_parallel_size=32,
+        micro_batch_size=1,
+        global_batch_size=16,
+        optimizer_moments_dtype=torch.float32,
+    )
+
+
+def qwen3_235b_a22b_pretrain_32gpu_vrnvl72_bf16_gbs256_config() -> ConfigContainer:
+    """Qwen3 235B-A22B benchmark: 32× VRNVL72, BF16, GBS256."""
+    return _build_qwen3_235b_a22b_vrnvl72_bf16_benchmark(
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=1,
+        expert_model_parallel_size=32,
+        micro_batch_size=2,
+        global_batch_size=256,
+        optimizer_moments_dtype=torch.float32,
+    )
+
+
+def qwen3_235b_a22b_pretrain_32gpu_vrnvl72_bf16_gbs1024_config() -> ConfigContainer:
+    """Qwen3 235B-A22B benchmark: 32× VRNVL72, BF16, GBS1024."""
+    return _build_qwen3_235b_a22b_vrnvl72_bf16_benchmark(
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=1,
+        expert_model_parallel_size=32,
+        micro_batch_size=2,
+        global_batch_size=1024,
+        optimizer_moments_dtype=torch.float32,
+    )
 
 
 def qwen3_235b_a22b_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:

@@ -18,6 +18,7 @@ carry the same NCCL EP stack."""
 import importlib
 
 import pytest
+import torch
 from megatron.training.determinism import DETERMINISM_ENV_VAR_DEFAULTS
 
 from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
@@ -79,12 +80,75 @@ _VRNVL72_ALIASES = (
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_16gpu_vrnvl72_bf16_gbs16_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_16gpu_vrnvl72_bf16_gbs256_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_16gpu_vrnvl72_bf16_gbs1024_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_32gpu_vrnvl72_bf16_gbs16_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_32gpu_vrnvl72_bf16_gbs256_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_32gpu_vrnvl72_bf16_gbs1024_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_bf16_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_fp8mx_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_bf16_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config"),
     ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config"),
+)
+
+_QWEN3_235B_VRNVL72_BF16_MATRIX = (
+    (
+        "qwen3_235b_a22b_pretrain_16gpu_vrnvl72_bf16_gbs16_config",
+        2,
+        2,
+        8,
+        1,
+        16,
+        torch.bfloat16,
+    ),
+    (
+        "qwen3_235b_a22b_pretrain_16gpu_vrnvl72_bf16_gbs256_config",
+        2,
+        2,
+        8,
+        1,
+        256,
+        torch.bfloat16,
+    ),
+    (
+        "qwen3_235b_a22b_pretrain_16gpu_vrnvl72_bf16_gbs1024_config",
+        2,
+        2,
+        8,
+        1,
+        1024,
+        torch.bfloat16,
+    ),
+    (
+        "qwen3_235b_a22b_pretrain_32gpu_vrnvl72_bf16_gbs16_config",
+        2,
+        1,
+        32,
+        1,
+        16,
+        torch.float32,
+    ),
+    (
+        "qwen3_235b_a22b_pretrain_32gpu_vrnvl72_bf16_gbs256_config",
+        2,
+        1,
+        32,
+        2,
+        256,
+        torch.float32,
+    ),
+    (
+        "qwen3_235b_a22b_pretrain_32gpu_vrnvl72_bf16_gbs1024_config",
+        2,
+        1,
+        32,
+        2,
+        1024,
+        torch.float32,
+    ),
 )
 
 
@@ -144,6 +208,45 @@ def test_vrnvl72_aliases_do_not_inherit_nccl_ep(module_name: str, factory_name: 
         assert cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
     else:
         assert cfg.model.moe_token_dispatcher_type == "alltoall"
+
+
+@pytest.mark.parametrize(
+    ("factory_name", "tp", "pp", "ep", "mbs", "gbs", "moments_dtype"),
+    _QWEN3_235B_VRNVL72_BF16_MATRIX,
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_qwen3_235b_vrnvl72_bf16_benchmark_matrix(
+    factory_name: str,
+    tp: int,
+    pp: int,
+    ep: int,
+    mbs: int,
+    gbs: int,
+    moments_dtype: torch.dtype,
+) -> None:
+    cfg = _build("qwen.vrnvl72.qwen3_moe", factory_name)
+
+    assert cfg.model.tensor_model_parallel_size == tp
+    assert cfg.model.pipeline_model_parallel_size == pp
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == ep
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is (tp > 1)
+    assert cfg.train.micro_batch_size == mbs
+    assert cfg.train.global_batch_size == gbs
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["moe_router", "moe_preprocess"]
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules == []
+
+    assert cfg.optimizer.exp_avg_dtype == moments_dtype
+    assert cfg.optimizer.exp_avg_sq_dtype == moments_dtype
+    assert cfg.ddp.use_distributed_optimizer is True
+    assert cfg.ddp.use_megatron_fsdp is False
+    assert cfg.dist.use_megatron_fsdp is False
 
 
 def test_deepseek_v3_gb300_fp8mx_deterministic_is_base_plus_determinism_overrides() -> None:
