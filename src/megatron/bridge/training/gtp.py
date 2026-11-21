@@ -14,7 +14,7 @@
 
 """Generalized Tensor Parallelism helpers for the standard Bridge runtime."""
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import torch
@@ -96,6 +96,7 @@ def configure_gtp_remat(
     *,
     reduce_scatter_with_fp32_accumulation: bool = False,
     nccl_ub: bool = False,
+    nccl_ub_collectives: Sequence[str] | None = None,
     pg_collection: ProcessGroupCollection | None = None,
 ) -> None:
     """Configure process-global GTP state before constructing model modules.
@@ -105,6 +106,8 @@ def configure_gtp_remat(
         reduce_scatter_with_fp32_accumulation: Accumulate GTP reduce-scatter
             results locally in FP32.
         nccl_ub: Register an NCCL symmetric-memory pool for the dense GTP group.
+        nccl_ub_collectives: GTP collectives ("ag", "rs") that use the pool; None keeps
+            Megatron-Core's default.
         pg_collection: Initialized process groups, required when nccl_ub is enabled.
 
     Raises:
@@ -135,7 +138,27 @@ def configure_gtp_remat(
             raise ValueError("gtp_remat_nccl_ub requires an initialized process-group collection.")
         from megatron.core.process_groups_config import resolve_gtp_remat_group
 
-        gtp_api.register_gtp_symm_pool(resolve_gtp_remat_group(pg_collection, is_expert=False))
+        group = resolve_gtp_remat_group(pg_collection, is_expert=False)
+        if nccl_ub_collectives is None:
+            gtp_api.register_gtp_symm_pool(group)
+        else:
+            gtp_api.register_gtp_symm_pool(group, collectives=nccl_ub_collectives)
+
+
+def move_gtp_weights_to_symm_pool(model: list[torch.nn.Module], model_config: Any) -> None:
+    """Move GTP all-gather inputs that DDP did not place into their registered symmetric pool.
+
+    Call after distributed wrapping and before classifying chains. No-op on Megatron-Core
+    versions without symmetric-memory all-gather support.
+    """
+    if not is_gtp_remat_active(model_config):
+        return
+
+    from megatron.core.tensor_parallel import gtp_api
+
+    move = getattr(gtp_api, "move_gtp_weights_to_symm_pool", None)
+    if move is not None:
+        move(model)
 
 
 def classify_gtp_remat_chains(model: list[torch.nn.Module], model_config: Any) -> None:

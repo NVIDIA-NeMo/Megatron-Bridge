@@ -21,6 +21,7 @@ import megatron.bridge.recipes as recipes
 from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config,
+    nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config,
     nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config,
     nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config,
     nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config,
@@ -211,6 +212,39 @@ def test_vrnvl72_perf_recipe_uses_nvl72_ultra_topology() -> None:
     assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+    assert cfg.env_vars["NCCL_NVLS_CHUNKSIZE"] == 131072
+    assert cfg.env_vars["NCCL_NVLS_NCHANNELS"] == 24
+    assert cfg.env_vars["NCCL_SYM_CE_THRESHOLD"] == 1 << 40
+
+
+_GB300_AND_VRNVL72_GTP_RECIPES = pytest.mark.parametrize(
+    "recipe_factory",
+    [
+        nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config,
+        nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config,
+        nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config,
+        nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config,
+    ],
+    ids=["gb300_fp8mx", "vrnvl72_fp8mx", "gb300_nvfp4", "vrnvl72_nvfp4"],
+)
+
+
+@pytest.mark.unit
+@_GB300_AND_VRNVL72_GTP_RECIPES
+def test_gb300_and_vrnvl72_perf_recipes_run_gtp_collectives_on_symmetric_memory(recipe_factory) -> None:
+    """GB300 and VRNVL72 Ultra run the GTP all-gather and reduce-scatter on NCCL symmetric memory over NVLS."""
+    cfg = recipe_factory()
+
+    assert cfg.dist.gtp_remat_nccl_ub is True
+    assert cfg.dist.gtp_remat_nccl_ub_collectives == ["ag", "rs"]
+    assert cfg.env_vars["NCCL_NVLS_ENABLE"] == 1
+
+
+@pytest.mark.unit
+@_GB300_AND_VRNVL72_GTP_RECIPES
+def test_gb300_and_vrnvl72_perf_recipes_run_mamba_on_cudnn(recipe_factory) -> None:
+    """GB300 and VRNVL72 Ultra run the Mamba-2 training conv + SSD on the cuDNN backend."""
+    assert recipe_factory().model.mamba_kernel_backend == "cudnn"
 
 
 @pytest.mark.unit
@@ -248,6 +282,9 @@ def test_vrnvl72_nvfp4_perf_recipe_uses_nvl72_ultra_topology() -> None:
     assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_USE_FAST_MATH"] == 1
+    assert cfg.env_vars["NCCL_NVLS_CHUNKSIZE"] == 131072
+    assert cfg.env_vars["NCCL_NVLS_NCHANNELS"] == 24
+    assert cfg.env_vars["NCCL_SYM_CE_THRESHOLD"] == 1 << 40
 
 
 @pytest.mark.unit

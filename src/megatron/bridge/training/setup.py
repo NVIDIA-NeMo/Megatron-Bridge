@@ -67,6 +67,7 @@ from megatron.bridge.training.gtp import (
     classify_gtp_remat_chains,
     configure_gtp_remat,
     get_data_distribution_group,
+    move_gtp_weights_to_symm_pool,
 )
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.bridge.training.optim import (
@@ -615,6 +616,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
         model_config,
         reduce_scatter_with_fp32_accumulation=cfg.dist.gtp_remat_reduce_scatter_with_fp32_accumulation,
         nccl_ub=cfg.dist.gtp_remat_nccl_ub,
+        nccl_ub_collectives=cfg.dist.gtp_remat_nccl_ub_collectives,
         pg_collection=pg_collection,
     )
     if getattr(model_config, "freeze_base_model_for_mtp", False):
@@ -641,6 +643,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
             pg_collection=pg_collection,
         )
+    move_gtp_weights_to_symm_pool(model, model_config)
     classify_gtp_remat_chains(model, model_config)
     return model
 

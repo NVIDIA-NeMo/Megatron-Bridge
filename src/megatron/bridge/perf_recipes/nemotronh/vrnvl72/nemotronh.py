@@ -238,8 +238,15 @@ def nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config(*, num_gpus: int = 256
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
+        # NCCL user-buffer and launch settings. NVLS backs the symmetric-memory GTP collectives.
+        # Rubin doubles NCCL's default NVLS channels (48 vs 24 per NVLink domain), and NVLS buffer
+        # memory scales with them, so keep the Blackwell channel count and chunk size.
+        "NCCL_NVLS_ENABLE": 1,
+        "NCCL_NVLS_CHUNKSIZE": 131072,
+        "NCCL_NVLS_NCHANNELS": 24,
+        # NCCL 2.31 moves registered all-gathers above 8M elements to the copy engines, which are
+        # slower than the symmetric kernels on Rubin; keep every GTP all-gather on the symmetric kernels.
+        "NCCL_SYM_CE_THRESHOLD": 1099511627776,
         # NCCL EP dispatcher mode and one GPU per rank.
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
@@ -273,8 +280,15 @@ def nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config(*, num_gpus: int = 256
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
+        # NCCL user-buffer and launch settings. NVLS backs the symmetric-memory GTP collectives.
+        # Rubin doubles NCCL's default NVLS channels (48 vs 24 per NVLink domain), and NVLS buffer
+        # memory scales with them, so keep the Blackwell channel count and chunk size.
+        "NCCL_NVLS_ENABLE": 1,
+        "NCCL_NVLS_CHUNKSIZE": 131072,
+        "NCCL_NVLS_NCHANNELS": 24,
+        # NCCL 2.31 moves registered all-gathers above 8M elements to the copy engines, which are
+        # slower than the symmetric kernels on Rubin; keep every GTP all-gather on the symmetric kernels.
+        "NCCL_SYM_CE_THRESHOLD": 1099511627776,
         # NCCL EP dispatcher mode and one GPU per rank.
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
