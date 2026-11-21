@@ -294,7 +294,12 @@ def forward_step(
         ):
             data_batch, packing_kwargs = pack_language_shard(data_batch, lengths=pack_lengths)
             if packing_kwargs is not None:
-                data_batch["packing_kwargs"] = packing_kwargs
+                cu_seqlens = packing_kwargs["cu_seqlens_q"]
+                data_batch["cu_seqlens"] = cu_seqlens.unsqueeze(0)
+                data_batch["cu_seqlens_padded"] = packing_kwargs["cu_seqlens_q_padded"].unsqueeze(0)
+                data_batch["max_seqlen"] = torch.tensor(
+                    [packing_kwargs["max_seqlen_q"]], dtype=torch.int32, device=cu_seqlens.device
+                )
         # The padding mask only feeds data-path lengths; the model runs causal attention and must get None.
         data_batch["attention_mask"] = None
     else:

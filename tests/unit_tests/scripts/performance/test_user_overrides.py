@@ -72,6 +72,17 @@ def test_mock_dataset_keeps_recipe_attention_mask_setting(tmp_path, create_atten
     assert updated.dataset.create_attention_mask is create_attention_mask
 
 
+@pytest.mark.parametrize("prefetch_factor", [None, 32])
+def test_mock_dataset_keeps_recipe_prefetch_factor(tmp_path, prefetch_factor):
+    """--data mock rebuilds the dataset config but keeps the recipe's dataloader prefetch_factor."""
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    recipe.dataset.prefetch_factor = prefetch_factor
+
+    updated = set_user_overrides(recipe, _parse_args(tmp_path, "--data", "mock"))
+
+    assert updated.dataset.prefetch_factor == prefetch_factor
+
+
 @pytest.mark.parametrize(
     ("backend", "visible", "expected"),
     [

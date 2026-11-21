@@ -1351,17 +1351,6 @@ def _mxfp4_weight_only_linear(out_features, in_features):
     return module
 
 
-def _exports_weight_only_mxfp4():
-    try:
-        return weight_export.get_quantized_weight_export_spec(_mxfp4_weight_only_linear(32, 32)) is not None
-    except NotImplementedError:
-        return False
-
-
-# TODO: Drop once nvidia-modelopt packs weight-only MXFP4 in its functional export (NVIDIA/Model-Optimizer#3221).
-_requires_weight_only_mxfp4 = pytest.mark.skipif(
-    not _exports_weight_only_mxfp4(), reason="nvidia-modelopt cannot export weight-only MXFP4"
-)
 _GPT_OSS_PROJECTIONS = {
     # HF name: mapping, Megatron name, (out, in) of each expert's Megatron weight
     "gate_up_proj": (GPTOSSMLPGateUpProjMapping, "linear_fc1", (64, 96)),
@@ -1383,7 +1372,6 @@ def _gpt_oss_expert_tasks(projection, factory):
     return module, tasks
 
 
-@_requires_weight_only_mxfp4
 @pytest.mark.parametrize("projection", _GPT_OSS_PROJECTIONS)
 def test_gpt_oss_experts_export_openai_mxfp4_blocks(projection):
     from modelopt.torch.quantization.qtensor import MXFP4QTensor
@@ -1421,7 +1409,6 @@ def test_gpt_oss_experts_export_openai_mxfp4_blocks(projection):
     torch.testing.assert_close(loaded, expected.to(loaded.dtype), rtol=0, atol=0)
 
 
-@_requires_weight_only_mxfp4
 def test_gpt_oss_openai_mxfp4_export_rejects_other_quantized_layers():
     module, tasks = _gpt_oss_expert_tasks("down_proj", _mxfp4_weight_only_linear)
     dense = _fp8_linear()
@@ -1434,7 +1421,42 @@ def test_gpt_oss_openai_mxfp4_export_rejects_other_quantized_layers():
         modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
 
 
-@_requires_weight_only_mxfp4
+@pytest.mark.parametrize("kv_format", ["FP8", "NVFP4"])
+def test_gpt_oss_openai_mxfp4_export_rejects_kv_quantization(kv_format):
+    from modelopt.torch.quantization.config import QuantizerAttributeConfig
+    from modelopt.torch.quantization.nn import TensorQuantizer
+
+    experts, tasks = _gpt_oss_expert_tasks("down_proj", _mxfp4_weight_only_linear)
+    model = torch.nn.Module()
+    model.experts = experts
+    model.self_attention = torch.nn.Module()
+    attention = torch.nn.Module()
+    model.self_attention.core_attention = attention
+    for axis in ("k", "v"):
+        config = {"num_bits": (4, 3), "axis": None}
+        if kv_format == "NVFP4":
+            config.update(num_bits=(2, 1), block_sizes={-1: 16, "type": "dynamic", "scale_bits": (4, 3)})
+        quantizer = TensorQuantizer(QuantizerAttributeConfig(**config))
+        quantizer.amax = 448.0
+        setattr(attention, f"{axis}_bmm_quantizer", quantizer)
+    linear = torch.nn.Linear(4, 8, bias=False)
+    model.self_attention.linear_qkv = linear
+    mapping = QKVMapping(
+        "decoder.layers.0.self_attention.linear_qkv.weight",
+        "model.layers.0.self_attn.q_proj.weight",
+        "model.layers.0.self_attn.k_proj.weight",
+        "model.layers.0.self_attn.v_proj.weight",
+    )
+    tasks.append(
+        replace(
+            _task(mapping, linear, global_name=mapping.megatron_param), param_name="self_attention.linear_qkv.weight"
+        )
+    )
+
+    with pytest.raises(NotImplementedError, match="native MXFP4 format does not support KV-cache"):
+        modelopt_utils.build_modelopt_export_plan(tasks, model=[model])
+
+
 @pytest.mark.parametrize("expert", [0, -1])
 def test_gpt_oss_openai_mxfp4_export_rejects_unquantized_experts(expert):
     # The last expert's hook packs the whole projection, so cover it and another one.
@@ -1717,7 +1739,7 @@ def test_four_rank_capture_failure_topologies(tmp_path):
 
 
 def test_auto_bridge_can_reuse_a_prepared_plan():
-    task = SimpleNamespace(name="task", global_param_name="model.weight")
+    task = SimpleNamespace(name="task", global_param_name="model.weight", export_hook=None)
     plan = modelopt_utils.ModelOptExportPlan([task], {"quantized_layers": {}}, frozenset(), {})
 
     class FakeBridge:
@@ -1838,10 +1860,14 @@ def test_shard_writer_accepts_tensors_the_source_lacks(tmp_path, max_shard_size)
     from safetensors.torch import load_file
 
     (tmp_path / "model.safetensors").write_bytes(b"stale")
+    fused, scale = torch.arange(8, dtype=torch.uint8), torch.tensor(0.5)
     tensors = {
-        "model.weight": torch.arange(4, dtype=torch.uint8),
-        "model.weight_scale": torch.ones(2, dtype=torch.float8_e4m3fn),
-        "model.input_scale": torch.tensor(0.5),
+        # Views of one tensor, as CPU exports of fused projections give.
+        "model.q_proj.weight": fused[:4],
+        "model.k_proj.weight": fused[4:],
+        "model.q_proj.weight_scale": torch.ones(2, dtype=torch.float8_e4m3fn),
+        "model.q_proj.input_scale": scale,
+        "model.k_proj.input_scale": scale,
     }
 
     saved = modelopt_utils.save_safetensors_shards(iter(tensors.items()), tmp_path, max_shard_size=max_shard_size)
@@ -1857,7 +1883,7 @@ def test_shard_writer_accepts_tensors_the_source_lacks(tmp_path, max_shard_size)
         assert set(index["weight_map"]) == tensors.keys() and set(index["weight_map"].values()) == saved - {
             "model.safetensors.index.json"
         }
-        assert len(saved) == 4
+        assert len(saved) == len(tensors) + 1
     else:
         assert saved == {"model.safetensors"}
     assert not list(tmp_path.glob(".*.tmp"))
@@ -1878,6 +1904,8 @@ def test_shard_writer_rejects_duplicate_names(tmp_path):
         (("q_proj", "k_proj", "v_proj"), "input_scale", False),
         (("gate_proj", "up_proj"), "weight_scale_2", False),
         (("q_a_proj", "kv_a_proj_with_mqa"), "input_scale", False),
+        (("g_proj", "q_a_proj", "kv_a_proj_with_mqa"), "weight_scale_2", False),
+        (("wq_a", "wkv"), "input_scale", False),
         (("q_proj", "o_proj"), "input_scale", True),  # Not fused: different scales are fine.
     ],
 )
@@ -1906,13 +1934,15 @@ def test_export_rejects_enabled_quantizers_it_would_drop():
     model.attention.k_bmm_quantizer.disable()
     modelopt_utils.check_exportable_quantizers([model])
 
+    # KV-cache quantizers are exported as k_scale / v_scale.
     model.attention.k_bmm_quantizer.enable()
+    modelopt_utils.check_exportable_quantizers([model])
+
     model.projection.output_quantizer.enable()
-    with pytest.raises(RuntimeError, match=r"attention\.k_bmm_quantizer.*projection\.output_quantizer"):
+    with pytest.raises(RuntimeError, match=r"\['projection\.output_quantizer'\]"):
         modelopt_utils.check_exportable_quantizers([model])
 
     # An activation-only layer would be exported unquantized.
-    model.attention.k_bmm_quantizer.disable()
     model.projection.output_quantizer.disable()
     model.projection.weight_quantizer.disable()
     with pytest.raises(RuntimeError, match=r"\['projection\.input_quantizer'\]"):
@@ -1955,7 +1985,7 @@ def _save_failure_worker(rank, world_size, init_file, out_dir, case):
             _StreamingBridge(case).save_hf_pretrained_modelopt(
                 [torch.nn.Linear(2, 2)],
                 out_dir,
-                export_plan=SimpleNamespace(quantization_config={"quant_method": "modelopt"}),
+                export_plan=modelopt_utils.ModelOptExportPlan([], {"quant_method": "modelopt"}, frozenset(), {}),
                 show_progress=False,
             )
 

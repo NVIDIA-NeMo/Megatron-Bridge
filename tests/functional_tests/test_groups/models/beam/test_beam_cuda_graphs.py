@@ -248,7 +248,7 @@ def test_beam_graph_replay_gathers_updated_sandwich_norms(beam_dp_group, scope):
                 finally:
                     graphed.enable_forward_pre_hook()
                 assert helper.graphs_created()
-                assert all(layer.cuda_graphs for layer in helper.flattened_callables)
+                assert all(layer.te_cuda_graphs for layer in helper.flattened_callables)
                 # Observe real native gather hooks, without replacing their work.
                 with patch.object(graphed, "_make_forward_pre_hook", make_observed_hook):
                     helper.cuda_graph_set_manual_hooks()

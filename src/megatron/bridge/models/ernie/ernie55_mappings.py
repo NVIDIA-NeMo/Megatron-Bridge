@@ -90,12 +90,13 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, ClassVar
 
 import torch
 from torch import nn
 from torch.distributed._tensor import DTensor
 
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.gtp import _is_gtp_param
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
@@ -957,6 +958,68 @@ def ernie55_hf_param_dtypes(hf_config: Any) -> dict[str, torch.dtype]:
     return dict(sorted(dtypes.items()))
 
 
+_FP8_SCALE_SUFFIX = "_scale_inv"
+
+
+def ernie55_fp8_block_size(hf_config: Any) -> int | None:
+    """The block size of a checkpoint's FP8 block-scaled weights, or ``None`` for an unquantized checkpoint.
+
+    The released FP8 checkpoints (``quantization_config`` with ``quant_method`` ``fp8`` and ``weight_block_size``
+    ``[128, 128]``) store their linear projections (attention, dense MLP, experts, latent and MTP projections) as
+    e4m3 with one power-of-two inverse scale per block under ``<name>_scale_inv``; the router, the norms, the
+    hyper-connections and the other tensors keep their dtypes. The import dequantizes such a checkpoint tensor
+    by tensor (:meth:`Ernie55WeightConversionMixin.maybe_modify_loaded_hf_weight`).
+
+    Args:
+        hf_config: The checkpoint's Hugging Face config (a ``PretrainedConfig`` or a dict).
+
+    Raises:
+        NotImplementedError: For a quantization other than blockwise FP8 with square blocks.
+    """
+    quantization = _hf_get(hf_config, "quantization_config")
+    if quantization is None:
+        return None
+    if not isinstance(quantization, Mapping):  # transformers may wrap the dict in a config object
+        quantization = quantization.to_dict() if hasattr(quantization, "to_dict") else vars(quantization)
+    method, block = quantization.get("quant_method"), quantization.get("weight_block_size")
+    square_blocks = (
+        method == "fp8"
+        and isinstance(block, (list, tuple))
+        and len(block) == 2
+        and all(isinstance(size, int) and not isinstance(size, bool) and size > 0 for size in block)
+        and block[0] == block[1]
+    )
+    if not square_blocks:
+        raise NotImplementedError(
+            "ERNIE 5.5 conversion: only blockwise FP8 weights with square blocks (quantization_config with "
+            f"quant_method 'fp8' and weight_block_size [n, n]) can be imported, got {dict(quantization)!r}."
+        )
+    return int(block[0])
+
+
+def _dequantize_fp8(
+    weight: torch.Tensor, name: str, hf_state_dict: Mapping[str, torch.Tensor], block_size: int, dtype: torch.dtype
+) -> torch.Tensor:
+    """An FP8 checkpoint tensor times its blockwise inverse scales, in ``dtype``; any other tensor unchanged.
+
+    Raises:
+        ValueError: If ``weight`` is FP8 but not 2D, or ``<name>_scale_inv`` is missing or does not hold one
+            scale per ``block_size`` x ``block_size`` block. A plain cast would silently load the weight
+            without its scales.
+    """
+    if not quantization_utils.is_fp8_tensor(weight):
+        return weight
+    scale_inv = hf_state_dict.get(f"{name}{_FP8_SCALE_SUFFIX}")
+    blocks = tuple(-(-size // block_size) for size in weight.shape) if weight.ndim == 2 else None
+    if blocks is None or scale_inv is None or tuple(scale_inv.shape) != blocks:
+        raise ValueError(
+            f"ERNIE 5.5 conversion: {name} is {weight.dtype} {tuple(weight.shape)} in the checkpoint, which needs "
+            f"{name}{_FP8_SCALE_SUFFIX} with one inverse scale per {block_size}x{block_size} block, shape "
+            f"{blocks}; got {None if scale_inv is None else tuple(scale_inv.shape)}."
+        )
+    return quantization_utils.dequantize_fp8_blockwise(weight, scale_inv.float(), block_size=block_size, dtype=dtype)
+
+
 def ernie55_mtp_body_copy_keys(hf_config: Any, hf_keys: Iterable[str] | None = None) -> set[str]:
     """Names of the MTP body copies a checkpoint may hold besides :func:`ernie55_hf_param_dtypes`.
 
@@ -991,7 +1054,8 @@ def check_ernie55_checkpoint_keys(hf_config: Any, hf_keys: Iterable[str]) -> Non
     that no mapping reads, which would drop weights silently: for example the shared experts of a config
     without ``n_shared_experts``. The one exception is :func:`ernie55_mtp_body_copy_keys`: the released
     checkpoints also store the shared MTP body under every MTP layer, a copy of the decoder's last layer that
-    the import does not read.
+    the import does not read. An FP8 checkpoint (:func:`ernie55_fp8_block_size`) also holds the inverse scales
+    of its weights, ``<name>_scale_inv``, which the import consumes together with the weights.
 
     Args:
         hf_config: The checkpoint's Hugging Face config (a ``PretrainedConfig`` or a dict).
@@ -1005,7 +1069,16 @@ def check_ernie55_checkpoint_keys(hf_config: Any, hf_keys: Iterable[str]) -> Non
     expected = set(ernie55_hf_param_dtypes(hf_config))
     keys = set(hf_keys)
     missing = sorted(expected - keys)
-    unexpected = sorted(keys - expected - ernie55_mtp_body_copy_keys(hf_config, expected))
+    read = expected | ernie55_mtp_body_copy_keys(hf_config, expected)
+    unexpected = keys - read
+    if ernie55_fp8_block_size(hf_config) is not None:
+        # the inverse scales of the FP8 weights, consumed with their weights
+        unexpected = {
+            name
+            for name in unexpected
+            if not (name.endswith(_FP8_SCALE_SUFFIX) and name[: -len(_FP8_SCALE_SUFFIX)] in read)
+        }
+    unexpected = sorted(unexpected)
     if missing or unexpected:
         raise ValueError(
             "ERNIE 5.5 conversion: the checkpoint does not hold exactly the tensors its config describes: "
@@ -1027,6 +1100,8 @@ class Ernie55WeightConversionMixin:
     * Loading a checkpoint first checks that it holds exactly the tensors the registry reads
       (:func:`check_ernie55_checkpoint_keys`). A weight source with no checkpoint behind it (an external
       state dict, a config-only wrapper) is not checked.
+    * An FP8 checkpoint's weights are dequantized as they are loaded, with the inverse scales stored next to
+      them (:func:`ernie55_fp8_block_size`); a strict export does not expect those scales in the source shards.
 
     Example::
 
@@ -1034,6 +1109,10 @@ class Ernie55WeightConversionMixin:
         class Ernie55Bridge(Ernie55WeightConversionMixin, MegatronModelBridge):
             ...
     """
+
+    # The inverse scales of an FP8 checkpoint's weights: the import consumes them with their weights
+    # (:meth:`maybe_modify_loaded_hf_weight`), and a strict export does not expect them in the source shards.
+    DEQUANTIZED_SOURCE_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = (_FP8_SCALE_SUFFIX,)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """The ERNIE 5.5 mapping registry of ``self.hf_config``.
@@ -1079,3 +1158,25 @@ class Ernie55WeightConversionMixin:
         """
         hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
         return sorted(ernie55_mtp_body_copy_keys(hf_config) & set(source_keys))
+
+    def maybe_modify_loaded_hf_weight(
+        self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
+        """Load ``hf_param``'s tensor(s); an FP8 checkpoint's weights come back dequantized in the checkpoint dtype.
+
+        Raises:
+            ValueError: If an FP8 tensor has no ``<name>_scale_inv`` with one inverse scale per block.
+            NotImplementedError: For a quantization other than blockwise FP8 with square blocks.
+        """
+        hf_weights = super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+        hf_config = getattr(self, "hf_config", None)
+        block_size = ernie55_fp8_block_size(hf_config)
+        if block_size is None:
+            return hf_weights
+        dtype = _hf_checkpoint_dtype(hf_config)
+        if isinstance(hf_weights, dict):
+            return {
+                part: _dequantize_fp8(tensor, hf_param[part], hf_state_dict, block_size, dtype)
+                for part, tensor in hf_weights.items()
+            }
+        return _dequantize_fp8(hf_weights, hf_param, hf_state_dict, block_size, dtype)

@@ -13,11 +13,13 @@
 # limitations under the License.
 
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
+import torch
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.attention import SelfAttention
+from megatron.core.transformer.module import Float16Module
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -25,10 +27,12 @@ from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     _TRANSFORMERS_HAS_QWEN3_5,
     _TRANSFORMERS_HAS_QWEN3_5_MOE,
     Qwen3VLSelfAttention,
+    Qwen35TokenClassificationModelProvider,
     Qwen35VLModelProvider,
     Qwen35VLMoEModelProvider,
     _patch_standard_attention_specs,
 )
+from megatron.bridge.training import model_load_save
 
 
 pytestmark = pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5 support")
@@ -474,3 +478,33 @@ def test_vision_recompute_config_round_trip(provider_cls, granularity, method, n
         method,
         num_layers,
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("provider_cls", "kwargs"),
+    [
+        (Qwen35VLModelProvider, {}),
+        (Qwen35VLMoEModelProvider, {}),
+        (Qwen35TokenClassificationModelProvider, {"num_labels": 3}),
+    ],
+)
+def test_provider_built_model_saves_its_provider(provider_cls, kwargs):
+    """ModelOpt's PTQ example saves provider-built models, which must keep their HF source and subclass fields."""
+    provider = provider_cls(num_layers=4, hidden_size=64, num_attention_heads=4, vocab_size=128, **kwargs)
+    provider._pg_collection = Mock()
+    with patch("megatron.bridge.models.qwen_vl.qwen35_vl_provider.Qwen35VLModelBuilder.build_model") as build_model:
+        build_model.return_value = torch.nn.Module()
+        build_model.return_value.config = SimpleNamespace()  # The builder's TransformerConfig.
+        build_model.return_value.language_model = None  # No token-classification head to attach.
+        wrapped = Mock(spec=Float16Module, module=provider.provide())
+
+    with (
+        patch("megatron.training.checkpointing.save_tokenizer_assets"),
+        patch.object(model_load_save, "save_checkpoint"),
+        patch.object(model_load_save, "GlobalState"),
+        patch.object(model_load_save, "ConfigContainer") as config_container,
+    ):
+        model_load_save.save_megatron_model([wrapped], "/checkpoint", low_memory_save=False)
+
+    assert config_container.call_args.kwargs["model"] is provider

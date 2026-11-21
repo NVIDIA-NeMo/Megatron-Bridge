@@ -552,15 +552,21 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_deterministic_mode_rejects_moe_aux_loss_fusion(self, isolated_determinism_state):
-        """Deterministic mode rejects the MoE aux-loss fusion but keeps fused TopK routing."""
+        """Deterministic mode rejects MoE aux-loss fusion unless TE has a deterministic fused kernel."""
         gpt_model_cfg = create_test_gpt_config(deterministic_mode=True, cross_entropy_loss_fusion=False)
         gpt_model_cfg.moe_router_fusion = True
         gpt_model_cfg.moe_router_aux_loss_fusion = True
 
         container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
+        te_support = "megatron.core.extensions.transformer_engine.te_supports_deterministic_moe_aux_loss"
         try:
-            with pytest.raises(AssertionError, match="moe_router_aux_loss_fusion=False"):
+            with patch(te_support, return_value=False):
+                with pytest.raises(AssertionError, match="moe_router_aux_loss_fusion=False"):
+                    container._validate_and_apply_deterministic_mode()
+
+            # Transformer Engine builds with a deterministic fused aux-loss kernel keep the fusion.
+            with patch(te_support, return_value=True):
                 container._validate_and_apply_deterministic_mode()
 
             gpt_model_cfg.moe_router_aux_loss_fusion = False

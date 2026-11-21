@@ -73,6 +73,7 @@ class MuseGlimmerModelConfig(ModelConfigOverrideMixin, HybridModelConfig):
     builder: ClassVar[str] = "megatron.bridge.models.muse_glimmer.MuseGlimmerModelBuilder"
     transformer_config_class: ClassVar[type[TransformerConfig]] = MuseGlimmerTransformerConfig
     hybrid_attention_layers_include_mlp: ClassVar[bool] = True
+    _mirrored_transformer_fields: ClassVar[frozenset[str]] = frozenset({"hybrid_layer_pattern"})
 
     vision: MuseGlimmerVisionModelConfig = field(default_factory=MuseGlimmerVisionModelConfig)
     image_token_id: int = 200_092
