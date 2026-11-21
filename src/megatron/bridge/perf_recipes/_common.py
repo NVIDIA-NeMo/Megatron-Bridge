@@ -106,6 +106,19 @@ def _enable_ncclep(cfg: ConfigContainer) -> None:
     cfg.model.moe_flex_dispatcher_backend = "ncclep"
 
 
+def _enable_optimizer_cuda_graph(cfg: ConfigContainer) -> None:
+    """Capture the optimizer step in a CUDA graph for a full-iteration CUDA graph recipe.
+
+    Mirrors the settings measured on the DeepSeek V3 256-GPU GB200 NVFP4 recipe: the optimizer
+    graph shares one memory pool with the full-iteration graph so its temporaries do not stay
+    pinned in a second pool, and Transformer Engine's capturable Adam does not support storing
+    parameter remainders.
+    """
+    cfg.optimizer.optimizer_cuda_graph = True
+    cfg.model.cuda_graph_use_single_mempool = True
+    cfg.optimizer.store_param_remainders = False
+
+
 def _perf_precision(compute_dtype: str):
     """Return mixed-precision config tuned for perf benchmarks.
 

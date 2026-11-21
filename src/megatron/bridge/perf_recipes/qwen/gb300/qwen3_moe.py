@@ -15,7 +15,7 @@
 
 import torch
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
+from megatron.bridge.perf_recipes._common import _enable_ncclep, _enable_optimizer_cuda_graph
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
@@ -521,6 +521,7 @@ def _build_qwen3_235b_a22b_gb300_fp8mx() -> ConfigContainer:
 def qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× GB300, MXFP8, PP=4 EP=32, NCCL EP."""
     cfg = _build_qwen3_235b_a22b_gb300_fp8mx()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
@@ -642,6 +643,7 @@ def _build_qwen3_235b_a22b_gb300_nvfp4() -> ConfigContainer:
 def qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× GB300, NVFP4, full-iteration CG and A2A overlap, NCCL EP."""
     cfg = _build_qwen3_235b_a22b_gb300_nvfp4()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.

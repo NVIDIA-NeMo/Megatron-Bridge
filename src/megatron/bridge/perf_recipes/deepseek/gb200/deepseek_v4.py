@@ -18,7 +18,7 @@ import torch
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
-from megatron.bridge.perf_recipes._common import _benchmark_common, _enable_ncclep
+from megatron.bridge.perf_recipes._common import _benchmark_common, _enable_ncclep, _enable_optimizer_cuda_graph
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config,
@@ -117,6 +117,7 @@ def _build_deepseek_v4_flash_gb200_fp8mx() -> ConfigContainer:
 def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× GB200, MXFP8, full-iteration CUDA graph, NCCL EP."""
     cfg = _build_deepseek_v4_flash_gb200_fp8mx()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.

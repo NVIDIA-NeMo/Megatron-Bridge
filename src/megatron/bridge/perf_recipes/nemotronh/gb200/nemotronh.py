@@ -13,7 +13,7 @@
 # limitations under the License.
 """GB200 performance recipes for Nemotron 3 and 3.5."""
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
+from megatron.bridge.perf_recipes._common import _enable_ncclep, _enable_optimizer_cuda_graph
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
     _TE_QUANT_CFG_PATH,
@@ -111,6 +111,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _apply_nemotron_3_super_perf_defaults(cfg)
     _enable_nemotron_3_super_full_iteration(cfg)
+    _enable_optimizer_cuda_graph(cfg)
     cfg.mixed_precision.fp8_dot_product_attention = True
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
@@ -161,6 +162,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
 
     _apply_nemotron_3_super_perf_defaults(cfg)
     _enable_nemotron_3_super_full_iteration(cfg)
+    _enable_optimizer_cuda_graph(cfg)
     cfg.mixed_precision.fp8_dot_product_attention = False
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the

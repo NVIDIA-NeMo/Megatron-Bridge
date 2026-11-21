@@ -13,7 +13,7 @@
 # limitations under the License.
 """VRNVL72 performance recipes for Qwen3 MoE."""
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
+from megatron.bridge.perf_recipes._common import _enable_ncclep, _enable_optimizer_cuda_graph
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen.common import ConfigContainer
 from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
@@ -57,6 +57,7 @@ def qwen3_235b_a22b_pretrain_256gpu_vrnvl72_bf16_config() -> ConfigContainer:
 def qwen3_235b_a22b_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VRNVL72, FP8-MX, NCCL EP (alias of GB300)."""
     cfg = _build_qwen3_235b_a22b_gb300_fp8mx()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
@@ -86,6 +87,7 @@ def qwen3_235b_a22b_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 def qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VRNVL72, NVFP4, NCCL EP, full-iteration CG and A2A overlap."""
     cfg = _build_qwen3_235b_a22b_gb300_nvfp4()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
@@ -145,6 +147,7 @@ def qwen3_30b_a3b_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContainer:
 def qwen3_30b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× VRNVL72, FP8-MX, NCCL EP (alias of GB300)."""
     cfg = _build_qwen3_30b_a3b_gb300_fp8mx()
+    _enable_optimizer_cuda_graph(cfg)
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
