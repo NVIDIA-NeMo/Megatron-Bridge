@@ -18,6 +18,8 @@ import pkgutil
 from collections.abc import Callable
 
 import pytest
+from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
     llama3_8b_pretrain_8gpu_gb200_nvfp4_config,
@@ -125,6 +127,42 @@ def test_llama3_70b_h100_fp8cs_sets_explicit_pipeline_layout(monkeypatch: pytest
 
 
 @pytest.mark.unit
+def test_llama3_70b_vrnvl72_fp8mx_sets_explicit_pipeline_layout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 64-GPU VRNVL72 MXFP8 recipe moves layers off the stage that holds the output layer and loss.
+
+    The last PP rank keeps 18 transformer layers and the two middle ranks take one more each
+    (20/21/21/18); its last virtual stage holds 2 layers plus the output layer and loss. The
+    parallelism and batch sizes stay those of the GB300 recipe.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    cfg = llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config()
+    gb300_cfg = llama3_70b_pretrain_64gpu_gb300_fp8mx_config()
+
+    assert cfg.model.pipeline_model_parallel_layout == "Et*4|t*5|t*5|t*4|(t*4|)*15,ttL"
+
+    pp_size = cfg.model.pipeline_model_parallel_size
+    layout = PipelineParallelLayerLayout(cfg.model.pipeline_model_parallel_layout, pp_size).layout
+    assert len(layout[0]) == cfg.model.virtual_pipeline_model_parallel_size
+    assert [sum(stage.count(LayerType.decoder) for stage in rank) for rank in layout] == [20, 21, 21, 18]
+    assert sum(stage.count(LayerType.decoder) for rank in layout for stage in rank) == cfg.model.num_layers
+    assert layout[0][0][0] == LayerType.embedding
+    assert layout[-1][-1] == [LayerType.decoder, LayerType.decoder, LayerType.loss]
+
+    # The layout is only valid for this parallelism; pin it to the GB300 recipe's.
+    for name in (
+        "tensor_model_parallel_size",
+        "pipeline_model_parallel_size",
+        "virtual_pipeline_model_parallel_size",
+        "context_parallel_size",
+        "num_layers",
+    ):
+        assert getattr(cfg.model, name) == getattr(gb300_cfg.model, name), name
+    assert cfg.train.global_batch_size == gb300_cfg.train.global_batch_size
+    assert cfg.train.micro_batch_size == gb300_cfg.train.micro_batch_size
+
+
+@pytest.mark.unit
 def test_llama3_70b_gb200_nvfp4_captures_whole_transformer_layer(monkeypatch: pytest.MonkeyPatch) -> None:
     """The 64-GPU GB200 NVFP4 recipe captures the whole Transformer layer per graph.
 
@@ -193,7 +231,7 @@ def test_llama3_vrnvl72_fp8mx_perf_settings(
 ) -> None:
     """The VRNVL72 MXFP8 recipes add FP8 attention, fused QKV+RoPE, TE SwiGLU and no attention mask to GB300.
 
-    Apart from those settings, the mixed-precision settings and the parallel layout match GB300.
+    Apart from those settings, the mixed-precision settings and the parallelism match GB300.
     """
     patch_recipe_construction_dependencies(monkeypatch)
 
