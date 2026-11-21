@@ -20,6 +20,10 @@ validated topology and memory policy but uses `optim_grads` ZeRO-2 sharding.
 It is the performance candidate when the additional replicated-parameter
 memory fits.
 
+`qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_config` matches
+the GB/VR comparison contract: distributed optimizer, BF16 Adam moments,
+no recompute, and TE router/preprocess graphs.
+
 Three diagnostic variants isolate the remaining activation-memory choices:
 
 - `..._zero2_selective_config` uses eager execution and recomputes only
@@ -38,8 +42,9 @@ TP/PP/EP mapping candidates are also provided for matched short-run tuning:
   the next power-of-two micro batch size.
 - 16-GPU TP2 selective/full-recompute graph variants probe whether additional
   TP headroom can support TE-scoped or Megatron-FSDP full-iteration graphs.
-- 32-GPU `..._pp1_sms16_config` and `..._pp1_sms24_config` tune HybridEP
-  communication SM allocation against the default 32-SM winner.
+- 32-GPU SM16/24/40/48 variants tune HybridEP communication SM allocation
+  against the default 32-SM winner; chunk64/256 variants bracket the default
+  128-token combine chunk.
 
 All reduced-scale recipes retain GBS=2048 from the 64-GPU template. Override
 `train.global_batch_size` when running the GBS 16, 256, or 1024 experiments.

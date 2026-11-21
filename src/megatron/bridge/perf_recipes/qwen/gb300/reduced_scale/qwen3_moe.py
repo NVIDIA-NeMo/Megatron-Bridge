@@ -13,6 +13,8 @@
 # limitations under the License.
 """Reduced-scale GB300 performance recipes for Qwen3-235B-A22B."""
 
+import torch
+
 from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
     qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config,
 )
@@ -47,6 +49,7 @@ def _enable_fsdp_full_iteration_graph(cfg: ConfigContainer) -> None:
     cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+    cfg.model.offload_modules = []
 
 
 def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
@@ -121,6 +124,40 @@ def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config() -> ConfigContainer:
     cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config()
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads"
     cfg.ddp.expert_data_parallel_sharding_strategy = "optim_grads"
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_config() -> ConfigContainer:
+    """16-GPU GB/VR comparison contract with BF16 moments and ZeRO-1 semantics."""
+    cfg = qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config()
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = []
+
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.use_distributed_optimizer = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.dist.use_megatron_fsdp = False
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.model.init_model_with_meta_device = False
+
+    _set_hybridep_domain_size(cfg, 16)
     return cfg
 
 
@@ -241,6 +278,30 @@ def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms24_config() -> ConfigContai
     return cfg
 
 
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms40_config() -> ConfigContainer:
+    """32-GPU TP=1/PP=1 winner candidate with 40 HybridEP communication SMs."""
+    cfg = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config()
+    cfg.model.moe_hybridep_num_sms = 40
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms48_config() -> ConfigContainer:
+    """32-GPU TP=1/PP=1 winner candidate with 48 HybridEP communication SMs."""
+    cfg = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config()
+    cfg.model.moe_hybridep_num_sms = 48
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk64_config() -> ConfigContainer:
+    """32-GPU TP=1/PP=1 winner candidate with 64-token combine chunks."""
+    cfg = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config()
+    cfg.env_vars = {
+        **cfg.env_vars,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+    }
+    return cfg
+
+
 def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk256_config() -> ConfigContainer:
     """32-GPU TP=1/PP=1 winner candidate with 256-token combine chunks."""
     cfg = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config()
@@ -253,6 +314,7 @@ def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk256_config() -> ConfigCon
 
 __all__ = [
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config",
@@ -267,6 +329,9 @@ __all__ = [
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_mbs2_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms16_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms24_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms40_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms48_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk64_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk256_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config",

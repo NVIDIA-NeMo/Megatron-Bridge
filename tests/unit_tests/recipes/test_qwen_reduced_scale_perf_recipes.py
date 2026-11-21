@@ -16,6 +16,7 @@ import torch
 from scripts.common.benchmark_parallelism import data_parallel_size, topology_from_config
 
 from megatron.bridge.perf_recipes.qwen import (
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config,
@@ -27,11 +28,14 @@ from megatron.bridge.perf_recipes.qwen import (
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_selective_graph_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero3_full_graph_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config,
+    qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk64_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk256_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_mbs2_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms16_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms24_config,
+    qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms40_config,
+    qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms48_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_config,
     qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_tp2_pp1_mbs2_config,
 )
@@ -83,6 +87,25 @@ def test_qwen3_235b_16gpu_gb300_bf16_uses_fsdp_zero3() -> None:
     assert cfg.optimizer.exp_avg_dtype == torch.float32
     assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 16
+
+
+def test_qwen3_235b_16gpu_gb300_bf16_common_contract() -> None:
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_config()
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["moe_router", "moe_preprocess"]
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules == []
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.ddp.use_distributed_optimizer is True
+    assert cfg.ddp.use_megatron_fsdp is False
+    assert cfg.dist.use_megatron_fsdp is False
 
 
 def test_qwen3_235b_16gpu_gb300_bf16_zero2_variant() -> None:
@@ -149,10 +172,16 @@ def test_qwen3_235b_32gpu_gb300_bf16_pp1_candidates() -> None:
 
     sms16 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms16_config()
     sms24 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms24_config()
+    sms40 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms40_config()
+    sms48 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms48_config()
     assert sms16.model.moe_hybridep_num_sms == 16
     assert sms24.model.moe_hybridep_num_sms == 24
+    assert sms40.model.moe_hybridep_num_sms == 40
+    assert sms48.model.moe_hybridep_num_sms == 48
 
+    chunk64 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk64_config()
     chunk256 = qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk256_config()
+    assert chunk64.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 64
     assert chunk256.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 256
 
 
