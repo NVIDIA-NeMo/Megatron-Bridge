@@ -2152,6 +2152,35 @@ class TestStreamSharedOuterAdapterWeights:
         )
 
     @patch(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_tensor_parallel_world_size",
+        return_value=2,
+    )
+    @patch(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        return_value=1,
+    )
+    def test_stack_3d_moe_gate_up_puts_expert_tp_shards_in_gate_then_up_order(self, _mock_ep, _mock_etp):
+        """With expert TP 2, each expert's gathered B is [gate_0; up_0; gate_1; up_1]; vLLM wants [gate; up]."""
+        bridge = self._make_bridge()
+        E, r, hid, mi = 2, 2, 6, 4
+        linear_in = torch.randn(r, hid)
+        gate = torch.randn(E, mi, r)
+        up = torch.randn(E, mi, r)
+        half = mi // 2
+        gathered = torch.cat([gate[:, :half], up[:, :half], gate[:, half:], up[:, half:]], dim=1)
+
+        with (
+            patch.object(bridge, "_gather_expert_adapter_weight", return_value=None),
+            patch("megatron.bridge.models.conversion.peft_bridge.is_expert_linear", return_value=True),
+        ):
+            out = self._run_3d(bridge, linear_in, gathered, E, self._mapping_gate_up())
+
+        torch.testing.assert_close(
+            out["model.layers.0.mlp.experts.base_layer.lora_B.weight"],
+            torch.cat([gate, up], dim=1).permute(1, 2, 0).contiguous(),
+        )
+
+    @patch(
         "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
         return_value=1,
     )

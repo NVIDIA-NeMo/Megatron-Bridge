@@ -544,9 +544,14 @@ class MegatronPeftBridge:
         *,
         is_expert: bool,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Split fused FC1 LoRA linear_out into gate/up with TP-aware ordering."""
+        """Split fused FC1 LoRA linear_out into gate/up with TP-aware ordering.
 
-        tp_size = 1 if is_expert else parallel_state.get_tensor_model_parallel_world_size()
+        ``linear_out_weight`` is gathered across the tensor-parallel group of its layer (the
+        expert-TP group for routed experts), so it holds one ``[gate shard; up shard]`` block per
+        rank, as a gated linear_fc1 is sharded.
+        """
+
+        tp_size = _expert_tp_size() if is_expert else parallel_state.get_tensor_model_parallel_world_size()
         if tp_size <= 1:
             return torch.chunk(linear_out_weight, 2, dim=0)
 
@@ -1263,8 +1268,9 @@ class MegatronPeftBridge:
 
         Each adapter task is either FC1 (gate_up → ``base_layer``) or FC2 (down →
         bare), distinguished by the HF base weight names it resolves to. A fused FC1
-        ``linear_out`` carries gate+up on its output dim already, matching vLLM's
-        ``2*moe_intermediate`` w13 fused stack, so no gate/up re-split is needed.
+        ``linear_out`` carries gate+up on its output dim, matching vLLM's
+        ``2*moe_intermediate`` w13 fused stack; with expert TP > 1 its rows come gathered
+        rank by rank and are put back in ``[gate; up]`` order.
         """
         in_name, out_name = source_names if source_names is not None else (None, None)
 
@@ -1320,6 +1326,11 @@ class MegatronPeftBridge:
                 ],
                 dim=0,
             )
+        if is_gate_up and _expert_tp_size() > 1:
+            # vLLM's w13 stack is [gate; up]; expert-TP gathering interleaves them by rank.
+            linear_out_all = torch.stack(
+                [torch.cat(self._split_fused_fc1_linear_out_weight(b, is_expert=True), dim=0) for b in linear_out_all]
+            )
         lora_b_3d = linear_out_all.permute(1, 2, 0).contiguous()
         if cpu:
             lora_b_3d = lora_b_3d.cpu()
@@ -1361,6 +1372,18 @@ class MegatronPeftBridge:
                     raise ValueError(f"Unknown GDN in_proj base weight name: {base_name}")
                 per_base[base_name] = gdn_linear_out_weights[projection_key]
             return per_base
+
+        if (
+            is_expert
+            and len(base_hf_weight_names) == 1
+            and _FUSED_EXPERT_GATE_UP.search(base_hf_weight_names[0])
+            and linear_out_tensor.ndim == 2
+            and _expert_tp_size() > 1
+        ):
+            # A fused HF gate_up_proj stores gate then up; expert-TP gathering interleaves
+            # them by rank, so put B's rows back in that order.
+            gate_weight, up_weight = self._split_fused_fc1_linear_out_weight(linear_out_tensor, is_expert=True)
+            return {base_hf_weight_names[0]: torch.cat([gate_weight, up_weight], dim=0)}
 
         is_fused_fc1 = self._is_fused_fc1_gate_up(base_hf_weight_names, linear_out_tensor)
         if is_fused_fc1:
@@ -1673,6 +1696,15 @@ class MegatronPeftBridge:
 
 
 _HF_LORA_SUFFIXES = (".lora_A.weight", ".lora_B.weight")
+
+# HF names of a routed-expert gate+up projection stored as one tensor, gate first
+# (FusedGatedExpertMapping); GPT-OSS's alternating layout is handled by its own bridge.
+_FUSED_EXPERT_GATE_UP = re.compile(r"\.experts\.gate_up_proj(?:\.weight)?$")
+
+
+def _expert_tp_size() -> int:
+    """Size of the expert tensor-parallel group, 1 when model parallelism is not set up."""
+    return parallel_state.get_expert_tensor_parallel_world_size() or 1
 
 
 # Expert projections on which a shared-outer MoE LoRA shares lora_A (the first expert
