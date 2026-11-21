@@ -1006,6 +1006,31 @@ class MegatronPeftBridge:
             if is_grouped_expert:
                 base_suffixes = [f".weight{expert_num}" for expert_num in range(num_moe_experts)]
 
+            # (base prefix, base suffix, lora_A, lora_B) per emitted adapter. A sequential expert
+            # (``local_experts.N``) holds its adapter only on its own expert-parallel rank, under a
+            # local index, so gather it from every rank and emit each under its global index.
+            emit_targets = [
+                (adapter_task.global_base_prefix, base_suffix, linear_in_tensor, linear_out_tensor)
+                for base_suffix in base_suffixes
+            ]
+            if is_expert and not is_grouped_expert:
+                sequential_in_gathered = self._gather_expert_adapter_weight(linear_in_tensor)
+                sequential_out_gathered = self._gather_expert_adapter_weight(linear_out_tensor)
+                if sequential_in_gathered is not None:
+                    emit_targets = [
+                        (
+                            _sequential_expert_prefix_on_rank(
+                                adapter_task.global_base_prefix, ep_rank, num_moe_experts, len(sequential_in_gathered)
+                            ),
+                            ".weight",
+                            rank_in,
+                            rank_out,
+                        )
+                        for ep_rank, (rank_in, rank_out) in enumerate(
+                            zip(sequential_in_gathered, sequential_out_gathered)
+                        )
+                    ]
+
             # If the HF base names don't include experts.N, emit packed expert weights
             # (stacked along dim 0) once per HF name instead of duplicating per expert.
             packed_expert = False
@@ -1061,9 +1086,7 @@ class MegatronPeftBridge:
 
                 continue
 
-            for base_suffix in base_suffixes:
-                current_linear_in_tensor = linear_in_tensor
-                current_linear_out_tensor = linear_out_tensor
+            for base_prefix, base_suffix, current_linear_in_tensor, current_linear_out_tensor in emit_targets:
                 if is_grouped_expert:
                     expert_idx = int(base_suffix[len(".weight") :])
                     current_linear_in_tensor = self._select_expert_adapter_weight(
@@ -1085,7 +1108,7 @@ class MegatronPeftBridge:
 
                 base_hf_weight_names = self._get_base_hf_param_names_for_adapter(
                     mapping_registry,
-                    adapter_task.global_base_prefix,
+                    base_prefix,
                     adapter_task.adapter_key,
                     base_suffix,
                 )
@@ -1403,10 +1426,11 @@ class MegatronPeftBridge:
         linear_out_weight = adapter_weight.linear_out_weight.weight
         num_moe_experts = megatron_model[0].config.num_moe_experts
         is_expert = is_expert_linear(adapter_weight.global_base_prefix)
-        is_grouped_expert = is_expert and ".local_experts." not in adapter_weight.global_base_prefix
         expert_linear_in_gathered = None
         expert_linear_out_gathered = None
-        if is_grouped_expert:
+        if is_expert:
+            # Routed experts are spread over expert-parallel ranks, sequential ones too: the base
+            # weights here are gathered from every rank, so take each expert's adapter from its rank.
             expert_linear_in_gathered = self._gather_expert_adapter_weight(linear_in_weight)
             expert_linear_out_gathered = self._gather_expert_adapter_weight(linear_out_weight)
 
@@ -1468,7 +1492,7 @@ class MegatronPeftBridge:
         for hf_name, base_weight in list(converted_weights_dict.items()):
             current_linear_in_weight = linear_in_weight
             current_linear_out_weight = linear_out_weight
-            if is_grouped_expert:
+            if is_expert:
                 expert_idx = self._infer_hf_expert_idx(hf_name)
                 if expert_idx is not None:
                     current_linear_in_weight = self._select_expert_adapter_weight(
@@ -1618,8 +1642,8 @@ class MegatronPeftBridge:
         base_prefix = adapter_weights[0].global_base_prefix
         num_moe_experts = megatron_model[0].config.num_moe_experts
         is_expert = is_expert_linear(base_prefix)
-        is_grouped_expert = is_expert and ".local_experts." not in base_prefix
-        if is_grouped_expert:
+        if is_expert:
+            # As in _merge_lora_adapter_weights: each routed expert's adapters live on its own EP rank.
             for adapter_key, adapter_weight in adapter_lookup.items():
                 expert_linear_in_gathered[adapter_key] = self._gather_expert_adapter_weight(
                     adapter_weight.linear_in_weight.weight,
@@ -1644,7 +1668,7 @@ class MegatronPeftBridge:
 
             linear_in_weight = target_adapter.linear_in_weight.weight
             linear_out_weight = target_adapter.linear_out_weight.weight
-            if is_grouped_expert:
+            if is_expert:
                 expert_idx = self._infer_hf_expert_idx(hf_name)
                 if expert_idx is not None:
                     linear_in_weight = self._select_expert_adapter_weight(
@@ -1682,6 +1706,17 @@ _SHARED_OUTER_LORA_A_PROJECTIONS = frozenset(
     {"gate_proj", "up_proj", "gate_up_proj", "w1", "w3", "linear_fc1", "fc1", "base_layer"}
 )
 _SHARED_OUTER_LORA_B_PROJECTIONS = frozenset({"down_proj", "w2", "linear_fc2", "fc2", "experts"})
+
+
+def _sequential_expert_prefix_on_rank(base_prefix: str, ep_rank: int, num_moe_experts: int, ep_size: int) -> str:
+    """``base_prefix`` with its ``local_experts.N`` renumbered to that local expert's global index on ``ep_rank``."""
+    num_local_experts = num_moe_experts // ep_size
+    return re.sub(
+        r"\.local_experts\.(\d+)\.",
+        lambda match: f".local_experts.{ep_rank * num_local_experts + int(match.group(1))}.",
+        base_prefix,
+        count=1,
+    )
 
 
 def _is_expert_adapter_base_name(base_name: str) -> bool:
