@@ -14,6 +14,8 @@
 
 """Tests for DeepSeek V3 H100 performance recipe topology."""
 
+from pathlib import Path
+
 import pytest
 from scripts.common.benchmark_parallelism import data_parallel_size, topology_from_config
 
@@ -30,18 +32,46 @@ def _offline_recipes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize("precision", ["bf16", "fp8cs"])
-def test_deepseek_v3_64gpu_h100_topology_fits_64_gpus(precision: str) -> None:
-    """The 64-GPU H100 recipes build dense and expert grids that divide 64 GPUs."""
-    cfg = getattr(deepseek, f"deepseek_v3_pretrain_64gpu_h100_{precision}_config")()
+def test_deepseek_v3_64gpu_h100_proxy_fits_64_gpus(precision: str) -> None:
+    """The 64-GPU H100 proxies build dense and expert grids that divide 64 GPUs."""
+    cfg = getattr(deepseek, f"deepseek_v3_pretrain_64gpu_h100_{precision}_proxy_config")()
     model = cfg.model
+    topology = topology_from_config(model)
 
-    assert data_parallel_size(num_gpus=64, topology=topology_from_config(model)) == 32
+    assert data_parallel_size(num_gpus=64, topology=topology) == 32
+    assert 64 % (model.expert_model_parallel_size * model.expert_tensor_parallel_size) == 0
     assert model.num_layers == 13
     assert model.moe_layer_freq == [0] * 3 + [1] * 10
     assert (model.tensor_model_parallel_size, model.expert_model_parallel_size) == (2, 64)
     assert (model.pipeline_model_parallel_size, model.virtual_pipeline_model_parallel_size) == (1, None)
     assert model.pipeline_model_parallel_layout is None
     assert cfg.train.global_batch_size == 1024
+
+
+@pytest.mark.parametrize("precision", ["bf16", "fp8cs"])
+def test_deepseek_v3_64gpu_h100_proxy_keeps_parent_settings(precision: str) -> None:
+    """The proxies change only depth and pipeline layout relative to their 64-GPU parents."""
+    proxy = getattr(deepseek, f"deepseek_v3_pretrain_64gpu_h100_{precision}_proxy_config")()
+    parent = getattr(deepseek, f"deepseek_v3_pretrain_64gpu_h100_{precision}_config")()
+
+    assert proxy.mixed_precision == parent.mixed_precision
+    assert proxy.env_vars == parent.env_vars
+    assert proxy.model.recompute_modules == parent.model.recompute_modules
+    assert proxy.model.mtp_num_layers == parent.model.mtp_num_layers == 1
+
+
+@pytest.mark.parametrize("compute_dtype", ["bf16", "fp8_cs"])
+def test_deepseek_v3_64gpu_h100_proxy_is_available_through_performance_selector(
+    monkeypatch: pytest.MonkeyPatch, compute_dtype: str
+) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / "scripts" / "performance"))
+    from utils.utils import get_perf_recipe_by_name
+
+    cfg = get_perf_recipe_by_name("deepseek_v3", "pretrain", 64, "h100", compute_dtype, config_variant="proxy")
+
+    assert cfg.model.num_layers == 13
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 64
 
 
 @pytest.mark.parametrize("precision", ["bf16", "fp8cs"])
