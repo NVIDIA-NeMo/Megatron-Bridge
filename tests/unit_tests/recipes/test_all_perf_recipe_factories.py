@@ -18,6 +18,7 @@ import importlib
 import inspect
 import pkgutil
 from collections.abc import Callable
+from dataclasses import fields
 
 import pytest
 
@@ -63,10 +64,48 @@ def test_all_perf_recipe_factories_are_exported() -> None:
         assert getattr(family_package, factory.__name__) is factory
 
 
+def _reject_unsupported_dsv4_recipe(recipe_factory: Callable[..., object]) -> bool:
+    """Require the reference runtime for eager and graph DSv4 factories."""
+    if recipe_factory.__name__ not in {
+        "deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config",
+        "deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config",
+        "deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
+        "deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config",
+        "deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config",
+        "deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config",
+        "deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config",
+        "deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config",
+    }:
+        return False
+
+    from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
+    from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import (
+        _DEV_MCORE_CAPABILITIES,
+        _MAIN_MCORE_CAPABILITIES,
+        _MCORE_CAPABILITIES,
+        _MHC_GRAPH_SPLIT_FIELD,
+    )
+
+    declared_fields = {field.name for field in fields(DeepSeekV4HybridModelProvider)}
+    required = set(_MCORE_CAPABILITIES)
+    # Only attention-graph variants need MCore #7337; eager ones build without it.
+    if not recipe_factory.__name__.endswith("_eager_config"):
+        required.add(_MHC_GRAPH_SPLIT_FIELD)
+    required.update(_DEV_MCORE_CAPABILITIES if "o_groups" in declared_fields else _MAIN_MCORE_CAPABILITIES)
+    if required <= declared_fields:
+        return False
+    with pytest.raises(RuntimeError, match="require.*MCore"):
+        recipe_factory()
+    return True
+
+
 @pytest.mark.parametrize("recipe_factory", _PERF_RECIPE_FACTORIES, ids=recipe_factory_id)
 def test_perf_recipe_factory_builds_config(recipe_factory: Callable[..., object]) -> None:
     """Every performance recipe can be built without GPU or network access."""
     inspect.signature(recipe_factory).bind()
+
+    if _reject_unsupported_dsv4_recipe(recipe_factory):
+        return
 
     cfg = recipe_factory()
 
@@ -96,4 +135,6 @@ def test_perf_recipe_factory_builds_config(recipe_factory: Callable[..., object]
 @pytest.mark.parametrize("recipe_factory", _PERF_RECIPE_FACTORIES, ids=recipe_factory_id)
 def test_ncclep_perf_recipe_bounds_packed_tokens(recipe_factory: Callable[..., object]) -> None:
     """NCCL EP sizes its buffers once, so recipes that feed it packed sequences declare the bound."""
+    if _reject_unsupported_dsv4_recipe(recipe_factory):
+        return
     assert_ncclep_bounds_packed_tokens(recipe_factory())

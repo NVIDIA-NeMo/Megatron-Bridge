@@ -819,9 +819,17 @@ class TestGetBatch:
         get_batch_mock = Mock(
             return_value=(tokens, labels, loss_mask, None, tokens.clone(), {"packed_seq_params": scheduled})
         )
+        custom_builder = Mock(side_effect=AssertionError("Scheduler parameters must not be rebuilt"))
 
-        _forward_step_common(state, _Iterator({}), model, _get_batch_fn=get_batch_mock)
+        _forward_step_common(
+            state,
+            _Iterator({}),
+            model,
+            _get_batch_fn=get_batch_mock,
+            _get_packed_seq_params_fn=custom_builder,
+        )
 
+        custom_builder.assert_not_called()
         accumulate_spy.assert_not_called()
         assert state._flops_seqlen_sum == 1000
         assert state._flops_seqlen_sq_sum == 90_000
@@ -895,7 +903,10 @@ class TestGetBatch:
         assert model.forward_kwargs["packed_seq_params"] is packed_params
         packed_params_mock.assert_called_once_with(metadata)
 
-    def test_forward_common_passes_unmasked_packed_seq_params_on_middle_pp_stage(self, monkeypatch):
+    @pytest.mark.parametrize("custom_packed_params_builder", [False, True])
+    def test_forward_common_passes_unmasked_packed_seq_params_on_middle_pp_stage(
+        self, monkeypatch, custom_packed_params_builder
+    ):
         """Packed batches without physical gaps do not need the router graph guard."""
         sentinel_packed_seq_params = object()
         tokens = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]])
@@ -943,7 +954,16 @@ class TestGetBatch:
         get_packed_seq_params_mock = Mock(return_value=sentinel_packed_seq_params)
         monkeypatch.setattr("megatron.bridge.training.gpt_step.get_packed_seq_params", get_packed_seq_params_mock)
 
-        output, returned_loss_mask = _forward_step_common(state, _Iterator({}), model)
+        if custom_packed_params_builder:
+            monkeypatch.setattr(
+                "megatron.bridge.training.gpt_step.get_packed_seq_params", Mock(side_effect=AssertionError)
+            )
+        output, returned_loss_mask = _forward_step_common(
+            state,
+            _Iterator({}),
+            model,
+            _get_packed_seq_params_fn=get_packed_seq_params_mock if custom_packed_params_builder else None,
+        )
 
         assert torch.equal(output, torch.tensor(1.0))
         assert torch.equal(returned_loss_mask, loss_mask)
@@ -958,6 +978,82 @@ class TestGetBatch:
         get_packed_seq_params_mock.assert_called_once_with(packed_seq_metadata)
         assert "cu_seqlens" not in get_packed_seq_params_mock.call_args.args[0]
         assert "cu_seqlens_argmin" not in get_packed_seq_params_mock.call_args.args[0]
+
+    @pytest.mark.unit
+    def test_forward_common_preserves_dsv4_builder_with_padding_mask(self, monkeypatch):
+        """DSv4 finalizes CP routes while router padding stays out of packed parameters."""
+        from megatron.bridge.models.deepseek import deepseek_v4_step
+
+        tokens = torch.arange(8).unsqueeze(0)
+        labels = tokens + 1
+        loss_mask = torch.tensor([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]])
+        padding_mask = torch.tensor([[False, False, False, False, False, False, False, True]])
+        packed_seq_metadata = {
+            "cu_seqlens_q": torch.tensor([0, 7, 7], dtype=torch.int32),
+            "cu_seqlens_kv": torch.tensor([0, 7, 7], dtype=torch.int32),
+            "cu_seqlens_q_padded": torch.tensor([0, 8, 8], dtype=torch.int32),
+            "cu_seqlens_kv_padded": torch.tensor([0, 8, 8], dtype=torch.int32),
+            "max_seqlen_q": torch.tensor(8, dtype=torch.int32),
+            "max_seqlen_kv": torch.tensor(8, dtype=torch.int32),
+            "pad_between_seqs": torch.tensor(True),
+            "cp_partition_mode": "contiguous",
+            "padding_mask": padding_mask,
+        }
+        model = _RecordingModel(pre_process=False)
+        state = Mock()
+        state.cfg = _make_cfg(enable_offline_packing=True, offline_packing_specs=object())
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
+        config = type(
+            "Config",
+            (),
+            {
+                "is_hybrid_model": True,
+                "mtp_num_layers": 0,
+                "overlap_moe_expert_parallel_comm": False,
+                "sequence_parallel": False,
+                "cuda_graph_impl": "transformer_engine",
+                "cuda_graph_modules": ["attn"],
+                "cuda_graph_scope": None,
+                "num_moe_experts": 8,
+            },
+        )()
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: config)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection())
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_packed_seq_params",
+            Mock(side_effect=AssertionError("DSv4 must use its custom packed-parameter builder")),
+        )
+        initial_params, finalized_params = object(), object()
+        build_params = Mock(return_value=initial_params)
+        finalize_params = Mock(return_value=finalized_params)
+        monkeypatch.setattr(deepseek_v4_step, "get_packed_seq_params", build_params)
+        monkeypatch.setattr(deepseek_v4_step, "finalize_packed_seq_params", finalize_params)
+        custom_builder = Mock(wraps=deepseek_v4_step._get_dsv4_packed_seq_params)
+        get_batch_mock = Mock(return_value=(tokens, labels, loss_mask, None, tokens.clone(), packed_seq_metadata))
+
+        output, returned_loss_mask = _forward_step_common(
+            state,
+            _Iterator({}),
+            model,
+            _get_batch_fn=get_batch_mock,
+            _get_packed_seq_params_fn=custom_builder,
+        )
+
+        custom_builder.assert_called_once()
+        callback_metadata = custom_builder.call_args.args[0]
+        assert "padding_mask" not in callback_metadata
+        assert callback_metadata["total_tokens"] == tokens.size(1)
+        build_params.assert_called_once_with(
+            {key: value for key, value in packed_seq_metadata.items() if key != "padding_mask"}
+        )
+        finalize_params.assert_called_once_with(initial_params)
+        assert "total_tokens" not in packed_seq_metadata
+        assert packed_seq_metadata["padding_mask"] is padding_mask
+        assert output is model.output
+        assert returned_loss_mask is loss_mask
+        assert model.forward_kwargs["packed_seq_params"] is finalized_params
+        assert model.forward_kwargs["padding_mask"] is padding_mask
 
     @pytest.mark.parametrize(
         ("return_schedule_plan", "expert_bias"),

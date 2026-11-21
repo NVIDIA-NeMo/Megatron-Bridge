@@ -16,6 +16,10 @@
 from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
+    deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config,
+    deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config,
+    deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
+    deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config,
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
@@ -51,3 +55,54 @@ def deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
     return cfg
+
+
+def _use_rubin_mok_comm_sms(cfg: ConfigContainer) -> ConfigContainer:
+    """Replace GB300's 28/28 MoK communication SMs with the Rubin benchmark's 40/40."""
+    cfg.model.moe_megakernel_backend_config = {
+        **cfg.model.moe_megakernel_backend_config,
+        "fwd_num_comm_sms": 40,
+        "bwd_num_comm_sms": 40,
+    }
+    return cfg
+
+
+def deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V4 Pro full model: 61 main blocks + MTP on 256 Rubin GPUs.
+
+    Carries over the GB300 full benchmark's model, pipeline split and training settings,
+    with the Rubin proxy's communication SM allocation. No full-model Rubin run has been
+    measured, so unlike the GB300 recipes and the Rubin proxy this reproduces no log.
+    Runtime requirements match the Rubin proxy.
+    """
+    return _use_rubin_mok_comm_sms(deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config())
+
+
+def deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config() -> ConfigContainer:
+    """Run the 61-block + MTP Rubin model eagerly.
+
+    Carries over the GB300 eager benchmark with the Rubin proxy's communication SM
+    allocation. Not measured on Rubin.
+    """
+    return _use_rubin_mok_comm_sms(deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config())
+
+
+def deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
+    """DeepSeek V4 Pro proxy: 16 main blocks + MTP on 64 Rubin GPUs.
+
+    Requires MCore main plus #7337 or compatible development MCore,
+    and a Rubin-capable MoK container. Indexer scoring uses BF16 on native main and MXFP8 on development.
+    Retains the GB300 proxy's model and training settings, using
+    the communication SM allocation from the Rubin benchmark.
+    """
+    return _use_rubin_mok_comm_sms(deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config())
+
+
+def deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config() -> ConfigContainer:
+    """Run the 16-block + MTP Rubin proxy eagerly.
+
+    Retains the full model widths, 65K sequence, CP16, Muon, MXFP8 and mHC group
+    two. Uses the native BF16 indexer, and overlaps the parameter gather only where
+    MCore has #7337.
+    """
+    return _use_rubin_mok_comm_sms(deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config())
