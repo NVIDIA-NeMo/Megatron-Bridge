@@ -1422,8 +1422,9 @@ class AutoBridge(Generic[MegatronModelT]):
         """Save a ModelOpt-quantized Megatron model as a quantized HuggingFace checkpoint.
 
         Quantized weights are packed with their scales (e.g. NVFP4 ``weight``, ``weight_scale``,
-        ``weight_scale_2`` and ``input_scale``), and ``config.json`` carries the
-        ``quantization_config`` that vLLM, SGLang and TensorRT-LLM read. Any quantization config
+        ``weight_scale_2`` and ``input_scale``), KV-cache quantizers add the attention's ``k_scale`` and
+        ``v_scale``, and ``config.json`` carries the ``quantization_config`` that vLLM, SGLang and
+        TensorRT-LLM read. Any quantization config
         of the source checkpoint is replaced. Unlike :meth:`save_hf_pretrained`, which exports
         fake-quantized BF16 weights with quantizer sidecars, this writes the deployment format.
 
@@ -1438,7 +1439,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Raises:
             NotImplementedError: If the bridge post-processes exported weights.
-            RuntimeError: If an enabled quantizer has no exported tensors (e.g. KV-cache quantizers).
+            RuntimeError: If an enabled quantizer has no exported tensors (e.g. output quantizers).
             ValueError: If projections that deployments fuse (e.g. ``q_proj`` / ``k_proj`` /
                 ``v_proj``) carry different per-tensor scales.
 
@@ -1449,6 +1450,7 @@ class AutoBridge(Generic[MegatronModelT]):
         # state: enabled weight quantizers -> this quantized checkpoint, folded weights -> BF16 with
         # quantizer sidecars.
         from megatron.bridge.models.conversion.modelopt_utils import (
+            _checkpoint_export_plan,
             _raise_distributed_errors,
             _world_group,
             check_exportable_quantizers,
@@ -1468,6 +1470,7 @@ class AutoBridge(Generic[MegatronModelT]):
         check_exportable_quantizers(model)
         if export_plan is None:
             export_plan = self.build_hf_modelopt_export_plan(model)
+        export_plan = _checkpoint_export_plan(export_plan)
         rank = dist.get_rank() if dist.is_initialized() else 0
         output_path = Path(path).resolve()
         # Rank 0 saves the artifacts; fail the other ranks too before the export collectives.

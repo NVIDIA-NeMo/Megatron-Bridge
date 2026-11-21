@@ -14,9 +14,6 @@
 
 """ModelOpt quantized Hugging Face export: the same checkpoint at every parallelism."""
 
-# TODO: Test KV-cache export (NVIDIA/Model-Optimizer#2981), k_scale / v_scale with kv_cache_quant_algo,
-# once save_hf_pretrained_modelopt writes it.
-
 import json
 import subprocess
 import sys
@@ -135,6 +132,8 @@ PROJECTION = {
     "deepseek_v4": "layers.0.ffn.experts.0.w2",
     "kimi_k3": "language_model.model.layers.1.block_sparse_moe.routed_expert_down_proj",
 }
+# An attention layer of the toys whose config quantizes the KV cache.
+ATTENTION = {"qwen3": "model.layers.0.self_attn", "qwen3_5_vl_moe": "model.language_model.layers.1.self_attn"}
 
 
 @pytest.mark.run_only_on("GPU")
@@ -168,6 +167,11 @@ def test_quantized_export_is_independent_of_parallelism(toy_models, tmp_path, mo
     assert {f"{projection}.weight_scale", f"{projection}.input_scale"} <= weights.keys()
     assert not any("quantizer" in name or name.endswith("_amax") for name in weights)
     assert not (tmp_path / "reference" / "hf_quant_config.json").exists()
+    if config in ("fp8", "mixed"):
+        assert quantization["kv_cache_scheme"] == {"dynamic": False, "num_bits": 8, "type": "float"}
+        # FP8 KV-cache scales come from the pinned ranges; the query isn't quantized.
+        assert weights[f"{ATTENTION[model]}.k_scale"] > 1 and weights[f"{ATTENTION[model]}.v_scale"] > 1
+        assert not any(name.endswith(".q_scale") for name in weights)
 
     if offline_out is not None:
         offline_weights, offline_config = _load(offline_out)
@@ -175,8 +179,8 @@ def test_quantized_export_is_independent_of_parallelism(toy_models, tmp_path, mo
         assert offline_weights.keys() == weights.keys()
         for name, tensor in weights.items():
             other = offline_weights[name]
-            # ModelOpt's exporter stores FP8 input scales with shape (1,).
-            if config == "fp8" and name.endswith(".input_scale") and other.shape == (1,):
+            # ModelOpt's exporter stores FP8 input and KV-cache scales with shape (1,).
+            if config == "fp8" and name.endswith((".input_scale", ".k_scale", ".v_scale")) and other.shape == (1,):
                 other = other.reshape(())
             assert (other.dtype, other.shape) == (tensor.dtype, tensor.shape), name
             assert torch.equal(_bits(other), _bits(tensor)), name
