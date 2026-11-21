@@ -2092,390 +2092,6 @@ class TestGroupedExpertLinearAdapter:
             expected_chunks.append(nn.functional.linear(hidden, adapter.linear_out.weight[expert_idx]))
         torch.testing.assert_close(output, torch.cat(expected_chunks), rtol=2e-2, atol=2e-2)
 
-    @pytest.mark.parametrize("te_version", ["2.14", "2.16", "2.17", "2.18", "2.19"])
-    @pytest.mark.parametrize("grad_enabled", [True, False])
-    @pytest.mark.parametrize("active_expert_indices", [(0, 1), (1, 2)])
-    def test_grouped_expert_linear_adapter_fp8_te_contract(self, te_version, grad_enabled, active_expert_indices):
-        """FP8 dispatch should pack the supported TE 2.14 through 2.19 call layouts."""
-        calls = []
-        expected = torch.randn(3, 2)
-
-        class TE214GroupedLinear:
-            @staticmethod
-            def apply(inp, non_tensor_args, *weights_and_biases):
-                calls.append((inp, None, non_tensor_args, weights_and_biases))
-                return expected
-
-            @staticmethod
-            def forward(ctx, inp, non_tensor_args, *weights_and_biases):
-                (
-                    m_splits,
-                    use_bias,
-                    is_first_microbatch,
-                    fp8,
-                    fp8_calibration,
-                    wgrad_store,
-                    input_quantizers,
-                    weight_quantizers,
-                    output_quantizers,
-                    grad_input_quantizers,
-                    grad_weight_quantizers,
-                    grad_output_quantizers,
-                    fuse_wgrad_accumulation,
-                    cpu_offloading,
-                    sequence_parallel,
-                    activation_dtype,
-                    is_grad_enabled,
-                    module,
-                    skip_fp8_weight_update,
-                    save_original_input,
-                    debug,
-                ) = non_tensor_args
-                assert ctx is None
-                calls.append((inp, None, non_tensor_args, weights_and_biases))
-                return expected
-
-        class TE216GroupedLinear:
-            @staticmethod
-            def apply(inp, non_tensor_args, *weights_and_biases):
-                calls.append((inp, None, non_tensor_args, weights_and_biases))
-                return expected
-
-            @staticmethod
-            def forward(ctx, inp, non_tensor_args, *weights_and_biases):
-                (
-                    m_splits,
-                    use_bias,
-                    is_first_microbatch,
-                    fp8,
-                    fp8_calibration,
-                    wgrad_store,
-                    input_quantizers,
-                    weight_quantizers,
-                    output_quantizers,
-                    grad_input_quantizers,
-                    grad_weight_quantizers,
-                    grad_output_quantizers,
-                    fuse_wgrad_accumulation,
-                    cpu_offloading,
-                    sequence_parallel,
-                    activation_dtype,
-                    is_grad_enabled,
-                    weight_workspaces,
-                    cache_weight,
-                    skip_fp8_weight_update,
-                    save_original_input,
-                    debug,
-                ) = non_tensor_args
-                assert ctx is None
-                calls.append((inp, None, non_tensor_args, weights_and_biases))
-                return expected
-
-        class TE217GroupedLinear:
-            @staticmethod
-            def apply(inp, m_splits, non_tensor_args, *weights_and_biases):
-                calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
-                return expected, []
-
-            @staticmethod
-            def forward(ctx, inp, m_splits, non_tensor_args, *weights_and_biases):
-                (
-                    use_bias,
-                    is_first_microbatch,
-                    fp8,
-                    fp8_calibration,
-                    wgrad_store,
-                    input_quantizers,
-                    weight_quantizers,
-                    output_quantizers,
-                    grad_input_quantizers,
-                    grad_weight_quantizers,
-                    grad_output_quantizers,
-                    fuse_wgrad_accumulation,
-                    cpu_offloading,
-                    sequence_parallel,
-                    activation_dtype,
-                    is_grad_enabled,
-                    weight_workspaces,
-                    cache_weight,
-                    skip_fp8_weight_update,
-                    save_original_input,
-                    debug,
-                ) = non_tensor_args
-                assert ctx is None
-                calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
-                return expected, []
-
-        class TE218GroupedLinear:
-            @staticmethod
-            def apply(inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases):
-                assert out is None
-                assert dgrad_out is None
-                calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
-                return expected, []
-
-            @staticmethod
-            def forward(ctx, inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases):
-                (
-                    use_bias,
-                    is_first_microbatch,
-                    fp8,
-                    fp8_calibration,
-                    wgrad_store,
-                    input_quantizers,
-                    weight_quantizers,
-                    output_quantizers,
-                    grad_input_quantizers,
-                    grad_weight_quantizers,
-                    grad_output_quantizers,
-                    fuse_wgrad_accumulation,
-                    cpu_offloading,
-                    sequence_parallel,
-                    activation_dtype,
-                    is_grad_enabled,
-                    weight_workspaces,
-                    cache_weight,
-                    skip_fp8_weight_update,
-                    save_original_input,
-                    debug,
-                ) = non_tensor_args
-                assert ctx is None
-                assert out is None
-                assert dgrad_out is None
-                calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
-                return expected, []
-
-        class TE219GroupedLinear:
-            @staticmethod
-            def apply(inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases):
-                return TE219GroupedLinear.forward(
-                    None, inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases
-                )
-
-            @staticmethod
-            def forward(ctx, inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases):
-                (
-                    use_bias,
-                    is_first_microbatch,
-                    fp8,
-                    fp8_calibration,
-                    wgrad_store,
-                    input_quantizers,
-                    weight_quantizers,
-                    output_quantizers,
-                    grad_input_quantizers,
-                    grad_weight_quantizers,
-                    grad_output_quantizers,
-                    fuse_wgrad_accumulation,
-                    cpu_offloading,
-                    sequence_parallel,
-                    activation_dtype,
-                    is_grad_enabled,
-                    weight_workspaces,
-                    cache_weight,
-                    skip_fp8_weight_update,
-                    save_original_input,
-                    delayed_scaling_input_quantizer,
-                    unsafe_requantization_input_quantizer,
-                    debug,
-                    single_grouped_weight,
-                    single_grouped_bias,
-                    use_grouped_tensor,
-                ) = non_tensor_args
-                assert ctx is None
-                assert out is None
-                assert dgrad_out is None
-                calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
-                return expected, []
-
-        autograd_functions = {
-            "2.14": TE214GroupedLinear,
-            "2.16": TE216GroupedLinear,
-            "2.17": TE217GroupedLinear,
-            "2.18": TE218GroupedLinear,
-            "2.19": TE219GroupedLinear,
-        }
-        autograd_function = autograd_functions[te_version]
-        helper = Mock()
-        helper.prepare_forward.side_effect = lambda inp, *, num_gemms: inp
-        helper._get_quantizers.return_value = tuple(
-            [f"quantizer-{group_idx}-{expert_idx}" for expert_idx in range(3)] for group_idx in range(6)
-        )
-        helper.apply_bias = False
-        helper.fp8 = True
-        helper.fp8_calibration = False
-        helper.wgrad_store = Mock()
-        helper.fuse_wgrad_accumulation = False
-        helper.sequence_parallel = False
-        helper.activation_dtype = torch.float32
-        helper.save_original_input = False
-        helper._delayed_scaling_input_quantizer = object()
-        helper._unsafe_requantization_input_quantizer = object()
-        helper.use_grouped_tensor = True
-        if te_version == "2.16":
-            helper._fp8_workspaces = {}
-
-        adapter = GroupedExpertLinearAdapter(
-            in_features=2,
-            out_features=2,
-            dim=2,
-            num_local_experts=3,
-            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
-            activation="identity",
-            input_is_parallel=False,
-            model_parallel_config=MockModelParallelConfig(),
-        )
-        x = torch.randn(3, 2)
-        context = torch.enable_grad() if grad_enabled else torch.no_grad()
-        with (
-            patch.object(adapter, "_get_te_grouped_linear_helper", return_value=helper),
-            patch.object(peft_utils, "TEPytorchGroupedLinearAutograd", autograd_function),
-            patch.object(peft_utils, "TEPytorchIsCPUOffloadEnabled", return_value=True),
-            context,
-        ):
-            output = adapter._forward_te_grouped_linear_fp8(
-                x,
-                weight=adapter.linear_in(list(active_expert_indices)),
-                m_splits=[1, 2],
-                projection="linear_in",
-                active_expert_indices=active_expert_indices,
-            )
-
-        torch.testing.assert_close(output, expected)
-        assert len(calls) == 1
-        received_input, explicit_splits, non_tensor_args, weights_and_biases = calls[0]
-        assert received_input is x
-        if te_version in {"2.14", "2.16"}:
-            assert explicit_splits is None
-            assert non_tensor_args[0] == [1, 2]
-            common_non_tensor_args = non_tensor_args[1:17]
-            if te_version == "2.14":
-                assert non_tensor_args[17] is helper
-                assert non_tensor_args[18] is None
-                assert non_tensor_args[19] is False
-                assert non_tensor_args[20] is False
-            else:
-                assert non_tensor_args[17] == [None, None]
-                assert non_tensor_args[18] is False
-                assert non_tensor_args[19] is None
-                assert non_tensor_args[20] is False
-                assert non_tensor_args[21] is False
-        else:
-            torch.testing.assert_close(explicit_splits, torch.tensor([1, 2], dtype=torch.int64))
-            assert explicit_splits.device.type == "cpu"
-            common_non_tensor_args = non_tensor_args[:16]
-            assert non_tensor_args[16] == [None, None]
-            assert non_tensor_args[17] is False
-            assert non_tensor_args[18] is None
-            assert non_tensor_args[19] is False
-            if te_version == "2.19":
-                assert non_tensor_args[20] is helper._delayed_scaling_input_quantizer
-                assert non_tensor_args[21] is helper._unsafe_requantization_input_quantizer
-                assert non_tensor_args[22:] == (False, False, False, False)
-            else:
-                assert non_tensor_args[20] is False
-        assert common_non_tensor_args[0] is False
-        assert common_non_tensor_args[2] is True
-        assert common_non_tensor_args[12] is True
-        for group_idx in range(6):
-            assert common_non_tensor_args[5 + group_idx] == [
-                f"quantizer-{group_idx}-{expert_idx}" for expert_idx in active_expert_indices
-            ]
-        assert len(weights_and_biases) == 4
-        helper.prepare_forward.assert_called_once_with(x, num_gemms=3)
-        helper.end_forward.assert_called_once_with()
-
-    def test_grouped_expert_linear_adapter_fp8_te_rocm_contract(self):
-        """FP8 dispatch should supply the extra non-tensor fields ROCm Transformer Engine unpacks."""
-        calls = []
-        expected = torch.randn(3, 2)
-
-        class TEROCmGroupedLinear:
-            @staticmethod
-            def apply(inp, non_tensor_args, *weights_and_biases):
-                calls.append((inp, non_tensor_args, weights_and_biases))
-                return expected
-
-            @staticmethod
-            def forward(ctx, inp, non_tensor_args, *weights_and_biases):
-                (
-                    m_splits,
-                    use_bias,
-                    is_first_microbatch,
-                    fp8,
-                    fp8_calibration,
-                    wgrad_store,
-                    input_quantizers,
-                    weight_quantizers,
-                    output_quantizers,
-                    grad_input_quantizers,
-                    grad_weight_quantizers,
-                    grad_output_quantizers,
-                    fuse_wgrad_accumulation,
-                    cpu_offloading,
-                    sequence_parallel,
-                    activation_dtype,
-                    is_grad_enabled,
-                    weight_workspaces,
-                    cache_weight,
-                    skip_fp8_weight_update,
-                    save_original_input,
-                    debug,
-                    m_splits_tensor,
-                    actual_m_splits,
-                    unpad_output,
-                ) = non_tensor_args
-                assert ctx is None
-                calls.append((inp, non_tensor_args, weights_and_biases))
-                return expected
-
-        helper = Mock()
-        helper.prepare_forward.side_effect = lambda inp, *, num_gemms: inp
-        helper._get_quantizers.return_value = tuple([None] * 3 for _ in range(6))
-        helper.apply_bias = False
-        helper.fp8 = True
-        helper.fp8_calibration = False
-        helper.wgrad_store = Mock()
-        helper.fuse_wgrad_accumulation = False
-        helper.sequence_parallel = False
-        helper.activation_dtype = torch.float32
-        helper.save_original_input = False
-
-        adapter = GroupedExpertLinearAdapter(
-            in_features=2,
-            out_features=2,
-            dim=2,
-            num_local_experts=3,
-            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
-            activation="identity",
-            input_is_parallel=False,
-            model_parallel_config=MockModelParallelConfig(),
-        )
-        x = torch.randn(3, 2)
-        with (
-            torch.no_grad(),
-            patch.object(adapter, "_get_te_grouped_linear_helper", return_value=helper),
-            patch.object(peft_utils, "TEPytorchGroupedLinearAutograd", TEROCmGroupedLinear),
-            patch.object(peft_utils, "TEPytorchIsCPUOffloadEnabled", return_value=False),
-        ):
-            output = adapter._forward_te_grouped_linear_fp8(
-                x,
-                weight=adapter.linear_in([0, 1]),
-                m_splits=[1, 2],
-                projection="linear_in",
-                active_expert_indices=(0, 1),
-            )
-
-        torch.testing.assert_close(output, expected)
-        assert len(calls) == 1
-        _, non_tensor_args, weights_and_biases = calls[0]
-        assert len(non_tensor_args) == 25
-        assert non_tensor_args[0] == [1, 2]
-        # The three ROCm-only trailing fields take TE's public-wrapper defaults.
-        assert non_tensor_args[22:] == (None, None, False)
-        assert len(weights_and_biases) == 4
-        helper.end_forward.assert_called_once_with()
-
     def test_grouped_expert_linear_adapter_fp8_prefers_te_backend(self):
         """An active FP8 context should select TE instead of the public BF16 backend."""
         adapter = GroupedExpertLinearAdapter(
@@ -2498,6 +2114,15 @@ class TestGroupedExpertLinearAdapter:
         with (
             patch.object(adapter, "_is_te_fp8_enabled", return_value=True),
             patch.object(adapter, "_can_use_te_grouped_linear_fp8", return_value=True),
+            patch.object(
+                peft_utils.TEFP8GlobalStateManager,
+                "get_fp8_recipe",
+                return_value=SimpleNamespace(
+                    mxfp8=lambda: False,
+                    nvfp4=lambda: False,
+                    float8_block_scaling=lambda: False,
+                ),
+            ),
             patch.object(
                 adapter,
                 "_can_use_grouped_mm",
@@ -2641,9 +2266,7 @@ class TestGroupedExpertLinearAdapter:
         fake_x = Mock(is_cuda=True, dtype=torch.bfloat16, device=torch.device("cuda:0"))
 
         with (
-            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR", True),
-            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR_AUTOGRAD", True),
-            patch.object(peft_utils, "HAVE_TE_PYTORCH_CPU_OFFLOAD_STATUS", True),
+            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR_OP", True),
             patch("megatron.bridge.peft.utils.torch.cuda.current_device", return_value=0),
         ):
             assert not adapter._can_use_te_grouped_linear_fp8(fake_x)
@@ -2664,9 +2287,7 @@ class TestGroupedExpertLinearAdapter:
         fake_x = Mock(is_cuda=True, dtype=torch.bfloat16, device=torch.device("cuda:1"))
 
         with (
-            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR", True),
-            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR_AUTOGRAD", True),
-            patch.object(peft_utils, "HAVE_TE_PYTORCH_CPU_OFFLOAD_STATUS", True),
+            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR_OP", True),
             patch("megatron.bridge.peft.utils.torch.cuda.current_device", return_value=0),
         ):
             assert not adapter._can_use_te_grouped_linear_fp8(fake_x)
@@ -2696,7 +2317,7 @@ class TestGroupedExpertLinearAdapter:
 
         with patch.object(
             peft_utils,
-            "TEPytorchGroupedLinear",
+            "TEPytorchGroupedLinearOp",
             side_effect=[
                 cuda0_linear_in_helper,
                 cuda1_linear_in_helper,
@@ -2815,12 +2436,7 @@ class TestGroupedExpertLinearAdapter:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="TE FP8 grouped linear requires CUDA")
     def test_grouped_expert_linear_adapter_te_fp8_forward_backward_and_inference(self):
         """The real TE FP8 path should produce finite outputs and gradients without public grouped-MM."""
-        if not (
-            peft_utils.HAVE_TE_FP8_GLOBAL_STATE_MANAGER
-            and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR
-            and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR_AUTOGRAD
-            and peft_utils.HAVE_TE_PYTORCH_CPU_OFFLOAD_STATUS
-        ):
+        if not (peft_utils.HAVE_TE_FP8_GLOBAL_STATE_MANAGER and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR_OP):
             pytest.skip("Transformer Engine grouped-linear FP8 support is unavailable")
         te = pytest.importorskip("transformer_engine.pytorch")
         adapter = GroupedExpertLinearAdapter(
@@ -2884,12 +2500,7 @@ class TestGroupedExpertLinearAdapter:
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="TE FP8 device migration requires two CUDA devices")
     def test_grouped_expert_linear_adapter_te_fp8_device_mismatch_uses_fallback(self):
         """An adapter moved away from the current CUDA device should use the safe fallback."""
-        if not (
-            peft_utils.HAVE_TE_FP8_GLOBAL_STATE_MANAGER
-            and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR
-            and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR_AUTOGRAD
-            and peft_utils.HAVE_TE_PYTORCH_CPU_OFFLOAD_STATUS
-        ):
+        if not (peft_utils.HAVE_TE_FP8_GLOBAL_STATE_MANAGER and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR_OP):
             pytest.skip("Transformer Engine grouped-linear FP8 support is unavailable")
         te = pytest.importorskip("transformer_engine.pytorch")
         torch.cuda.set_device(0)
