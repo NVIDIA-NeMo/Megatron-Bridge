@@ -12,7 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Grouped RMSNorm with an optional fused forward and bounded FP32 backward."""
+# The adapted Megatron-LM kernels retain the upstream BSD-3-Clause notice:
+# Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2019-2025, NVIDIA CORPORATION. All rights reserved.
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+"""Grouped RMSNorm with optional fused kernels and bounded FP32 backward."""
 
 from typing import cast
 
@@ -76,6 +104,60 @@ if triton is not None:
             normalized = values * rstd[:, None] * gain[None, :]
             tl.store(output_ptr + base + channels[None, :], normalized.to(output_ptr.dtype.element_ty), mask=mask)
 
+    # Norm-only specialization of PR #7553's contiguous row-split backward
+    # and fixed-order parameter reduction (same commit/link as above). Compute
+    # the projection directly from existing dY; no gates, residual add or
+    # main_grad writes. Each program owns one group and a contiguous row split.
+    @triton.jit
+    def _grouped_rmsnorm_bwd_kernel(
+        x_ptr,
+        weight_ptr,
+        rstd_ptr,
+        gradient_ptr,
+        dx_ptr,
+        partial_ptr,
+        rows_count,
+        GROUPS: tl.constexpr,
+        CHANNELS: tl.constexpr,
+        BLOCK: tl.constexpr,
+    ):
+        partition = tl.program_id(0)
+        partitions = tl.num_programs(0)
+        group = tl.program_id(1)
+        channels = tl.arange(0, BLOCK)
+        mask = channels < CHANNELS
+        width: tl.constexpr = GROUPS * CHANNELS
+        columns = group * CHANNELS + channels
+        gain = tl.load(weight_ptr + columns, mask=mask, other=0.0).to(tl.float32) + 1.0
+        partial = tl.zeros([BLOCK], dtype=tl.float32)
+        rows_per_split = tl.cdiv(rows_count, partitions)
+        row_begin = partition * rows_per_split
+        row_end = tl.minimum(row_begin + rows_per_split, rows_count)
+        for row in range(row_begin, row_end):
+            offsets = row * width + columns
+            values = tl.load(x_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+            gradient = tl.load(gradient_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+            rstd = tl.load(rstd_ptr + row * GROUPS + group)
+            normalized = values * rstd
+            scaled = gradient * gain
+            projection = tl.sum(scaled * normalized, axis=0) * (1.0 / CHANNELS)
+            dx = rstd * (scaled - normalized * projection)
+            tl.store(dx_ptr + offsets, dx.to(dx_ptr.dtype.element_ty), mask=mask)
+            partial += gradient * normalized
+        tl.store(partial_ptr + partition * width + columns, partial, mask=mask)
+
+    @triton.jit
+    def _grouped_rmsnorm_dw_kernel(partial_ptr, dw_ptr, partitions, width, BLOCK: tl.constexpr):
+        # Fixed-order finalizer specialized from PR #7553's
+        # _gr_param_reduce_kernel at the attributed commit above. No atomics or
+        # main_grad updates: autograd owns parameter-gradient accumulation.
+        columns = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+        mask = columns < width
+        total = tl.zeros([BLOCK], dtype=tl.float32)
+        for partition in range(partitions):
+            total += tl.load(partial_ptr + partition * width + columns, mask=mask, other=0.0)
+        tl.store(dw_ptr + columns, total.to(dw_ptr.dtype.element_ty), mask=mask)
+
 
 def _can_use_triton(x: Tensor, weight: Tensor) -> bool:
     return (
@@ -99,6 +181,11 @@ def norm_chunk_rows(width: int, workspace_bytes: int) -> int:
     if width < 1 or workspace_bytes < 1:
         raise ValueError("Normalization width and workspace budget must be positive.")
     return max(1, workspace_bytes // (8 * width * 4))
+
+
+def _backward_partitions(rows: int, width: int, groups: int, workspace_bytes: int, multiprocessors: int) -> int:
+    """Limit FP32 partials to the budget and about two resident programs per SM."""
+    return min(rows, (2 * multiprocessors + groups - 1) // groups, workspace_bytes // (width * 4))
 
 
 class _GroupedRMSNorm(torch.autograd.Function):
@@ -139,6 +226,7 @@ class _GroupedRMSNorm(torch.autograd.Function):
         ctx.save_for_backward(x, weight, rstd)
         ctx.groups = groups
         ctx.chunk = chunk
+        ctx.workspace_bytes = workspace_bytes
         return output.reshape(x.shape)
 
     @staticmethod
@@ -150,6 +238,48 @@ class _GroupedRMSNorm(torch.autograd.Function):
         gradients = grad_output.reshape(-1, width)
         channels = width // ctx.groups
         dx = torch.empty_like(rows)
+        if (
+            _can_use_triton(x, weight)
+            and grad_output.is_contiguous()
+            and grad_output.device == x.device
+            and grad_output.dtype == x.dtype
+            and channels <= 16384
+            and ctx.workspace_bytes >= width * 4
+        ):
+            with torch.cuda.device(x.device):
+                partitions = _backward_partitions(
+                    rows.shape[0],
+                    width,
+                    ctx.groups,
+                    ctx.workspace_bytes,
+                    torch.cuda.get_device_properties(x.device).multi_processor_count,
+                )
+                partials = torch.empty(partitions, width, dtype=torch.float32, device=x.device)
+                dw = torch.empty_like(weight)
+                _grouped_rmsnorm_bwd_kernel[(partitions, ctx.groups)](
+                    rows,
+                    weight,
+                    rstd,
+                    gradients,
+                    dx,
+                    partials,
+                    rows.shape[0],
+                    GROUPS=ctx.groups,
+                    CHANNELS=channels,
+                    BLOCK=triton.next_power_of_2(channels),
+                    num_warps=8,
+                    enable_fp_fusion=False,
+                )
+                _grouped_rmsnorm_dw_kernel[(triton.cdiv(width, 256),)](
+                    partials,
+                    dw,
+                    partitions,
+                    width,
+                    BLOCK=256,
+                    num_warps=8,
+                    enable_fp_fusion=False,
+                )
+            return dx.reshape(x.shape), dw, None, None, None
         dw = torch.zeros_like(weight, dtype=torch.float32)
         gain = (1.0 + weight.float()).reshape(ctx.groups, channels)
         for start in range(0, rows.shape[0], ctx.chunk):
@@ -176,8 +306,9 @@ def grouped_rmsnorm(
     Saves the activation and one FP32 inverse RMS per stream instead of the
     token-sized FP32 products that eager autograd retains. Weight gradients
     accumulate in FP32; chunking changes only their reduction order. Contiguous
-    CUDA inputs optionally use a fixed-tile Triton forward, whose FP32 reduction
-    order can differ from the eager fallback. Backward always uses the saved rstd.
+    CUDA inputs optionally use Triton kernels, whose FP32 reduction orders can
+    differ from the eager fallback. Backward always uses the saved rstd, with
+    deterministic FP32 weight-gradient partials bounded by the workspace budget.
     """
     if x.ndim < 1 or groups < 1 or x.shape[-1] < 1 or x.shape[-1] % groups:
         raise ValueError("Input width must be positive and divisible by the residual stream count.")
