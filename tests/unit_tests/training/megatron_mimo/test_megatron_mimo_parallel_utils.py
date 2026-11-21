@@ -325,6 +325,7 @@ def _build_two_module_setup(llm_dp, encoder_dp, *, llm_rank_offset=4, llm_size=4
 
     llm_module = MagicMock(name="llm_module")
     encoder_module = MagicMock(name="encoder_module")
+    encoder_module.parameters.return_value = iter([torch.nn.Parameter(torch.zeros(1, dtype=torch.bfloat16))])
     llm_pg = MagicMock(name="llm_pg")
     encoder_pg = MagicMock(name="encoder_pg")
 
@@ -403,7 +404,9 @@ class TestFinalizeModelGradsMultimodule:
         assert mock_dist.broadcast.call_args.kwargs["src"] == 7
 
         # Phase 3: encoder scaled by 1/total only; LLM already normalized by DDP.
-        s.encoder_module.scale_gradients.assert_called_once_with(1.0 / 100)
+        s.encoder_module.scale_gradients.assert_called_once()
+        scale = s.encoder_module.scale_gradients.call_args.args[0]
+        torch.testing.assert_close(scale, num_tokens.float().new_tensor(1.0 / 100))
         s.llm_module.scale_gradients.assert_not_called()
 
     @pytest.mark.parametrize(
@@ -428,6 +431,8 @@ class TestFinalizeModelGradsMultimodule:
         expected_gradient,
     ):
         """Module-local DDP scaling must not change the global encoder gradient."""
+        from megatron.core.distributed.param_and_grad_buffer import _ParamAndGradBuffer
+
         from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
 
         s = _build_two_module_setup(llm_dp=2, encoder_dp=4)
@@ -446,7 +451,10 @@ class TestFinalizeModelGradsMultimodule:
                 encoder_gradient.div_(s.dp_by_grid[id(s.encoder_grid)])
 
         mock_finalize.side_effect = finalize_with_module_local_ddp
-        s.encoder_module.scale_gradients.side_effect = encoder_gradient.mul_
+        buffer = _ParamAndGradBuffer.__new__(_ParamAndGradBuffer)
+        buffer.grad_data = encoder_gradient
+        buffer.extra_main_grads = []
+        s.encoder_module.scale_gradients.side_effect = buffer.scale_gradients
 
         num_tokens = torch.tensor(100) if language_per_token else None
         finalize_model_grads_multimodule(
@@ -458,11 +466,14 @@ class TestFinalizeModelGradsMultimodule:
 
         assert encoder_gradient.item() == pytest.approx(expected_gradient)
 
+    @pytest.mark.parametrize(("llm_dp", "encoder_dp"), [(2, 4), (4, 1)])
     @patch(f"{MODULE}.dist")
     @patch(f"{MODULE}.is_current_rank_in_grid")
     @patch(f"{MODULE}._get_dp_size_from_grid")
     @patch(f"{MODULE}._finalize_model_grads")
-    def test_non_per_token_loss_path_applies_dp_compensation(self, mock_finalize, mock_dp, mock_in_grid, mock_dist):
+    def test_non_per_token_loss_path_applies_dp_compensation(
+        self, mock_finalize, mock_dp, mock_in_grid, mock_dist, llm_dp, encoder_dp
+    ):
         """num_tokens is None (calculate_per_token_loss=False) path.
 
         Every module is finalized with num_tokens=None, no broadcast happens, and
@@ -470,7 +481,7 @@ class TestFinalizeModelGradsMultimodule:
         """
         from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
 
-        s = _build_two_module_setup(llm_dp=2, encoder_dp=4)
+        s = _build_two_module_setup(llm_dp=llm_dp, encoder_dp=encoder_dp)
         mock_in_grid.return_value = True
         mock_dp.side_effect = lambda grid: s.dp_by_grid[id(grid)]
         s.llm_module.config.calculate_per_token_loss = False
@@ -490,8 +501,10 @@ class TestFinalizeModelGradsMultimodule:
             assert call.kwargs["force_all_reduce"] is True
         assert mock_dist.broadcast.call_count == 0
 
-        # encoder_dp (4) != llm_dp (2) -> scale by 4/2; LLM matches llm_dp -> no scale.
-        s.encoder_module.scale_gradients.assert_called_once_with(2.0)
+        # Scale the encoder by its DP ratio; the LLM needs no correction.
+        s.encoder_module.scale_gradients.assert_called_once()
+        scale = s.encoder_module.scale_gradients.call_args.args[0]
+        torch.testing.assert_close(scale, torch.tensor(encoder_dp / llm_dp, dtype=torch.float32))
         s.llm_module.scale_gradients.assert_not_called()
 
     @patch(f"{MODULE}.dist")
