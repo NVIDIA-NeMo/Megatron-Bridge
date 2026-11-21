@@ -363,11 +363,17 @@ def main(args) -> None:
     )
     if is_kimi:
         patch_kimi_vision_processor(args.hf_model_path)
-    processor = AutoProcessor.from_pretrained(
-        args.hf_model_path,
-        trust_remote_code=trust_remote,
-        **_hf_revision_kwargs(args.hf_revision),
-    )
+    if is_inkling2:
+        # Imported here: the Inkling package requires Transformers >= 5.23.
+        from megatron.bridge.models.inkling import Inkling2Processor
+
+        processor = Inkling2Processor.from_pretrained(args.hf_model_path, **_hf_revision_kwargs(args.hf_revision))
+    else:
+        processor = AutoProcessor.from_pretrained(
+            args.hf_model_path,
+            trust_remote_code=trust_remote,
+            **_hf_revision_kwargs(args.hf_revision),
+        )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     pad_token_id = tokenizer.pad_token_id or 0
