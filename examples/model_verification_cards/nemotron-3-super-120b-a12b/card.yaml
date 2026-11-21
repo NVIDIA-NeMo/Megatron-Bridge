@@ -248,8 +248,7 @@ items:
         NVLink domain, domain size 72, MNNVL). Loss stayed finite from 10.54598
         to 3.886796 with zero skipped or NaN iterations, and complete
         iter_0000050 and iter_0000100 checkpoints saved. Metrics average steps
-        91-100; token throughput uses 4096 times GBS1280 per step. Run on a NeMo
-        nightly base container (2026-11-18).
+        91-100; token throughput uses 4096 times GBS1280 per step.
 
   sft:
     H100:
@@ -346,8 +345,7 @@ items:
         TP8/EP16, the recipe's cohort GBS/MBS 32/1, and pad-8 offline packing,
         with finite loss and zero skipped or NaN iterations, and the step-100
         checkpoint saved completely. Metrics average steps 91-100; token-slot
-        throughput uses 8192 times GBS32 per step. Run on a NeMo nightly base
-        container (2026-11-18).
+        throughput uses 8192 times GBS32 per step.
 
   sft_export_inference:
     H100:
@@ -408,8 +406,7 @@ items:
         not fit on one GPU). Greedy chat-template inference stopped at EOS
         after 22 new tokens, under the 45-token maximum, with the literal
         completion "The capital of France is Paris, which serves as the
-        country's political, cultural, and economic center." Run on a NeMo
-        nightly base container (2026-11-18).
+        country's political, cultural, and economic center."
 
   sft_long_context:
     H100:
@@ -694,8 +691,7 @@ items:
         4.838643 at step 51 and 3.893195 versus 3.886796 at step 100, with the
         two MTP losses also within tolerance at both steps. The complete
         iter_0000100 checkpoint saved. Metrics average steps 91-100; token
-        throughput uses 4096 times GBS1280 per step. Run on a NeMo nightly base
-        container (2026-11-18).
+        throughput uses 4096 times GBS1280 per step.
 
   pretrain_performance:
     H100:

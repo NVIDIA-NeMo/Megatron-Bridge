@@ -5060,7 +5060,7 @@
             "moe_dispatcher": "hybridep"
           },
           "entry_id": "nemotron-3-super-120b-a12b-pretrain-gb200",
-          "expected_result": "On 64 GB200s in one NVL72 domain at this item's Bridge commit, the BF16 support run warm-started from the immutable imported Megatron checkpoint with checkpoint.load null (the resolved configuration names the imported iter_0000000 as the pretrained checkpoint) and completed exactly 100 bounded RP2 optimizer steps with the same convergence recipe and layout as the H100 item: TP1/PP2/CP1/EP32/ETP1, sequence length 4096, GBS/MBS 1280/1, natural routing, and HybridEP flex dispatch with 1.10x fixed expert capacity, here with the NVL72 HybridEP environment (32 ranks per NVLink domain, domain size 72, MNNVL). Loss stayed finite from 10.54598 to 3.886796 with zero skipped or NaN iterations, and complete iter_0000050 and iter_0000100 checkpoints saved. Metrics average steps 91-100; token throughput uses 4096 times GBS1280 per step. Run on a NeMo nightly base container (2026-11-18).\n",
+          "expected_result": "On 64 GB200s in one NVL72 domain at this item's Bridge commit, the BF16 support run warm-started from the immutable imported Megatron checkpoint with checkpoint.load null (the resolved configuration names the imported iter_0000000 as the pretrained checkpoint) and completed exactly 100 bounded RP2 optimizer steps with the same convergence recipe and layout as the H100 item: TP1/PP2/CP1/EP32/ETP1, sequence length 4096, GBS/MBS 1280/1, natural routing, and HybridEP flex dispatch with 1.10x fixed expert capacity, here with the NVL72 HybridEP environment (32 ranks per NVLink domain, domain size 72, MNNVL). Loss stayed finite from 10.54598 to 3.886796 with zero skipped or NaN iterations, and complete iter_0000050 and iter_0000100 checkpoints saved. Metrics average steps 91-100; token throughput uses 4096 times GBS1280 per step.\n",
           "hardware": "GB200",
           "last_verified": "2026-11-18",
           "metrics": {
@@ -5130,7 +5130,7 @@
             "sequence_packing": "offline"
           },
           "entry_id": "nemotron-3-super-120b-a12b-sft-gb200",
-          "expected_result": "On 16 GB200s at this item's Bridge commit, the immutable-revision Tulu3 run completed exactly 100 full-SFT steps at sequence length 8192, TP8/EP16, the recipe's cohort GBS/MBS 32/1, and pad-8 offline packing, with finite loss and zero skipped or NaN iterations, and the step-100 checkpoint saved completely. Metrics average steps 91-100; token-slot throughput uses 8192 times GBS32 per step. Run on a NeMo nightly base container (2026-11-18).\n",
+          "expected_result": "On 16 GB200s at this item's Bridge commit, the immutable-revision Tulu3 run completed exactly 100 full-SFT steps at sequence length 8192, TP8/EP16, the recipe's cohort GBS/MBS 32/1, and pad-8 offline packing, with finite loss and zero skipped or NaN iterations, and the step-100 checkpoint saved completely. Metrics average steps 91-100; token-slot throughput uses 8192 times GBS32 per step.\n",
           "hardware": "GB200",
           "last_verified": "2026-11-18",
           "metrics": {
@@ -5198,7 +5198,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-super-120b-a12b-sft-export-inference-gb200",
-          "expected_result": "At this item's Bridge commit, the GB200 step-100 full-SFT checkpoint exported as 50 indexed BF16 safetensor shards and reloaded natively in Transformers, sharded across the node's four GB200s with device-map balanced and GPU-only placement (the 120B BF16 model does not fit on one GPU). Greedy chat-template inference stopped at EOS after 22 new tokens, under the 45-token maximum, with the literal completion \"The capital of France is Paris, which serves as the country's political, cultural, and economic center.\" Run on a NeMo nightly base container (2026-11-18).\n",
+          "expected_result": "At this item's Bridge commit, the GB200 step-100 full-SFT checkpoint exported as 50 indexed BF16 safetensor shards and reloaded natively in Transformers, sharded across the node's four GB200s with device-map balanced and GPU-only placement (the 120B BF16 model does not fit on one GPU). Greedy chat-template inference stopped at EOS after 22 new tokens, under the 45-token maximum, with the literal completion \"The capital of France is Paris, which serves as the country's political, cultural, and economic center.\"\n",
           "hardware": "GB200",
           "last_verified": "2026-11-18",
           "metrics": {},
@@ -5398,7 +5398,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-super-120b-a12b-checkpoint-resume-gb200",
-          "expected_result": "At this item's Bridge commit, the direct continuation on 64 GB200s restored model, optimizer, scheduler, data-order, and RNG state from iter_0000050 of the warm-started pretrain reference, with no pretrained-checkpoint fallback, and executed exactly steps 51-100 into a distinct output root with finite loss and zero skipped or NaN iterations. Every declared loss sentinel satisfied abs(resumed - reference) <= 1e-6 + 0.01 * abs(reference): lm loss 4.838639 versus 4.838643 at step 51 and 3.893195 versus 3.886796 at step 100, with the two MTP losses also within tolerance at both steps. The complete iter_0000100 checkpoint saved. Metrics average steps 91-100; token throughput uses 4096 times GBS1280 per step. Run on a NeMo nightly base container (2026-11-18).\n",
+          "expected_result": "At this item's Bridge commit, the direct continuation on 64 GB200s restored model, optimizer, scheduler, data-order, and RNG state from iter_0000050 of the warm-started pretrain reference, with no pretrained-checkpoint fallback, and executed exactly steps 51-100 into a distinct output root with finite loss and zero skipped or NaN iterations. Every declared loss sentinel satisfied abs(resumed - reference) <= 1e-6 + 0.01 * abs(reference): lm loss 4.838639 versus 4.838643 at step 51 and 3.893195 versus 3.886796 at step 100, with the two MTP losses also within tolerance at both steps. The complete iter_0000100 checkpoint saved. Metrics average steps 91-100; token throughput uses 4096 times GBS1280 per step.\n",
           "hardware": "GB200",
           "last_verified": "2026-11-18",
           "metrics": {
