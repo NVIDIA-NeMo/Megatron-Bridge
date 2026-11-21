@@ -23,6 +23,8 @@ memory fits.
 `qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_config` matches
 the GB/VR comparison contract: distributed optimizer, BF16 Adam moments,
 no recompute, and TE router/preprocess graphs.
+`..._common_contract_tp2_config` keeps the same contract and changes only
+TP/SP to reduce per-rank dense state after the TP1 contract OOMed.
 
 Three diagnostic variants isolate the remaining activation-memory choices:
 

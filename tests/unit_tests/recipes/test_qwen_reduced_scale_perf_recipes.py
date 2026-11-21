@@ -17,6 +17,7 @@ from scripts.common.benchmark_parallelism import data_parallel_size, topology_fr
 
 from megatron.bridge.perf_recipes.qwen import (
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_config,
+    qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_tp2_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config,
     qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config,
@@ -106,6 +107,20 @@ def test_qwen3_235b_16gpu_gb300_bf16_common_contract() -> None:
     assert cfg.ddp.use_distributed_optimizer is True
     assert cfg.ddp.use_megatron_fsdp is False
     assert cfg.dist.use_megatron_fsdp is False
+
+
+def test_qwen3_235b_16gpu_gb300_bf16_common_contract_tp2() -> None:
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_tp2_config()
+
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.sequence_parallel is True
+    assert data_parallel_size(num_gpus=16, topology=topology_from_config(cfg.model)) == 8
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.ddp.use_megatron_fsdp is False
 
 
 def test_qwen3_235b_16gpu_gb300_bf16_zero2_variant() -> None:

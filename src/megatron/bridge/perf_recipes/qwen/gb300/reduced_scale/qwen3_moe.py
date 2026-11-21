@@ -161,6 +161,14 @@ def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_config() -> Config
     return cfg
 
 
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_tp2_config() -> ConfigContainer:
+    """16-GPU common contract with TP=2 and sequence parallelism."""
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_config()
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.sequence_parallel = True
+    return cfg
+
+
 def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config() -> ConfigContainer:
     """16-GPU ZeRO-2 candidate with selective expert-activation recompute."""
     cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config()
@@ -315,6 +323,7 @@ def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_chunk256_config() -> ConfigCon
 __all__ = [
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_tp2_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config",
