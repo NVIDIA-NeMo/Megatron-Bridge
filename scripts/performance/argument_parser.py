@@ -324,6 +324,13 @@ def parse_cli_args():
         ),
     )
 
+    training_args.add_argument(
+        "--use_gloo_process_groups",
+        type=bool_arg,
+        default=None,
+        help="Create auxiliary Gloo process groups. Defaults to whether checkpoint save or load is configured.",
+    )
+
     # Optimizer
     optimizer_args = parser.add_argument_group("Optimizer arguments")
     optimizer_args.add_argument("--lr", type=float, help="Learning rate")
