@@ -102,6 +102,45 @@ class TestValidateRopeFusionCompatibility:
         result = validate_rope_fusion_compatibility(mock_config)
         assert result is True
 
+    def test_rope_fusion_with_yarn_position_embeddings(self):
+        """YaRN keeps RoPE fusion when RoPE covers the whole head."""
+        mock_config = MagicMock()
+        mock_config.apply_rope_fusion = True
+        mock_config.position_embedding_type = "yarn"
+        mock_config.rotary_percent = 1.0
+        mock_config.multi_latent_attention = False
+
+        result = validate_rope_fusion_compatibility(mock_config)
+        assert result is True
+
+    def test_rope_fusion_with_yarn_partial_rotary(self, caplog):
+        """YaRN with partial rotary disables RoPE fusion."""
+        mock_config = MagicMock()
+        mock_config.apply_rope_fusion = True
+        mock_config.position_embedding_type = "yarn"
+        mock_config.rotary_percent = 0.5
+        mock_config.multi_latent_attention = False
+
+        with (
+            patch("megatron.bridge.utils.fusions.LOG_FUSION_DISABLE", True),
+            caplog.at_level(logging.WARNING),
+        ):
+            result = validate_rope_fusion_compatibility(mock_config)
+
+        assert result is False
+        assert "apply_rope_fusion with YaRN needs rotary_percent=1.0" in caplog.text
+
+    def test_rope_fusion_with_rope_partial_rotary(self):
+        """Plain RoPE keeps RoPE fusion with partial rotary."""
+        mock_config = MagicMock()
+        mock_config.apply_rope_fusion = True
+        mock_config.position_embedding_type = "rope"
+        mock_config.rotary_percent = 0.5
+        mock_config.multi_latent_attention = False
+
+        result = validate_rope_fusion_compatibility(mock_config)
+        assert result is True
+
     def test_rope_fusion_with_non_rope_position_embeddings(self, caplog):
         """Test RoPE fusion with non-RoPE position embeddings."""
         mock_config = MagicMock()
