@@ -21,8 +21,8 @@ summary: >
   long-context SFT leaf was measured in that container at its own
   bridge_commit. The GB200 pretrain, sft, sft_export_inference, peft, and
   checkpoint_resume leaves were re-measured at that same leaf-level
-  bridge_commit on a NeMo nightly base container (2026-11-18), because the default
-  bridge_commit cannot load distributed checkpoints with newer PyTorch.
+  bridge_commit, because the default bridge_commit cannot load distributed
+  checkpoints with newer PyTorch.
 verification_index:
   model_level:
     verified:
@@ -242,8 +242,7 @@ items:
         real-data steps 91-100 average 19,752.760 ms / 747.100 TFLOP/s/GPU
         with 158.900 GiB peak allocated and 167.680 GiB peak reserved memory.
         Complete 15-file, 430-GiB checkpoints with distributed metadata are
-        written at steps 50 and 100. Run on a NeMo nightly base container
-        (2026-11-18) at this item's Bridge commit.
+        written at steps 50 and 100. Measured at this item's Bridge commit.
 
   pretrain_fsdp:
     GB200:
@@ -386,9 +385,8 @@ items:
         0.6007083 -> 0.377143. Steps 91-100 average 7,613.870 ms / 229.400
         TFLOP/s/GPU with 101.340 GiB peak allocated and 104.930 GiB peak
         reserved memory. No iteration is skipped or NaN, and the complete
-        12-file reloadable full-model checkpoint is written at step 100. Run
-        on a NeMo nightly base container (2026-11-18) at this item's Bridge
-        commit; MTP losses cover completion tokens only (SFT loss mask), as
+        12-file reloadable full-model checkpoint is written at step 100.
+        Measured at this item's Bridge commit; MTP losses cover completion tokens only (SFT loss mask), as
         in the GB200 long-context SFT leaf.
 
   sft_export_inference:
@@ -435,7 +433,7 @@ items:
           --prompt "Solve briefly: If 3x + 5 = 20, what is x?"
           --max-new-tokens 45 --chat-template --disable-thinking
       last_verified: 2026-11-20
-      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format with architecture NemotronHForCausalLM. The deterministic verifier reloads the export with Hugging Face Transformers, failing on any missing, unexpected, or mismatched weight, and one greedy generation produces exactly 45 new tokens. The literal completion is: \"To solve for \u0024x\u0024, follow these steps:\n\n1. Subtract 5 from both sides of the equation:\n\\[ 3x + 5 - 5 = 20 - 5 \\Rightarrow 3x\". Run on a NeMo nightly base container (2026-11-18) at this item's Bridge commit."
+      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format with architecture NemotronHForCausalLM. The deterministic verifier reloads the export with Hugging Face Transformers, failing on any missing, unexpected, or mismatched weight, and one greedy generation produces exactly 45 new tokens. The literal completion is: \"To solve for \u0024x\u0024, follow these steps:\n\n1. Subtract 5 from both sides of the equation:\n\\[ 3x + 5 - 5 = 20 - 5 \\Rightarrow 3x\". Measured at this item's Bridge commit."
 
   sft_long_context:
     H100:
@@ -608,7 +606,7 @@ items:
         loss 0.5187526 -> 0.3485283, and no skipped or NaN iterations. Steps
         91-100 average 23,796.430 ms / 73.460 TFLOP/s/GPU, and the complete
         12-file adapter checkpoint is written at step 100 with a latest marker
-        of 100. Run on a NeMo nightly base container (2026-11-18) at this
+        of 100. Measured at this
         item's Bridge commit; MTP losses cover completion tokens only (SFT
         loss mask), as in the GB200 long-context SFT leaf.
 
@@ -696,9 +694,8 @@ items:
         6.171713 and 5.809084 match uninterrupted losses 6.171713 and 5.808105
         at steps 51 and 100. All 150 shared LM/MTP-1/MTP-2 values pass with a
         maximum relative difference of 0.045435%, no iteration is skipped or
-        NaN, and the 15-file, 430-GiB step-100 checkpoint is complete. Run on
-        a NeMo nightly base container (2026-11-18) at this item's Bridge
-        commit, resuming the pretrain reference written at the same commit.
+        NaN, and the 15-file, 430-GiB step-100 checkpoint is complete.
+        Measured at this item's Bridge commit, resuming the pretrain reference written at the same commit.
 
   pretrain_performance:
     H100:
