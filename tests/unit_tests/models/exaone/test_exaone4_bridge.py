@@ -200,6 +200,40 @@ class TestExaone4Bridge:
             "up": "model.layers.0.mlp.up_proj.weight",
         }
 
+    def test_mapping_registry_maps_untied_lm_head(self):
+        """EXAONE 4.0 32B does not tie its output layer to the embedding."""
+        registry = Exaone4Bridge().mapping_registry()
+
+        assert registry.megatron_to_hf_lookup("output_layer.weight").hf_param == "lm_head.weight"
+
+    def test_hybrid_attention_follows_layer_types(self):
+        """EXAONE 4.0 32B (LLLG): sliding-window layers keep RoPE, global layers have none."""
+        layer_types = ["sliding_attention"] * 3 + ["full_attention"]
+        config = make_exaone4_config(
+            num_hidden_layers=8,
+            sliding_window=4096,
+            sliding_window_pattern="LLLG",
+            layer_types=layer_types * 2,
+            tie_word_embeddings=False,
+        )
+
+        model_config = Exaone4Bridge().hf_config_to_model_config(config)
+
+        assert model_config.window_size == (4095, 0)
+        assert model_config.window_attn_skip_freq == [1, 1, 1, 0, 1, 1, 1, 0]
+        assert model_config.no_rope_freq == [0, 0, 0, 1, 0, 0, 0, 1]
+        assert model_config.share_embeddings_and_output_weights is False
+
+    def test_full_attention_model_keeps_rope_on_every_layer(self):
+        """EXAONE 4.0 1.2B has no sliding window, so every layer is global and applies RoPE."""
+        config = make_exaone4_config(sliding_window=None, layer_types=["full_attention"] * 30)
+
+        model_config = Exaone4Bridge().hf_config_to_model_config(config)
+
+        assert model_config.window_size is None
+        assert not model_config.no_rope_freq
+        assert model_config.window_attn_skip_freq is None
+
 
 class TestExaone4BuilderConfig:
     """Builder-backed ModelConfig path for EXAONE 4.0."""

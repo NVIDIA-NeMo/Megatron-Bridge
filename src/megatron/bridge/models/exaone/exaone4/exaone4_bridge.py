@@ -20,7 +20,9 @@ EXAONE 4.0 architecture overview:
 - GQA with 32 heads / 8 KV heads
 - SwiGLU activation
 - RoPE with llama3-style scaling
-- Tied word embeddings (embed_tokens == lm_head)
+- 1.2B: full attention on every layer and tied word embeddings (embed_tokens == lm_head)
+- 32B: hybrid attention ("LLLG": three sliding-window layers with RoPE, then one global layer without
+  positional encoding) and a separate lm_head
 
 Key differences from standard GPT-style model bridges:
 - No input_layernorm or pre_feedforward_layernorm weights
@@ -29,7 +31,7 @@ Key differences from standard GPT-style model bridges:
 - Post-LN mapping follows shared post-normalization pattern: *.post_layernorm.weight
 
 References:
-- HuggingFace: LGAI-EXAONE/EXAONE-4.0-1.2B
+- HuggingFace: LGAI-EXAONE/EXAONE-4.0-1.2B, LGAI-EXAONE/EXAONE-4.0-32B
 - the shared post-normalization layer: Post-LN via TERowParallelLinearLayerNorm pattern
 - EXAONE bridge: QK layernorm mapping pattern
 """
@@ -80,7 +82,8 @@ class Exaone4Bridge(MegatronModelBridge):
       following the same pattern established by the shared post-normalization layer.
     - QK RMSNorm is mapped using EXAONE attention norm parameters.
     - 1.2B model uses full attention only (no sliding window / hybrid attention).
-    - 32B model introduces hybrid attention (LLLG pattern) — future extension.
+    - 32B model uses hybrid attention (LLLG pattern): sliding-window layers apply RoPE and the
+      global layers apply none, as in transformers' ``Exaone4Attention``.
 
     Example:
         >>> from megatron.bridge import AutoBridge
@@ -141,6 +144,18 @@ class Exaone4Bridge(MegatronModelBridge):
                     self._MCORE_LLAMA3_ROPE_SCALING,
                 )
 
+        # Hybrid attention (EXAONE 4.0 32B). transformers drops RoPE on the global layers only when a
+        # sliding window is configured; without one (1.2B) every layer is global and keeps RoPE.
+        sliding_window = getattr(hf_config, "sliding_window", None)
+        layer_types = getattr(hf_config, "layer_types", None)
+        if sliding_window is not None and layer_types:
+            is_sliding = [layer_type == "sliding_attention" for layer_type in layer_types]
+            config_kwargs.update(
+                window_size=(sliding_window - 1, 0),
+                window_attn_skip_freq=[int(sliding) for sliding in is_sliding],
+                no_rope_freq=[int(not sliding) for sliding in is_sliding],
+            )
+
         return config_kwargs
 
     def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
@@ -193,9 +208,9 @@ class Exaone4Bridge(MegatronModelBridge):
         # 1:1 Parameter Mappings (Megatron → HF)
         # =====================================================================
         param_mappings = {
-            # Embedding & output
+            # Embedding & output (the 1.2B ties lm_head to embed_tokens; the 32B has its own)
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
-            # NOTE: No lm_head.weight mapping — tie_word_embeddings=true reuses embed_tokens
+            "output_layer.weight": "lm_head.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
             # Attention output projection
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
