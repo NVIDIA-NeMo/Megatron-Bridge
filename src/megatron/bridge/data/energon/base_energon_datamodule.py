@@ -17,7 +17,7 @@ import logging
 from typing import Any, Callable, Literal, Optional
 
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.energon import Sample, WorkerConfig, get_savable_loader, get_train_dataset
+from megatron.energon import CachePool, Sample, WorkerConfig, get_savable_loader, get_train_dataset
 from megatron.energon import dataset_config as _energon_dataset_config
 from megatron.energon.epathlib import EPath
 from megatron.energon.flavors.webdataset.default_generic_webdataset import DefaultGenericWebdatasetFactory
@@ -186,6 +186,7 @@ class EnergonMultiModalDataModule:
     init_global_step (int): The initial global step for the trainer, used for resuming training.
     train_dataloader_object (Optional): The DataLoader object for training data.
     val_dataloader_object (Optional): The DataLoader object for validation data.
+    cache_pool (CachePool, optional): Cache pool forwarded to get_savable_loader(). Defaults to None.
     """
 
     def __init__(
@@ -205,6 +206,7 @@ class EnergonMultiModalDataModule:
         packing_buffer_size: Optional[int] = None,
         validation_task_encoder: Optional[Any] = None,
         pg_collection: Optional[ProcessGroupCollection] = None,
+        cache_pool: Optional[CachePool] = None,
         **kwargs,
     ) -> None:
         """
@@ -231,6 +233,7 @@ class EnergonMultiModalDataModule:
         and batching samples for validation. Defaults to None and will be the same as task_encoder.
         pg_collection (ProcessGroupCollection, optional): Process group collection for distributed training.
         If provided, used instead of the global parallel_state. Defaults to None.
+        cache_pool (CachePool, optional): Cache pool forwarded to get_savable_loader(). Defaults to None.
         **kwargs: Additional keyword arguments. Will be passed to get_train_dataset() of Energon
         """
 
@@ -253,6 +256,7 @@ class EnergonMultiModalDataModule:
         self.validation_task_encoder = validation_task_encoder or self.task_encoder
         self.num_val_workers = self.num_workers if num_val_workers is None else num_val_workers
         self.pg_collection = pg_collection
+        self.cache_pool = cache_pool
         self.kwargs = kwargs
 
     def _build_worker_config(self, num_workers: int, split: str = "train") -> WorkerConfig:
@@ -343,7 +347,7 @@ class EnergonMultiModalDataModule:
             return self.train_dataloader_object
         worker_config = self._build_worker_config(self.num_workers, split="train")
         train_dataset = self.datasets_provider(worker_config, split="train")
-        energon_dataloader = get_savable_loader(train_dataset, worker_config=worker_config)
+        energon_dataloader = get_savable_loader(train_dataset, worker_config=worker_config, cache_pool=self.cache_pool)
         self.train_dataloader_object = energon_dataloader
         return EnergonDataloader(self.train_dataloader_object)
 
@@ -360,7 +364,7 @@ class EnergonMultiModalDataModule:
         if self.val_dataloader_object is None:
             worker_config = self._build_worker_config(self.num_val_workers, split="val")
             val_dataset = self.datasets_provider(worker_config, split="val")
-            energon_loader = get_savable_loader(val_dataset, worker_config=worker_config)
+            energon_loader = get_savable_loader(val_dataset, worker_config=worker_config, cache_pool=self.cache_pool)
             self.val_dataloader_object = energon_loader
         return EnergonDataloader(self.val_dataloader_object)
 
