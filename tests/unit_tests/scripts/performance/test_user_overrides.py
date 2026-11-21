@@ -61,6 +61,40 @@ def test_seq_length_updates_model_and_mock_dataset(tmp_path):
     assert updated.dataset.seq_length == 128
 
 
+@pytest.mark.parametrize("moe_layer_freq", [1, 2])
+def test_num_layers_keeps_int_moe_layer_freq(tmp_path, moe_layer_freq):
+    """An int moe_layer_freq (dense models keep the default 1) applies at any depth."""
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    recipe.model.moe_layer_freq = moe_layer_freq
+
+    updated = set_user_overrides(recipe, _parse_args(tmp_path, "--num_layers", "4"))
+
+    assert updated.model.num_layers == 4
+    assert updated.model.moe_layer_freq == moe_layer_freq
+
+
+def test_num_layers_rebuilds_moe_layer_freq_list(tmp_path):
+    """A per-layer list keeps its dense layers and fills the rest with MoE layers."""
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    recipe.model.num_layers = 6
+    recipe.model.moe_layer_freq = [0, 0, 1, 1, 1, 1]
+
+    updated = set_user_overrides(recipe, _parse_args(tmp_path, "--num_layers", "4"))
+
+    assert updated.model.num_layers == 4
+    assert updated.model.moe_layer_freq == [0, 0, 1, 1]
+
+
+def test_first_k_dense_replace_builds_moe_layer_freq_list(tmp_path):
+    """--first_k_dense_replace still sets an explicit list, also from an int moe_layer_freq."""
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    recipe.model.moe_layer_freq = 1
+
+    updated = set_user_overrides(recipe, _parse_args(tmp_path, "--num_layers", "4", "--first_k_dense_replace", "1"))
+
+    assert updated.model.moe_layer_freq == [0, 1, 1, 1]
+
+
 @pytest.mark.parametrize("create_attention_mask", [True, False])
 def test_mock_dataset_keeps_recipe_attention_mask_setting(tmp_path, create_attention_mask):
     """--data mock rebuilds the dataset config but keeps the recipe's create_attention_mask."""
