@@ -146,8 +146,8 @@ def test_qwen3_235b_16gpu_gb300_bf16_gbs_common_contracts() -> None:
 def test_qwen3_235b_32gpu_gb300_bf16_common_contracts() -> None:
     for config_fn, gbs, mbs, tp, dp, ga in (
         (qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs16_common_contract_config, 16, 1, 2, 16, 1),
-        (qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs256_common_contract_config, 256, 2, 1, 32, 4),
-        (qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs1024_common_contract_config, 1024, 2, 1, 32, 16),
+        (qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs256_common_contract_config, 256, 2, 2, 16, 8),
+        (qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs1024_common_contract_config, 1024, 2, 2, 16, 32),
     ):
         cfg = config_fn()
         assert cfg.train.global_batch_size == gbs

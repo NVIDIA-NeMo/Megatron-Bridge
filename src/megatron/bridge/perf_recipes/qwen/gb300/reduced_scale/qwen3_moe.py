@@ -220,14 +220,14 @@ def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs16_common_contract_config() -> 
 
 def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs256_common_contract_config() -> ConfigContainer:
     """32-GPU GBS=256 common-contract benchmark."""
-    cfg = _qwen3_235b_32gpu_common_contract_base(tensor_model_parallel_size=1, micro_batch_size=2)
+    cfg = _qwen3_235b_32gpu_common_contract_base(tensor_model_parallel_size=2, micro_batch_size=2)
     cfg.train.global_batch_size = 256
     return cfg
 
 
 def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs1024_common_contract_config() -> ConfigContainer:
     """32-GPU GBS=1024 common-contract benchmark."""
-    cfg = _qwen3_235b_32gpu_common_contract_base(tensor_model_parallel_size=1, micro_batch_size=2)
+    cfg = _qwen3_235b_32gpu_common_contract_base(tensor_model_parallel_size=2, micro_batch_size=2)
     cfg.train.global_batch_size = 1024
     return cfg
 
