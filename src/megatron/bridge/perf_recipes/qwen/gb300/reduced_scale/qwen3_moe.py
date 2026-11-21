@@ -32,6 +32,28 @@ def _set_hybridep_domain_size(cfg: ConfigContainer, domain_size: int) -> None:
     }
 
 
+def _apply_gb_vr_comparison_contract(cfg: ConfigContainer, *, adam_moments_dtype: torch.dtype) -> None:
+    """Apply the common GB300/VR200 execution and optimizer contract."""
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = []
+
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = adam_moments_dtype
+    cfg.optimizer.exp_avg_sq_dtype = adam_moments_dtype
+    cfg.optimizer.use_distributed_optimizer = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.dist.use_megatron_fsdp = False
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.model.init_model_with_meta_device = False
+
+
 def _enable_fsdp_full_iteration_graph(cfg: ConfigContainer) -> None:
     """Enable the static full-iteration graph path used by Megatron-FSDP."""
     cfg.model.cuda_graph_impl = "full_iteration"
@@ -140,22 +162,7 @@ def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_config() -> Config
     cfg.model.sequence_parallel = False
     cfg.train.micro_batch_size = 1
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
-    cfg.model.recompute_modules = []
-
-    cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.main_grads_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
-    cfg.optimizer.use_distributed_optimizer = True
-    cfg.ddp.use_distributed_optimizer = True
-    cfg.dist.use_megatron_fsdp = False
-    cfg.ddp.use_megatron_fsdp = False
-    cfg.model.init_model_with_meta_device = False
+    _apply_gb_vr_comparison_contract(cfg, adam_moments_dtype=torch.bfloat16)
 
     _set_hybridep_domain_size(cfg, 16)
     return cfg
@@ -166,6 +173,62 @@ def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_tp2_config() -> Co
     cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_config()
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.sequence_parallel = True
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_gbs256_common_contract_config() -> ConfigContainer:
+    """16-GPU GBS=256 common-contract benchmark."""
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_tp2_config()
+    cfg.train.global_batch_size = 256
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_gbs1024_common_contract_config() -> ConfigContainer:
+    """16-GPU GBS=1024 common-contract benchmark."""
+    cfg = qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_tp2_config()
+    cfg.train.global_batch_size = 1024
+    return cfg
+
+
+def _qwen3_235b_32gpu_common_contract_base(
+    *, tensor_model_parallel_size: int, micro_batch_size: int
+) -> ConfigContainer:
+    """32-GPU GB/VR comparison contract with FP32 Adam moments."""
+    cfg = qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config()
+
+    cfg.model.tensor_model_parallel_size = tensor_model_parallel_size
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = tensor_model_parallel_size > 1
+    cfg.train.micro_batch_size = micro_batch_size
+
+    _apply_gb_vr_comparison_contract(cfg, adam_moments_dtype=torch.float32)
+
+    _set_hybridep_domain_size(cfg, 32)
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs16_common_contract_config() -> ConfigContainer:
+    """32-GPU GBS=16 common-contract benchmark."""
+    cfg = _qwen3_235b_32gpu_common_contract_base(tensor_model_parallel_size=2, micro_batch_size=1)
+    cfg.train.global_batch_size = 16
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs256_common_contract_config() -> ConfigContainer:
+    """32-GPU GBS=256 common-contract benchmark."""
+    cfg = _qwen3_235b_32gpu_common_contract_base(tensor_model_parallel_size=1, micro_batch_size=2)
+    cfg.train.global_batch_size = 256
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs1024_common_contract_config() -> ConfigContainer:
+    """32-GPU GBS=1024 common-contract benchmark."""
+    cfg = _qwen3_235b_32gpu_common_contract_base(tensor_model_parallel_size=1, micro_batch_size=2)
+    cfg.train.global_batch_size = 1024
     return cfg
 
 
@@ -324,6 +387,8 @@ __all__ = [
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_common_contract_tp2_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_gbs256_common_contract_config",
+    "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_gbs1024_common_contract_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_no_recompute_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_selective_config",
@@ -334,6 +399,9 @@ __all__ = [
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero2_tp2_full_graph_config",
     "qwen3_235b_a22b_pretrain_16gpu_gb300_bf16_zero3_full_graph_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs16_common_contract_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs256_common_contract_config",
+    "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_gbs1024_common_contract_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_mbs2_config",
     "qwen3_235b_a22b_pretrain_32gpu_gb300_bf16_pp1_sms16_config",
