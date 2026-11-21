@@ -65,10 +65,11 @@ def test_text_9b_pretrain_deterministic_applies_determinism():
 
     assert cfg.model.deterministic_mode is True
     assert cfg.model.cross_entropy_loss_fusion is False
-    assert cfg.model.gdn_kernel_backend == "torch"
+    # the fused Transformer Engine / cuDNN kernels are deterministic under deterministic_mode
+    assert cfg.model.gdn_kernel_backend == "transformer_engine"
     assert cfg.model.tensor_model_parallel_size == base.model.tensor_model_parallel_size == 1
     assert cfg.train.global_batch_size == base.train.global_batch_size
     # TODO: revert with the recipe override once a deterministic fused GDN kernel is available.
-    assert cfg.train.micro_batch_size == 1
-    assert base.train.micro_batch_size == 2
+    # the fused backend fits the base batch size; only the torch kernel needed micro_batch_size=1
+    assert cfg.train.micro_batch_size == base.train.micro_batch_size == 2
     assert cfg.env_vars == DETERMINISM_ENV_VARS
