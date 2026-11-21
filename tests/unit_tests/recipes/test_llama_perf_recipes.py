@@ -38,8 +38,11 @@ from megatron.bridge.perf_recipes.llama.vrnvl72.llama3 import (
     llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config,
     llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config,
 )
+from megatron.bridge.recipes.llama.llama3 import llama3_70b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import (
+    _OfflineAutoBridge,
+    _OfflineModelProvider,
     patch_recipe_construction_dependencies,
     patch_recipe_module_global,
 )
@@ -126,6 +129,15 @@ def test_llama3_70b_h100_fp8cs_sets_explicit_pipeline_layout(monkeypatch: pytest
     assert cfg.train.micro_batch_size == 1
 
 
+class _OfflineLlama3_70BBridge(_OfflineAutoBridge):
+    """Offline bridge with Llama 3 70B's 80 layers; the shared offline provider defaults to 32."""
+
+    def to_megatron_provider(self, *args: object, **kwargs: object) -> _OfflineModelProvider:
+        provider = super().to_megatron_provider(*args, **kwargs)
+        provider.num_layers = 80
+        return provider
+
+
 @pytest.mark.unit
 def test_llama3_70b_vrnvl72_fp8mx_sets_explicit_pipeline_layout(monkeypatch: pytest.MonkeyPatch) -> None:
     """The 64-GPU VRNVL72 MXFP8 recipe moves layers off the stage that holds the output layer and loss.
@@ -135,6 +147,7 @@ def test_llama3_70b_vrnvl72_fp8mx_sets_explicit_pipeline_layout(monkeypatch: pyt
     parallelism and batch sizes stay those of the GB300 recipe.
     """
     patch_recipe_construction_dependencies(monkeypatch)
+    patch_recipe_module_global(monkeypatch, llama3_70b_pretrain_config, "AutoBridge", _OfflineLlama3_70BBridge)
 
     cfg = llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config()
     gb300_cfg = llama3_70b_pretrain_64gpu_gb300_fp8mx_config()
