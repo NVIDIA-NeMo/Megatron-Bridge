@@ -128,17 +128,18 @@ def test_llama3_70b_h100_fp8cs_sets_explicit_pipeline_layout(monkeypatch: pytest
 
 @pytest.mark.unit
 def test_llama3_70b_vrnvl72_fp8mx_sets_explicit_pipeline_layout(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The 64-GPU VRNVL72 MXFP8 recipe gives the output layer and loss a virtual stage of their own.
+    """The 64-GPU VRNVL72 MXFP8 recipe moves layers off the stage that holds the output layer and loss.
 
-    The last PP rank keeps 18 transformer layers and the first two middle ranks take one more each
-    (20/21/21/18). The parallelism and batch sizes stay those of the GB300 recipe.
+    The last PP rank keeps 18 transformer layers and the two middle ranks take one more each
+    (20/21/21/18); its last virtual stage holds 2 layers plus the output layer and loss. The
+    parallelism and batch sizes stay those of the GB300 recipe.
     """
     patch_recipe_construction_dependencies(monkeypatch)
 
     cfg = llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config()
     gb300_cfg = llama3_70b_pretrain_64gpu_gb300_fp8mx_config()
 
-    assert cfg.model.pipeline_model_parallel_layout == "Et*4|t*5|t*5|t*5|(t*4|)*3,t*5|(t*4|)*11,L"
+    assert cfg.model.pipeline_model_parallel_layout == "Et*4|t*5|t*5|t*4|(t*4|)*15,ttL"
 
     pp_size = cfg.model.pipeline_model_parallel_size
     layout = PipelineParallelLayerLayout(cfg.model.pipeline_model_parallel_layout, pp_size).layout
@@ -146,7 +147,7 @@ def test_llama3_70b_vrnvl72_fp8mx_sets_explicit_pipeline_layout(monkeypatch: pyt
     assert [sum(stage.count(LayerType.decoder) for stage in rank) for rank in layout] == [20, 21, 21, 18]
     assert sum(stage.count(LayerType.decoder) for rank in layout for stage in rank) == cfg.model.num_layers
     assert layout[0][0][0] == LayerType.embedding
-    assert layout[-1][-1] == [LayerType.loss]
+    assert layout[-1][-1] == [LayerType.decoder, LayerType.decoder, LayerType.loss]
 
     # The layout is only valid for this parallelism; pin it to the GB300 recipe's.
     for name in (

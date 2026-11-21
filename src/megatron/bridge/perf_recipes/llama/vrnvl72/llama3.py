@@ -155,8 +155,8 @@ def llama3_70b_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
 def llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     """LLaMA 3 70B pretrain: 64× VRNVL72, FP8-MX (alias of GB300)."""
     cfg = llama3_70b_pretrain_64gpu_gb300_fp8mx_config()
-    # 20/21/21/18 layers per PP rank; the last virtual stage holds only the output layer and loss.
-    cfg.model.pipeline_model_parallel_layout = "Et*4|t*5|t*5|t*5|(t*4|)*3,t*5|(t*4|)*11,L"
+    # 20/21/21/18 layers per PP rank; the last virtual stage holds 2 layers plus the output layer and loss.
+    cfg.model.pipeline_model_parallel_layout = "Et*4|t*5|t*5|t*4|(t*4|)*15,ttL"
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
