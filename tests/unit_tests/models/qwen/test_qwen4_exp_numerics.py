@@ -185,3 +185,67 @@ def test_invalid_normalization_shape_fails(groups, width):
     """Reject malformed group layouts before any output allocation."""
     with pytest.raises(ValueError):
         grouped_rmsnorm(torch.empty(2, width), torch.empty(width), groups, 1e-6)
+
+
+@pytest.mark.parametrize("batch,seq", [(1, 1), (2, 7), (3, 8), (2, 9), (3, 12), (2, 33)])
+@pytest.mark.parametrize("workspace,ties", [(1, False), (1 << 20, False), (1 << 20, True)])
+def test_unpacked_qsa_metadata_preserves_selection(batch, seq, workspace, ties):
+    """Known batch rows retain exact bits at top-k boundaries, tails and ties."""
+    torch.manual_seed(67)
+    ratio, topk = 4, 2
+    # Include a strided input: advanced indexing must keep the same GEMM layout.
+    q = torch.randn(batch * seq, 3, 16)[..., ::2]
+    if ties:
+        q.zero_()
+    keys = torch.randn(batch, seq // ratio, 8)
+    valid = torch.ones(batch, seq // ratio, dtype=torch.bool)
+    docs = torch.arange(batch).repeat_interleave(seq)
+    positions = torch.arange(seq).repeat(batch)
+    args = (q, keys, valid, docs, positions)
+    kwargs = dict(compress_ratio=ratio, block_topk=topk, workspace_bytes=workspace)
+    expected, expected_all = select_document_blocks(*args, **kwargs)
+    actual, actual_all = select_document_blocks(*args, **kwargs, unpacked_sequence_length=seq)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    assert actual_all == expected_all == (seq // ratio <= topk)
+    if not actual_all:
+        torch.testing.assert_close(actual, _replicated_key_selection(*args, ratio, topk), rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("seq", [1, 8, 17])
+def test_unpacked_qsa_metadata_avoids_host_tensor_reads(monkeypatch, seq):
+    """Both dense and top-k shortcuts avoid discovering known layout on the GPU."""
+    args = (
+        torch.randn(2 * seq, 2, 8),
+        torch.randn(2, seq // 4, 8),
+        torch.ones(2, seq // 4, dtype=torch.bool),
+        torch.arange(2).repeat_interleave(seq),
+        torch.arange(seq).repeat(2),
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Known unpacked metadata must not be read back from tensors")
+
+    with monkeypatch.context() as patch:
+        for name in ("item", "tolist", "unique"):
+            patch.setattr(torch.Tensor, name, forbidden)
+        patch.setattr(torch, "nonzero", forbidden)
+        bits, all_selected = select_document_blocks(
+            *args, compress_ratio=4, block_topk=2, unpacked_sequence_length=seq
+        )
+    assert bits.shape == (2 * seq, (seq // 4 + 8) // 8)
+    assert all_selected == (seq // 4 <= 2)
+
+
+@pytest.mark.parametrize("seq", [0, -1, 3, 8, 16])
+def test_unpacked_qsa_rejects_inconsistent_shapes(seq):
+    with pytest.raises(ValueError, match="metadata"):
+        select_document_blocks(
+            torch.randn(8, 2, 8),
+            torch.randn(2, 1, 8),
+            torch.ones(2, 1, dtype=torch.bool),
+            torch.arange(2).repeat_interleave(4),
+            torch.arange(4).repeat(2),
+            compress_ratio=4,
+            block_topk=2,
+            unpacked_sequence_length=seq,
+        )

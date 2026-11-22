@@ -196,7 +196,9 @@ def test_qsa_mrope_uses_each_documents_actual_block_start_frequencies(packed):
     indexer.q_layernorm = torch.nn.Identity()
     indexer.k_layernorm = torch.nn.Identity()
     indexer.index_qk_proj = Mock(side_effect=lambda hidden: (torch.cat((hidden, hidden), dim=-1), None))
-    indexer._select_blocks = Mock(side_effect=lambda q, *args: (torch.zeros(q.shape[0], 1, dtype=torch.uint8), True))
+    indexer._select_blocks = Mock(
+        side_effect=lambda q, *args, **kwargs: (torch.zeros(q.shape[0], 1, dtype=torch.uint8), True)
+    )
     # Two documents with identical hidden values and different multimodal positions.
     angles = torch.tensor([[0.0, 0.1, 0.2, 0.3], [1.0, 1.1, 1.2, 1.3]])
     seq, batch = (8, 1) if packed else (4, 2)
@@ -218,6 +220,7 @@ def test_qsa_mrope_uses_each_documents_actual_block_start_frequencies(packed):
     indexer.forward(hidden, frequencies, packed_params)
 
     queries, pooled, valid, _, _ = indexer._select_blocks.call_args.args
+    assert indexer._select_blocks.call_args.kwargs == {"unpacked_sequence_length": None if packed else seq}
     expected_queries = torch.zeros(8, 1, 4)
     expected_queries[:, 0, 0] = angles.flatten().cos()
     expected_queries[:, 0, 2] = angles.flatten().sin()

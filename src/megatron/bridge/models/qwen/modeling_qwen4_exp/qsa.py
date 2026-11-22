@@ -232,7 +232,7 @@ class QSAIndexer(MegatronModule):
         return torch.cat([rotated.view_as(x_rot), x_pass], dim=-1)
 
     def _pool_keys(
-        self, raw_keys: Tensor, doc_ids: Tensor, positions: Tensor, max_doc_len: int
+        self, raw_keys: Tensor, doc_ids: Tensor, positions: Tensor, max_doc_len: int, *, num_docs: int | None = None
     ) -> Tuple[Tensor, Tensor, Tensor]:
         """Mean-pool complete blocks of ``compress_ratio`` consecutive tokens per document.
 
@@ -245,7 +245,7 @@ class QSAIndexer(MegatronModule):
             block_valid [n_docs, n_blocks_max])``. Only complete blocks are valid.
         """
         R = self.compress_ratio
-        n_docs = int(doc_ids.max().item()) + 1
+        n_docs = int(doc_ids.max().item()) + 1 if num_docs is None else num_docs
         n_blocks_max = max_doc_len // R
         D = raw_keys.shape[-1]
         block_of_token = positions.long() // R
@@ -273,6 +273,8 @@ class QSAIndexer(MegatronModule):
         block_valid: Tensor,
         doc_ids: Tensor,
         positions: Tensor,
+        *,
+        unpacked_sequence_length: int | None = None,
     ) -> Tuple[Tensor, bool]:
         """Top-k complete blocks per query.
 
@@ -293,6 +295,7 @@ class QSAIndexer(MegatronModule):
             positions,
             compress_ratio=self.compress_ratio,
             block_topk=self.block_topk,
+            unpacked_sequence_length=unpacked_sequence_length,
         )
 
     # ------------------------------------------------------------------ forward
@@ -351,7 +354,9 @@ class QSAIndexer(MegatronModule):
         pos_flat = positions.reshape(-1)
 
         with torch.no_grad():
-            pooled, block_positions, block_valid = self._pool_keys(keys_flat.detach(), doc_flat, pos_flat, max_doc_len)
+            pooled, block_positions, block_valid = self._pool_keys(
+                keys_flat.detach(), doc_flat, pos_flat, max_doc_len, num_docs=None if is_thd else b
+            )
             n_docs, n_blocks_max, D = pooled.shape
             if n_blocks_max > 0:
                 pooled = self.k_layernorm(pooled.reshape(-1, D))
@@ -369,7 +374,14 @@ class QSAIndexer(MegatronModule):
                 else:
                     pooled = self._rope_at_positions(pooled, rotary_pos_emb, block_positions.reshape(-1))
                 pooled = pooled.view(n_docs, n_blocks_max, D)
-            selected_bits, all_selected = self._select_blocks(q_flat.detach(), pooled, block_valid, doc_flat, pos_flat)
+            selected_bits, all_selected = self._select_blocks(
+                q_flat.detach(),
+                pooled,
+                block_valid,
+                doc_flat,
+                pos_flat,
+                unpacked_sequence_length=None if is_thd else s,
+            )
         nbytes = selected_bits.shape[1]
         return QSASelection(
             doc_ids=doc_ids,
