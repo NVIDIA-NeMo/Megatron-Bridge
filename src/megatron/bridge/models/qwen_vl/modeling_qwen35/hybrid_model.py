@@ -76,7 +76,13 @@ class _HybridMultimodalRotaryEmbedding(Qwen3VLMultimodalRotaryEmbedding):
             raise RuntimeError("Qwen3.5 Hybrid mRoPE is only valid inside the language-model forward.")
         if position_ids is None:
             raise RuntimeError("Qwen3.5 Hybrid mRoPE requires the current forward's position_ids.")
-        return super().forward(position_ids, self.mrope_section, cp_group=cp_group)
+        # max_seq_len is this rank's sequence length (get_rotary_seq_len does not scale it by CP). Callers that
+        # shard the batch for CP may pass this rank's position ids: MegatronMIMO shards them with the hidden
+        # states, and packed (THD) ids always follow the local tokens. Only full-sequence ids need slicing here.
+        position_ids_cp_sharded = packed_seq or position_ids.shape[-1] == max_seq_len
+        return super().forward(
+            position_ids, self.mrope_section, cp_group=cp_group, position_ids_cp_sharded=position_ids_cp_sharded
+        )
 
 
 class Qwen35VLHybridAttentionLayer(Qwen3VLRotaryTransformerLayer):

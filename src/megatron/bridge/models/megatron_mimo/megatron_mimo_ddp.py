@@ -9,9 +9,11 @@ Note: This module only supports DDP wrapping. FSDP is not yet implemented.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from typing import TYPE_CHECKING, Dict, Optional
 
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+from megatron.core.utils import log_single_rank
 from torch import nn
 
 from megatron.bridge.utils.common_utils import warn_rank_0
@@ -28,6 +30,9 @@ if TYPE_CHECKING:
     from megatron.core.transformer.transformer_config import TransformerConfig
 
     from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMIMOParallelismConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 def wrap_megatron_mimo_model_distributed(
@@ -83,8 +88,26 @@ def wrap_megatron_mimo_model_distributed(
         config: "TransformerConfig",
         pg: "ProcessGroupCollection",
         module_ddp_config: "DistributedDataParallelConfig",
+        *,
+        module_name: str,
+        log_rank: int,
     ) -> "DistributedDataParallel":
         layout = None
+        if (
+            getattr(config, "calculate_per_token_loss", False) is True
+            and module_ddp_config.average_in_collective is True
+        ):
+            # Per-token loss sums a module's gradients over its DP ranks, and finalize divides them by the global
+            # token count, so MCore's DDP rejects averaging in the collective for that module. One DDP config is
+            # shared by every module; the others keep averaging.
+            log_single_rank(
+                logger,
+                logging.WARNING,
+                f"Disabling average_in_collective for MegatronMIMO module {module_name!r}: it calculates "
+                "per-token loss (for example, Qwen3.5-VL turns it on for context parallelism).",
+                rank=log_rank,
+            )
+            module_ddp_config = dataclasses.replace(module_ddp_config, average_in_collective=False)
         if use_layer_wise_distributed_optimizer:
             module_ddp_config = dataclasses.replace(
                 module_ddp_config,
@@ -126,6 +149,8 @@ def wrap_megatron_mimo_model_distributed(
                     megatron_mimo_model.language_model.config,
                     llm_pg,
                     ddp_config,
+                    module_name=MIMO_LANGUAGE_MODULE_KEY,
+                    log_rank=llm_grid.rank_offset,
                 )
                 # MCore's DDP wrapper does not proxy arbitrary module methods.
                 # MimoModel._forward_language_module() checks for and calls
@@ -177,6 +202,8 @@ def wrap_megatron_mimo_model_distributed(
                     first_encoder.config,
                     module_pg,
                     encoder_ddp_config,
+                    module_name=module_name,
+                    log_rank=module_grid.rank_offset,
                 )
                 # MCore optimizers unwrap DDP and read process groups from the wrapped module.
                 wrapped.module.pg_collection = module_pg
