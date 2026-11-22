@@ -175,11 +175,13 @@ Current OpenMath starting points are:
   `moe+layernorm+core_attn+moe_act+mlp+shared_experts`.
 - Full SFT: 48 nodes, `TP=2 PP=12 EP=16`, the recipe's selective recompute on
   `moe+core_attn+moe_act`. These are the recipe defaults and the current H100
-  starting point for 4096-token packed OpenMath SFT. On Transformer Engine 2.18
-  and later, a TE norm that is a pipeline stage's first backward operation fails
-  with `invalid device context`, so the recipe does not recompute the pre-MLP
-  norms and sets `NVTE_NORM_FWD_USE_CUDNN=1` and `NVTE_NORM_BWD_USE_CUDNN=1` to
-  use cuDNN normalization kernels. Export `TORCHINDUCTOR_COMPILE_THREADS=1`
+  starting point for 4096-token packed OpenMath SFT. The recipe does not
+  recompute the pre-MLP norms and sets `NVTE_NORM_FWD_USE_CUDNN=1` and
+  `NVTE_NORM_BWD_USE_CUDNN=1` to use cuDNN normalization kernels. The 48-node
+  layout was validated with both settings, which date from a Transformer Engine
+  2.18+ failure (`invalid device context` when a recomputed TE norm was a
+  pipeline stage's first backward operation) that Bridge now prevents during
+  initialization. Export `TORCHINDUCTOR_COMPILE_THREADS=1`
   before launching (`slurm_sft.sh` does) so Inductor compiles kernels in the
   training process: on Python 3.12 before 3.12.8, Inductor's default pool of
   forked compile workers can deadlock when it re-forks after an idle period
