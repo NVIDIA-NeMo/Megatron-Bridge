@@ -473,6 +473,12 @@ def nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config(
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # As in the SFT recipe, the first step compiles kernels stage by stage through the pipeline.
+    # With empty kernel caches, iteration 1 takes about 9.5 minutes on 32 H100s and stage 0 waits
+    # about 6 of them for its first backward, about 4 minutes short of the 10-minute default
+    # timeout. slurm_peft.sh passes the same 90 minutes.
+    cfg.dist.distributed_timeout_minutes = 90
+
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,

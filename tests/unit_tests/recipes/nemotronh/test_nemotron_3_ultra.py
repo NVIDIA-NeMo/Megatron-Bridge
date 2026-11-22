@@ -384,6 +384,7 @@ def test_openmath_peft_uses_validated_parallelism_values() -> None:
     assert cfg.model.recompute_method is None
     assert cfg.model.recompute_num_layers is None
     assert cfg.model.recompute_modules == ["moe", "layernorm", "core_attn", "moe_act", "mlp", "shared_experts"]
+    assert cfg.dist.distributed_timeout_minutes == 90
 
     assert cfg.optimizer.lr == 1e-4
     assert cfg.optimizer.min_lr == 1e-5
