@@ -2529,6 +2529,96 @@ class TestLoadCheckpoint:
         optimizer.load_state_dict.assert_not_called()
         scheduler.load_state_dict.assert_not_called()
 
+    def test_torch_dist_resume_releases_loaded_state_dict_before_empty_cache(self, load_checkpoint_fixtures):
+        """The loaded resume state dict is unreachable by the time the cache is emptied."""
+        cfg = load_checkpoint_fixtures["mock_cfg"]
+        cfg.checkpoint.ckpt_format = "torch_dist"
+        cfg.checkpoint.load_rng = False
+        cfg.peft = None
+
+        state = load_checkpoint_fixtures["mock_state"]
+        state.train_state.step = 0
+        state.train_state.floating_point_operations_so_far = 0
+
+        optimizer = load_checkpoint_fixtures["mock_optimizer"]
+        optimizer.is_stub_optimizer = False
+        scheduler = load_checkpoint_fixtures["mock_scheduler"]
+        pg_collection = Mock()
+
+        class _LoadedStateDict(dict):
+            pass
+
+        loaded_ref = None
+        tensor_refs = {}
+
+        def _generate(*args, **kwargs):
+            tensor = torch.randn(4, 4)
+            tensor_refs["request"] = weakref.ref(tensor)
+            return {"model": {"weight": tensor}}
+
+        def _load_base(*args, **kwargs):
+            nonlocal loaded_ref
+            if loaded_ref is None:
+                loaded_ref = False
+                return {}, "/checkpoints/iter_0000003", False, CheckpointType.GLOBAL
+            loaded = _LoadedStateDict(model={"weight": torch.randn(4, 4)}, checkpoint_version=3.0)
+            loaded_ref = weakref.ref(loaded)
+            tensor_refs["loaded"] = weakref.ref(loaded["model"]["weight"])
+            return loaded, "/checkpoints/iter_0000003", False, CheckpointType.GLOBAL
+
+        released_at_empty_cache = []
+
+        def _empty_cache():
+            gc.collect()
+            released_at_empty_cache.append(
+                bool(loaded_ref)
+                and loaded_ref() is None
+                and set(tensor_refs) == {"request", "loaded"}
+                and all(ref() is None for ref in tensor_refs.values())
+            )
+
+        run_config = {
+            "model": {
+                "tensor_model_parallel_size": 1,
+                "pipeline_model_parallel_size": 1,
+            },
+            "checkpoint": {
+                "save_optim": False,
+                "save_rng": False,
+                "fully_parallel_save": False,
+            },
+        }
+
+        with (
+            patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False),
+            patch("megatron.bridge.training.checkpointing.is_checkpoint_iteration_directory", return_value=True),
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=True),
+            patch("megatron.bridge.training.checkpointing.read_run_config", return_value=run_config),
+            patch("megatron.bridge.training.checkpointing.read_train_state", return_value=state.train_state),
+            patch("megatron.bridge.training.checkpointing.update_num_microbatches"),
+            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
+            patch("megatron.bridge.training.checkpointing._load_model_state_dict", new=lambda *args, **kwargs: None),
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing.load_content_metadata", return_value={}),
+            patch("megatron.bridge.training.checkpointing.generate_state_dict", new=_generate),
+            patch("megatron.bridge.training.checkpointing.torch.distributed.is_initialized", return_value=False),
+            patch("megatron.bridge.training.checkpointing.torch.cuda.empty_cache", side_effect=_empty_cache),
+            patch("megatron.bridge.training.checkpointing.wandb_utils.on_load_checkpoint_success"),
+            patch("megatron.bridge.training.checkpointing.mlflow_utils.on_load_checkpoint_success"),
+            patch("megatron.bridge.training.checkpointing.comet_utils.on_load_checkpoint_success"),
+            patch("megatron.bridge.training.checkpointing._load_base_checkpoint", new=_load_base),
+        ):
+            result = _load_checkpoint_from_path(
+                "/checkpoints/iter_0000003",
+                state,
+                load_checkpoint_fixtures["mock_model"],
+                optimizer,
+                scheduler,
+                pg_collection=pg_collection,
+            )
+
+        assert result == (0, 0)
+        assert released_at_empty_cache == [True]
+
     @patch("torch.distributed.is_initialized")
     @patch("megatron.bridge.training.checkpointing._build_auto_bridge_for_save")
     def test_load_hf_pretrained_checkpoint_initializes_from_hf_source(
