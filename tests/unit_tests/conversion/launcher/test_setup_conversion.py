@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import importlib.util
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -69,6 +70,70 @@ def _parse(module, *options):
     return module.build_parser(include_execution=True).parse_args(
         ["import", "--hf-model", "hf/model", "--megatron-path", "/checkpoint", *options]
     )
+
+
+def test_allocation_setup_runs_before_worker_and_preserves_failure(tmp_path):
+    module = _load_setup_conversion_module()
+    script = tmp_path / "setup.sh"
+    marker = tmp_path / "worker"
+    script.write_text("false\necho must-not-run\n")
+    executor = types.SimpleNamespace(setup_lines="set +e")
+    module._configure_slurm_setup_script(executor, script)
+    result = subprocess.run(
+        ["bash", "-c", executor.setup_lines + f"\ntouch '{marker}'"], capture_output=True, text=True
+    )
+    assert result.returncode != 0
+    assert not marker.exists()
+    assert "must-not-run" not in result.stdout
+
+
+def test_allocation_setup_preserves_literal_shell_and_order(tmp_path):
+    module = _load_setup_conversion_module()
+    output = tmp_path / "ordered"
+    script = tmp_path / "setup.sh"
+    script.write_text(f"printf '%s\\n' 'setup with a quote: '\"'\"' and $literal' >> '{output}'\n")
+    executor = types.SimpleNamespace(setup_lines=f"printf 'before\\n' > '{output}'")
+    module._configure_slurm_setup_script(executor, script)
+    subprocess.run(["bash", "-c", executor.setup_lines + f"printf 'worker\\n' >> '{output}'"], check=True)
+    assert output.read_text().splitlines() == ["before", "setup with a quote: ' and $literal", "worker"]
+
+
+def test_allocation_setup_is_optional_slurm_only_and_launcher_only(tmp_path):
+    module = _load_setup_conversion_module()
+    executor = types.SimpleNamespace(setup_lines="unchanged")
+    module._configure_slurm_setup_script(executor, None)
+    assert executor.setup_lines == "unchanged"
+    script = tmp_path / "setup.sh"
+    script.write_text("echo staged\n")
+    args = _parse(module, "--setup-script", str(script))
+    with pytest.raises(ValueError, match="only supported by the Slurm"):
+        module._validate_args(args)
+    assert "--setup-script" not in module.conversion_worker_args(args)
+    script.write_text(" \n")
+    with pytest.raises(ValueError, match="non-empty"):
+        module._configure_slurm_setup_script(executor, script)
+
+
+def test_allocation_setup_missing_file_is_rejected(tmp_path):
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--executor", "slurm", "--setup-script", str(tmp_path / "absent.sh"))
+    with pytest.raises(ValueError, match="existing file"):
+        module._validate_args(args)
+
+
+def test_allocation_setup_environment_is_child_only(tmp_path):
+    module = _load_setup_conversion_module()
+    script = tmp_path / "setup.sh"
+    script.write_text("export CONVERSION_SETUP_TEST=child\n")
+    executor = types.SimpleNamespace(setup_lines="export CONVERSION_SETUP_TEST=parent")
+    module._configure_slurm_setup_script(executor, script)
+    result = subprocess.run(
+        ["bash", "-c", executor.setup_lines + 'printf "%s" "$CONVERSION_SETUP_TEST"'],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout == "parent"
 
 
 @pytest.mark.parametrize("options", [[], ["--detach"], ["--submission-dry-run"]])

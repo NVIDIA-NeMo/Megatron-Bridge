@@ -118,6 +118,11 @@ def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device:
     )
     execution.add_argument("--experiment-name", help="NeMo Run experiment name.")
     execution.add_argument(
+        "--setup-script",
+        type=Path,
+        help="Allocation setup shell script, run before conversion workers (Slurm only).",
+    )
+    execution.add_argument(
         "--submission-dry-run",
         "--dry-run",
         action="store_true",

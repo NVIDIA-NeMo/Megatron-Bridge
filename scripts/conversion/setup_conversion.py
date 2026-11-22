@@ -22,6 +22,7 @@ import os
 import shlex
 import sys
 from pathlib import Path
+from typing import Any
 
 import nemo_run as run
 from arguments import build_parser, conversion_worker_args
@@ -70,6 +71,11 @@ def _parse_mounts(values: list[str]) -> list[str]:
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate execution resources and conversion parallelism before launch."""
     validate_container_runtime(args)
+    if args.setup_script is not None:
+        if args.executor != "slurm":
+            raise ValueError("--setup-script is only supported by the Slurm executor.")
+        if not args.setup_script.is_file():
+            raise ValueError("--setup-script must name an existing file.")
     if args.nodes < 1:
         raise ValueError("--nodes must be at least 1.")
     if args.cpu_processes_per_node < 1:
@@ -170,6 +176,21 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--export-weight-dtype requires distributed CPU export or the GPU backend.")
 
 
+def _configure_slurm_setup_script(executor: Any, setup_script: Path | None) -> None:
+    """Run allocation staging in a strict child shell before conversion workers.
+
+    NeMo Run's batch template disables errexit, so propagate setup failure
+    explicitly. Child environment changes do not affect worker processes.
+    """
+    if setup_script is None:
+        return
+    source = setup_script.read_text()
+    if not source.strip():
+        raise ValueError("--setup-script must contain a non-empty shell script.")
+    command = f"bash -euo pipefail -c {shlex.quote(source)} || exit $?"
+    executor.setup_lines = f"{executor.setup_lines or ''}\n{command}\n"
+
+
 def _build_executor(
     args: argparse.Namespace,
     env_names: list[str],
@@ -223,6 +244,7 @@ def _build_executor(
     # Values are inherited by Slurm and selected by name for the container;
     # keeping env_vars empty prevents NeMo Run from serializing secrets.
     executor.env_vars = {}
+    _configure_slurm_setup_script(executor, args.setup_script)
     return executor
 
 

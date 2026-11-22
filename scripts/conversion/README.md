@@ -123,6 +123,15 @@ cluster may use:
 --srun-arg=--container-writable
 ```
 
+For large checkpoints, `--setup-script PATH` runs an allocation-time shell
+script before conversion workers. Use it to stage shared inputs and source to
+node-local storage and prepare local build/cache directories. The script runs
+in a strict child shell; a failure stops the job before conversion starts.
+Environment changes inside that child do not propagate to workers: forward
+worker environment variables with `--env` as usual. The option is Slurm-only
+and has no effect when omitted. This supports the same staging workflow as the
+public training launcher without changing conversion or checkpoint semantics.
+
 The `=` form is required when `ARG` begins with `-`.
 
 For allocation-level settings, pass
