@@ -82,10 +82,16 @@ def resolve_hf_model_revision(hf_model: str, hf_revision: str | None, *, config_
     if hf_revision is None:
         return hf_model
 
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import constants, snapshot_download
 
-    kwargs = {"allow_patterns": ["config.json", "*.py"]} if config_only else {}
-    return snapshot_download(repo_id=hf_model, revision=hf_revision, **kwargs)
+    # Explicitly select cache-only resolution: some Hub versions still query
+    # the repository tree for an immutable revision when offline mode is set.
+    return snapshot_download(
+        repo_id=hf_model,
+        revision=hf_revision,
+        local_files_only=constants.HF_HUB_OFFLINE,
+        allow_patterns=["config.json", "*.py"] if config_only else None,
+    )
 
 
 def parse_dtype(name: str) -> torch.dtype:

@@ -32,6 +32,7 @@ resolve_hf_model_revision = conversion_utils.resolve_hf_model_revision
 
 
 def test_resolve_hf_model_revision_downloads_exact_snapshot(monkeypatch):
+    monkeypatch.setattr("huggingface_hub.constants.HF_HUB_OFFLINE", False)
     calls = []
     monkeypatch.setattr(
         "huggingface_hub.snapshot_download",
@@ -41,14 +42,63 @@ def test_resolve_hf_model_revision_downloads_exact_snapshot(monkeypatch):
     resolved = resolve_hf_model_revision("hf/model", "0123456789abcdef")
 
     assert resolved == "/cache/models--hf--model/snapshots/0123456789abcdef"
-    assert calls == [{"repo_id": "hf/model", "revision": "0123456789abcdef"}]
+    assert calls == [
+        {
+            "repo_id": "hf/model",
+            "revision": "0123456789abcdef",
+            "local_files_only": False,
+            "allow_patterns": None,
+        }
+    ]
 
 
 def test_config_only_revision_never_downloads_weights(monkeypatch):
+    monkeypatch.setattr("huggingface_hub.constants.HF_HUB_OFFLINE", False)
     calls = []
     monkeypatch.setattr("huggingface_hub.snapshot_download", lambda **kwargs: calls.append(kwargs) or "/cache/config")
     assert resolve_hf_model_revision("hf/model", "pinned", config_only=True) == "/cache/config"
-    assert calls == [{"repo_id": "hf/model", "revision": "pinned", "allow_patterns": ["config.json", "*.py"]}]
+    assert calls == [
+        {
+            "repo_id": "hf/model",
+            "revision": "pinned",
+            "allow_patterns": ["config.json", "*.py"],
+            "local_files_only": False,
+        }
+    ]
+
+
+@pytest.mark.parametrize("config_only", [False, True])
+@pytest.mark.parametrize("cached", [False, True])
+def test_offline_revision_uses_only_cached_snapshot(tmp_path, monkeypatch, cached, config_only):
+    from huggingface_hub import HfApi, constants
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    revision = "a" * 40
+    snapshot = tmp_path / "models--example--model" / "snapshots" / revision
+    if cached:
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.json").write_text("{}")
+    monkeypatch.setattr(constants, "HF_HUB_CACHE", str(tmp_path))
+    monkeypatch.setattr(constants, "HF_HUB_OFFLINE", True)
+
+    def reject_network(*args, **kwargs):
+        pytest.fail("Offline conversion attempted a Hub API request")
+
+    monkeypatch.setattr(HfApi, "repo_info", reject_network)
+    monkeypatch.setattr(HfApi, "list_repo_tree", reject_network)
+    if cached:
+        assert resolve_hf_model_revision("example/model", revision, config_only=config_only) == str(snapshot)
+    else:
+        with pytest.raises(LocalEntryNotFoundError):
+            resolve_hf_model_revision("example/model", revision, config_only=config_only)
+
+
+def test_unpinned_reference_is_not_resolved(monkeypatch):
+    monkeypatch.setattr(
+        "huggingface_hub.snapshot_download",
+        lambda **_kwargs: pytest.fail("An unpinned reference must remain unchanged"),
+    )
+    assert resolve_hf_model_revision("example/model", None) == "example/model"
 
 
 def test_resolve_hf_commit_revision_resolves_named_ref_without_downloading(monkeypatch):
