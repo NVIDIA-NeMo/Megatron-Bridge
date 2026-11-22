@@ -419,7 +419,7 @@ def _create_pg_collection(
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
-    create_all_gather_group: bool = False,
+    create_separate_param_all_gather_groups: bool = False,
     world_size: int = None,
     rank_offset: int = None,
     save_grid: bool = False,
@@ -550,7 +550,7 @@ def _create_pg_collection(
     # Separate communicators let parameter all-gather overlap gradient reduce-scatter.
     dp_cp_ag_pg = None
     expt_dp_ag_pg = None
-    if create_all_gather_group:
+    if create_separate_param_all_gather_groups:
         # create_pg rejects duplicate dimensions; use the public rank enumeration
         # to create another communicator with the existing group's membership.
         dp_cp_rank_lists = grid.get_rank_enum(["dp", "cp"])
@@ -605,7 +605,7 @@ def _create_dist_train_pgs(
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
-    create_all_gather_group: bool = False,
+    create_separate_param_all_gather_groups: bool = False,
 ) -> DistTrainProcessGroupCollection:
     """Create process group collections for vision and language models for dist train."""
     vision_model_config = copy(model_config)
@@ -628,7 +628,7 @@ def _create_dist_train_pgs(
         world_size=model_config.dist_train.vision_world_size,
         rank_offset=0,
         save_grid=True,
-        create_all_gather_group=create_all_gather_group,
+        create_separate_param_all_gather_groups=create_separate_param_all_gather_groups,
     )
     language_pg_collection = _create_pg_collection(
         language_model_config,
@@ -638,7 +638,7 @@ def _create_dist_train_pgs(
         world_size=model_config.dist_train.language_world_size,
         rank_offset=model_config.dist_train.vision_world_size,
         save_grid=True,
-        create_all_gather_group=create_all_gather_group,
+        create_separate_param_all_gather_groups=create_separate_param_all_gather_groups,
     )
     grid_dict = {"vision_module": vision_model_config.grid, "language_module": language_model_config.grid}
 
@@ -833,7 +833,7 @@ def _initialize_distributed(
                 num_distributed_optimizer_instances,
                 get_embedding_ranks=get_embedding_ranks,
                 get_position_embedding_ranks=get_position_embedding_ranks,
-                create_all_gather_group=dist_config.create_all_gather_group,
+                create_separate_param_all_gather_groups=dist_config.create_separate_param_all_gather_groups,
             )
             return pg_collection
         pg_collection = _create_pg_collection(
@@ -841,7 +841,7 @@ def _initialize_distributed(
             num_distributed_optimizer_instances,
             get_embedding_ranks=get_embedding_ranks,
             get_position_embedding_ranks=get_position_embedding_ranks,
-            create_all_gather_group=dist_config.create_all_gather_group,
+            create_separate_param_all_gather_groups=dist_config.create_separate_param_all_gather_groups,
         )
         if get_rank_safe() == 0:
             tp = int(model_config.tensor_model_parallel_size)
@@ -893,7 +893,7 @@ def _initialize_distributed(
                 get_position_embedding_ranks=get_position_embedding_ranks,
                 create_gloo_process_groups=dist_config.use_gloo_process_groups,
                 use_sharp=dist_config.use_sharp,
-                create_all_gather_group=dist_config.create_all_gather_group,
+                create_separate_param_all_gather_groups=dist_config.create_separate_param_all_gather_groups,
                 high_priority_stream_groups=dist_config.high_priority_stream_groups,
                 sharp_enabled_group=dist_config.sharp_enabled_group,
                 **_optional_kwargs,
@@ -908,7 +908,7 @@ def _initialize_distributed(
                     f"{parallel_state.get_pipeline_model_parallel_world_size()}"
                 )
 
-        if dist_config.create_all_gather_group:
+        if dist_config.create_separate_param_all_gather_groups:
             needs_expert_ag = (getattr(model_config, "expert_model_parallel_size", 1) or 1) > 1
             if pg_collection.dp_cp_ag is None or (needs_expert_ag and pg_collection.expt_dp_ag is None):
                 raise RuntimeError(

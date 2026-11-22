@@ -47,15 +47,15 @@ class TestDistributedInitConfigDecentralizedPg:
         config = DistributedInitConfig(use_decentralized_pg=False)
         assert config.use_decentralized_pg is False
 
-    def test_create_all_gather_group_defaults_to_false(self):
+    def test_create_separate_param_all_gather_groups_defaults_to_false(self):
         """Separate optimizer all-gather communicators are opt-in."""
         config = DistributedInitConfig()
-        assert config.create_all_gather_group is False
+        assert config.create_separate_param_all_gather_groups is False
 
-    def test_create_all_gather_group_can_be_enabled(self):
+    def test_create_separate_param_all_gather_groups_can_be_enabled(self):
         """The overlap communicator option is exposed through Bridge config."""
-        config = DistributedInitConfig(create_all_gather_group=True)
-        assert config.create_all_gather_group is True
+        config = DistributedInitConfig(create_separate_param_all_gather_groups=True)
+        assert config.create_separate_param_all_gather_groups is True
 
 
 class TestCreatePgCollectionFunction:
@@ -133,7 +133,7 @@ class TestCreatePgCollectionFunction:
         result = _create_pg_collection(
             mock_model_config,
             num_distributed_optimizer_instances=1,
-            create_all_gather_group=True,
+            create_separate_param_all_gather_groups=True,
         )
 
         dense_group, dense_ranks, dense_backend = created_groups["DATA_PARALLEL_GROUP_WITH_CP_AG"]
@@ -281,9 +281,9 @@ class TestCreateDistTrainPgsFunction:
             world_size=None,
             rank_offset=None,
             save_grid=False,
-            create_all_gather_group=False,
+            create_separate_param_all_gather_groups=False,
         ):
-            create_all_gather_flags.append(create_all_gather_group)
+            create_all_gather_flags.append(create_separate_param_all_gather_groups)
             if rank_offset == 0:
                 return vision_pgc
             return language_pgc
@@ -296,7 +296,7 @@ class TestCreateDistTrainPgsFunction:
             num_distributed_optimizer_instances=1,
             get_embedding_ranks=None,
             get_position_embedding_ranks=None,
-            create_all_gather_group=True,
+            create_separate_param_all_gather_groups=True,
         )
 
         assert isinstance(result, DistTrainProcessGroupCollection)
@@ -330,7 +330,7 @@ class TestCreateDistTrainPgsFunction:
             world_size=None,
             rank_offset=None,
             save_grid=False,
-            create_all_gather_group=False,
+            create_separate_param_all_gather_groups=False,
         ):
             if rank_offset == 0:
                 return vision_pgc
@@ -527,7 +527,7 @@ class TestInitializeDistributedBranching:
 
         mock_dist_config = MagicMock()
         mock_dist_config.use_decentralized_pg = True
-        mock_dist_config.create_all_gather_group = True
+        mock_dist_config.create_separate_param_all_gather_groups = True
 
         mock_pg_collection = MagicMock()
         mock_create_pg_collection.return_value = mock_pg_collection
@@ -542,7 +542,7 @@ class TestInitializeDistributedBranching:
 
         # Verify _create_pg_collection was called
         mock_create_pg_collection.assert_called_once()
-        assert mock_create_pg_collection.call_args.kwargs["create_all_gather_group"] is True
+        assert mock_create_pg_collection.call_args.kwargs["create_separate_param_all_gather_groups"] is True
         # Verify parallel_state.initialize_model_parallel was NOT called
         mock_parallel_state.initialize_model_parallel.assert_not_called()
         # Verify the result is the pg_collection from _create_pg_collection
@@ -595,7 +595,7 @@ class TestInitializeDistributedBranching:
         mock_dist_config.use_sharp = False
         mock_dist_config.high_priority_stream_groups = False
         mock_dist_config.sharp_enabled_group = None
-        mock_dist_config.create_all_gather_group = False
+        mock_dist_config.create_separate_param_all_gather_groups = False
 
         mock_parallel_state.model_parallel_is_initialized.return_value = False
         mock_parallel_state.initialize_model_parallel.__signature__ = inspect.Signature(
@@ -659,7 +659,7 @@ class TestInitializeDistributedBranching:
 
         mock_dist_config = MagicMock()
         mock_dist_config.use_decentralized_pg = False
-        mock_dist_config.create_all_gather_group = True
+        mock_dist_config.create_separate_param_all_gather_groups = True
         mock_dist_config.distributed_timeout_minutes = 30
 
         dense_ag = MagicMock()
@@ -695,7 +695,7 @@ class TestInitializeDistributedBranching:
             mock_parallel_state.initialize_model_parallel.assert_not_called()
         else:
             kwargs = mock_parallel_state.initialize_model_parallel.call_args.kwargs
-            assert kwargs["create_all_gather_group"] is True
+            assert kwargs["create_separate_param_all_gather_groups"] is True
             assert "pg_collection" not in kwargs
 
     @patch("megatron.bridge.training.initialize._create_pg_collection")

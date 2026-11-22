@@ -84,7 +84,7 @@ For Megatron FSDP configurations that overlap parameter all-gather with gradient
 reduce-scatter, enable a second communicator over the same replica ranks:
 
 ```python
-cfg.dist.create_all_gather_group = True
+cfg.dist.create_separate_param_all_gather_groups = True
 ```
 
 In the standard MPU path, Core initialization creates the groups. In the
