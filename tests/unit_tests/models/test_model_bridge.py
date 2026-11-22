@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Mapping
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -1213,6 +1214,61 @@ def test_stream_weights_megatron_to_hf_finalizes_exported_tensors_before_cpu(mon
     ]
     for label in ("packed", "scale", "scale_2"):
         assert events.index(("finalize", label)) < events.index(("cpu", label))
+
+
+@pytest.mark.parametrize("weight_dtype", [None, torch.bfloat16, torch.float32])
+def test_export_dtype_preserves_lazy_shard_streaming(monkeypatch, weight_dtype):
+    bridge = DummyBridge()
+    fetched = []
+    sources = {
+        "hf.bf16": torch.tensor([0.0, -0.0, 1.5], dtype=torch.bfloat16),
+        "hf.fp32": torch.tensor([1.234567, -2.25], dtype=torch.float32),
+        "hf.integer": torch.tensor([2**40 + 1], dtype=torch.int64),
+    }
+
+    class LazyShards(Mapping):
+        def __iter__(self):
+            return iter(sources)
+
+        def __len__(self):
+            return len(sources)
+
+        def __getitem__(self, name):
+            fetched.append(name)
+            return sources[name]
+
+    class LazyMapping:
+        def megatron_to_hf(self, weight, module):
+            return LazyShards()
+
+    task = WeightConversionTask(
+        param_name="decoder.ngram_embeddings.weight",
+        global_param_name="decoder.ngram_embeddings.weight",
+        mapping=LazyMapping(),
+        param_weight=torch.empty(0),
+        weight_dtype=weight_dtype,
+    )
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
+    monkeypatch.setattr(bridge, "maybe_modify_converted_hf_weight", lambda _task, weights, _state: weights)
+    stream = bridge.stream_weights_megatron_to_hf(
+        [Mock()],
+        SimpleNamespace(),
+        cpu=True,
+        show_progress=False,
+        conversion_tasks=[task],
+        merge_adapter_weights=False,
+    )
+    assert fetched == []
+    for index, (name, source) in enumerate(sources.items()):
+        result = next(stream)
+        # Even an explicit same-dtype cast must not gather the remaining shards.
+        assert fetched == list(sources)[: index + 1]
+        assert result.param_name == name
+        expected = source.to(weight_dtype) if weight_dtype is not None and source.is_floating_point() else source
+        assert result.weight.dtype == expected.dtype
+        assert torch.equal(result.weight.view(torch.uint8), expected.view(torch.uint8))
+    with pytest.raises(StopIteration):
+        next(stream)
 
 
 @pytest.mark.parametrize(
