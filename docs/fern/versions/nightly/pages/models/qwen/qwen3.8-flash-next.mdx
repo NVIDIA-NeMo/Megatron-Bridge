@@ -1,20 +1,37 @@
 # Qwen3.8-Flash-Next
 
-Qwen/Qwen3.8-Flash-Next uses the Qwen4Exp vision-language architecture. The early
-BF16 image SFT recipe `qwen38_flash_next_sft_64gpu_gb200_bf16_config` uses
-64 GB200 GPUs with TP4, sequence parallelism, EP64 and HybridEP with MoE fusions.
-A 100-update native-data run completed with loss 0.350772 → 0.167498 and
-14.26 analytical TFLOP/s/GPU over its final ten updates. Performance tuning
-remains preliminary; the same-input comparison has unresolved loss and
-gradient-norm differences above 1e-5.
+Qwen/Qwen3.8-Flash-Next uses the Qwen4Exp vision-language architecture.
+`AutoBridge.from_hf_pretrained(..., text_only=True)` selects its standalone
+language model; `text_only=False` includes the vision encoder and projector.
+Both use the same hybrid decoder, QSA, GDN, MoE, gated residual and PLE modules.
 
-See the [training example](../../../examples/models/qwen/qwen4_exp/README.md)
-for pinned data preparation and the standard recipe runner. The
-[verification card](../../../examples/model_verification_cards/qwen3.8-flash-next/card.yaml)
-records the exact configuration and execution evidence. SFT verification does
-not establish HF/backward/parallelism parity, checkpoint roundtrip correctness,
-or held-out quality. The historical 8,192-sample, 5,349-step image SFT loss curve
-remains separate evidence.
+The registered recipes are **EARLY, UNOPTIMIZED**. Text pretraining uses the
+full 48-layer model at sequence 4096, TP2/SP, EP32 and Muon on 32 GB200 GPUs;
+only the EP-sharded PLE n-gram tables are frozen. Image SFT uses TP4/SP, EP64,
+sequence 2048 and Adam on 64 GB200 GPUs with the language model, encoder and
+projector trainable. Both use natural routing and HybridEP with MoE fusions.
+
+Released NeMo 26.10 verification completed on 2026-11-22. GPU conversion
+preserved all 1,627 supported language/vision tensors exactly (MTP excluded).
+
+| Workload | GPUs / sequence / updates | Initial → final loss | Final-ten mean step | Final-ten mean TFLOP/s/GPU | Token slots/s/GPU |
+| --- | --- | --- | --- | --- | --- |
+| Frozen-PLE text / Muon | 32 / 4096 / 30 | 1.927702 → 1.366627 | 3.637 s | 47.46 | 1126.30 |
+| Full image SFT / Adam | 64 / 2048 / 100 | 0.351589 → 0.167965 | 5.458 s | 5.89 | 93.81 |
+
+All ranks completed finite, unskipped updates; frozen PLE table hashes were
+unchanged. These are bounded functional observations, not optimized benchmarks.
+
+See the [training instructions](../../../examples/models/qwen/qwen4_exp/README.md)
+for separate native text/VL conversion, pinned data preparation and public
+recipe commands. The [verification card](../../../examples/model_verification_cards/qwen3.8-flash-next/card.yaml)
+records the measured source, released container, conversion scope and final-ten
+loss/throughput observations. Model TFLOP/s is an analytical matrix-work estimate;
+at 4K its QSA attention term is a dense surrogate. Update time and token slots/s
+are also recorded. Functional training does not establish cross-framework or
+parallel-layout trajectory parity, optimizer-state resume, or held-out quality.
+The historical 8,192-sample, 5,349-step image-SFT loss curve remains valid
+separate evidence.
 
 ## Frozen PLE table sharding
 
@@ -36,9 +53,9 @@ Lookup requests and embeddings travel by all-to-all. Hashing precedes SP
 slicing so n-grams retain context across tensor-parallel boundaries.
 
 HF import reads the checkpoint shards overlapping each destination's row
-range. Default-dtype HF export streams one shard at a time over the table's
-TP or EP group. Requesting an explicit export dtype may materialize multiple
-shards through the shared conversion layer. Start a fresh optimizer when
+range. HF export streams one shard at a time over the table's TP or EP group.
+The shared conversion layer applies an explicit floating-point export dtype
+as each tensor is emitted, preserving streaming and integer buffer dtypes. Start a fresh optimizer when
 freezing a previously trainable table; this option does not migrate optimizer
 state from trainable PLE checkpoints. Trainable EP tables, ETP greater than
 one, CP, and CUDA graph capture are outside this initial implementation.
@@ -94,10 +111,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="qwen3-8-flash-next-hf-to-megatron-gpu" aria-controls="qwen3-8-flash-next-hf-to-megatron-gpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="qwen3-8-flash-next-hf-to-megatron-gpu" aria-controls="qwen3-8-flash-next-hf-to-megatron-gpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Import · GPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -108,17 +125,17 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="qwen3-8-flash-next-megatron-to-hf-gpu" aria-controls="qwen3-8-flash-next-megatron-to-hf-gpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="qwen3-8-flash-next-megatron-to-hf-gpu" aria-controls="qwen3-8-flash-next-megatron-to-hf-gpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · GPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="qwen3-8-flash-next-pretrain-gb200" aria-controls="qwen3-8-flash-next-pretrain-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="qwen3-8-flash-next-pretrain-gb200" aria-controls="qwen3-8-flash-next-pretrain-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Pretrain · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -167,20 +184,26 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="qwen3-8-flash-next-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-hf-to-megatron-gpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Import · GPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-22</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --tp 4 --pp 1 --ep 8 --etp 1 --hf-model Qwen/Qwen3.8-Flash-Next --hf-revision de4b8e4d43b917e7706784d8bb445c9af86a3540 --torch-dtype bfloat16 --megatron-path work/checkpoints/qwen3.8-flash-next-vl</code></pre>
+        </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Historical in-memory language-only import on 32 GB200 GPUs at TP8/EP32 completed 2,427 mappings across all 48 layers, including PLE; rank 0 held 11,455,020,976 local parameters including replicas. Vision and MTP were excluded. This does not verify the public conversion command or a persisted-checkpoint reload.</p>
+        <p>Full language/vision import persisted a native checkpoint that reloaded in a fresh export process. The supported full-VL roundtrip retained exact tensor keys, shapes, dtypes and bytes. A separate text-only import supplies the native pretraining checkpoint. MTP is unsupported and excluded.</p>
       </section>
     </article>
     <article id="qwen3-8-flash-next-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-megatron-to-hf-cpu" tabindex="-1">
@@ -205,98 +228,60 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="qwen3-8-flash-next-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-megatron-to-hf-gpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · GPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-22</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --tp 4 --pp 1 --ep 8 --etp 1 --hf-model Qwen/Qwen3.8-Flash-Next --hf-revision de4b8e4d43b917e7706784d8bb445c9af86a3540 --torch-dtype bfloat16 --export-weight-dtype bfloat16 --distributed-save --megatron-path work/checkpoints/qwen3.8-flash-next-vl --hf-path work/exports/exported-hf</code></pre>
+        </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>GPU export, reload, and weight equality have not been verified.</p>
+        <p>Fresh native reload and export completed. All 1,627 supported tensors match the pinned HF checkpoint exactly by key, shape, dtype and bytes: 333 vision tensors, 1,624 BF16 tensors and three I64 PLE buffers. The 31 unsupported MTP tensors are excluded. Reloaded config fields match except provenance metadata and unsupported MTP configuration; tokenizer and image-processor configuration and a processed image batch agree. An auxiliary asset checker failed on integer-key diagnostic formatting after successful export and weight comparison, causing the original wrapper to exit unsuccessfully. The repaired checker passed separately on the same preserved export in the released container. This does not verify inference or training-trajectory equivalence.</p>
       </section>
     </article>
     <article id="qwen3-8-flash-next-pretrain-gb200" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-pretrain-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Pretrain · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
-      </header>
-      <dl class="verification-model-detail-meta">
-        <div><dt>Hardware</dt><dd>GB200</dd></div>
-        <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
-      </dl>
-      <section class="verification-recorded-metrics">
-        <h5>Recorded metrics</h5>
-        <dl class="verification-metric-list">
-          <div>
-            <dt>Initial loss</dt>
-            <dd>None</dd>
-          </div>
-          <div>
-            <dt>Final loss</dt>
-            <dd>None</dd>
-          </div>
-          <div>
-            <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
-          </div>
-          <div>
-            <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
-          </div>
-          <div>
-            <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
-          </div>
-        </dl>
-      </section>
-      <section class="verification-command-section">
-        <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
-      </section>
-      <section class="verification-expected-result">
-        <h5>Expected result</h5>
-        <p>The current public recipe is qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config: full 48-layer text-only model, sequence 4096, TP2/SP, EP32/ETP1, PP1/CP1, MBS1/GBS32, BF16 and FP32 gradient reduction, HybridEP with MoE fusions, frozen EP-sharded n-gram tables and layer-wise distributed Muon. PLE projections, normalization and convolution remain trainable. CUDA graphs and recomputation are disabled. The recipe is EARLY, UNOPTIMIZED; optimizer state is initialized afresh from model weights. The run reused the bounded Salesforce/wikitext indexed text described below, not image data. A full-checkpoint run on 2026-11-03 completed 15 updates: loss 1.932210684 to 1.706202507, with finite gradients and no skipped updates in the 15 surviving final rank audits. Its producer reported 4214.13945 ms, 40.87683 estimated model TFLOP/s/GPU and 971.96594 tokens/s/GPU over updates 11-15. These are provisional five-update observations, not the final-ten metrics required by this card: storage publication failed and 17 of 32 final rank audits were lost. Do not promote this item to verified without a complete rerun. A separate synthetic forced-routing diagnostic retained all 32 audits and measured 4320.14744 ms and 39.87379 estimated model TFLOP/s/GPU over five updates; it does not qualify natural-routing training quality. Both runs used the full model at source commit d425842218dfce43fb3a0c8602cb750bd135270b plus private recipe configuration now represented by the public recipe. The QSA FLOP estimate at 4K is a dense surrogate and excludes Muon work, selection, norms, lookups, convolution and communication; tokens/s and update time are primary. Historical language-only full-checkpoint training completed ten steps on 32 GB200 GPUs at TP8/SP, EP32, ETP1/PP1/CP1, sequence 512, MBS1/GBS4, Adam LR 1e-6 and zero weight decay. Salesforce/wikitext train, wikitext-2-raw-v1 revision b08601e04326c79dfdd32d625aee71d232d685c3, supplied 1,000,000 tokens from 9,460 documents. Loss went from 2.246053695678711 to 2.0654714107513428, with range [2.0654714107513428, 2.4887423515319824]; preclip gradient norms ranged from 16.23810386657715 to 26.358875274658203. There were zero skipped steps, a clean exit, and a positive sampled master-parameter update minimum of 1.0132789611816406e-6. BF16 gradient reduction, unfused allgather dispatch, and disabled shared-expert overlap were used. Gradient-reduction overlap was disabled because the hard-selection indexer has no gradient. The RC4 variable-split all-to-all path failed this workload; sequence 512 does not exercise the 2,048-token selection budget. Public-command, checkpoint, and convergence verification remain pending; no trustworthy throughput metrics were captured.</p>
-      </section>
-    </article>
-    <article id="qwen3-8-flash-next-sft-gb200" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-sft-gb200" tabindex="-1">
-      <header class="verification-model-detail-heading">
-        <h4>SFT · GB200</h4>
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-14</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-22</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.35077196</dd>
+            <dd>1.9277017</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.16749771</dd>
+            <dd>1.3666266</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>1,525.190 ms</dd>
+            <dd>3,636.693 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>14.260 TFLOP/s/GPU</dd>
+            <dd>47.459 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>335.696 tokens/s/GPU</dd>
+            <dd>1,126.298 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -307,12 +292,62 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe qwen38_flash_next_sft_64gpu_gb200_bf16_config --mode sft --max_steps 100 --pretrained_checkpoint work/cache/qwen3.8-flash-next dataset.path=work/data/nemotron-image-v3-ecd logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/sft/resolved-config.yaml logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/sft/tensorboard</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 8 --gpus-per-node 4 --recipe qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config --mode pretrain --max_steps 30 --pretrained_checkpoint work/checkpoints/qwen3.8-flash-next-text &#x27;dataset.data_path=[work/data/wikitext2_qwen38_train_text_document]&#x27; logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/pretrain/resolved-config.yaml logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/pretrain/tensorboard</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 100 native Energon-loader optimizer steps with the full HF checkpoint at the pinned model revision and 8,192 complete image conversations prepared by scripts/data/prepare_nemotron_image_v3_subset.py from nvidia/Nemotron-Image-Training-v3 ECD revision 7656391d4d4cb11ec3722b34f10d499435de0460. The measured source commit used explicit configuration overrides now represented by the recipe defaults. The command requires the updated recipe defaults and is the public launcher equivalent of that native training workload, not a new execution of those defaults. The recorded bridge_commit identifies the measured runtime source; at that historical commit, the settings below must be supplied as overrides rather than using its earlier TP8 recipe defaults. Settings are 64 GB200 GPUs, TP4/SP, EP64, ETP1/PP1/CP1, padded sequence 2048, MBS1/GBS16, BF16 with FP32 gradient reduction, constant LR 1e-6, HybridEP dispatch, fused permutation including HybridEP integration, fused router, bias activation, and gradient accumulation. Recomputation, CUDA graphs, and shared-expert overlap are disabled. All 100 losses and gradient norms were finite, with zero skipped/NaN iterations and a clean exit. The runtime-synchronized configuration was saved at setup entry. These are functional observations from one native-loader run. A separate same-input 40-step comparison against the earlier TP8 configuration had maximum absolute loss difference 0.008722812 and preclip gradient-norm difference 28.2429, beginning at step one; numerical equivalence remains unresolved. No matched native-loader speedup is claimed. Historical public-command verification at commit 99188699f92108885b7f8823f87029369d2eb447 used TP8/GBS8 and allgather: loss 0.3097828 to 0.2084261, final-ten mean 1403.24 ms, 7.75 analytical TFLOP/s/GPU and 182.43 token slots/s/GPU. Historical training from the recorded Bridge base with Transformers 5.16.1 completed 5,349 steps on this bounded subset: first loss 0.310870707035, final loss 0.01342209149, first-ten mean 0.311553779, and last-ten mean 0.017778902. The historical loss curve remains valid; repeated-subset training is not generalization evidence. Historical model TFLOP/s/GPU was not reliably captured. Token throughput counts padded slots, not supervised tokens. Logged TFLOP/s uses an analytical matrix-work estimate including gated-residual and PLE projections. At sequence 2048 the dense QSA path bypasses the indexer. Norms, activations, lookups, PLE depthwise convolution, communication, and duplicated parallel work are outside this estimate; it is not hardware-counter throughput or MFU.</p>
+        <p>Completed 30 natural-routing updates from a separately imported text-only native checkpoint. Full 48-layer language model, sequence 4096, 32 GB200 GPUs, TP2/SP, EP32/ETP1, PP1/CP1, MBS1/GBS32, BF16 with FP32 gradient reduction. Only EP-sharded hashed n-gram tables are frozen; PLE projections, normalization and convolution stay trainable. Fresh layer-wise distributed Muon optimizer, constant LR 1e-4, five-step warmup, zero weight decay and clip 1. The data is bounded Salesforce/wikitext train, wikitext-2-raw-v1 revision b08601e04326c79dfdd32d625aee71d232d685c3: one million tokens from 9,460 nonblank rows in source order, EOS 248046 appended per document and the final document trimmed to that token bound. HybridEP and MoE fusions are enabled; CUDA graphs, recomputation, evaluation and checkpoint saving are disabled. Final-ten metrics use updates 21-30. This is short functional qualification, not full convergence or a cross-model comparison. TFLOPs estimate matrix work, including forward-only indexer projections. At 4K, QSA attention uses a dense surrogate and indexer score work is not accurately counted; optimizer work, norms, lookups, PLE depthwise convolution and communication are excluded. Throughput counts fixed sequence token slots. All 32 ranks completed 30 finite, unskipped updates with zero NaN iterations. Full frozen-table hashes were unchanged; tables stayed outside DDP and optimizer groups. Selected language parameters and FP32 Muon/Adam samples changed. The run consumed 960 sequences (3,932,160 token slots); preclip gradient norms ranged from 1.039667 to 12.357839. Native timings include lightweight verification callbacks; no profiler was active.</p>
+      </section>
+    </article>
+    <article id="qwen3-8-flash-next-sft-gb200" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-sft-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · GB200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-22</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>0.35158914</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>0.16796531</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>5,457.587 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>5.890 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>93.814 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe qwen38_flash_next_sft_64gpu_gb200_bf16_config --mode sft --max_steps 100 --pretrained_checkpoint work/cache/qwen3.8-flash-next dataset.path=work/data/nemotron-image-v3-ecd logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/sft/resolved-config.yaml logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/sft/tensorboard</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Completed 100 native Energon-loader updates with the full pinned HF checkpoint and 8,192 complete image conversations prepared by scripts/data/prepare_nemotron_image_v3_subset.py from nvidia/Nemotron-Image-Training-v3 ECD revision 7656391d4d4cb11ec3722b34f10d499435de0460. All language, vision and projector parameters are trainable. Configuration: 64 GB200 GPUs, TP4/SP, EP64/ETP1, PP1/CP1, padded unpacked sequence 2048, MBS1/GBS16, BF16 with FP32 gradient reduction, distributed Adam, constant LR 1e-6, zero weight decay and clip 1. Natural routing, HybridEP and MoE fusions are enabled; CUDA graphs, recomputation, shared-expert overlap, evaluation and checkpoint saving are disabled. Final-ten metrics use updates 91-100. These are short functional observations on a bounded subset, not held-out quality, full convergence or numerical equivalence to another parallel layout. Throughput counts padded slots, not supervised tokens. TFLOPs estimate model matrix work rather than hardware utilization. At sequence 2048 the dense QSA shortcut bypasses the indexer. All 64 ranks completed 100 finite, unskipped updates with zero NaN iterations. Image inputs and encoder execution were observed; selected language/vision parameters and FP32 Adam samples changed. The run consumed 1,600 conversations and 1,156,890 supervised tokens, counted once across dense-DP representatives. Preclip gradient norms ranged from 1.694735 to 28.194944. Native timings include lightweight verification callbacks; no profiler was active.</p>
       </section>
     </article>
     <article id="qwen3-8-flash-next-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-sft-long-context-gb200" tabindex="-1">

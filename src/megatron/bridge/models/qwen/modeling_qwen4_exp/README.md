@@ -14,16 +14,23 @@ learned gates; Core's generic mHC expansion and mean contraction stay disabled.
 ## Optimizations
 
 - QSA scores document-local block keys without a query-sized replicated key
-  tensor. Query chunks bound the head-score workspace. The selected block
-  bitsets retain causal visibility and document boundaries.
+  tensor. Query chunks bound the head-score workspace. Unpacked inputs reuse
+  their known batch-major document layout after the sequence-parallel gather,
+  avoiding scalar reads and dynamic document discovery in the selector. Packed
+  inputs retain the generic path. The selected block bitsets preserve causal
+  visibility and document boundaries.
 - GR keeps the HF activation-dtype division, sigmoid, multiplication, and mean
   boundaries. BF16/FP16 gate helpers remain eager under an outer compile so
   fusion cannot remove the reference rounding points.
-- Grouped RMSNorm saves the raw input and one inverse RMS per stream. Its
-  forward and first-order backward work in chunks, including the FP32 norm-gain
-  reduction. The 64 MiB chunk budget excludes required outputs, input gradients,
-  and saved statistics. A single row is the minimum chunk. Chunking can change
-  FP32 reduction order; it does not provide higher-order gradients.
+- Grouped RMSNorm saves the raw input and one FP32 inverse RMS per stream.
+  Eligible contiguous CUDA inputs use norm-only Triton forward and backward
+  kernels adapted from [Megatron-LM PR #7553](https://github.com/NVIDIA/Megatron-LM/pull/7553)
+  at `53ff95854b024e36ce7b51a61e65d43d3ced8dac`, with attribution and the upstream
+  license retained in `norms.py`. Backward computes input gradients and bounded
+  FP32 norm-gain partials, then reduces the partials in a fixed order without
+  atomics. Other inputs retain the chunked eager fallback. The 64 MiB workspace
+  budget excludes required outputs, input gradients and saved statistics.
+  Reduction order can differ from eager; higher-order gradients are unsupported.
 
 The grouped norm uses separate RMS statistics and zero-centered gains for
 each residual stream while keeping the flat checkpoint parameter layout.
