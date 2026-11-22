@@ -75,6 +75,60 @@ def test_select_sequence_handles_none_and_selects_dimension():
     assert selected.is_contiguous()
 
 
+class _LocalNorm(torch.nn.LayerNorm):
+    """Plain LayerNorm with the ``build_module`` signature used by the patch merger."""
+
+    def __init__(self, config, hidden_size, eps):
+        super().__init__(hidden_size, eps=eps)
+
+
+class _LocalLinear(torch.nn.Linear):
+    """Plain Linear that returns ``(output, bias)`` like the Megatron parallel linears."""
+
+    def __init__(self, input_size, output_size, *, config, init_method, bias, **kwargs):
+        super().__init__(input_size, output_size, bias=bias)
+
+    def forward(self, x):
+        return super().forward(x), None
+
+
+@pytest.mark.parametrize("use_postshuffle_norm", [False, True])
+def test_patch_merger_matches_hf_exact_gelu(use_postshuffle_norm):
+    """The patch merger must use exact GELU like HF, not the vision blocks' tanh GELU."""
+    from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionConfig
+    from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionPatchMerger as HFPatchMerger
+
+    torch.manual_seed(0)
+    hf_config = Qwen3VLVisionConfig(
+        depth=1, hidden_size=16, intermediate_size=32, num_heads=2, out_hidden_size=24, spatial_merge_size=2
+    )
+    config = Qwen3VLTransformerConfig(
+        num_layers=1,
+        hidden_size=16,
+        num_attention_heads=2,
+        spatial_merge_size=2,
+        out_hidden_size=24,
+        add_bias_linear=True,
+        layernorm_epsilon=1e-6,
+        activation_func=lambda x: torch.nn.functional.gelu(x, approximate="tanh"),
+    )
+    submodules = PatchMergerSubmodules(patch_norm=_LocalNorm, linear_fc1=_LocalLinear, linear_fc2=_LocalLinear)
+    merger = Qwen3VLVisionPatchMerger(config, submodules, use_postshuffle_norm=use_postshuffle_norm)
+    hf_merger = HFPatchMerger(hf_config, use_postshuffle_norm=use_postshuffle_norm)
+    with torch.no_grad():
+        for name in ("linear_fc1", "linear_fc2"):
+            getattr(hf_merger, name).load_state_dict(getattr(merger, name).state_dict())
+        hf_merger.norm.load_state_dict(merger.patch_norm.state_dict())
+        # Push the fc1 outputs into the range where exact and tanh GELU visibly differ.
+        merger.linear_fc1.weight.mul_(8.0)
+        hf_merger.linear_fc1.weight.copy_(merger.linear_fc1.weight)
+
+    x = torch.randn(32, config.hidden_size, dtype=torch.float64)
+    merger.double()
+    hf_merger.double()
+    torch.testing.assert_close(merger(x), hf_merger(x), rtol=0, atol=1e-10)
+
+
 @pytest.mark.parametrize("tp_size", [1, 8])
 @pytest.mark.parametrize("use_fp8_padding", [False, True])
 def test_packed_sequence_alignment_and_gradients(tp_size, use_fp8_padding):
