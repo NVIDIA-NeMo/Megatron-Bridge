@@ -48,7 +48,7 @@ def test_frozen_ngram_text_recipe_roundtrip(full_hf_config, tmp_path):
         assert candidate.checkpoint.finetune
         assert candidate.checkpoint.load is None
         assert candidate.checkpoint.pretrained_checkpoint is None
-        assert candidate.train.train_iters == 15
+        assert candidate.train.train_iters == 30
         assert candidate.train.global_batch_size == 32
         assert candidate.model.ple_embedding_sharding == "ep"
         assert not candidate.model.moe_router_force_load_balancing

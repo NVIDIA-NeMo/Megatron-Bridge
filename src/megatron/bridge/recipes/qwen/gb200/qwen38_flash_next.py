@@ -33,13 +33,14 @@ def qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config(
 
     Muon uses layer-wise distribution and full-matrix, duplicated TP
     orthogonalization; non-matrix and embedding weights use its Adam fallback.
-    The 15-update schedule (five-step LR warmup) is for performance bring-up,
-    not convergence. Exclude updates 1-10 from throughput measurements. The
+    The 30-update schedule (five-step LR warmup) is for performance bring-up,
+    not convergence. Use updates 21-30 for the final ten-step timing window. The
     verification card records the measured result and its evidence limits.
 
-    Supply indexed text through ``dataset.data_path`` and the pinned local HF
-    snapshot through ``checkpoint.pretrained_checkpoint`` to the standard
-    pretrain runner. Start a fresh optimizer from these model weights. CUDA
+    Supply indexed text through ``dataset.data_path`` and an imported text-only
+    Megatron checkpoint through ``checkpoint.pretrained_checkpoint`` to the
+    standard pretrain runner. Pinned HF initialization is also supported.
+    Start a fresh optimizer from these model weights. CUDA
     graphs, recomputation, checkpoint saving and evaluation remain disabled.
     Set ``OMP_NUM_THREADS=8`` to match the measured host-thread configuration.
 
@@ -78,7 +79,7 @@ def qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config(
     model.recompute_granularity = None
     model.cuda_graph_impl = "none"
 
-    cfg.train.train_iters = 15
+    cfg.train.train_iters = 30
     cfg.train.micro_batch_size = 1
     cfg.train.global_batch_size = 32
     cfg.dataset.seq_length = 4096
