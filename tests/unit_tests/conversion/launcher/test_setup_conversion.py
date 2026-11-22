@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import importlib.util
+import shlex
 import subprocess
 import sys
 import types
@@ -583,6 +584,38 @@ def test_slurm_roundtrip_task_uses_container_conversion_worker():
     assert task.args != display_args
     assert display_args[4] == "/model path"
     assert task.args == [*display_args[:4], "'/model path'", *display_args[5:]]
+
+
+@pytest.mark.parametrize("executor", ["local", "slurm"])
+@pytest.mark.parametrize("prefix", ["work/checkpoints", "/checkpoint mount"])
+def test_checkpoint_paths_connect_conversion_to_training_without_changing_local_paths(executor, prefix):
+    module = _load_setup_conversion_module()
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    native_path = f"{prefix}/native $literal"
+    hf_path = f"{prefix}/export with 'quote'"
+    args = _parse_export(module, "--executor", executor, "--megatron-path", native_path, "--hf-path", hf_path)
+    original = vars(args).copy()
+
+    task, display_args = module._build_task(args)
+    actual = shlex.split(" ".join(task.args)) if executor == "slurm" else task.args
+
+    for flag, path in (("--megatron-path", native_path), ("--hf-path", hf_path)):
+        expected = f"/opt/Megatron-Bridge/{path}" if executor == "slurm" and not path.startswith("/") else path
+        assert actual[actual.index(flag) + 1] == expected
+    assert actual[actual.index("--hf-model") + 1] == "hf/model"
+    assert actual == display_args
+    assert vars(args) == original
+
+
+def test_slurm_import_resolves_relative_native_output():
+    module = _load_setup_conversion_module()
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    args = _parse(module, "--executor", "slurm", "--megatron-path", "work/checkpoints/native")
+
+    task, _ = module._build_task(args)
+
+    assert task.args[task.args.index("--megatron-path") + 1] == "/opt/Megatron-Bridge/work/checkpoints/native"
+    assert "--hf-path" not in task.args
 
 
 @pytest.mark.parametrize("additional", [[], ["--additional-slurm-params", "segment=1;export=ALL"]])

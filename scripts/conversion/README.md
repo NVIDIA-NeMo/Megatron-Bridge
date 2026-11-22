@@ -66,6 +66,12 @@ The GPU backend uses NeMo Run's torchrun launcher for local execution and
 srun-native tasks for Slurm. Users should not wrap the command in `torchrun`,
 `srun`, or `sbatch`.
 
+On Slurm, relative `--megatron-path` and `--hf-path` values resolve from the
+mounted `/opt/Megatron-Bridge` checkout, matching the public training launcher.
+For example, `work/checkpoints/model` identifies the same checkpoint in both
+launchers. Absolute paths stay unchanged; local conversion retains the caller's
+working directory. HF model identifiers are not rewritten.
+
 The requested topology must satisfy `nodes * gpus-per-node % (TP * PP) == 0` and
 `nodes * gpus-per-node % (ETP * EP * PP) == 0`. Expert parallelism is an
 alternative slicing of the same ranks rather than an extra multiplicand, so it

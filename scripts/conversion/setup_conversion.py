@@ -250,7 +250,15 @@ def _build_executor(
 
 def _build_task(args: argparse.Namespace) -> tuple[run.Script, list[str]]:
     """Build the in-job conversion or round-trip task and its display arguments."""
-    display_args = conversion_worker_args(args)
+    worker_args = argparse.Namespace(**vars(args))
+    if args.executor == "slurm":
+        # NeMo-Run starts in /nemo_run/code. Resolve checkpoint paths against
+        # the mounted checkout, matching the public training launcher's paths.
+        for name in ("megatron_path", "hf_path"):
+            value = getattr(worker_args, name, None)
+            if value is not None:
+                setattr(worker_args, name, str(CONTAINER_REPO_ROOT / value))
+    display_args = conversion_worker_args(worker_args)
     relative_task_path = Path("scripts/conversion/run_conversion.py")
     repo_root = LOCAL_REPO_ROOT if args.executor == "local" else CONTAINER_REPO_ROOT
     task_args = display_args if args.executor == "local" else [shlex.quote(argument) for argument in display_args]
