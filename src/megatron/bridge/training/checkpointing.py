@@ -37,7 +37,12 @@ import torch
 import torch.nn.functional as F
 from megatron.core import dist_checkpointing, tensor_parallel
 from megatron.core.dist_checkpointing.dict_utils import nested_values
-from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedStateDict, ShardedTensor
+from megatron.core.dist_checkpointing.mapping import (
+    ShardedObject,
+    ShardedStateDict,
+    ShardedTensor,
+    ShardedTensorFactory,
+)
 from megatron.core.dist_checkpointing.serialization import StateDict
 from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelLoadStrategyWrapper,
@@ -2744,6 +2749,14 @@ def _process_state_dict_for_glu_interleaving(
             if not isinstance(value.data, torch.Tensor):
                 processed_state_dict[key] = value
                 continue
+            new_data = _apply_glu_interleave_to_tensor_data(value.data, interleave_size, interleave)
+            processed_state_dict[key] = replace(value, data=new_data)
+            num_keys_processed += 1
+            continue
+
+        if isinstance(value, ShardedTensorFactory):
+            # Grouped experts wrap each SwiGLU fc1 in a factory that splits [W; V] when it is built, so the
+            # (de-)interleave must apply to the factory's source tensor before that split.
             new_data = _apply_glu_interleave_to_tensor_data(value.data, interleave_size, interleave)
             processed_state_dict[key] = replace(value, data=new_data)
             num_keys_processed += 1
