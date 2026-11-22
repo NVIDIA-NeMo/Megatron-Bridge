@@ -129,9 +129,9 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     # processor scales it up to at least QWEN_VL_MIN_PIXELS (448 * 448) pixels in area. Each image
     # therefore reaches the encoder as 448x448 = 28x28 patches of 16x16 pixels, 784 patches, and MBS 4
     # gives 3136. With the graph, training runs the encoder as one dense attention over all images of a
-    # microbatch (images attend to each other, and padding is not masked) and without the 2D rotary
-    # embedding, which the capture does not record; evaluation runs eagerly, per image and with the
-    # rotary embedding. vision_cuda_graph_impl = "none" restores that behavior in training as well.
+    # microbatch (images attend to each other, and padding is not masked); evaluation runs eagerly, per
+    # image. Both apply the 2D rotary embedding. vision_cuda_graph_impl = "none" restores per-image
+    # attention in training as well.
     cfg.model.vision_cuda_graph_impl = "transformer_engine"
     cfg.model.vision_cuda_graph_scope = ["attn", "mlp"]
     cfg.model.max_vision_cuda_graph_seq_length = 3136
@@ -332,8 +332,8 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer
 
     # Vision-encoder CUDA graph with the cap for MBS 1: each 256x256 mock image reaches the encoder as
     # 784 patches (see the 35B recipe above). Set the cap to MBS x images per sample x patches per image
-    # whenever one of them changes. As in the 35B recipe, the graphed encoder runs without the 2D rotary
-    # embedding, and images that share a microbatch attend to each other.
+    # whenever one of them changes. As in the 35B recipe, images that share a microbatch attend to each
+    # other in the graphed encoder.
     cfg.model.vision_cuda_graph_impl = "transformer_engine"
     cfg.model.vision_cuda_graph_scope = ["attn", "mlp"]
     cfg.model.max_vision_cuda_graph_seq_length = 784

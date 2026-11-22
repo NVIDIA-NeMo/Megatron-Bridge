@@ -11,6 +11,10 @@ on:
         type: string
         description: "The mcore branch to bump"
     secrets:
+      NGC_API_USER:
+        required: false
+      NGC_API_KEY:
+        required: false
       PAT:
         required: true
       AZURE_CLIENT_ID:

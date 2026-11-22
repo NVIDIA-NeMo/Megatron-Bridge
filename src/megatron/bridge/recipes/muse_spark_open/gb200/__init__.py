@@ -17,6 +17,7 @@
 from megatron.bridge.recipes.muse_spark_open.gb200.muse_spark_open import (
     muse_spark_open_peft_16gpu_gb200_bf16_multimodal_config,
     muse_spark_open_peft_64gpu_gb200_bf16_config,
+    muse_spark_open_pretrain_16gpu_gb200_bf16_proxy_config,
     muse_spark_open_pretrain_192gpu_gb200_bf16_config,
     muse_spark_open_pretrain_256gpu_gb200_bf16_config,
     muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config,
@@ -30,6 +31,7 @@ from megatron.bridge.recipes.muse_spark_open.gb200.muse_spark_open import (
 __all__ = [
     "muse_spark_open_peft_16gpu_gb200_bf16_multimodal_config",
     "muse_spark_open_peft_64gpu_gb200_bf16_config",
+    "muse_spark_open_pretrain_16gpu_gb200_bf16_proxy_config",
     "muse_spark_open_pretrain_192gpu_gb200_bf16_config",
     "muse_spark_open_pretrain_256gpu_gb200_bf16_config",
     "muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config",

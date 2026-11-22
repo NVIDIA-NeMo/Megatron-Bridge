@@ -74,7 +74,7 @@ def process_vision(
             kwargs["min_pixels"] = min_pixels
         if max_pixels is not None:
             kwargs["max_pixels"] = max_pixels
-        image_inputs = processor(images=images, text="", videos=None, return_tensors="pt", **kwargs)
+        image_inputs = processor.image_processor(images=images, return_tensors="pt", **kwargs)
         image_grid_thw = image_inputs.get("image_grid_thw", None)
     else:
         image_inputs = {}

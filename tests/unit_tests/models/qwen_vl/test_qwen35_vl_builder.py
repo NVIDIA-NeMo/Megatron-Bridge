@@ -300,7 +300,9 @@ def test_vl_tied_mtp_checkpoint_uses_embedding_on_last_pipeline_stage(pre_proces
         output_key: ShardedTensor.from_rank_offsets(output_key, torch.ones(2, 2)),
     }
 
-    model.tie_embeddings_and_output_weights_state_dict(state, output_key, embedding_key)
+    model.tie_embeddings_and_output_weights_state_dict(
+        state, output_key, embedding_key, metadata={"dp_cp_group": None}
+    )
 
     assert state[embedding_key] is embedding
     assert (output_key in state) is pre_process

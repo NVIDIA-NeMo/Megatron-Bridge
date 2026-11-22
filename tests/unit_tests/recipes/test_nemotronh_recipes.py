@@ -767,6 +767,7 @@ def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_poli
         "moe_flex_dispatcher_num_sms",
         "moe_hybridep_num_sms",
         "moe_use_grouped_tensor",
+        "max_seq_length_per_sample",
         "recompute_granularity",
         "recompute_modules",
         "recompute_method",

@@ -64,7 +64,7 @@ def qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config() -> ConfigContainer:
     cfg.model.recompute_modules = None
 
     # Qwen-VL's multimodal inputs are not yet a safe full-iteration graph
-    # target, and its mRoPE path is incompatible with fused RoPE.
+    # target. RoPE fusion is supported but not yet validated for this recipe.
     cfg.model.apply_rope_fusion = False
     cfg.model.cuda_graph_impl = "none"
     set_cuda_graph_modules(cfg.model, [])
@@ -244,6 +244,8 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     cfg.model.sequence_parallel = False
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # NCCL EP sizes its dispatch buffers once; packed (THD) batches take their per-rank bound from the pack length.
+    cfg.model.max_seq_length_per_sample = cfg.model.seq_length
     # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
     # which NCCL EP's faster dispatch exposes as a CPU stall.
     cfg.model.moe_use_grouped_tensor = True

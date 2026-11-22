@@ -959,6 +959,34 @@ class TestQwen35VLBridgeModelConfig:
         assert model_config.share_embeddings_and_output_weights is tie_word_embeddings
 
     @pytest.mark.parametrize(("bridge_class", "moe"), _BRIDGE_CASES, ids=_BRIDGE_IDS)
+    @pytest.mark.parametrize("layout", [None, "contiguous", "zigzag"])
+    def test_finalized_provider_conversion_preserves_cp_input_intent(self, bridge_class, moe, layout):
+        from megatron.bridge.models.qwen.modeling_qwen35.model_config import prepare_qwen35_pipeline_config
+        from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _qwen35_provider_model_config
+
+        pretrained = Mock(spec=PreTrainedCausalLM)
+        pretrained.config = _qwen35_vl_config(moe=moe)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge_class().provider_bridge(pretrained)
+        provider.finalize()
+        # Explicit reassignment must remain explicit, even when equal to the inferred value.
+        if layout is not None:
+            provider.linear_cp_mode = "chunkwise"
+            provider.linear_cp_layout = layout
+        config = _qwen35_provider_model_config(provider)
+        if layout == "zigzag":
+            with pytest.raises(ValueError, match="chunkwise.*contiguous"):
+                prepare_qwen35_pipeline_config(config)
+            return
+
+        prepared = prepare_qwen35_pipeline_config(config)
+        prepared = prepare_qwen35_pipeline_config(prepared)
+        assert prepared.linear_cp_mode == provider.linear_cp_mode
+        assert prepared.linear_cp_layout == provider.linear_cp_layout == (layout or "zigzag")
+        if hasattr(prepared.transformer, "_linear_cp_layout_explicit"):
+            assert prepared.transformer._linear_cp_layout_explicit is (layout is not None)
+
+    @pytest.mark.parametrize(("bridge_class", "moe"), _BRIDGE_CASES, ids=_BRIDGE_IDS)
     def test_model_config_matches_provider(self, bridge_class, moe):
         hf_config = _qwen35_vl_config(moe=moe)
         bridge = bridge_class()
@@ -978,7 +1006,13 @@ class TestQwen35VLBridgeModelConfig:
             "moe_layer_freq",
             "is_hybrid_model",
             "mtp_hybrid_override_pattern",
+            "hybrid_layer_pattern",
         }
+        # The provider uses paired TransformerBlock layers, whereas the builder uses a
+        # HybridStack pattern. Dev now declares the pattern on both config types.
+        assert getattr(provider, "hybrid_layer_pattern", None) is None
+        expected_pattern = "GEGEGE*EGEGEGE*E" if moe else "G-G-G-*-G-G-G-*-"
+        assert model_config.hybrid_layer_pattern == expected_pattern
         assert {"vision_config", "image_token_id", "mrope_section", "apply_rotary_pos_emb_in_fp32"} <= shared
         for field_name in sorted(shared):
             assert getattr(model_config, field_name) == getattr(provider, field_name), field_name

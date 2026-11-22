@@ -26,7 +26,7 @@ from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VA
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed, bf16_with_mxfp8_mixed
-from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
+from megatron.bridge.utils.cuda_graph import enable_hybrid_cuda_graph_pairs, set_cuda_graph_modules
 
 
 def _apply_qwen35_vl_397b_a17b_64gpu_gb300_execution_config(cfg: ConfigContainer) -> None:
@@ -78,6 +78,10 @@ def _apply_qwen35_vl_397b_a17b_64gpu_gb300_execution_config(cfg: ConfigContainer
     # disappears, fused attention being two kernels and cheap to capture. Kept
     # alongside the router/preprocess graphs to match the 35B-A3B real-data recipe.
     set_cuda_graph_modules(cfg.model, ["attn", "moe_router", "moe_preprocess"])
+    # Once Megatron-Core supports it: one graph per HF block instead of one per Hybrid position, and graphs for the
+    # MTP layers, which per-position graphs leave eager. Bitwise identical to per-position graphs with an eager MTP,
+    # so the training numerics do not change.
+    enable_hybrid_cuda_graph_pairs(cfg.model)
     # Vision encoder CUDA graphs. Variable DataComp image shapes are handled by
     # padding each vision sequence up to max_vision_cuda_graph_seq_length, so the
     # cap must be MEASURED for this recipe's batch shape -- see the note in
@@ -209,6 +213,10 @@ def _apply_qwen35_vl_35b_a3b_16gpu_gb300_execution_config(cfg: ConfigContainer) 
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     set_cuda_graph_modules(cfg.model, ["attn", "moe_router", "moe_preprocess"])
+    # Once Megatron-Core supports it: one graph per HF block instead of one per Hybrid position, and graphs for the
+    # MTP layers, which per-position graphs leave eager. Bitwise identical to per-position graphs with an eager MTP,
+    # so the training numerics do not change.
+    enable_hybrid_cuda_graph_pairs(cfg.model)
 
     # Vision encoder CUDA graphs. Measured on 16x GB300 with real DataComp
     # Energon and REAL routing (forced load balancing off), n=50 over steps

@@ -95,10 +95,10 @@ def thinker_config():
 class TestQwen25OmniModel:
     """Test suite for Qwen2.5 Omni Model."""
 
-    @classmethod
-    def setup_class(cls):
-        """Setup distributed process group once for all tests in this class."""
-        if not dist.is_initialized():
+    def setup_method(self):
+        """Create a process group per test so subgroups do not accumulate across tests."""
+        self._owns_process_group = not dist.is_initialized()
+        if self._owns_process_group:
             os.environ["MASTER_ADDR"] = "127.0.0.1"
             os.environ["MASTER_PORT"] = "29500"
             os.environ["RANK"] = "0"
@@ -116,12 +116,6 @@ class TestQwen25OmniModel:
                 timeout=datetime.timedelta(minutes=30),
             )
 
-    @classmethod
-    def teardown_class(cls):
-        """Teardown distributed process group once after all tests in this class."""
-        if dist.is_initialized():
-            dist.destroy_process_group()
-
     def _setup_parallel_state(self, tp_size=1, pp_size=1, cp_size=1):
         """Setup Megatron parallel state."""
         if parallel_state.model_parallel_is_initialized():
@@ -137,8 +131,12 @@ class TestQwen25OmniModel:
         model_parallel_cuda_manual_seed(123)
 
     def teardown_method(self):
-        """Teardown Megatron parallel state after each test method."""
-        parallel_state.destroy_model_parallel()
+        """Release this test's parallel state and owned process groups."""
+        try:
+            parallel_state.destroy_model_parallel()
+        finally:
+            if self._owns_process_group and dist.is_initialized():
+                dist.destroy_process_group()
 
     @staticmethod
     def _make_language_config(thinker_config):
