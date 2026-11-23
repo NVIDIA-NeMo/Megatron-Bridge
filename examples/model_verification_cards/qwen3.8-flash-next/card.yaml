@@ -1,10 +1,10 @@
-title: qwen3_8_flash_next
+title: qwen3_8_flash_next_vlm
 summary: 'Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing
   and throughput metrics are functional verification observations, not standalone optimized performance results.
-  EARLY, UNOPTIMIZED recipes cover full-checkpoint 4K text-only training with frozen EP-sharded PLE tables and Muon,
-  and image SFT with all language, vision and projector parameters trainable. Released-container GPU conversion
-  verifies all supported language and vision weights, and 30 text-pretraining updates and 100 image-SFT updates
-  are verified.'
+  This VLM card covers text_only=False: full language, vision encoder and projector import/export, plus image SFT.
+  All 1,627 supported tensors passed exact GPU roundtrip comparison, and 100 image-SFT updates are verified. The
+  recipe is EARLY, UNOPTIMIZED. Text-only frozen-PLE pretraining is recorded separately in the qwen3.8-flash-next-text-only
+  card.'
 verification_index:
   model_level:
     verified:
@@ -18,9 +18,9 @@ verification_index:
   training:
     GB200:
       verified:
-      - pretrain
       - sft
       unverified:
+      - pretrain
       - sft_export_inference
       - sft_long_context
       - peft
@@ -48,8 +48,8 @@ items:
       --torch-dtype bfloat16 --megatron-path work/checkpoints/qwen3.8-flash-next-vl
     last_verified: '2026-11-22'
     expected_result: Full language/vision import persisted a native checkpoint that reloaded in a fresh export process.
-      The supported full-VL roundtrip retained exact tensor keys, shapes, dtypes and bytes. A separate text-only
-      import supplies the native pretraining checkpoint. MTP is unsupported and excluded.
+      The supported full-VL roundtrip retained exact tensor keys, shapes, dtypes and bytes. MTP is unsupported and
+      excluded.
   megatron_to_hf_cpu:
     status: unverified
     precision: bf16
@@ -90,36 +90,19 @@ items:
       by the current model implementation.
   pretrain:
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      enabled_features:
-        moe_dispatcher: hybridep
-      command: ./scripts/training/train.sh --nodes 8 --gpus-per-node 4 --recipe qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config
-        --mode pretrain --max_steps 30 --pretrained_checkpoint work/checkpoints/qwen3.8-flash-next-text 'dataset.data_path=[work/data/wikitext2_qwen38_train_text_document]'
-        logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/pretrain/resolved-config.yaml logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/pretrain/tensorboard
-      last_verified: '2026-11-22'
+      enabled_features: {}
+      command: null
+      last_verified: null
       metrics:
-        initial_loss: 1.927701711654663
-        final_loss: 1.3666266202926636
-        last_10_steps_step_time_ms_avg: 3636.6934776306152
-        last_10_steps_model_tflops_per_gpu_avg: 47.45907783508301
-        last_10_steps_tokens_per_second_per_gpu_avg: 1126.2978376359156
-      expected_result: 'Completed 30 natural-routing updates from a separately imported text-only native checkpoint.
-        Full 48-layer language model, sequence 4096, 32 GB200 GPUs, TP2/SP, EP32/ETP1, PP1/CP1, MBS1/GBS32, BF16
-        with FP32 gradient reduction. Only EP-sharded hashed n-gram tables are frozen; PLE projections, normalization
-        and convolution stay trainable. Fresh layer-wise distributed Muon optimizer, constant LR 1e-4, five-step
-        warmup, zero weight decay and clip 1. The data is bounded Salesforce/wikitext train, wikitext-2-raw-v1 revision
-        b08601e04326c79dfdd32d625aee71d232d685c3: one million tokens from 9,460 nonblank rows in source order, EOS
-        248046 appended per document and the final document trimmed to that token bound. HybridEP and MoE fusions
-        are enabled; CUDA graphs, recomputation, evaluation and checkpoint saving are disabled. Final-ten metrics
-        use updates 21-30. This is short functional qualification, not full convergence or a cross-model comparison.
-        TFLOPs estimate matrix work, including forward-only indexer projections. At 4K, QSA attention uses a dense
-        surrogate and indexer score work is not accurately counted; optimizer work, norms, lookups, PLE depthwise
-        convolution and communication are excluded. Throughput counts fixed sequence token slots. All 32 ranks completed
-        30 finite, unskipped updates with zero NaN iterations. Full frozen-table hashes were unchanged; tables stayed
-        outside DDP and optimizer groups. Selected language parameters and FP32 Muon/Adam samples changed. The run
-        consumed 960 sequences (3,932,160 token slots); preclip gradient norms ranged from 1.039667 to 12.357839.
-        Native timings include lightweight verification callbacks; no profiler was active.'
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: Full-VLM pretraining with image inputs has not been verified. The fixed-4096-token frozen-PLE
+        Muon run belongs to the separate text-only card.
   sft:
     GB200:
       status: verified
@@ -136,20 +119,21 @@ items:
         last_10_steps_step_time_ms_avg: 5457.587313652039
         last_10_steps_model_tflops_per_gpu_avg: 5.890045213699341
         last_10_steps_tokens_per_second_per_gpu_avg: 93.81434882759326
-      expected_result: 'Completed 100 native Energon-loader updates with the full pinned HF checkpoint and 8,192
-        complete image conversations prepared by scripts/data/prepare_nemotron_image_v3_subset.py from nvidia/Nemotron-Image-Training-v3
-        ECD revision 7656391d4d4cb11ec3722b34f10d499435de0460. All language, vision and projector parameters are
-        trainable. Configuration: 64 GB200 GPUs, TP4/SP, EP64/ETP1, PP1/CP1, padded unpacked sequence 2048, MBS1/GBS16,
-        BF16 with FP32 gradient reduction, distributed Adam, constant LR 1e-6, zero weight decay and clip 1. Natural
-        routing, HybridEP and MoE fusions are enabled; CUDA graphs, recomputation, shared-expert overlap, evaluation
-        and checkpoint saving are disabled. Final-ten metrics use updates 91-100. These are short functional observations
-        on a bounded subset, not held-out quality, full convergence or numerical equivalence to another parallel
-        layout. Throughput counts padded slots, not supervised tokens. TFLOPs estimate model matrix work rather
-        than hardware utilization. At sequence 2048 the dense QSA shortcut bypasses the indexer. All 64 ranks completed
-        100 finite, unskipped updates with zero NaN iterations. Image inputs and encoder execution were observed;
-        selected language/vision parameters and FP32 Adam samples changed. The run consumed 1,600 conversations
-        and 1,156,890 supervised tokens, counted once across dense-DP representatives. Preclip gradient norms ranged
-        from 1.694735 to 28.194944. Native timings include lightweight verification callbacks; no profiler was active.'
+      expected_result: 'EARLY, UNOPTIMIZED recipe. Completed 100 native Energon-loader updates with the full pinned
+        HF checkpoint and 8,192 complete image conversations prepared by scripts/data/prepare_nemotron_image_v3_subset.py
+        from nvidia/Nemotron-Image-Training-v3 ECD revision 7656391d4d4cb11ec3722b34f10d499435de0460. All language,
+        vision and projector parameters are trainable. Configuration: 64 GB200 GPUs, TP4/SP, EP64/ETP1, PP1/CP1,
+        padded unpacked sequence 2048, MBS1/GBS16, BF16 with FP32 gradient reduction, distributed Adam, constant
+        LR 1e-6, zero weight decay and clip 1. Natural routing, HybridEP and MoE fusions are enabled; CUDA graphs,
+        recomputation, shared-expert overlap, evaluation and checkpoint saving are disabled. Final-ten metrics use
+        updates 91-100. These are short functional observations on a bounded subset, not held-out quality, full
+        convergence or numerical equivalence to another parallel layout. Throughput counts padded slots, not supervised
+        tokens. TFLOPs estimate model matrix work rather than hardware utilization. At sequence 2048 the dense QSA
+        shortcut bypasses the indexer. All 64 ranks completed 100 finite, unskipped updates with zero NaN iterations.
+        Image inputs and encoder execution were observed; selected language/vision parameters and FP32 Adam samples
+        changed. The run consumed 1,600 conversations and 1,156,890 supervised tokens, counted once across dense-DP
+        representatives. Preclip gradient norms ranged from 1.694735 to 28.194944. Native timings include lightweight
+        verification callbacks; no profiler was active.'
   sft_export_inference:
     GB200:
       status: unverified

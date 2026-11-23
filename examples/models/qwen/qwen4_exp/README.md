@@ -13,6 +13,11 @@ Provide scheduler settings, container mounts and cache mappings through the
 launchers' external setup. The portable `work/...` paths below identify inputs
 and outputs; create output parents before running.
 
+Verification is split by mode:
+
+- [Text-only card](../../../model_verification_cards/qwen3.8-flash-next-text-only/card.yaml): fixed-4K frozen-PLE Muon pretraining.
+- [VLM card](../../../model_verification_cards/qwen3.8-flash-next/card.yaml): full language/vision conversion and image SFT.
+
 ## Convert the checkpoint
 
 The vision-language and standalone text models have different native checkpoint

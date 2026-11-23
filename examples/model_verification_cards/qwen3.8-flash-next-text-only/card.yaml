@@ -1,0 +1,185 @@
+title: qwen3_8_flash_next_text_only
+summary: 'Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing
+  and throughput metrics are functional verification observations, not standalone optimized performance results.
+  This text-only card covers text_only=True: the standalone language model extracted from the same VLM checkpoint,
+  excluding vision encoder and projector weights. The EARLY, UNOPTIMIZED recipe completed 30 fixed-4096-token pretraining
+  updates with frozen EP-sharded PLE tables and Muon. GPU import and native reload were exercised by that run; exact
+  standalone-text conversion equality remains unverified. Full-VLM conversion and image SFT are recorded separately
+  in the qwen3.8-flash-next card.'
+verification_index:
+  model_level:
+    unverified:
+    - hf_to_megatron_cpu
+    - hf_to_megatron_gpu
+    - megatron_to_hf_cpu
+    - megatron_to_hf_gpu
+    - manual_forward_pass
+    - inference
+  training:
+    GB200:
+      verified:
+      - pretrain
+      unverified:
+      - sft
+      - sft_export_inference
+      - sft_long_context
+      - peft
+      - checkpoint_resume
+model:
+  hf_id: Qwen/Qwen3.8-Flash-Next
+  hf_revision: de4b8e4d43b917e7706784d8bb445c9af86a3540
+  architecture: Qwen4ExpForCausalLM
+  min_transformers_version: 5.16.1
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.10
+  bridge_commit: 1359a94264fadc590826edd29638b60bda554f5d
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: CPU import and persisted-checkpoint reload have not been verified.
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: bf16
+    command: ./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --tp
+      4 --pp 1 --ep 8 --etp 1 --hf-model Qwen/Qwen3.8-Flash-Next --hf-revision de4b8e4d43b917e7706784d8bb445c9af86a3540
+      --torch-dtype bfloat16 --text-only --megatron-path work/checkpoints/qwen3.8-flash-next-text
+    last_verified: null
+    expected_result: The text_only=True GPU import completed and its persisted standalone language checkpoint reloaded
+      for the verified pretraining run, including TP-to-EP PLE resharding. Vision encoder and projector weights
+      are excluded. Exact standalone-text keys, shapes, dtypes and values have not been independently checked; the
+      full-VLM roundtrip is not text-only conversion evidence. MTP is unsupported and excluded.
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: CPU export, reload, and weight equality have not been verified.
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: Standalone text-only export, HF reload and exact weight equality have not been verified. The
+      full-VLM roundtrip on the companion card does not qualify this namespace.
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: The public model-comparison command has not been qualified on this revision. Historical component-level
+      numerical investigations and metadata/kernel checks do not establish complete HF/Bridge forward or training-trajectory
+      parity.
+  inference:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: Standalone deterministic generation has not been verified. Cached generation is unsupported
+      by the current model implementation.
+  pretrain:
+    GB200:
+      status: verified
+      precision: bf16
+      enabled_features:
+        moe_dispatcher: hybridep
+      command: ./scripts/training/train.sh --nodes 8 --gpus-per-node 4 --recipe qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config
+        --mode pretrain --max_steps 30 --pretrained_checkpoint work/checkpoints/qwen3.8-flash-next-text 'dataset.data_path=[work/data/wikitext2_qwen38_train_text_document]'
+        logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/pretrain/resolved-config.yaml logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/pretrain/tensorboard
+      last_verified: '2026-11-22'
+      metrics:
+        initial_loss: 1.927701711654663
+        final_loss: 1.3666266202926636
+        last_10_steps_step_time_ms_avg: 3636.6934776306152
+        last_10_steps_model_tflops_per_gpu_avg: 47.45907783508301
+        last_10_steps_tokens_per_second_per_gpu_avg: 1126.2978376359156
+      expected_result: 'EARLY, UNOPTIMIZED recipe. Completed 30 natural-routing updates from a separately imported
+        text-only native checkpoint. Full 48-layer language model, sequence 4096, 32 GB200 GPUs, TP2/SP, EP32/ETP1,
+        PP1/CP1, MBS1/GBS32, BF16 with FP32 gradient reduction. Only EP-sharded hashed n-gram tables are frozen;
+        PLE projections, normalization and convolution stay trainable. Fresh layer-wise distributed Muon optimizer,
+        constant LR 1e-4, five-step warmup, zero weight decay and clip 1. The data is bounded Salesforce/wikitext
+        train, wikitext-2-raw-v1 revision b08601e04326c79dfdd32d625aee71d232d685c3: one million tokens from 9,460
+        nonblank rows in source order, EOS 248046 appended per document and the final document trimmed to that token
+        bound. HybridEP and MoE fusions are enabled; CUDA graphs, recomputation, evaluation and checkpoint saving
+        are disabled. Final-ten metrics use updates 21-30. This is short functional qualification, not full convergence
+        or a cross-model comparison. TFLOPs estimate matrix work, including forward-only indexer projections. At
+        4K, QSA attention uses a dense surrogate and indexer score work is not accurately counted; optimizer work,
+        norms, lookups, PLE depthwise convolution and communication are excluded. Throughput counts fixed sequence
+        token slots. All 32 ranks completed 30 finite, unskipped updates with zero NaN iterations. Full frozen-table
+        hashes were unchanged; tables stayed outside DDP and optimizer groups. Selected language parameters and
+        FP32 Muon/Adam samples changed. The run consumed 960 sequences (3,932,160 token slots); preclip gradient
+        norms ranged from 1.039667 to 12.357839. Native timings include lightweight verification callbacks; no profiler
+        was active.'
+  sft:
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: Text-only SFT has not been verified. The image-SFT run uses the full VLM and is recorded
+        on its companion card.
+  sft_export_inference:
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: SFT checkpoint export, reload, and deterministic HF generation remain unverified.
+  sft_long_context:
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: Long-context SFT with packing and context parallelism has not been verified.
+  peft:
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: Parameter-efficient finetuning has not been verified.
+  checkpoint_resume:
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: []
+        loss_relative_tolerance: 0.01
+        loss_absolute_tolerance: 1.0e-06
+        sentinels_match: null
+      expected_result: Full optimizer/RNG checkpoint resume and loss sentinels have not been verified.
