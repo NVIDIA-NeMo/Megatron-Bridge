@@ -689,7 +689,7 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
     assert scripts[0].path == "/opt/Megatron-Bridge/scripts/training/run_recipe.py"
     assert scripts[0].entrypoint == "python"
     assert scripts[0].env == {
-        "PYTHONPATH": "/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/Megatron-LM:$PYTHONPATH"
+        "PYTHONPATH": "/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/megatron-core:$PYTHONPATH"
     }
     submission_options = {"--submission-dry-run", "--dry-run", "--wait"}
     expected_training_options = [option for option in extra_options if option not in submission_options]

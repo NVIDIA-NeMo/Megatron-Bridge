@@ -263,7 +263,7 @@ def _build_task(task_name: str, inference_args: list[str]) -> run.Script:
         path=str(task_path),
         entrypoint="python",
         env={
-            "PYTHONPATH": f"{CONTAINER_REPO_ROOT}/src:{CONTAINER_REPO_ROOT}/3rdparty/Megatron-LM:$PYTHONPATH",
+            "PYTHONPATH": f"{CONTAINER_REPO_ROOT}/src:{CONTAINER_REPO_ROOT}/3rdparty/megatron-core:$PYTHONPATH",
         },
         # NeMo-Run 0.10 joins Script arguments into an sbatch shell command.
         # Quote each value so prompts and paths with shell metacharacters remain one argument.

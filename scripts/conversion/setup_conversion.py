@@ -234,11 +234,11 @@ def _build_task(args: argparse.Namespace) -> tuple[run.Script, list[str]]:
     task_args = display_args if args.executor == "local" else [shlex.quote(argument) for argument in display_args]
     if args.executor == "local":
         existing_pythonpath = os.environ.get("PYTHONPATH", "")
-        pythonpath = f"{repo_root}/src:{repo_root}/3rdparty/Megatron-LM"
+        pythonpath = f"{repo_root}/src:{repo_root}/3rdparty/megatron-core"
         if existing_pythonpath:
             pythonpath = f"{pythonpath}:{existing_pythonpath}"
     else:
-        pythonpath = f"{repo_root}/src:{repo_root}/3rdparty/Megatron-LM:$PYTHONPATH"
+        pythonpath = f"{repo_root}/src:{repo_root}/3rdparty/megatron-core:$PYTHONPATH"
     task_env = {"PYTHONPATH": pythonpath}
     distributed_cpu = args.device == "cpu" and args.cpu_processes_per_node > 1
     if args.executor == "local" and (args.device == "gpu" or distributed_cpu):

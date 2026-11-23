@@ -193,7 +193,7 @@ fi
 CLI_OVERRIDES="${CLI_OVERRIDES} ${EXTRA_OVERRIDES}"
 
 CMD="cd ${WORKDIR} && mkdir -p ${WORKSPACE}/results ${SAVE_DIR}/wandb ${SAVE_DIR}/tb_logs && \
-export PYTHONPATH=${WORKDIR}/src:${WORKDIR}/3rdparty/Megatron-LM:\${PYTHONPATH:-} && \
+export PYTHONPATH=${WORKDIR}/src:${WORKDIR}/3rdparty/megatron-core:\${PYTHONPATH:-} && \
 uv run --no-sync python scripts/training/run_recipe.py \
 --recipe ${RECIPE_NAME} \
 ${CLI_OVERRIDES}"

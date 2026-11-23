@@ -49,7 +49,7 @@ fi
 "${SRUN_CMD[@]}" bash -c '
 set -euo pipefail
 cd "$WORKDIR"
-export PYTHONPATH="$WORKDIR/src:$WORKDIR/3rdparty/Megatron-LM:${PYTHONPATH:-}"
+export PYTHONPATH="$WORKDIR/src:$WORKDIR/3rdparty/megatron-core:${PYTHONPATH:-}"
 
 uv run --no-sync python scripts/training/prepare_gpt_sft_packed_data.py \
     --recipe "$RECIPE_NAME"

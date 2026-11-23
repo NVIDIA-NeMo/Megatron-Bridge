@@ -159,7 +159,7 @@ class TestQwen3OmniConversion:
         output_dir.mkdir(exist_ok=True)
         repo_root = Path(__file__).resolve().parents[5]
         env = os.environ.copy()
-        env["PYTHONPATH"] = f"{repo_root / 'src'}:{repo_root / '3rdparty' / 'Megatron-LM'}"
+        env["PYTHONPATH"] = f"{repo_root / 'src'}:{repo_root / '3rdparty' / 'megatron-core'}"
 
         cmd = [
             "python",

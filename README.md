@@ -111,6 +111,17 @@ For development installation and additional details, please refer to our [Contri
 
 Megatron Bridge pins [Megatron-Core](https://github.com/NVIDIA/Megatron-LM) as a git submodule at `3rdparty/Megatron-LM`. The repository tracks two pinned commits — one from the upstream **main** branch (default) and one from **dev** — managed by `scripts/switch_mcore.sh`.
 
+While the standalone Bridge repository is supported, `uv sync` installs MCore through
+`3rdparty/megatron-core`. This directory links to the pinned upstream build metadata and
+the `megatron.core` and `megatron.training` sources, excluding MLM's new `megatron.bridge`
+package. Both editable installs and wheels built from this directory leave
+`megatron.bridge` owned by this repository. For a manual MCore install or build, use
+`uv pip install -e 3rdparty/megatron-core` or `uv build --wheel 3rdparty/megatron-core`;
+do not install the raw submodule alongside standalone Bridge. Custom `PYTHONPATH`
+settings should likewise use `3rdparty/megatron-core`, not the raw MLM checkout.
+The submodule itself remains unchanged, and switching its pin updates these links
+automatically. This temporary separation can be removed when standalone Bridge retires.
+
 The submodule committed to the repo always points to the **main** commit. Use the **dev** commit when you need a Megatron-Core feature or fix that has not yet landed on main, or to validate forward-compatibility with upcoming MCore changes:
 
 ```bash

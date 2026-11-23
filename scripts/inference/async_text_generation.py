@@ -29,7 +29,7 @@ from pathlib import Path
 
 G_REPO_ROOT = Path(__file__).resolve().parents[2]
 G_SRC_ROOT = G_REPO_ROOT / "src"
-G_MCORE_ROOT = G_REPO_ROOT / "3rdparty" / "Megatron-LM"
+G_MCORE_ROOT = G_REPO_ROOT / "3rdparty" / "megatron-core"
 for _path in (G_SRC_ROOT, G_MCORE_ROOT):
     if _path.exists() and str(_path) not in sys.path:
         sys.path.append(str(_path))

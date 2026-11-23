@@ -159,6 +159,7 @@ COPY docker/common/uv_retry.sh /opt/uv_retry.sh
 RUN python /opt/preserve_base_runtime.py record /opt/base-runtime-packages.json
 
 COPY pyproject.toml uv.lock /opt/Megatron-Bridge/
+COPY 3rdparty/megatron-core /opt/Megatron-Bridge/3rdparty/megatron-core
 COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
 
 ARG BASELINE_MCORE_REF
@@ -259,7 +260,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json && \
     # uv may retain the baseline editable MCore wheel when only its source tree changes.
     # Rebuild the dispatched checkout so its optional dataset helper is present.
-    uv pip install --no-deps --reinstall -e 3rdparty/Megatron-LM && \
+    uv pip install --no-deps --reinstall -e 3rdparty/megatron-core && \
     test -n "$(find 3rdparty/Megatron-LM/megatron/core/datasets -maxdepth 1 -name 'helpers_cpp*.so' -print -quit)" && \
     # Create symlink for tilelang's libcudart_stub.so to the actual libcudart.so
     # Otherwise, the stub will be called in some cases and fail

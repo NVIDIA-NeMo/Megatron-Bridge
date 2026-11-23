@@ -42,7 +42,7 @@ echo "NeMo-RL SHA: ${nemo_rl_sha}"
 echo "Version injection: mounted checkout through PYTHONPATH (worker venv rebuild disabled)"
 
 export NRL_FORCE_REBUILD_VENVS=false
-export PYTHONPATH="${BRIDGE_ROOT}/src:${MCORE_ROOT}:${NEMO_RL_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH="${BRIDGE_ROOT}/src:${BRIDGE_ROOT}/3rdparty/megatron-core:${NEMO_RL_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 export UV_NO_SYNC=1
 export WANDB_MODE=disabled
 

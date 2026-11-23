@@ -415,7 +415,7 @@ def test_build_task_quotes_prompts_and_uses_existing_entrypoint():
     assert scripts[0].path == "/opt/Megatron-Bridge/scripts/inference/text_generation.py"
     assert scripts[0].entrypoint == "python"
     assert scripts[0].env == {
-        "PYTHONPATH": "/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/Megatron-LM:$PYTHONPATH"
+        "PYTHONPATH": "/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/megatron-core:$PYTHONPATH"
     }
     assert scripts[0].args == ["--prompt", "'benign; echo should-not-run'"]
 
