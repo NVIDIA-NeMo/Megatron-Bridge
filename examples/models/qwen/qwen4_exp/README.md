@@ -1,9 +1,10 @@
 # Qwen3.8-Flash-Next training
 
 **EARLY, UNOPTIMIZED recipes.** The registered recipes use the full checkpoint
-through the standard public training launcher. Text pretraining freezes only
+through the standard public training launcher. Text pretraining freezes
 the EP-sharded PLE n-gram tables and uses Muon. Image SFT trains the language
-model, vision encoder and projector together.
+model, vision encoder and projector with PLE n-gram lookup tables frozen and
+EP-sharded. Hard-selection QSA indexer weights are also frozen.
 
 Use the released **`nvcr.io/nvidia/nemo:26.10`** container and
 **Qwen/Qwen3.8-Flash-Next** at revision
@@ -109,8 +110,16 @@ qualification schedule, not a recommendation for full training convergence.
 
 The library recipe
 [`qwen38_flash_next_sft_64gpu_gb200_bf16_config`](../../../../src/megatron/bridge/recipes/qwen_vl/qwen38_flash_next.py)
-uses the Qwen VL forward step and native Energon loader. Prepare the first 8,192
-complete supervised conversations from the pinned ECD portion of
+uses the Qwen VL forward step and native Energon loader. Current defaults use
+fixed 4096-token batches, frozen EP-sharded PLE lookup tables and synchronized
+manual garbage collection every 100 steps. Prepare DataComp image-caption
+conversations with the [maintained DataComp tutorial](../../../../tutorials/data/datacomp/README.md)
+and supply the ChatML Energon directory at `work/data/datacomp/energon`.
+These defaults are awaiting a new full-checkpoint verification; the recorded
+2K results below retain their original recipe and trainable-table settings.
+
+The historical image-SFT run used the first 8,192 complete supervised
+conversations from the pinned ECD portion of
 **nvidia/Nemotron-Image-Training-v3**, with images from
 **ChartFoundation/ECD-10k-Images**:
 
@@ -132,14 +141,13 @@ existing subset with matching preprocessing and manifest can be reused.
 ./scripts/training/train.sh --nodes 16 --gpus-per-node 4 \
   --recipe qwen38_flash_next_sft_64gpu_gb200_bf16_config --mode sft --step-func qwen3_vl_step \
   --max_steps 100 --pretrained_checkpoint work/cache/qwen3.8-flash-next \
-  dataset.path=work/data/nemotron-image-v3-ecd \
+  dataset.path=work/data/datacomp/energon \
   logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/sft/resolved-config.yaml \
   logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/sft/tensorboard
 ```
 
-Do not select another `--dataset` preset: it would replace the prepared Energon
-configuration. Defaults are 64 GB200 GPUs, TP4/SP, EP64/ETP1, PP1/CP1,
-MBS1/GBS16, unpacked sequences padded to 2048, image limits 65,536–262,144 pixels,
+Use the recipe-owned Energon configuration. Defaults are 64 GB200 GPUs, TP4/SP, EP64/ETP1, PP1/CP1,
+MBS1/GBS16, unpacked sequences padded to 4096, image limits 65,536–262,144 pixels,
 and distributed Adam with constant LR 1e-6, zero weight decay and clipping 1.
 
 Both recipes use BF16 with FP32 gradient reduction, natural routing, HybridEP,

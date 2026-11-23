@@ -141,9 +141,10 @@ def test_native_attention_outputs_and_all_vjps_two_forwards_reverse_backward(nat
 
     Two live forward graphs use different inputs/lengths; reverse backward
     exercises the persistent selection under selective core-attention replay.
-    This is a kernel-level qualification, not full-model or TP8 acceptance.
     """
     module = native_qsa_cuda
+    assert list(module.indexer.parameters())
+    assert all(not parameter.requires_grad for parameter in module.indexer.parameters())
     module.checkpoint_core_attention = recompute
     lengths = [8, 11] if not packed else [8, 10]
     values = [torch.randn(s, 1, 32, device="cuda", dtype=torch.bfloat16) for s in lengths]
@@ -189,3 +190,28 @@ def test_native_attention_outputs_and_all_vjps_two_forwards_reverse_backward(nat
             torch.testing.assert_close(gradient, actual[2][name], rtol=0, atol=0, msg=name)
     assert all(g is None for n, g in actual[2].items() if n.startswith("indexer."))
     assert tuple(module.state_dict()) == state_keys
+
+
+def test_native_indexer_allows_overlapped_ddp_bucket_reset(native_qsa_cuda):
+    """Both skipped and active hard selection leave no unready trainable parameters."""
+    from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig
+
+    attention = native_qsa_cuda
+    model = DistributedDataParallel(
+        attention.config,
+        DistributedDataParallelConfig(overlap_grad_reduce=True, grad_reduce_in_fp32=True),
+        attention,
+        pg_collection=attention.pg_collection,
+    )
+    for length in (8, 16):
+        model.zero_grad_buffer()
+        hidden = torch.randn(length, 1, 32, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+        rotary = torch.randn(length, 1, 1, 16, device="cuda")
+        output, _ = model(hidden, None, rotary_pos_emb=rotary)
+        output.float().square().mean().backward()
+        model.finish_grad_sync()
+        assert hidden.grad is not None and torch.isfinite(hidden.grad).all()
+        for parameter in attention.parameters():
+            if parameter.requires_grad:
+                assert torch.isfinite(parameter.main_grad).all()
+    model.zero_grad_buffer()

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-"""EARLY, UNOPTIMIZED Qwen3.8-Flash-Next image SFT with TP4/HybridEP."""
+"""EARLY, UNOPTIMIZED fixed-4K image SFT with frozen EP-sharded PLE tables."""
 
 from megatron.bridge.data.builders.energon import EnergonDatasetConfig, QwenVLEnergonTaskEncoderConfig
 from megatron.bridge.models import AutoBridge
@@ -38,18 +38,21 @@ def qwen38_flash_next_sft_64gpu_gb200_bf16_config(
 ) -> ConfigContainer:
     """Return EARLY, UNOPTIMIZED image SFT on 64 GB200 GPUs with TP4/SP and EP64.
 
-    This configuration completed 100 native-loader steps with HybridEP and
-    fusions. Same-input numerical differences from the earlier TP8 baseline
-    remain unresolved; this is functional training evidence. Use the shared
-    Qwen VL forward step with ``--step-func qwen3_vl_step``. Supply
-    ``dataset.path`` and ``checkpoint.pretrained_checkpoint`` at launch; the
-    latter accepts the full local Hugging Face checkpoint. Standard finetuning
-    loads the weights and refreshes optimizer master parameters before training.
+    Use the shared Qwen VL forward step with ``--step-func qwen3_vl_step``.
+    Supply ``dataset.path`` and ``checkpoint.pretrained_checkpoint`` at launch;
+    the latter accepts the full local Hugging Face checkpoint. Standard
+    finetuning loads weights and refreshes optimizer master parameters.
 
-    Supply complete sequence-2048 samples in a prepared Energon dataset. Packing, checkpoint
-    saving, evaluation, recomputation, and CUDA graphs are disabled. Standard
-    training logs record loss, gradient norm, iteration time, and estimated
-    model TFLOP/s/GPU. This recipe is not a numerical-parity test.
+    The language model, vision encoder and projector train together. PLE n-gram
+    lookup tables are frozen and EP-sharded; PLE projections, normalization and
+    convolution remain trainable. QSA indexer weights stay frozen because hard
+    selection is detached from the training objective.
+
+    Supply prepared Energon image conversations, such as DataComp image-caption
+    samples. Batches are padded to a fixed 4096 tokens with no packing.
+    Synchronized manual garbage collection avoids rank-dependent Python pauses.
+    Checkpoint saving, evaluation, recomputation and CUDA graphs are disabled.
+    Standard logs record loss, gradient norm, iteration time and model TFLOP/s.
 
     Args:
         hf_path: Public model ID or local directory containing its HF config
@@ -61,12 +64,14 @@ def qwen38_flash_next_sft_64gpu_gb200_bf16_config(
     revision = "de4b8e4d43b917e7706784d8bb445c9af86a3540"  # pragma: allowlist secret
     model = AutoBridge.from_hf_pretrained(hf_path, revision=revision, text_only=False).get_model_config()
     model.perform_initialization = False
+    model.ple_freeze_ngram_embeddings = True
+    model.ple_embedding_sharding = "ep"
     model.tensor_model_parallel_size = 4
     model.expert_model_parallel_size = 64
     model.expert_tensor_parallel_size = 1
     model.pipeline_model_parallel_size = model.context_parallel_size = 1
     model.sequence_parallel = True
-    model.seq_length = 2048
+    model.seq_length = 4096
     model.gradient_accumulation_fusion = True
     model.bias_activation_fusion = True
     model.moe_token_dispatcher_type = "flex"
@@ -92,11 +97,11 @@ def qwen38_flash_next_sft_64gpu_gb200_bf16_config(
         max_pixels=262144,
         max_num_images=1,
         max_num_frames=1,
-        max_visual_tokens=2048 - 1,
+        max_visual_tokens=4096 - 1,
     )
     dataset = EnergonDatasetConfig(
         path=None,
-        seq_length=2048,
+        seq_length=4096,
         micro_batch_size=1,
         task_encoder=encoder,
         num_workers=2,
@@ -112,7 +117,13 @@ def qwen38_flash_next_sft_64gpu_gb200_bf16_config(
     precision.grad_reduce_in_fp32 = True
     cfg = ConfigContainer(
         model=model,
-        train=TrainingConfig(train_iters=1000000, micro_batch_size=1, global_batch_size=16),
+        train=TrainingConfig(
+            train_iters=1000000,
+            micro_batch_size=1,
+            global_batch_size=16,
+            manual_gc=True,
+            manual_gc_interval=100,
+        ),
         validation=ValidationConfig(eval_iters=0, eval_interval=1000000 + 1),
         optimizer=OptimizerConfig(
             optimizer="adam",

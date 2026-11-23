@@ -227,10 +227,10 @@ class QSAIndexer(MegatronModule):
             hidden_size=self.head_dim,
             eps=config.layernorm_epsilon,
         )
-        # Every TP rank computes the identical full-sequence indexer, so duplicated-parameter
-        # gradients are averaged (not summed) across the TP domain.
-        for param in self.parameters():
-            setattr(param, "average_gradients_across_tp_domain", True)
+        # Hard block selection is detached from the training objective. Keep
+        # checkpoint weights, but exclude them from optimizer and DDP buckets:
+        # their gradients never become ready, including when selection is skipped.
+        self.requires_grad_(False)
 
     # ------------------------------------------------------------------ helpers
     def _rope_at_positions(self, x: Tensor, freqs: Tensor, positions: Tensor) -> Tensor:

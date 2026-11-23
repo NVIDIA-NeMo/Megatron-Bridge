@@ -52,7 +52,7 @@ def test_full_vl_recipe_roundtrip_and_weight_initialization_contract(full_hf_con
     assert restored.dataset.task_encoder.hf_processor_revision == revision
     assert restored.logger.log_throughput
 
-    # Defaults reproduce the measured native-loader configuration, before and
+    # Recipe defaults retain their training contract before and
     # after serialization. Disabled recomputation does not activate the Core
     # default recompute_modules list.
     for config in (cfg, restored):
@@ -75,4 +75,8 @@ def test_full_vl_recipe_roundtrip_and_weight_initialization_contract(full_hf_con
         assert config.train.micro_batch_size == 1
         assert config.train.global_batch_size == 16
         assert config.dataset.pad_to_max_length
-        assert config.dataset.seq_length == 2048
+        assert config.dataset.seq_length == config.model.seq_length == 4096
+        assert config.model.ple_freeze_ngram_embeddings
+        assert config.model.ple_embedding_sharding == "ep"
+        assert config.train.manual_gc
+        assert config.train.manual_gc_interval == 100
