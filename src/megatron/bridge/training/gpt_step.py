@@ -15,7 +15,7 @@
 import logging
 from dataclasses import dataclass
 from functools import partial, wraps
-from typing import Iterable
+from typing import Callable, Iterable
 
 import modelopt.torch.distill as mtd
 import torch
@@ -302,6 +302,77 @@ def _current_stage_needs_mtp_inputs_from_layout(
     return _current_stage_has_mtp_from_layout(cfg, pg_collection=pg_collection, vp_stage=vp_stage)
 
 
+@dataclass(frozen=True)
+class _StageBatchFields:
+    """Which batch fields one PP/VPP stage reads from the data iterator."""
+
+    is_first: bool
+    is_last: bool
+    include_full_batch_fields: bool
+    include_mtp_inputs: bool
+
+    @property
+    def reads_batch(self) -> bool:
+        """Whether the stage calls ``next()`` on the data iterator once per micro-batch."""
+        return self.is_first or self.is_last or self.include_full_batch_fields or self.include_mtp_inputs
+
+
+def _stage_batch_fields(
+    cfg: ConfigContainer, *, pg_collection, use_mtp: bool, vp_stage: int | None
+) -> _StageBatchFields:
+    """Return the batch fields ``get_batch`` reads on this PP/VPP stage."""
+    model_cfg = getattr(cfg, "model", None)
+    vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None)
+    is_first = is_pp_first_stage(pg_collection.pp) and (
+        vp_stage is None or is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size)
+    )
+    is_last = is_pp_last_stage(pg_collection.pp) and (
+        vp_stage is None or is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size)
+    )
+    is_middle = (not is_first) and (not is_last)
+    return _StageBatchFields(
+        is_first=is_first,
+        is_last=is_last,
+        include_full_batch_fields=is_middle and _middle_pp_stage_needs_batch(cfg),
+        include_mtp_inputs=use_mtp
+        and _current_stage_needs_mtp_inputs_from_layout(
+            cfg, pg_collection=pg_collection, is_last=is_last, vp_stage=vp_stage
+        ),
+    )
+
+
+def _rank_reads_batch(
+    cfg: ConfigContainer, *, pg_collection, stage_batch_fields: Callable[..., _StageBatchFields]
+) -> bool:
+    """Return whether any model chunk on this rank reads the data iterator in a training iteration.
+
+    With virtual pipeline parallelism the chunks read through cache views over one outer iterator
+    (``make_data_iterator_list``), so the rank advances that iterator when any chunk reads.
+
+    Args:
+        cfg: Configuration container.
+        pg_collection: Process groups of this rank.
+        stage_batch_fields: The step's per-stage read logic, with the signature of ``_stage_batch_fields``.
+    """
+    model_cfg = getattr(cfg, "model", None)
+    use_mtp = (getattr(model_cfg, "mtp_num_layers", None) or 0) > 0
+    vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None)
+    vp_stages = range(vp_size) if vp_size else (None,)
+    return any(
+        stage_batch_fields(cfg, pg_collection=pg_collection, use_mtp=use_mtp, vp_stage=vp_stage).reads_batch
+        for vp_stage in vp_stages
+    )
+
+
+def _reads_batch_on_skip(cfg: ConfigContainer, pg_collection) -> bool:
+    """Return whether the GPT step reads the data iterator on this rank.
+
+    ``train()`` uses it on skipped iterations (``train.iterations_to_skip``) to advance the same
+    ranks that read batches in a real iteration.
+    """
+    return _rank_reads_batch(cfg, pg_collection=pg_collection, stage_batch_fields=_stage_batch_fields)
+
+
 def _partition_packed_batch_for_cp(
     batch: dict[str, torch.Tensor], cp_group: torch.distributed.ProcessGroup
 ) -> dict[str, torch.Tensor]:
@@ -530,30 +601,19 @@ def get_batch(
             position_ids,
             {"packed_seq_params": packed_seq_params, "padding_mask": padding_mask},
         )
-    vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None)
-    is_first = is_pp_first_stage(pg_collection.pp) and (
-        vp_stage is None or is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size)
-    )
-    is_last = is_pp_last_stage(pg_collection.pp) and (
-        vp_stage is None or is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size)
-    )
-    is_middle = (not is_first) and (not is_last)
-    include_full_batch_fields = is_middle and _middle_pp_stage_needs_batch(cfg)
-    include_mtp_inputs = use_mtp and _current_stage_needs_mtp_inputs_from_layout(
-        cfg, pg_collection=pg_collection, is_last=is_last, vp_stage=vp_stage
-    )
-    if is_middle and not include_full_batch_fields and not include_mtp_inputs:
+    stage = _stage_batch_fields(cfg, pg_collection=pg_collection, use_mtp=use_mtp, vp_stage=vp_stage)
+    if not stage.reads_batch:
         return None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
-        include_mtp_inputs=include_mtp_inputs,
+        include_mtp_inputs=stage.include_mtp_inputs,
         skip_getting_attention_mask_from_dataset=getattr(
             cfg.dataset, "skip_getting_attention_mask_from_dataset", True
         ),
-        is_first_pp_stage=is_first,
-        is_last_pp_stage=is_last,
-        include_full_batch_fields=include_full_batch_fields,
+        is_first_pp_stage=stage.is_first,
+        is_last_pp_stage=stage.is_last,
+        include_full_batch_fields=stage.include_full_batch_fields,
         inter_document_masking=_uses_inter_document_masking(cfg),
     )
 
@@ -884,3 +944,8 @@ def _create_loss_function_modelopt(
         return partial(loss_func_kd, loss_mask=loss_mask, original_loss_fn=mnt_loss_func, model=unwrapped_model)
     else:
         return mnt_loss_func
+
+
+# Read by train() before it wraps the step, so skipped iterations advance the ranks that read batches.
+forward_step.reads_batch_on_skip = _reads_batch_on_skip
+forward_step_modelopt.reads_batch_on_skip = _reads_batch_on_skip

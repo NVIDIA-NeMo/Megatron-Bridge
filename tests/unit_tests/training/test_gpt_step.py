@@ -25,11 +25,13 @@ from megatron.core.datasets.utils import Split
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.moe.router import TopKRouter
 
+from megatron.bridge.data.iterator_utils import make_data_iterator_list
+from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.models.deepseek import deepseek_v4_step
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
-from megatron.bridge.training import gpt_step
+from megatron.bridge.training import gpt_step, train
 from megatron.bridge.training.config import GPTDatasetConfig, MockGPTDatasetConfig
 from megatron.bridge.training.gpt_step import (
     _create_loss_function_modelopt,
@@ -46,6 +48,7 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
+from megatron.bridge.training.utils.train_utils import prepare_forward_step_func
 
 
 class _Iterator:
@@ -1891,6 +1894,333 @@ def test_inter_document_masking_flag_on_other_datasets_leaves_packed_batches_unc
     assert set(metadata) == set(packed_fields)
     for key, value in packed_fields.items():
         assert metadata[key].tolist() == value
+
+
+class _OneForwardBackward:
+    """Rerun state machine stand-in that runs a single forward-backward pass."""
+
+    def __init__(self):
+        self._ran = False
+
+    def should_run_forward_backward(self, data_iterator):
+        if self._ran:
+            return False
+        self._ran = True
+        return True
+
+
+class _CountingIterator:
+    """Outer data iterator that records how many rows were read."""
+
+    def __init__(self, rows):
+        self._rows = iter(rows)
+        self.reads = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        row = next(self._rows)
+        self.reads += 1
+        return row
+
+
+def _rows_with_one_boundary(seq_length, count):
+    """Return ``count`` GPTDataset rows; row ``i`` holds documents of ``i + 1`` and ``seq_length - i - 1`` tokens."""
+    return [_gpt_dataset_document_batch([index + 1, seq_length - index - 1], seq_length) for index in range(count)]
+
+
+def _skip_one_iteration_then_run_the_next(monkeypatch, step, forward_step, *, pp_rank, num_microbatches):
+    """Skip one iteration of ``num_microbatches`` rows, then run the next iteration through ``forward_step``.
+
+    The policy is resolved from ``forward_step`` and the forward runs through the state-injected partial,
+    as ``train()`` does. Returns the outer iterator's read count after the skip, the read count after the
+    next iteration, and the first boundary each micro-batch of the next iteration received.
+    """
+    seq_length = 8
+    data_iterator = _CountingIterator(_rows_with_one_boundary(seq_length, 2 * num_microbatches))
+    pg_collection = _MockPGCollection(pp_rank=pp_rank, pp_size=3)
+    state = _document_masking_forward_state(monkeypatch, step, pg_collection, seq_length)
+    # Core's stage helpers read rank 0 while torch.distributed is not initialized, so the skip's
+    # first/last-stage fallback needs the same simulated stages as the step.
+    monkeypatch.setattr(train, "is_pp_first_stage", lambda pg: pg.rank() == 0)
+    monkeypatch.setattr(train, "is_pp_last_stage", lambda pg: pg.rank() == 2)
+    monkeypatch.setattr(train, "get_num_microbatches", lambda: num_microbatches)
+    monkeypatch.setattr(train, "get_rerun_state_machine", _OneForwardBackward)
+
+    reads_batch_on_skip = train._resolve_reads_batch_on_skip(forward_step)
+    train._dummy_train_step(state, data_iterator, pg_collection, reads_batch_on_skip=reads_batch_on_skip)
+    reads_after_skip = data_iterator.reads
+
+    wrapped_forward_step = prepare_forward_step_func(forward_step, state)
+    first_boundaries = []
+    for _ in range(num_microbatches):
+        model = _RecordingModel()
+        wrapped_forward_step(data_iterator, model)
+        first_boundaries.append(model.forward_kwargs["packed_seq_params"].cu_seqlens_q[1].item())
+    return reads_after_skip, data_iterator.reads, first_boundaries
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("step", [gpt_step, deepseek_v4_step], ids=["gpt", "dsv4"])
+@pytest.mark.parametrize("pp_rank", [0, 1, 2], ids=["first_pp_stage", "middle_pp_stage", "last_pp_stage"])
+def test_inter_document_masking_skip_keeps_every_stage_on_the_next_rows(monkeypatch, step, pp_rank):
+    """With 3 micro-batches, a skipped iteration reads rows 0-2 and the next iteration gets rows 3-5 on every stage."""
+    num_microbatches = 3
+
+    reads_after_skip, reads_after_next, first_boundaries = _skip_one_iteration_then_run_the_next(
+        monkeypatch, step, step.forward_step, pp_rank=pp_rank, num_microbatches=num_microbatches
+    )
+
+    assert reads_after_skip == num_microbatches
+    assert reads_after_next == 2 * num_microbatches
+    assert first_boundaries == [4, 5, 6]
+
+
+def _nested_partial(forward_step):
+    """Wrap ``forward_step`` in two functools.partial layers, without the policy on either."""
+    inner = partial(forward_step)
+    # An instance attribute keeps functools.partial from flattening the outer layer into the inner one.
+    inner.description = "inner layer"
+    outer = partial(inner, return_schedule_plan=False)
+    assert outer.func is inner
+    return outer
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("step", [gpt_step, deepseek_v4_step], ids=["gpt", "dsv4"])
+@pytest.mark.parametrize(
+    "wrap",
+    [lambda forward_step: partial(forward_step, return_schedule_plan=False), _nested_partial],
+    ids=["partial", "nested_partial"],
+)
+def test_inter_document_masking_skip_through_a_partial_keeps_the_middle_stage_on_the_next_rows(
+    monkeypatch, step, wrap
+):
+    """A step passed to train() as a functools.partial keeps the step's skip policy on a middle stage."""
+    num_microbatches = 3
+
+    reads_after_skip, reads_after_next, first_boundaries = _skip_one_iteration_then_run_the_next(
+        monkeypatch, step, wrap(step.forward_step), pp_rank=1, num_microbatches=num_microbatches
+    )
+
+    assert reads_after_skip == num_microbatches
+    assert reads_after_next == 2 * num_microbatches
+    assert first_boundaries == [4, 5, 6]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "declares_policy, expected_reads_after_skip, expected_first_boundaries",
+    [(False, 0, [1, 2, 3]), (True, 3, [4, 5, 6])],
+    ids=["opaque_wrapper", "opaque_wrapper_with_policy"],
+)
+def test_inter_document_masking_skip_through_an_opaque_wrapper_uses_its_own_policy(
+    monkeypatch, declares_policy, expected_reads_after_skip, expected_first_boundaries
+):
+    """A wrapper that is not a functools.partial has no policy unless it declares one.
+
+    Without one, a skipped iteration keeps the first/last-stage rule, so the middle stage does not
+    advance and reads the skipped rows next.
+    """
+
+    def wrapped_step(state, data_iterator, model):
+        return gpt_step.forward_step(state, data_iterator, model)
+
+    if declares_policy:
+        wrapped_step.reads_batch_on_skip = gpt_step.forward_step.reads_batch_on_skip
+
+    reads_after_skip, _, first_boundaries = _skip_one_iteration_then_run_the_next(
+        monkeypatch, gpt_step, wrapped_step, pp_rank=1, num_microbatches=3
+    )
+
+    assert reads_after_skip == expected_reads_after_skip
+    assert first_boundaries == expected_first_boundaries
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("dataloader_type", ["single", "cyclic"])
+@pytest.mark.parametrize("pp_rank", [0, 1, 2], ids=["first_pp_stage", "middle_pp_stage", "last_pp_stage"])
+def test_inter_document_masking_skip_counters_match_the_next_row_after_rebuilding_the_sampler(
+    monkeypatch, dataloader_type, pp_rank
+):
+    """After a skipped iteration, a sampler rebuilt from the sample counters starts at the live iterator's next row.
+
+    A run that resumes after the skip rebuilds its sampler from ``consumed_train_samples``, so every
+    stage of the live run must have advanced exactly that far.
+    """
+    num_microbatches = 3
+    dataset = [{"index": torch.tensor(index)} for index in range(4 * num_microbatches)]
+
+    def loader(consumed_samples):
+        return iter(
+            build_pretraining_data_loader(
+                dataset,
+                consumed_samples,
+                dataloader_type,
+                micro_batch_size=1,
+                num_workers=0,
+                data_sharding=True,
+                pin_memory=False,
+            )
+        )
+
+    pg_collection = _MockPGCollection(pp_rank=pp_rank, pp_size=3)
+    monkeypatch.setattr(gpt_step, "is_pp_first_stage", lambda pg: pg.rank() == 0)
+    monkeypatch.setattr(gpt_step, "is_pp_last_stage", lambda pg: pg.rank() == 2)
+    monkeypatch.setattr(train, "is_pp_first_stage", lambda pg: pg.rank() == 0)
+    monkeypatch.setattr(train, "is_pp_last_stage", lambda pg: pg.rank() == 2)
+    monkeypatch.setattr(train, "get_num_microbatches", lambda: num_microbatches)
+    monkeypatch.setattr(train, "get_rerun_state_machine", _OneForwardBackward)
+    monkeypatch.setattr(train, "get_data_distribution_group", lambda pg, model: _MockProcessGroup(size=1))
+    cfg = _document_masking_cfg(8, pipeline_model_parallel_size=3)
+    if not hasattr(cfg.dataset, "dataloader_type"):
+        raise ValueError("Config has no field 'dataloader_type'")
+    cfg.dataset.dataloader_type = dataloader_type
+    cfg.train.iterations_to_skip = [1]
+    state = SimpleNamespace(
+        cfg=cfg, train_state=SimpleNamespace(step=0, consumed_train_samples=0, skipped_train_samples=0)
+    )
+    live_iterator = loader(0)
+
+    skipped = train._should_skip_and_handle_iteration(
+        state, live_iterator, pg_collection, reads_batch_on_skip=gpt_step.forward_step.reads_batch_on_skip
+    )
+    resumed_iterator = loader(state.train_state.consumed_train_samples)
+
+    assert skipped
+    assert state.train_state.consumed_train_samples == state.train_state.skipped_train_samples == num_microbatches
+    for _ in range(num_microbatches):
+        assert next(live_iterator)["index"].item() == next(resumed_iterator)["index"].item()
+
+
+_MTP_ON_MIDDLE_STAGE_LAYOUT = [["embedding", "decoder"], ["decoder", "mtp"], ["decoder", "loss"]]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("step", [gpt_step, deepseek_v4_step], ids=["gpt", "dsv4"])
+@pytest.mark.parametrize("pp_rank", [0, 1, 2], ids=["first_pp_stage", "middle_pp_stage", "last_pp_stage"])
+@pytest.mark.parametrize(
+    "inter_document_masking, mtp_layout",
+    [(False, None), (True, None), (False, _MTP_ON_MIDDLE_STAGE_LAYOUT)],
+    ids=["unmasked", "document_masking", "mtp_on_middle_stage"],
+)
+def test_reads_batch_on_skip_matches_the_stage_reads_of_get_batch(
+    monkeypatch, step, pp_rank, inter_document_masking, mtp_layout
+):
+    """The skip policy reports a read exactly when the step's get_batch reads the iterator."""
+    seq_length = 8
+    pg_collection = _MockPGCollection(pp_rank=pp_rank, pp_size=3)
+    monkeypatch.setattr(step, "is_pp_first_stage", lambda pg: pg.rank() == 0)
+    monkeypatch.setattr(step, "is_pp_last_stage", lambda pg: pg.rank() == 2)
+    monkeypatch.setattr(step, "get_batch_on_this_cp_rank", lambda batch, **kwargs: batch)
+    # The layout lookup reads the PP rank from the group only when distributed is initialized.
+    _set_distributed_initialized(monkeypatch)
+    monkeypatch.setattr(
+        "megatron.bridge.training.gpt_step.parallel_state.get_virtual_pipeline_model_parallel_rank", lambda: None
+    )
+    use_mtp = mtp_layout is not None
+    cfg = _document_masking_cfg(
+        seq_length,
+        pipeline_model_parallel_size=3,
+        pipeline_model_parallel_layout=mtp_layout,
+        mtp_num_layers=1 if use_mtp else 0,
+    )
+    cfg.dataset.inter_document_masking = inter_document_masking
+    batch = _gpt_dataset_document_batch([3, 5], seq_length)
+    if not inter_document_masking:
+        batch = {key: value for key, value in batch.items() if key not in ("cu_seqlens", "max_seqlen")}
+    data_iterator = _CountingIterator([batch])
+
+    step.get_batch(data_iterator, cfg, use_mtp, pg_collection=pg_collection)
+
+    expected_reads = pp_rank != 1 or inter_document_masking or use_mtp
+    assert data_iterator.reads == int(expected_reads)
+    assert step.forward_step.reads_batch_on_skip(cfg, pg_collection) is expected_reads
+
+
+# PP3 x VPP2, indexed by vp_stage * pp_size + pp_rank: the middle PP rank holds MTP on its second chunk only.
+_MTP_ON_SECOND_CHUNK_OF_MIDDLE_STAGE_LAYOUT = [
+    ["embedding", "decoder"],
+    ["decoder"],
+    ["decoder"],
+    ["decoder"],
+    ["decoder", "mtp"],
+    ["decoder", "loss"],
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("step", [gpt_step, deepseek_v4_step], ids=["gpt", "dsv4"])
+def test_vpp_skip_reads_the_shared_iterator_when_only_the_second_chunk_reads(monkeypatch, step):
+    """With VPP2 on a middle PP stage, only the second chunk (which holds MTP) reads.
+
+    Both chunks read through cache views over one outer iterator, so a real iteration reads M outer
+    rows. A skipped iteration must read the same M, and the next iteration's second chunk must start
+    at row M.
+    """
+    num_microbatches = 3
+    seq_length = 8
+    pg_collection = _MockPGCollection(pp_rank=1, pp_size=3)
+    monkeypatch.setattr(step, "is_pp_first_stage", lambda pg: pg.rank() == 0)
+    monkeypatch.setattr(step, "is_pp_last_stage", lambda pg: pg.rank() == 2)
+    monkeypatch.setattr(step, "get_batch_on_this_cp_rank", lambda batch, **kwargs: batch)
+    # The layout lookup reads the PP rank from the group only when distributed is initialized.
+    _set_distributed_initialized(monkeypatch)
+    monkeypatch.setattr(
+        "megatron.bridge.training.gpt_step.parallel_state.get_virtual_pipeline_model_parallel_rank", lambda: None
+    )
+    monkeypatch.setattr(train, "get_num_microbatches", lambda: num_microbatches)
+    monkeypatch.setattr(train, "get_rerun_state_machine", _OneForwardBackward)
+    cfg = _make_cfg(
+        pipeline_model_parallel_size=3,
+        virtual_pipeline_model_parallel_size=2,
+        pipeline_model_parallel_layout=_MTP_ON_SECOND_CHUNK_OF_MIDDLE_STAGE_LAYOUT,
+        mtp_num_layers=1,
+    )
+    cfg.dataset = GPTDatasetConfig(seq_length=seq_length, random_seed=1234)
+    if not hasattr(cfg.dataset, "dataloader_type"):
+        raise ValueError("Config has no field 'dataloader_type'")
+    cfg.dataset.dataloader_type = "single"
+    rows = [
+        {
+            "tokens": _as_nocuda(torch.full((1, seq_length), index)),
+            "labels": _as_nocuda(torch.full((1, seq_length), index)),
+            "loss_mask": _as_nocuda(torch.ones(1, seq_length)),
+            "position_ids": _as_nocuda(torch.arange(seq_length).unsqueeze(0)),
+            "attention_mask": None,
+        }
+        for index in range(2 * num_microbatches)
+    ]
+    data_iterator = _CountingIterator(rows)
+
+    chunk_reads = [
+        step._stage_batch_fields(cfg, pg_collection=pg_collection, use_mtp=True, vp_stage=vp_stage).reads_batch
+        for vp_stage in (0, 1)
+    ]
+    assert chunk_reads == [False, True]
+    reads_batch_on_skip = step.forward_step.reads_batch_on_skip
+    assert reads_batch_on_skip(cfg, pg_collection) is True
+
+    train._dummy_train_step(
+        SimpleNamespace(cfg=cfg), data_iterator, pg_collection, reads_batch_on_skip=reads_batch_on_skip
+    )
+    skipped_reads = data_iterator.reads
+
+    # The next real iteration, with every micro-batch run on both chunks as an interleaved schedule does.
+    chunk_iterators = make_data_iterator_list(model=[object(), object()], data_iterator=data_iterator)
+    first_tokens = {0: [], 1: []}
+    for _ in range(num_microbatches):
+        for vp_stage in (0, 1):
+            tokens, *_ = step.get_batch(
+                chunk_iterators[vp_stage], cfg, True, pg_collection=pg_collection, vp_stage=vp_stage
+            )
+            first_tokens[vp_stage].append(None if tokens is None else tokens[0, 0].item())
+
+    assert skipped_reads == num_microbatches
+    assert data_iterator.reads - skipped_reads == skipped_reads
+    assert first_tokens[0] == [None] * num_microbatches
+    assert first_tokens[1] == list(range(num_microbatches, 2 * num_microbatches))
 
 
 def _mock_gpt_dataset(monkeypatch, seq_length):
