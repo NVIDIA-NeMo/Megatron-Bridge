@@ -49,7 +49,7 @@ from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params, get_thd_cp_partition_indices
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
-from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+from megatron.bridge.utils.cuda_graph import cuda_graph_captures_attention, cuda_graph_module_names
 
 
 logger = logging.getLogger(__name__)
@@ -253,6 +253,47 @@ def _uses_inter_document_masking(cfg: ConfigContainer) -> bool:
     """
     dataset_cfg = getattr(cfg, "dataset", None)
     return isinstance(dataset_cfg, GPTDatasetConfig) and bool(getattr(dataset_cfg, "inter_document_masking", False))
+
+
+def _validate_inter_document_masking(cfg: ConfigContainer) -> None:
+    """Reject settings the GPT and DSv4 steps do not support with document masking.
+
+    The steps convert one row per micro-batch and do not split documents across context-parallel
+    ranks, for training and evaluation alike. A CUDA graph that captures attention would need
+    boundary tensors of one shape, while the number of documents changes from row to row. A custom
+    forward step that flattens micro-batches or partitions documents itself is not affected.
+
+    Raises:
+        ValueError: If a micro-batch size or context-parallel size is not 1, or if the CUDA graph
+            captures attention.
+    """
+    train_micro_batch_size = cfg.train.micro_batch_size
+    eval_micro_batch_size = cfg.validation.eval_micro_batch_size
+    context_parallel_size = getattr(cfg.model, "context_parallel_size", 1)
+    eval_context_parallel_size = cfg.dist.eval_context_parallel_size
+    sizes = {
+        "train.micro_batch_size": train_micro_batch_size,
+        "validation.eval_micro_batch_size": (
+            train_micro_batch_size if eval_micro_batch_size is None else eval_micro_batch_size
+        ),
+        "model.context_parallel_size": context_parallel_size,
+        "dist.eval_context_parallel_size": (
+            context_parallel_size if eval_context_parallel_size is None else eval_context_parallel_size
+        ),
+    }
+    unsupported = ", ".join(f"{name}={size}" for name, size in sizes.items() if size != 1)
+    if unsupported:
+        raise ValueError(
+            "dataset.inter_document_masking=True in the GPT and DSv4 steps requires micro-batch size 1 and "
+            f"context-parallel size 1 for training and evaluation; got {unsupported}."
+        )
+    if cuda_graph_captures_attention(cfg.model):
+        raise ValueError(
+            "dataset.inter_document_masking=True in the GPT and DSv4 steps does not support CUDA graphs that "
+            f"capture attention (model.cuda_graph_impl={getattr(cfg.model, 'cuda_graph_impl', None)!r}, "
+            f"modules {cuda_graph_module_names(cfg.model)}): the document boundaries change shape from row to "
+            "row. Disable CUDA graphs or limit them to modules without attention, such as 'mlp'."
+        )
 
 
 def _layout_stage_has_mtp(layout, *, pp_rank: int, pp_size: int, vp_stage: int) -> bool:
@@ -601,6 +642,9 @@ def get_batch(
             position_ids,
             {"packed_seq_params": packed_seq_params, "padding_mask": padding_mask},
         )
+    inter_document_masking = _uses_inter_document_masking(cfg)
+    if inter_document_masking:
+        _validate_inter_document_masking(cfg)
     stage = _stage_batch_fields(cfg, pg_collection=pg_collection, use_mtp=use_mtp, vp_stage=vp_stage)
     if not stage.reads_batch:
         return None, None, None, None, None, None
@@ -614,7 +658,7 @@ def get_batch(
         is_first_pp_stage=stage.is_first,
         is_last_pp_stage=stage.is_last,
         include_full_batch_fields=stage.include_full_batch_fields,
-        inter_document_masking=_uses_inter_document_masking(cfg),
+        inter_document_masking=inter_document_masking,
     )
 
     cp_size = pg_collection.cp.size()

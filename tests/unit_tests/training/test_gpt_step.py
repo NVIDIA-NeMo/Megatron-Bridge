@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from functools import partial
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
@@ -2221,6 +2222,75 @@ def test_vpp_skip_reads_the_shared_iterator_when_only_the_second_chunk_reads(mon
     assert data_iterator.reads - skipped_reads == skipped_reads
     assert first_tokens[0] == [None] * num_microbatches
     assert first_tokens[1] == list(range(num_microbatches, 2 * num_microbatches))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("step", [gpt_step, deepseek_v4_step], ids=["gpt", "dsv4"])
+@pytest.mark.parametrize(
+    "setting",
+    [
+        "train.micro_batch_size",
+        "validation.eval_micro_batch_size",
+        "model.context_parallel_size",
+        "dist.eval_context_parallel_size",
+    ],
+    ids=["micro_batch_size_2", "eval_micro_batch_size_2", "context_parallel_size_2", "eval_context_parallel_size_2"],
+)
+def test_inter_document_masking_steps_reject_unsupported_sizes_before_reading(monkeypatch, step, setting):
+    """The GPT and DSv4 steps reject document masking outside MBS1/CP1, for training and evaluation."""
+    cfg = _document_masking_cfg(8)
+    section, name = setting.split(".")
+    setattr(getattr(cfg, section), name, 2)
+    data_iterator = _CountingIterator([_gpt_dataset_document_batch([3, 5], 8)])
+    monkeypatch.setattr(step, "is_pp_first_stage", lambda pg: True)
+
+    with pytest.raises(ValueError, match=re.escape(f"{setting}=2")):
+        step.get_batch(data_iterator, cfg, pg_collection=_MockPGCollection())
+
+    assert data_iterator.reads == 0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("step", [gpt_step, deepseek_v4_step], ids=["gpt", "dsv4"])
+@pytest.mark.parametrize(
+    "cuda_graph_impl, cuda_graph_modules, captures_attention",
+    [
+        ("full_iteration", [], True),
+        ("local", ["full_iteration"], True),
+        ("transformer_engine", [], True),
+        ("transformer_engine", ["attn"], True),
+        ("local", ["attn", "mlp"], True),
+        ("transformer_engine", ["mlp"], False),
+        ("local", ["mlp"], False),
+    ],
+    ids=[
+        "full_iteration",
+        "local_full_iteration_scope",
+        "te_whole_layer",
+        "te_attention",
+        "local_per_layer_attention",
+        "te_mlp_only",
+        "local_mlp_only",
+    ],
+)
+def test_inter_document_masking_steps_reject_cuda_graphs_that_capture_attention(
+    monkeypatch, step, cuda_graph_impl, cuda_graph_modules, captures_attention
+):
+    """Masked rows change boundary shapes from row to row, so a graph that captures attention is rejected."""
+    cfg = _document_masking_cfg(8)
+    cfg.model.cuda_graph_impl = cuda_graph_impl
+    cfg.model.cuda_graph_modules = cuda_graph_modules
+    data_iterator = _CountingIterator([_gpt_dataset_document_batch([3, 5], 8)])
+    monkeypatch.setattr(step, "is_pp_first_stage", lambda pg: True)
+    monkeypatch.setattr(step, "get_batch_on_this_cp_rank", lambda batch, **kwargs: batch)
+
+    if captures_attention:
+        with pytest.raises(ValueError, match="does not support CUDA graphs that capture attention"):
+            step.get_batch(data_iterator, cfg, pg_collection=_MockPGCollection())
+        assert data_iterator.reads == 0
+    else:
+        *_, metadata = step.get_batch(data_iterator, cfg, pg_collection=_MockPGCollection())
+        assert metadata["cu_seqlens_q"].tolist() == [[0, 3, 8]]
 
 
 def _mock_gpt_dataset(monkeypatch, seq_length):

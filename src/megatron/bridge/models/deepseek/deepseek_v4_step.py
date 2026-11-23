@@ -51,6 +51,7 @@ from megatron.bridge.training.gpt_step import (
     _rank_reads_batch,
     _StageBatchFields,
     _uses_inter_document_masking,
+    _validate_inter_document_masking,
     get_batch_from_iterator,
 )
 from megatron.bridge.training.state import GlobalState
@@ -213,6 +214,9 @@ def get_batch(  # pragma: no cover
     Native attention_cp_layout selects contiguous partitioning. Every CP
     pipeline stage consumes the global packed metadata before token slicing.
     """
+    inter_document_masking = _uses_inter_document_masking(cfg)
+    if inter_document_masking:
+        _validate_inter_document_masking(cfg)
     model_cfg = getattr(cfg, "model", None)
     cp_size = pg_collection.cp.size()
     if cp_size > 1 and getattr(model_cfg, "attention_cp_layout", None) != "contiguous":
@@ -232,7 +236,7 @@ def get_batch(  # pragma: no cover
         is_first_pp_stage=stage.is_first,
         is_last_pp_stage=stage.is_last,
         include_full_batch_fields=stage.include_full_batch_fields,
-        inter_document_masking=_uses_inter_document_masking(cfg),
+        inter_document_masking=inter_document_masking,
     )
 
     has_packed = _has_packed_sequence_metadata(batch)

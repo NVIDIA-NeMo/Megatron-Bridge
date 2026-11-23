@@ -2312,6 +2312,26 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.unit
+    def test_inter_document_masking_leaves_micro_batch_size_to_the_forward_step(self):
+        """validate() accepts document masking at MBS 2: a custom forward step may flatten micro-batches itself.
+
+        The GPT and DSv4 steps check their own MBS1/CP1 limit when they read a batch.
+        """
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(context_parallel_size=1),
+            train_config=create_test_training_config(micro_batch_size=2),
+        )
+        try:
+            if not hasattr(container.dataset, "inter_document_masking"):
+                raise ValueError("Config has no field 'inter_document_masking'")
+            container.dataset.inter_document_masking = True
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+        assert container.validation.eval_micro_batch_size == 2
+
     @pytest.mark.parametrize(
         "seq_length, context_parallel_size, expect_assertion_error",
         [
