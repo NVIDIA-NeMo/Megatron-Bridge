@@ -77,6 +77,20 @@ Parameters for managing how scheduler settings are applied during checkpoint loa
 | `override_opt_param_scheduler` | `bool` | `False` | Reset scheduler values from config, ignoring checkpoint |
 | `use_checkpoint_opt_param_scheduler` | `bool` | `False` | Use scheduler values from checkpoint, ignoring config |
 
+For the standard distributed optimizer with `torch_dist` checkpoints,
+`override_opt_param_scheduler=True` now passes `override_lr=True` to Core's
+existing optimizer loader. Core retains the runtime per-group LR bounds and
+logging classification while restoring the checkpoint's remaining metadata and
+tensors. Bridge restores the consumed-sample count and evaluates the scheduler
+without replacing custom bounds with base or decoupled defaults.
+
+This requires the companion Core LR-reconciliation API. The checkpoint format
+and ordinary resume behavior are unchanged: there is no new version check or
+second tensor loader. Saved groups with different retained metadata (such as
+betas, epsilon or step counters) are rejected when LR-only matching is ambiguous.
+The option does not validate arbitrary membership changes or add resharding
+capabilities. Layer-wise and FSDP optimizers retain their existing loading policy.
+
 ### Computed Fields
 
 These fields are automatically calculated during configuration validation and help align training schedules with the configured batch size and iteration counts:

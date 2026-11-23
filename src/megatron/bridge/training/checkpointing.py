@@ -3392,9 +3392,21 @@ def _load_checkpoint_from_path(
     if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim and not ignore_optimizer_state:
         try:
             restore_lr_bounds = cfg.scheduler.override_opt_param_scheduler and not skip_load_to_model_and_opt
-            # The optimizer's groups still hold the LR bounds built from the current config; the
-            # checkpoint's groups replace them below.
-            built_lr_bounds = _param_group_lr_bounds(optimizer) if restore_lr_bounds else None
+            # Core reconciles LR-only changes while loading standard distributed groups.
+            # Other optimizer backends retain their existing resume policy.
+            override_distributed_optimizer_lr = (
+                restore_lr_bounds
+                and ckpt_format == "torch_dist"
+                and cfg.optimizer.use_distributed_optimizer
+                and not cfg.optimizer.use_layer_wise_distributed_optimizer
+                and cfg.ddp is not None
+                and not cfg.ddp.use_megatron_fsdp
+            )
+            built_lr_bounds = (
+                _param_group_lr_bounds(optimizer)
+                if restore_lr_bounds and not override_distributed_optimizer_lr
+                else None
+            )
             if (
                 not skip_load_to_model_and_opt
                 and optimizer is not None
@@ -3422,7 +3434,8 @@ def _load_checkpoint_from_path(
                             enabled=cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu,
                         ),
                     ):
-                        optimizer.load_state_dict(state_dict["optimizer"])
+                        optimizer_load_kwargs = {"override_lr": True} if override_distributed_optimizer_lr else {}
+                        optimizer.load_state_dict(state_dict["optimizer"], **optimizer_load_kwargs)
                     # Direct checkpoint callers also need HDO's loaded working
                     # copies and advancing CPU/GPU step counters synchronized.
                     sync_hybrid_device_optimizer_fp32_master_copies(optimizer)
@@ -3434,7 +3447,12 @@ def _load_checkpoint_from_path(
                     opt_param_scheduler.load_state_dict(state_dict["opt_param_scheduler"])
             if restore_lr_bounds:
                 _restore_scheduler_runtime_overrides(
-                    cfg, state.train_state, optimizer, opt_param_scheduler, built_lr_bounds
+                    cfg,
+                    state.train_state,
+                    optimizer,
+                    opt_param_scheduler,
+                    built_lr_bounds,
+                    group_lrs_restored=override_distributed_optimizer_lr,
                 )
         except KeyError as e:
             print_rank_0(
@@ -3847,6 +3865,8 @@ def _restore_scheduler_runtime_overrides(
     optimizer: MegatronOptimizer | None,
     scheduler: Any | None,
     built_lr_bounds: list[dict[str, Any]] | None = None,
+    *,
+    group_lrs_restored: bool = False,
 ) -> None:
     """Restore runtime LR bounds after optimizer checkpoint groups replace them.
 
@@ -3854,19 +3874,25 @@ def _restore_scheduler_runtime_overrides(
     the decoupled bounds. Groups with their own LR override (``optimizer_config_override_provider``, e.g.
     LoRA+ or LSQ scale learning) get back the bounds they were built with, given ``built_lr_bounds``
     from :func:`_param_group_lr_bounds` taken before the optimizer state was loaded.
+    When Core already retained the runtime groups, only synchronize scheduler progress;
+    do not replace custom bounds or infer group correspondence from list position.
     """
     if optimizer is None or getattr(optimizer, "is_stub_optimizer", False) or scheduler is None:
         print_rank_0("WARNING: scheduler override requires an optimizer and scheduler; skipping runtime LR bounds.")
         return
-    if built_lr_bounds is not None and [bounds["default_config"] for bounds in built_lr_bounds] != [
-        group.get("default_config", True) for group in optimizer.param_groups
-    ]:
+    if (
+        not group_lrs_restored
+        and built_lr_bounds is not None
+        and [bounds["default_config"] for bounds in built_lr_bounds]
+        != [group.get("default_config", True) for group in optimizer.param_groups]
+    ):
         print_rank_0(
             "WARNING: optimizer param groups changed while loading the checkpoint; per-group LR overrides "
             "are reset to the base LR."
         )
         built_lr_bounds = None
-    for i, group in enumerate(optimizer.param_groups):
+    groups_to_restore = [] if group_lrs_restored else optimizer.param_groups
+    for i, group in enumerate(groups_to_restore):
         if group.get("is_decoupled_lr", False):
             max_lr, min_lr = cfg.optimizer.decoupled_lr, cfg.optimizer.decoupled_min_lr
         elif built_lr_bounds is not None and not built_lr_bounds[i]["default_config"]:
