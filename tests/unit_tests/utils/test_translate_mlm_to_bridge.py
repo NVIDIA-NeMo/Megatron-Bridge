@@ -930,6 +930,74 @@ class TestTranslateBridgeToMlmPrecision:
         assert any("8-mixed" in note for note in r.notes)
 
 
+class TestTranslateConstantWeightDecay:
+    @pytest.mark.parametrize("effective", [0.0, 0.033, 0.1])
+    def test_effective_scheduler_wd_survives_mlm_validation(self, effective):
+        from types import SimpleNamespace
+
+        from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+        from megatron.training.config.training_config import SchedulerConfig
+
+        original = {
+            "optimizer.weight_decay": 0.1,
+            "scheduler.start_weight_decay": effective,
+            "scheduler.end_weight_decay": effective,
+        }
+        result = translate_bridge_to_mlm(original)
+        scheduler_config = SchedulerConfig(
+            start_weight_decay=result.mlm_args["start-weight-decay"],
+            end_weight_decay=result.mlm_args["end-weight-decay"],
+        )
+        scheduler_config.validate_run(
+            train_iters=10, train_samples=None, skip_train=False, weight_decay=result.mlm_args["weight-decay"]
+        )
+        scheduler_config.finalize_scheduler_config(result.mlm_args["weight-decay"])
+        optimizer = SimpleNamespace(param_groups=[{"wd_mult": mult, "lr_mult": 1.0} for mult in (1.0, 0.0, 0.5)])
+        scheduler = OptimizerParamScheduler(
+            optimizer,
+            init_lr=0,
+            max_lr=0.001,
+            min_lr=0.0001,
+            lr_warmup_steps=2,
+            lr_decay_steps=10,
+            lr_decay_style="linear",
+            start_wd=scheduler_config.start_weight_decay,
+            end_wd=scheduler_config.end_weight_decay,
+            wd_incr_steps=10,
+            wd_incr_style="constant",
+        )
+        for step in (0, 2, 5, 10):
+            scheduler.step(step - scheduler.num_steps)
+            assert [group["weight_decay"] for group in optimizer.param_groups] == pytest.approx(
+                [effective, 0.0, effective / 2]
+            )
+        assert original["optimizer.weight_decay"] == 0.1
+
+    @pytest.mark.parametrize("style", ["linear", "cosine"])
+    def test_nonconstant_schedule_is_preserved(self, style):
+        result = translate_bridge_to_mlm(
+            {
+                "optimizer.weight_decay": 0.1,
+                "scheduler.start_weight_decay": 0.01,
+                "scheduler.end_weight_decay": 0.2,
+                "scheduler.weight_decay_incr_style": style,
+            }
+        )
+        assert result.mlm_args["weight-decay"] == 0.1
+        assert result.mlm_args["start-weight-decay"] == 0.01
+        assert result.mlm_args["end-weight-decay"] == 0.2
+
+    @pytest.mark.parametrize(
+        "start,end", [(0.01, 0.02), (0.01, None), (None, 0.01), (-0.1, -0.1), (float("inf"), float("inf"))]
+    )
+    def test_ambiguous_or_invalid_constant_schedule_is_rejected(self, start, end):
+        with pytest.raises(ValueError, match="Constant"):
+            translate_bridge_to_mlm({"scheduler.start_weight_decay": start, "scheduler.end_weight_decay": end})
+
+    def test_optimizer_only_input_keeps_its_explicit_value(self):
+        assert translate_bridge_to_mlm({"optimizer.weight_decay": 0.2}).mlm_args["weight-decay"] == 0.2
+
+
 class TestTranslateBridgeToMlmActivation:
     """Tests for activation function reverse translation."""
 

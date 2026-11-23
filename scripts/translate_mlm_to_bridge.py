@@ -57,6 +57,7 @@ import argparse
 import ast
 import importlib
 import json
+import math
 import pkgutil
 import shlex
 import sys
@@ -1456,6 +1457,24 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
     """Translate Bridge overrides into MLM pretrain_gpt.py CLI args."""
     result = ReverseTranslationResult()
     consumed: set[str] = set()
+    overrides = dict(overrides)
+
+    # Bridge's scheduler bounds determine effective WD. MLM requires a constant
+    # schedule to agree with the optimizer value, so lower the effective value.
+    if overrides.get("scheduler.weight_decay_incr_style", "constant") == "constant":
+        start = overrides.get("scheduler.start_weight_decay")
+        end = overrides.get("scheduler.end_weight_decay")
+        if start is not None or end is not None:
+            if start is None or end is None or start != end:
+                raise ValueError("Constant WD translation requires equal, explicit start/end_weight_decay bounds.")
+            if not isinstance(start, (int, float)) or not math.isfinite(start) or start < 0:
+                raise ValueError("Constant weight decay must be finite and nonnegative.")
+            previous = overrides.get("optimizer.weight_decay")
+            overrides["optimizer.weight_decay"] = start
+            if previous != start:
+                result.add_note(
+                    f"Normalized optimizer.weight_decay from {previous} to the effective constant scheduler WD {start}."
+                )
 
     # --- Preamble: always-required MLM flags that have no Bridge equivalent ----
     # Bridge always uses Megatron-Core models and TransformerEngine; MLM needs
