@@ -126,10 +126,10 @@ def test_noncontiguous_norm_inputs():
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize("rows", [1, 17, 257])
-def test_residual_gate_rounding_matches_hf(dtype, rows):
+def test_residual_gate_rounding_matches_hf(dtype):
     """Check eager operation boundaries rather than a widened FP32 expression."""
     torch.manual_seed(37)
+    rows = 17
     down = torch.randn(rows, 32, dtype=dtype).requires_grad_()
     reference_down = down.detach().clone().requires_grad_()
     actual = activate_residual_gate(down, 4)

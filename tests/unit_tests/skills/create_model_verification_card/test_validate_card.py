@@ -157,6 +157,8 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("qwen3.6-35b-a3b", "peft", "H100"): (4096, 32, 16),
     ("qwen3.6-35b-a3b", "peft", "GB200"): (4096, 32, 8),
     ("qwen3.6-35b-a3b", "peft", "GB300"): (4096, 32, 8),
+    ("qwen3.8-flash-next", "sft", "GB200"): (4096, 16, 64),
+    ("qwen3.8-flash-next-text-only", "pretrain", "GB200"): (4096, 32, 32),
     ("qwen3.8-27b", "pretrain", "GB200"): (4096, 32, 16),
     ("qwen3.8-27b", "sft", "GB200"): (4096, 32, 16),
     ("qwen3.8-27b", "sft", "H100"): (4096, 32, 16),

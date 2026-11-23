@@ -96,28 +96,6 @@ def full_hf_config():
     )
 
 
-@pytest.mark.parametrize("top_level_tied", [False, True])
-def test_full_vlm_uses_parent_tie_setting_and_multimodal_config(full_hf_config, top_level_tied):
-    full_hf_config.tie_word_embeddings = top_level_tied
-    full_hf_config.text_config.tie_word_embeddings = not top_level_tied
-    config = Qwen4ExpBridge().hf_config_to_model_config(full_hf_config)
-
-    assert isinstance(config, Qwen4ExpVLModelConfig)
-    assert not config.hf_model_text_only
-    assert config.share_embeddings_and_output_weights is top_level_tied
-    assert config.vision_config["depth"] == 2
-    assert config.mrope_section == [11, 11, 10]
-    config.finalize()
-    assert config.qwen4_mrope
-    assert not config.apply_rope_fusion
-    assert not config.scatter_embedding_sequence_parallel
-    restored = Qwen4ExpVLModelConfig.from_dict(config.as_dict())
-    assert type(restored) is Qwen4ExpVLModelConfig
-    assert restored.vision_config == config.vision_config
-    assert not restored.hf_model_text_only
-    assert restored.get_builder_cls() is config.get_builder_cls()
-
-
 def test_text_projection_is_lazy_filters_vision_and_preserves_export_namespace(full_hf_config, tmp_path, monkeypatch):
     tensors = {
         "model.language_model.embed_tokens.weight": torch.arange(12.0).reshape(3, 4),
@@ -239,7 +217,10 @@ def test_qsa_mrope_uses_each_documents_actual_block_start_frequencies(packed):
 
 
 @pytest.mark.parametrize("text_only", [False, True])
-def test_public_auto_bridge_flag_selects_shared_language_or_vlm_builder(full_hf_config, tmp_path, text_only):
+@pytest.mark.parametrize("tied", [False, True])
+def test_public_auto_bridge_selects_and_serializes_model_config(full_hf_config, tmp_path, text_only, tied):
+    full_hf_config.tie_word_embeddings = tied
+    full_hf_config.text_config.tie_word_embeddings = not tied
     config_dict = full_hf_config.to_dict()
     config_dict["model_type"] = "qwen4_exp"
     config_dict["text_config"]["model_type"] = "qwen4_exp_text"
@@ -260,6 +241,18 @@ def test_public_auto_bridge_flag_selects_shared_language_or_vlm_builder(full_hf_
     assert type(config) is expected_config
     assert config.get_builder_cls() is expected_builder
     assert config.hf_model_text_only is text_only
+    assert config.share_embeddings_and_output_weights is tied
+    config.finalize()
+    restored = expected_config.from_dict(config.as_dict())
+    assert restored.hf_model_text_only is text_only
+    assert restored.get_builder_cls() is expected_builder
+    assert restored.share_embeddings_and_output_weights is tied
+    if not text_only:
+        assert config.vision_config["depth"] == 2
+        assert restored.vision_config == config.vision_config
+        assert config.mrope_section == [11, 11, 10]
+        assert config.qwen4_mrope and not config.apply_rope_fusion
+        assert not config.scatter_embedding_sequence_parallel
     keys = set(bridge.hf_pretrained.state.source.get_all_keys())
     assert "lm_head.weight" in keys
     assert ("model.visual.pos_embed.weight" in keys) is not text_only

@@ -286,38 +286,12 @@ class TestQwen4ExpMappings:
 
 
 class TestPLEShardLoading:
-    @pytest.mark.parametrize("tp_size", [1, 2, 4, 8])
-    def test_local_rows_cover_rank_range(self, tp_size):
-        num_shards, shard_rows, dim = 16, 6, 3
-        table = torch.arange(num_shards * shard_rows * dim, dtype=torch.float32).view(-1, dim)
-        loaded = []
-
-        def load_shard(i):
-            loaded.append(i)
-            return table[i * shard_rows : (i + 1) * shard_rows]
-
-        rows_per_rank = table.shape[0] // tp_size
-        for rank in range(tp_size):
-            loaded.clear()
-            rows = ple_local_rows_from_shards(load_shard, num_shards, table.shape[0], shard_rows, rank, tp_size)
-            torch.testing.assert_close(rows, table[rank * rows_per_rank : (rank + 1) * rows_per_rank])
-            # Only the overlapping shards are read.
-            assert len(loaded) <= -(-rows_per_rank // shard_rows) + 1
-
     def test_rejects_indivisible_tables(self):
         with pytest.raises(ValueError):
             ple_local_rows_from_shards(lambda i: torch.zeros(5, 2), 3, 15, 5, 0, 2)
 
-    def test_export_resplits_shards(self):
-        mapping = PLENGramEmbeddingMapping("x.weight", "hf.shard_{}.weight", num_shards=4)
-        mapping.broadcast_from_pp_rank = lambda t, cache_key=None: t
-        full = torch.arange(24.0).view(12, 2)
-        out = mapping.megatron_to_hf(full, None)
-        assert list(out) == [f"hf.shard_{i}.weight" for i in range(4)]
-        torch.testing.assert_close(torch.cat(list(out.values()), dim=0), full)
-
-    @pytest.mark.parametrize("tp_size,num_shards", [(2, 4), (4, 4), (4, 6), (3, 5)])
-    def test_export_streams_one_shard_at_a_time_across_tp(self, monkeypatch, tp_size, num_shards):
+    @pytest.mark.parametrize("tp_size,num_shards", [(1, 4), (2, 4), (4, 6), (3, 5)])
+    def test_tp_shard_import_and_lazy_export(self, monkeypatch, tp_size, num_shards):
         """Each shard is assembled from the ranks' row slices (one collective per shard)."""
         dim = 3
         rows_per_rank = 12
@@ -339,6 +313,17 @@ class TestPLEShardLoading:
                 },
             )
             mappings.append(rank_cls("x.weight", "hf.shard_{}.weight", num_shards=num_shards))
+            loaded = []
+
+            def load_shard(index):
+                loaded.append(index)
+                return full[index * shard_rows : (index + 1) * shard_rows]
+
+            rows = ple_local_rows_from_shards(load_shard, num_shards, len(full), shard_rows, rank, tp_size)
+            torch.testing.assert_close(rows, full[rank * rows_per_rank : (rank + 1) * rows_per_rank])
+            assert loaded == list(
+                range(rank * rows_per_rank // shard_rows, ((rank + 1) * rows_per_rank - 1) // shard_rows + 1)
+            )
         contributions = []
         monkeypatch.setattr(torch.distributed, "all_reduce", lambda t, group=None: contributions.append(t.clone()))
 
@@ -346,9 +331,9 @@ class TestPLEShardLoading:
             contributions.clear()
             for rank, m in enumerate(mappings):
                 local = full[rank * rows_per_rank : (rank + 1) * rows_per_rank]
-                m.gather_shard(local, i)
-            assert len(contributions) == tp_size
-            shard = torch.stack(contributions).sum(0)
+                gathered = m.gather_shard(local, i)
+            assert len(contributions) == (tp_size if tp_size > 1 else 0)
+            shard = torch.stack(contributions).sum(0) if contributions else gathered
             torch.testing.assert_close(shard, full[i * shard_rows : (i + 1) * shard_rows])
 
         # The export mapping is lazy: building and listing it gathers nothing.
