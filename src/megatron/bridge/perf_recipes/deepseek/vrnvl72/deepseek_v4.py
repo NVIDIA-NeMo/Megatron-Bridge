@@ -89,8 +89,8 @@ def deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
 
     Preserves the GB300 benchmark and HybridEP. Allocate four NVLink domains
     with 64 ranks in each domain. Requires MCore support for mHC recompute
-    with graphs and activation offload. Rubin MXFP8 runtime validation
-    is pending.
+    with graphs and activation offload. Fused grouped MLP backward allows
+    nondeterministic router-probability gradients on Rubin.
     """
     cfg = _deepseek_v4_pro_pretrain_256gpu_gb300_common()
     cfg.env_vars = {
@@ -110,6 +110,7 @@ def deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # Rubin's fused clamped GLU backward has no deterministic dprob kernel.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
     return cfg
