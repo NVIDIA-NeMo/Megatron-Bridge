@@ -42,6 +42,7 @@ from megatron.bridge.training.config import (
     _validate_mixed_precision_consistency,
 )
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
+from megatron.bridge.training.gtp import is_gtp_remat_active
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.utils.common_utils import get_world_size_safe
 from megatron.bridge.utils.cuda_graph import validate_cuda_graph_configuration
@@ -117,6 +118,10 @@ class TrainingRecipe:
 
 SUPPORTED_BATCH_LAYOUTS = ("thd", "bshd")
 SUPPORTED_MTP_TARGET_SCOPES = ("primary", "all_valid")
+GTP_NOT_SUPPORTED = (
+    "GTP weight rematerialization is not supported (tensor_parallel_num_weight_shards and "
+    "expert_tensor_parallel_num_weight_shards must equal the tensor-parallel sizes)"
+)
 
 
 def _model_parallel_sizes(recipe: TrainingRecipe) -> tuple[int, int]:
@@ -178,6 +183,10 @@ def check_supported(recipe: TrainingRecipe) -> None:
         or getattr(recipe.ddp, "use_megatron_fsdp", False)
     ):
         problems.append("FSDP wrappers are not supported; use DDP with the distributed optimizer")
+    # TODO(gtp): support GTP weight rematerialization. It has never been run through the engine, and
+    # its setup is process-global while the engine builds a policy and a frozen model in one process.
+    if is_gtp_remat_active(recipe.model):
+        problems.append(GTP_NOT_SUPPORTED)
     if getattr(recipe.model, "vocab_size", None) is None:
         problems.append("model.vocab_size must be set (the engine does not build a tokenizer)")
     if getattr(recipe.model, "seq_length", None) is None:
@@ -238,6 +247,9 @@ def finalize_recipe(recipe: TrainingRecipe) -> None:
         recipe.optimizer.finalize()
     validate_cuda_graph_configuration(model)
     model.finalize()
+    # finalize derives the GTP sizes from the weight-shard counts, which a recipe may set instead.
+    if is_gtp_remat_active(model):
+        raise ValueError(f"Recipe is not supported by TrainingEngine:\n  - {GTP_NOT_SUPPORTED}")
     if recipe.rng.te_rng_tracker or model.use_te_rng_tracker:
         model.use_te_rng_tracker = recipe.rng.te_rng_tracker = True
 

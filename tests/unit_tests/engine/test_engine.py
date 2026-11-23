@@ -107,6 +107,8 @@ def test_check_supported_accepts_baseline_shape():
         (lambda r: setattr(r.dist, "lazy_mpu_init", True), "lazy_mpu_init"),
         (lambda r: setattr(r.dist, "use_torch_fsdp2", True), "FSDP"),
         (lambda r: setattr(r.ddp, "use_megatron_fsdp", True), "FSDP"),
+        (lambda r: setattr(r.model, "gtp_weight_remat_size", 2), "GTP"),
+        (lambda r: setattr(r.model, "expert_gtp_weight_remat_size", 2), "GTP"),
         (lambda r: setattr(r.model, "vocab_size", None), "vocab_size"),
         (lambda r: setattr(r.model, "seq_length", None), "seq_length"),
         (lambda r: setattr(r, "batch_layout", "sbhd"), "batch_layout"),
