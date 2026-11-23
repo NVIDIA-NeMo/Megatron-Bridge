@@ -28,6 +28,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model import Qwen4ExpHybridModel
 from megatron.bridge.models.qwen.modeling_qwen4_exp.model_builder import Qwen4ExpModelBuilder
 from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpModelConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
@@ -48,6 +49,22 @@ class Qwen4ExpVLModelConfig(Qwen4ExpModelConfig):
     vision_start_token_id: int
     vision_end_token_id: int
     scatter_embedding_sequence_parallel: bool = False
+
+    def estimate_vision_flops(
+        self,
+        *,
+        patch_sum: int,
+        patch_squared_sum: int,
+        merged_token_sum: int,
+        include_backward: bool = True,
+    ) -> float:
+        """Estimate vision transformer and merger work from per-image patch sums."""
+        v = self.vision_config
+        h = v["hidden_size"]
+        forward = v["depth"] * ((8 * h**2 + 4 * h * v["intermediate_size"]) * patch_sum + 4 * h * patch_squared_sum)
+        merged_width = h * v["spatial_merge_size"] ** 2
+        forward += 2 * merged_token_sum * merged_width * (merged_width + v["out_hidden_size"])
+        return forward * (3 if include_backward else 1)
 
     def finalize(self) -> None:
         """Validate the supported Qwen4 vision architecture before allocating it."""
@@ -116,6 +133,29 @@ class Qwen4ExpVLModel(MegatronModule):
             pre_process=True,
             post_process=True,
             pg_collection=pg_collection,
+        )
+
+    @classmethod
+    def estimate_flops(
+        cls,
+        config: Qwen4ExpVLModelConfig,
+        *,
+        total_real_tokens_in_batch: float,
+        seqlen_squared_sum_in_batch: float,
+        patch_sum: int = 0,
+        patch_squared_sum: int = 0,
+        merged_token_sum: int = 0,
+    ) -> float:
+        """Compose language and vision forward estimates from additive batch stats."""
+        return Qwen4ExpHybridModel.estimate_flops(
+            config,
+            total_real_tokens_in_batch=total_real_tokens_in_batch,
+            seqlen_squared_sum_in_batch=seqlen_squared_sum_in_batch,
+        ) + config.estimate_vision_flops(
+            patch_sum=patch_sum,
+            patch_squared_sum=patch_squared_sum,
+            merged_token_sum=merged_token_sum,
+            include_backward=False,
         )
 
     def set_input_tensor(self, input_tensor: torch.Tensor | list[torch.Tensor] | None) -> None:

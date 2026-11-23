@@ -109,24 +109,23 @@ complete supervised conversations from the pinned ECD portion of
 **nvidia/Nemotron-Image-Training-v3**, with images from
 **ChartFoundation/ECD-10k-Images**:
 
-```bash
-uv run python scripts/data/prepare_nemotron_image_v3_subset.py \
-  --checkpoint work/cache/qwen3.8-flash-next \
-  --source-dir work/data/nemotron-downloads \
-  --output-dir work/data/nemotron-image-v3-ecd
-```
+The measured subset was prepared with the
+[pinned subset preparer](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/c7ee2cf6eaf977b853ef0b65e127a60a11fde81f/scripts/data/prepare_nemotron_image_v3_subset.py).
+It remains available at that verification revision. Reuse an equivalent prepared
+Energon dataset at `work/data/nemotron-image-v3-ecd`; general Nemotron conversion
+is provided by `tutorials/data/energon/prepare_nemotron_image_v3.py`.
 
 The `work/cache/qwen3.8-flash-next` alias must contain the complete local HF
 checkpoint and processor assets from the public model and immutable revision
 above. The checkpoint warm-start option takes an existing directory; it does
-not resolve a Hub model ID. The preparer uses those pinned processor assets and
+not resolve a Hub model ID. The historical preparer uses those pinned processor assets and
 writes 32 shards plus a selection/asset manifest. It skips overlength
 conversations whole, without truncation. There is no validation split. An
 existing subset with matching preprocessing and manifest can be reused.
 
 ```bash
 ./scripts/training/train.sh --nodes 16 --gpus-per-node 4 \
-  --recipe qwen38_flash_next_sft_64gpu_gb200_bf16_config --mode sft \
+  --recipe qwen38_flash_next_sft_64gpu_gb200_bf16_config --mode sft --step-func qwen3_vl_step \
   --max_steps 100 --pretrained_checkpoint work/cache/qwen3.8-flash-next \
   dataset.path=work/data/nemotron-image-v3-ecd \
   logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/sft/resolved-config.yaml \
@@ -179,3 +178,15 @@ The historical 5,349-step image-SFT run remains separate valid evidence: loss
 was captured with the earlier runtime and configuration; it did not capture
 trustworthy TFLOP/s. “Unoptimized” qualifies recipe performance, not that loss
 curve. Repeated-subset loss does not establish held-out quality.
+
+Current launcher usage sets `--step-func qwen3_vl_step` explicitly for SFT.
+Cluster staging belongs to the caller's allocation setup; this model PR does
+not change the shared conversion or training scripts. The card retains the
+exact commands and source commits of the completed verification runs.
+
+FLOPs accounting now lives in the model's `estimate_flops` functions, shared
+between LM and VLM and called by training accounting. Standard blocks now use
+the pinned Core estimators, including its causal-attention convention. QSA
+still uses a dense surrogate and GDN recurrence remains approximate. Historical
+TFLOP/s figures retain their original estimator and source revisions; they have
+not been recomputed with these new functions.

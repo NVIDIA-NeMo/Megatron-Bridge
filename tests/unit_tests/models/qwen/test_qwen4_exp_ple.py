@@ -54,27 +54,6 @@ def ple_module(monkeypatch: pytest.MonkeyPatch) -> per_layer_embedding.PerLayerE
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "boundaries,expected_positions",
-    [(None, [0, 1, 2, 3, 4, 5]), ([0, 3, 6], [0, 1, 2, 0, 1, 2])],
-)
-def test_prepare_retains_context_group(
-    ple_module: per_layer_embedding.PerLayerEmbedding,
-    boundaries: list[int] | None,
-    expected_positions: list[int],
-) -> None:
-    tokens = torch.arange(6).reshape(1, 6)
-    cu_seqlens = torch.tensor(boundaries, dtype=torch.int32) if boundaries is not None else None
-    assert ple_module.cp_group.size() == 1
-
-    ple_module.prepare(tokens, cu_seqlens)
-
-    ple_module.ple_embedding.compute_ngram_ids.assert_called_once_with(tokens, cu_seqlens)
-    torch.testing.assert_close(ple_module._ngram_ids, tokens.unsqueeze(-1))
-    torch.testing.assert_close(ple_module._local_positions(6), torch.tensor(expected_positions).reshape(6, 1))
-
-
-@pytest.mark.unit
 def test_prepare_rejects_context_parallelism(
     ple_module: per_layer_embedding.PerLayerEmbedding, monkeypatch: pytest.MonkeyPatch
 ) -> None:

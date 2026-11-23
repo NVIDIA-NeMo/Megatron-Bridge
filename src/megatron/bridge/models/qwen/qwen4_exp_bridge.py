@@ -64,7 +64,12 @@ from megatron.bridge.models.qwen.qwen35_bridge import _moe_routed_expert_mapping
 from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import _get_vision_mappings
 
 
-_LAYER_TYPE_TO_LINEAR = {"linear_attention": 1, "full_attention": 0, "qwen_sparse_attention": 0}
+_LAYER_TYPE_TO_LINEAR = {
+    "linear_attention": 1,
+    "full_attention": 0,
+    "qwen_sparse_attention": 0,
+    "indexed_attention": 0,
+}
 _PLE_SHARD_RE = re.compile(r"\.ple\.ple_embedding\.ngram_embedding\.shard_(\d+)\.weight$")
 
 
@@ -72,7 +77,7 @@ def linear_attention_pattern_from_hf(text_config: PretrainedConfig) -> list[int]
     """Per-layer pattern (1 = Gated DeltaNet, 0 = (sparse) softmax attention).
 
     ``Qwen4ExpTextConfig.__post_init__`` rewrites the checkpoint's ``full_attention`` entries to
-    ``qwen_sparse_attention``, which the generic Qwen3-Next helper does not know about.
+    ``qwen_sparse_attention`` (older Transformers) or ``indexed_attention`` (current Transformers).
     """
     layer_types = getattr(text_config, "layer_types", None)
     if isinstance(layer_types, list) and layer_types:

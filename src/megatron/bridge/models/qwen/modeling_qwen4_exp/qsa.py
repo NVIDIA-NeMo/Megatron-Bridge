@@ -165,6 +165,23 @@ class QSAIndexer(MegatronModule):
     key of the sequence.
     """
 
+    @classmethod
+    def estimate_flops(
+        cls,
+        config: TransformerConfig,
+        *,
+        total_real_tokens_in_batch: float,
+        seqlen_squared_sum_in_batch: float,
+    ) -> float:
+        """Count detached Q/K projections, excluding selection score work."""
+        return (
+            2
+            * total_real_tokens_in_batch
+            * config.hidden_size
+            * (config.qsa_indexer_n_heads + config.qsa_indexer_kv_heads)
+            * config.qsa_indexer_head_dim
+        )
+
     def __init__(
         self,
         config: TransformerConfig,
@@ -602,6 +619,21 @@ class QwenSparseSelfAttention(Qwen3VLSelfAttention):
     :class:`SelfAttention` forward (QKV projection, QK-norm, RoPE, core attention, output gate,
     output projection) proceeds unchanged.
     """
+
+    @classmethod
+    def estimate_flops(
+        cls,
+        config: TransformerConfig,
+        *,
+        total_real_tokens_in_batch: float,
+        seqlen_squared_sum_in_batch: float,
+    ) -> float:
+        """Use Core's causal dense surrogate; detached indexer work is separate."""
+        return SelfAttention.estimate_flops(
+            config,
+            total_real_tokens_in_batch=total_real_tokens_in_batch,
+            seqlen_squared_sum_in_batch=seqlen_squared_sum_in_batch,
+        )
 
     def __init__(
         self,

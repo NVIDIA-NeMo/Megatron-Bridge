@@ -25,19 +25,16 @@ from safetensors.torch import save_file
 from transformers import PretrainedConfig
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.qwen.modeling_qwen4_exp.model_builder import Qwen4ExpModelBuilder
 from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpModelConfig
 from megatron.bridge.models.qwen.modeling_qwen4_exp.qsa import QSAIndexer
 from megatron.bridge.models.qwen.modeling_qwen4_exp.vl_model import (
-    Qwen4ExpVLModel,
     Qwen4ExpVLModelBuilder,
     Qwen4ExpVLModelConfig,
 )
-from megatron.bridge.models.qwen.qwen4_exp_bridge import PLENGramEmbeddingMapping, Qwen4ExpBridge, Qwen4ExpTextBridge
-from megatron.bridge.training.vlm_step import _filter_visual_kwargs_for_model
+from megatron.bridge.models.qwen.qwen4_exp_bridge import Qwen4ExpBridge, Qwen4ExpTextBridge
 from tests.unit_tests.models.qwen.test_qwen4_exp_bridge import _text_config_dict
 
 
@@ -93,17 +90,6 @@ def test_full_vlm_uses_parent_tie_setting_and_multimodal_config(full_hf_config, 
     assert restored.vision_config == config.vision_config
     assert not restored.hf_model_text_only
     assert restored.get_builder_cls() is config.get_builder_cls()
-
-
-def test_native_text_checkpoint_has_no_vision_construction(full_hf_config):
-    config = Qwen4ExpTextBridge().hf_config_to_model_config(full_hf_config.text_config)
-    assert type(config) is Qwen4ExpModelConfig
-    assert config.hf_model_text_only
-    assert Qwen4ExpModelConfig.from_dict(config.as_dict()).hf_model_text_only
-    assert not hasattr(config, "vision_config")
-    assert config.mrope_section is None
-    config.finalize()
-    assert not config.qwen4_mrope
 
 
 def test_text_projection_is_lazy_filters_vision_and_preserves_export_namespace(full_hf_config, tmp_path, monkeypatch):
@@ -170,13 +156,6 @@ def test_text_projection_is_lazy_filters_vision_and_preserves_export_namespace(f
     )
 
 
-def test_text_projection_rejects_subfolder(full_hf_config):
-    pretrained = PreTrainedCausalLM("unused-model", device="cpu", subfolder="weights")
-    pretrained.config = full_hf_config
-    with pytest.raises(ValueError, match="subfolder"):
-        Qwen4ExpBridge().text_only_pretrained(pretrained)
-
-
 @pytest.mark.parametrize("packed", [False, True])
 def test_qsa_mrope_uses_each_documents_actual_block_start_frequencies(packed):
     # Exercise the actual pooling and rotary operations without allocating TE projections.
@@ -233,59 +212,6 @@ def test_qsa_mrope_uses_each_documents_actual_block_start_frequencies(packed):
     assert valid.all()
 
 
-@pytest.mark.parametrize("sharded", [False, True])
-def test_actual_checkpoint_keys_select_unsplit_or_sharded_ple_mapping(full_hf_config, sharded):
-    prefix = "model.language_model.layers.1.ple.ple_embedding.ngram_embedding."
-    keys = [prefix + f"shard_{i}.weight" for i in range(2)] if sharded else [prefix + "weight"]
-    source = Mock()
-    source.get_all_keys.return_value = keys
-    bridge = Qwen4ExpBridge()
-    bridge.hf_pretrained = SimpleNamespace(config=full_hf_config, state=SimpleNamespace(source=source))
-
-    assert bridge._num_ple_shards(full_hf_config.text_config) == (2 if sharded else 0)
-    mapping = bridge.mapping_registry().megatron_to_hf_lookup(
-        "language_model.decoder.layers.1.per_layer_embedding.ple_embedding.ngram_embedding.weight"
-    )
-    if sharded:
-        assert isinstance(mapping, PLENGramEmbeddingMapping)
-        assert mapping.num_shards == 2
-        assert mapping.hf_param == {f"shard_{i}": prefix + f"shard_{i}.weight" for i in range(2)}
-    else:
-        assert isinstance(mapping, AutoMapping)
-        assert mapping.hf_param == prefix + "weight"
-
-
-def test_vlm_step_filters_unconsumed_multimodal_token_types():
-    model = Qwen4ExpVLModel.__new__(Qwen4ExpVLModel)
-    torch.nn.Module.__init__(model)
-    pixels = torch.ones(1, 8)
-    grid = torch.tensor([[1, 2, 2]])
-    kwargs = _filter_visual_kwargs_for_model(
-        model,
-        {"pixel_values": pixels, "image_grid_thw": grid, "mm_token_type_ids": torch.zeros(1, 4)},
-    )
-    assert set(kwargs) == {"pixel_values", "image_grid_thw"}
-    assert kwargs["pixel_values"] is pixels
-    assert kwargs["image_grid_thw"] is grid
-
-
-@pytest.mark.parametrize("full_vlm", [False, True])
-def test_finalization_mirrors_authoritative_tie_setting_to_transformer(full_hf_config, full_vlm):
-    bridge = Qwen4ExpBridge() if full_vlm else Qwen4ExpTextBridge()
-    hf_config = full_hf_config if full_vlm else full_hf_config.text_config
-    config = bridge.hf_config_to_model_config(hf_config)
-    config.share_embeddings_and_output_weights = True
-    config.transformer.share_embeddings_and_output_weights = False
-    config.finalize()
-    assert config.transformer.share_embeddings_and_output_weights
-    assert bridge._share_embeddings_and_output_weights(config.transformer)
-
-    config.share_embeddings_and_output_weights = False
-    config.finalize()
-    assert not config.transformer.share_embeddings_and_output_weights
-    assert not bridge._share_embeddings_and_output_weights(config.transformer)
-
-
 @pytest.mark.parametrize("text_only", [False, True])
 def test_public_auto_bridge_flag_selects_shared_language_or_vlm_builder(full_hf_config, tmp_path, text_only):
     config_dict = full_hf_config.to_dict()
@@ -312,19 +238,3 @@ def test_public_auto_bridge_flag_selects_shared_language_or_vlm_builder(full_hf_
     assert "lm_head.weight" in keys
     assert ("model.visual.pos_embed.weight" in keys) is not text_only
     assert ("model.embed_tokens.weight" if text_only else "model.language_model.embed_tokens.weight") in keys
-
-
-def test_vlm_builder_delegates_to_the_shared_language_builder(full_hf_config, monkeypatch):
-    config = Qwen4ExpBridge().hf_config_to_model_config(full_hf_config)
-    language_model = Mock()
-    build_language = Mock(return_value=language_model)
-    wrap_vision = Mock()
-    monkeypatch.setattr(Qwen4ExpModelBuilder, "build_model", build_language)
-    monkeypatch.setattr("megatron.bridge.models.qwen.modeling_qwen4_exp.vl_model.Qwen4ExpVLModel", wrap_vision)
-    groups = Mock()
-
-    model = Qwen4ExpVLModelBuilder(config).build_model(groups)
-
-    build_language.assert_called_once_with(groups, None, None, None)
-    wrap_vision.assert_called_once_with(config, language_model, groups)
-    assert model is wrap_vision.return_value

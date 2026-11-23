@@ -527,11 +527,7 @@ def _get_vision_config(cfg: ConfigContainer):
     if vision_config is None:
         thinker_config = getattr(cfg.model, "thinker_config", None)
         vision_config = getattr(thinker_config, "vision_config", None)
-    # Qwen4-Exp serializes its vision settings as a mapping rather than a
-    # Transformers config. Normalize only this accounting view, not the model.
-    if isinstance(vision_config, Mapping):
-        return SimpleNamespace(**vision_config)
-    return vision_config
+    return SimpleNamespace(**vision_config) if isinstance(vision_config, Mapping) else vision_config
 
 
 def vit_flops_from_patch_stats(
@@ -542,6 +538,9 @@ def vit_flops_from_patch_stats(
     merged_token_sum: int | torch.Tensor,
 ) -> int | torch.Tensor:
     """Calculate ViT FLOPS from additive per-attention-sequence statistics."""
+    estimator = getattr(cfg.model, "estimate_vision_flops", None)
+    if estimator is not None:
+        return estimator(patch_sum=patch_sum, patch_squared_sum=patch_squared_sum, merged_token_sum=merged_token_sum)
     vision_config = _get_vision_config(cfg)
     if vision_config is None:
         return 0
@@ -722,6 +721,19 @@ def num_floating_point_operations(
     """
     peft = getattr(cfg, "peft", None)
     is_lora = isinstance(peft, LoRA)
+    estimator = getattr(cfg.model, "estimate_flops", None)
+    if estimator is not None and peft is None:
+        language_flops = estimator(
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+        )
+        # Legacy callers only know aggregate patches; retain their equal-image approximation.
+        vision_flops = 0
+        if num_vision_patches > 0:
+            patches_per_image = num_vision_patches / batch_size if batch_size > 0 else num_vision_patches
+            vision_flops = vit_flops(cfg, batch_size, patches_per_image)
+        return language_flops + vision_flops
     runtime_flops_estimator = getattr(cfg.model, "_get_num_floating_point_operations_with_runtime_stats", None)
     if runtime_flops_estimator is not None and not is_lora:
         return runtime_flops_estimator(
@@ -1713,9 +1725,6 @@ def num_floating_point_operations(
     # and its MLP. The standard Transformer path already accounts for that full
     # layer plus GQA, output gates, sliding attention, logits, and vision work.
     if getattr(cfg.model, "hybrid_attention_layers_include_mlp", False):
-        additional_flops = getattr(cfg.model, "_get_additional_transformer_flops", None)
-        if additional_flops is not None and peft is None:
-            return transformer_flops() + additional_flops(seqlen_sum=seqlen_sum)
         return transformer_flops()
 
     # GLM's split Hybrid graph has the same arithmetic as its paired DSA/MoE

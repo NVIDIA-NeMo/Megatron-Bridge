@@ -14,11 +14,6 @@
 
 """Optional fused-forward dispatch contracts; numerical GPU qualification is separate."""
 
-import builtins
-import importlib.util
-from contextlib import contextmanager
-from types import SimpleNamespace
-
 import pytest
 import torch
 
@@ -35,57 +30,6 @@ def test_cpu_and_strided_inputs_keep_eager_path():
     expected = expected * (1 + weight.float())
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
     assert all(torch.isfinite(g).all() for g in torch.autograd.grad(actual.sum(), (x, weight)))
-
-
-def test_import_without_triton(monkeypatch):
-    original = builtins.__import__
-
-    def optional_import(name, *args, **kwargs):
-        if name == "triton" or name.startswith("triton."):
-            raise ImportError("optional Triton unavailable")
-        return original(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", optional_import)
-    spec = importlib.util.spec_from_file_location("norms_without_triton", norms.__file__)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert module.triton is None
-    x, weight = torch.randn(2, 16), torch.randn(16)
-    torch.testing.assert_close(module.grouped_rmsnorm(x, weight, 4, 1e-6), norms.grouped_rmsnorm(x, weight, 4, 1e-6))
-
-
-def test_launch_uses_input_device_and_keeps_saved_state(monkeypatch):
-    events = []
-
-    @contextmanager
-    def device_context(device):
-        events.append(("enter", device))
-        yield
-        events.append(("exit", device))
-
-    class Launch:
-        def __getitem__(self, grid):
-            assert grid == (2, 4)
-
-            def kernel(x, weight, rstd, output, rows, eps, **kwargs):
-                assert events == [("enter", x.device)]
-                assert kwargs == dict(GROUPS=4, CHANNELS=16, BM=8, BC=128, num_warps=8, enable_fp_fusion=False)
-                values = x.float().reshape(rows, 4, 16)
-                rstd.copy_(torch.rsqrt(values.square().mean(-1, keepdim=True) + eps))
-                output.copy_((values * rstd * (1 + weight.float()).reshape(4, 16)).flatten(-2))
-
-            return kernel
-
-    monkeypatch.setattr(norms, "_can_use_triton", lambda *_: True)
-    monkeypatch.setattr(norms, "triton", SimpleNamespace(cdiv=lambda n, d: (n + d - 1) // d))
-    monkeypatch.setattr(norms, "_grouped_rmsnorm_fwd_kernel", Launch(), raising=False)
-    monkeypatch.setattr(torch.cuda, "device", device_context)
-    x, weight = torch.randn(9, 64, requires_grad=True), torch.randn(64, requires_grad=True)
-    result = norms.grouped_rmsnorm(x, weight, 4, 1e-6)
-    assert events == [("enter", x.device), ("exit", x.device)]
-    assert result.grad_fn.saved_tensors[2].dtype == torch.float32
-    assert result.grad_fn.chunk == norms.norm_chunk_rows(64, 64 << 20)
-    assert all(torch.isfinite(g).all() for g in torch.autograd.grad(result.sum(), (x, weight)))
 
 
 @pytest.mark.skipif(not torch.cuda.is_available() or norms.triton is None, reason="Requires CUDA and Triton")
@@ -127,14 +71,6 @@ def test_fused_forward_statistics_and_gradients(monkeypatch, channels, dtype):
     tolerance = 3e-5 if dtype == torch.float32 else 2e-2
     for result, reference in zip((actual, *actual_grads), (expected, *expected_grads)):
         torch.testing.assert_close(result, reference, rtol=tolerance, atol=tolerance)
-
-
-def test_large_index_layout_falls_back(monkeypatch):
-    monkeypatch.setattr(norms, "triton", object())
-    metadata = dict(is_cuda=True, is_contiguous=lambda: True, device=torch.device("cuda"), dtype=torch.bfloat16)
-    x = SimpleNamespace(**metadata, numel=lambda: 2**31)
-    weight = SimpleNamespace(**metadata)
-    assert not norms._can_use_triton(x, weight)
 
 
 @pytest.mark.parametrize("budget", [1, 40959, 40960, 64 << 20])

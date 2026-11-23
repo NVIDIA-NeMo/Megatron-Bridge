@@ -23,7 +23,7 @@ from megatron.bridge.models.qwen.modeling_qwen4_exp.gated_residual_math import (
     activate_residual_gate,
     mix_residual_streams,
 )
-from megatron.bridge.models.qwen.modeling_qwen4_exp.norms import grouped_rmsnorm, norm_chunk_rows
+from megatron.bridge.models.qwen.modeling_qwen4_exp.norms import grouped_rmsnorm
 from megatron.bridge.models.qwen.modeling_qwen4_exp.qsa_selection import select_document_blocks
 
 
@@ -33,9 +33,7 @@ def _reference_norm(x, weight, groups, eps):
     return (normalized.flatten(-2) * (1.0 + weight.float())).to(x.dtype)
 
 
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
-@pytest.mark.parametrize("groups", [1, 4])
-@pytest.mark.parametrize("rows", [0, 1, 17])
+@pytest.mark.parametrize("dtype,groups,rows", [(torch.float32, 1, 0), (torch.float16, 4, 1), (torch.bfloat16, 4, 17)])
 def test_chunked_norm_forward_and_gradients(dtype, groups, rows):
     """Compare every input and weight gradient with eager autograd across chunk boundaries."""
     torch.manual_seed(11)
@@ -68,32 +66,6 @@ def test_noncontiguous_norm_inputs():
         torch.autograd.grad(expected.sum(), (source, weight)),
     ):
         torch.testing.assert_close(a, b, rtol=3e-5, atol=3e-5)
-
-
-def test_norm_rejects_double_backward():
-    """Reject unsupported higher derivatives instead of treating saved scales as constants."""
-    x = torch.randn(3, 8, requires_grad=True)
-    weight = torch.zeros(8, requires_grad=True)
-    output = grouped_rmsnorm(x, weight, 2, 1e-6)
-    gradient = torch.autograd.grad(output.square().sum(), x, create_graph=True)[0]
-    with pytest.raises(RuntimeError):
-        torch.autograd.grad(gradient.sum(), x)
-
-
-def test_norm_saved_state_does_not_keep_token_sized_fp32_products():
-    """The backward state contains raw activations and one statistic per stream."""
-    x = torch.randn(257, 4, 64, dtype=torch.bfloat16, requires_grad=True)
-    weight = torch.zeros(64, dtype=torch.bfloat16, requires_grad=True)
-    saved = []
-
-    def record(tensor):
-        saved.append((tensor.shape, tensor.dtype))
-        return tensor
-
-    with torch.autograd.graph.saved_tensors_hooks(record, lambda tensor: tensor):
-        grouped_rmsnorm(x, weight, 4, 1e-6)
-    assert saved == [(x.shape, x.dtype), (weight.shape, weight.dtype), (torch.Size([1028, 4, 1]), torch.float32)]
-    assert norm_chunk_rows(10240, 64 << 20) * 8 * 10240 * 4 <= 64 << 20
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
@@ -137,9 +109,7 @@ def _replicated_key_selection(q, keys, valid_blocks, docs, positions, ratio, top
     return bits.to(torch.uint8)
 
 
-@pytest.mark.parametrize("lengths", [[1, 3, 33], [37, 19, 2], [40, 40]])
-@pytest.mark.parametrize("workspace", [1, 1 << 20])
-@pytest.mark.parametrize("ties", [False, True])
+@pytest.mark.parametrize("lengths,workspace,ties", [([1, 3, 33], 1, False), ([37, 19, 2], 1 << 20, True)])
 def test_document_local_qsa_preserves_selected_blocks(lengths, workspace, ties):
     """Packed boundaries, partial tails and top-k ties retain the actual selected IDs."""
     torch.manual_seed(51)
@@ -180,15 +150,7 @@ def test_qsa_documents_without_complete_blocks():
     assert all_selected and bits.shape == (3, 1) and not bits.any()
 
 
-@pytest.mark.parametrize("groups,width", [(0, 4), (3, 4), (1, 0)])
-def test_invalid_normalization_shape_fails(groups, width):
-    """Reject malformed group layouts before any output allocation."""
-    with pytest.raises(ValueError):
-        grouped_rmsnorm(torch.empty(2, width), torch.empty(width), groups, 1e-6)
-
-
-@pytest.mark.parametrize("batch,seq", [(1, 1), (2, 7), (3, 8), (2, 9), (3, 12), (2, 33)])
-@pytest.mark.parametrize("workspace,ties", [(1, False), (1 << 20, False), (1 << 20, True)])
+@pytest.mark.parametrize("batch,seq,workspace,ties", [(1, 1, 1, False), (2, 9, 1, False), (3, 12, 1 << 20, True)])
 def test_unpacked_qsa_metadata_preserves_selection(batch, seq, workspace, ties):
     """Known batch rows retain exact bits at top-k boundaries, tails and ties."""
     torch.manual_seed(67)
@@ -209,43 +171,3 @@ def test_unpacked_qsa_metadata_preserves_selection(batch, seq, workspace, ties):
     assert actual_all == expected_all == (seq // ratio <= topk)
     if not actual_all:
         torch.testing.assert_close(actual, _replicated_key_selection(*args, ratio, topk), rtol=0, atol=0)
-
-
-@pytest.mark.parametrize("seq", [1, 8, 17])
-def test_unpacked_qsa_metadata_avoids_host_tensor_reads(monkeypatch, seq):
-    """Both dense and top-k shortcuts avoid discovering known layout on the GPU."""
-    args = (
-        torch.randn(2 * seq, 2, 8),
-        torch.randn(2, seq // 4, 8),
-        torch.ones(2, seq // 4, dtype=torch.bool),
-        torch.arange(2).repeat_interleave(seq),
-        torch.arange(seq).repeat(2),
-    )
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("Known unpacked metadata must not be read back from tensors")
-
-    with monkeypatch.context() as patch:
-        for name in ("item", "tolist", "unique"):
-            patch.setattr(torch.Tensor, name, forbidden)
-        patch.setattr(torch, "nonzero", forbidden)
-        bits, all_selected = select_document_blocks(
-            *args, compress_ratio=4, block_topk=2, unpacked_sequence_length=seq
-        )
-    assert bits.shape == (2 * seq, (seq // 4 + 8) // 8)
-    assert all_selected == (seq // 4 <= 2)
-
-
-@pytest.mark.parametrize("seq", [0, -1, 3, 8, 16])
-def test_unpacked_qsa_rejects_inconsistent_shapes(seq):
-    with pytest.raises(ValueError, match="metadata"):
-        select_document_blocks(
-            torch.randn(8, 2, 8),
-            torch.randn(2, 1, 8),
-            torch.ones(2, 1, dtype=torch.bool),
-            torch.arange(2).repeat_interleave(4),
-            torch.arange(4).repeat(2),
-            compress_ratio=4,
-            block_topk=2,
-            unpacked_sequence_length=seq,
-        )

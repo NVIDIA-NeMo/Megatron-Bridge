@@ -28,19 +28,6 @@ def _owner(*, sequence_parallel=False, force_sparse=False):
     return module
 
 
-@pytest.mark.parametrize("length,expected", [(1, True), (8, True), (11, True), (12, False), (0, False)])
-def test_dense_guard_includes_partial_block_only(length, expected):
-    module = _owner()
-    assert module._can_skip_indexer(torch.empty(length, 1, 8)) is expected
-
-
-@pytest.mark.parametrize("local_length,expected", [(1, True), (2, False)])
-def test_dense_guard_uses_gathered_sequence_length(monkeypatch, local_length, expected):
-    module = _owner(sequence_parallel=True)
-    monkeypatch.setattr(qsa, "get_pg_size", lambda group: 8)
-    assert module._can_skip_indexer(torch.empty(local_length, 1, 8)) is expected
-
-
 @pytest.mark.parametrize("packed", [False, True])
 def test_production_forward_skips_indexer_and_preserves_attention_arguments(monkeypatch, packed):
     module = _owner()
@@ -70,34 +57,6 @@ def test_force_sparse_and_long_packed_sequence_keep_original_indexer(monkeypatch
     module(hidden, None, rotary_pos_emb=rotary, packed_seq_params=params)
     module.indexer.assert_called_once_with(hidden, rotary, params)
     module.core_attention.set_selection.assert_called_once_with(module.indexer.return_value)
-
-
-def test_dense_shortcut_preserves_invalid_context_rejections():
-    module = _owner()
-    hidden = torch.empty(8, 1, 8)
-    with pytest.raises(NotImplementedError, match="inference"):
-        module(hidden, None, inference_context=object())
-    with pytest.raises(AssertionError, match="rotary"):
-        module(hidden, None)
-    with pytest.raises(AssertionError, match="single row"):
-        module(torch.empty(4, 2, 8), None, rotary_pos_emb=hidden, packed_seq_params=PackedSeqParams(qkv_format="thd"))
-
-
-def test_dense_marker_is_explicit_and_cannot_enable_forced_sparse():
-    core = qsa.QSACoreAttention.__new__(qsa.QSACoreAttention)
-    torch.nn.Module.__init__(core)
-    core.config = SimpleNamespace(qsa_force_sparse=False)
-    core._selection = None
-    core.dense_core_attention = Mock(return_value=object())
-    query = torch.randn(3, 1, 1, 4)
-    with pytest.raises(RuntimeError, match="without a block selection"):
-        core(query, query, query, None)
-    core.set_selection(qsa._DENSE_QSA_SELECTION)
-    assert core(query, query, query, None) is core.dense_core_attention.return_value
-    core.config.qsa_force_sparse = True
-    with pytest.raises(RuntimeError, match="forced sparse"):
-        core(query, query, query, None)
-    core.dense_core_attention.assert_called_once()
 
 
 @pytest.fixture

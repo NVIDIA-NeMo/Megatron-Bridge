@@ -69,6 +69,19 @@ class GatedResidualHyperConnection(MegatronModule):
     reference checkpoints; the norm statistics run in fp32; gates retain activation-dtype operation boundaries.
     """
 
+    @classmethod
+    def estimate_flops(
+        cls,
+        config: TransformerConfig,
+        *,
+        total_real_tokens_in_batch: float,
+        seqlen_squared_sum_in_batch: float,
+    ) -> float:
+        """Count the read mixer and residual-injection projections (forward only)."""
+        width = config.mhc_num_residual_streams * config.hidden_size
+        weights = 2 * width * config.mhc_gated_residual_rank + width * config.mhc_num_residual_streams
+        return 2 * total_real_tokens_in_batch * weights
+
     def __init__(self, config: TransformerConfig, layer_number: int = 1, use_combine: bool = True):
         super().__init__(config)
         self.config = config
@@ -202,6 +215,18 @@ class GatedResidualOutputMixer(GatedResidualHyperConnection):
     The ``(config, hidden_size, eps)`` signature matches the layer-norm builders used in block
     specs.
     """
+
+    @classmethod
+    def estimate_flops(
+        cls,
+        config: TransformerConfig,
+        *,
+        total_real_tokens_in_batch: float,
+        seqlen_squared_sum_in_batch: float,
+    ) -> float:
+        """Count the final read mixer; it has no residual-injection projection."""
+        width = config.mhc_num_residual_streams * config.hidden_size
+        return 4 * total_real_tokens_in_batch * width * config.mhc_gated_residual_rank
 
     def __init__(
         self,

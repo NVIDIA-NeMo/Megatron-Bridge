@@ -41,13 +41,12 @@ def qwen38_flash_next_sft_64gpu_gb200_bf16_config(
     This configuration completed 100 native-loader steps with HybridEP and
     fusions. Same-input numerical differences from the earlier TP8 baseline
     remain unresolved; this is functional training evidence. Use the shared
-    Qwen VL forward step through ``scripts/training/run_recipe.py``. Supply
+    Qwen VL forward step with ``--step-func qwen3_vl_step``. Supply
     ``dataset.path`` and ``checkpoint.pretrained_checkpoint`` at launch; the
     latter accepts the full local Hugging Face checkpoint. Standard finetuning
     loads the weights and refreshes optimizer master parameters before training.
 
-    Prepare complete sequence-2048 samples with
-    ``scripts/data/prepare_nemotron_image_v3_subset.py``. Packing, checkpoint
+    Supply complete sequence-2048 samples in a prepared Energon dataset. Packing, checkpoint
     saving, evaluation, recomputation, and CUDA graphs are disabled. Standard
     training logs record loss, gradient norm, iteration time, and estimated
     model TFLOP/s/GPU. This recipe is not a numerical-parity test.

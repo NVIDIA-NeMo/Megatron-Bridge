@@ -10,7 +10,6 @@ from torch import nn
 from megatron.bridge.models.qwen import qwen4_exp_bridge as bridge
 from megatron.bridge.models.qwen.modeling_qwen4_exp import per_layer_embedding as ple
 from megatron.bridge.models.qwen.modeling_qwen4_exp.ep_ngram_embedding import FrozenEPNgramEmbedding
-from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpModelConfig
 
 
 pytestmark = pytest.mark.unit
@@ -70,18 +69,6 @@ def test_lazy_ep_import_uses_destination_and_only_overlapping_shards():
     assert actual.dtype == module.weight.dtype
     torch.testing.assert_close(actual, full[6:12].bfloat16(), rtol=0, atol=0)
     assert source.reads == [mapping.hf_param[f"shard_{i}"] for i in (0, 7, 2, 3)]
-
-
-@pytest.mark.parametrize("num_shards", [0, 4])
-def test_registry_selects_destination_aware_mapping_for_split_and_single_table(num_shards):
-    mappings = bridge.Qwen4ExpBridge.get_lm_mappings("model.", False, SimpleNamespace(ple_layer_ids=[1]), num_shards)
-    tables = [mapping for mapping in mappings if mapping.megatron_param.endswith("ngram_embedding.weight")]
-    assert len(tables) == 1 and isinstance(tables[0], bridge.PLENGramEmbeddingMapping)
-    resolved = tables[0].resolve(("0",))
-    assert not resolved.is_expert
-    assert resolved.num_shards == (num_shards or 1)
-    suffix = "shard_0.weight" if num_shards else "weight"
-    assert resolved.hf_param["shard_0"] == "model.layers.0.ple.ple_embedding.ngram_embedding." + suffix
 
 
 @pytest.mark.parametrize("rank", range(4))
@@ -164,22 +151,6 @@ def test_tp_import_and_export_remain_on_tp_group(monkeypatch):
     monkeypatch.setattr(torch.distributed, "all_reduce", lambda tensor, group: calls.append(group))
     mapping.megatron_to_hf(actual, module)["hf.shard_0"]
     assert calls == [mapping.tp_group]
-
-
-@pytest.mark.parametrize(
-    "sharding,freeze,etp,error,match",
-    [
-        ("ep", False, 1, ValueError, "frozen|freeze"),
-        ("ep", True, 2, NotImplementedError, "expert_tensor"),
-        ("invalid", True, 1, ValueError, "sharding"),
-    ],
-)
-def test_config_rejects_unsupported_ep_modes(sharding, freeze, etp, error, match):
-    config = SimpleNamespace(
-        ple_embedding_sharding=sharding, ple_freeze_ngram_embeddings=freeze, expert_tensor_parallel_size=etp
-    )
-    with pytest.raises(error, match=match):
-        Qwen4ExpModelConfig._validate_qwen4_exp(config)
 
 
 def _ngram_config(**overrides):

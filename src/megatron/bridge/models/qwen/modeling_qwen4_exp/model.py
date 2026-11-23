@@ -33,7 +33,10 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultim
 
 
 if TYPE_CHECKING:
-    from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpTransformerConfig
+    from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import (
+        Qwen4ExpModelConfig,
+        Qwen4ExpTransformerConfig,
+    )
 
 
 @dataclass
@@ -147,6 +150,25 @@ class Qwen4ExpHybridModel(HybridModel):
                 cp_group=self.pg_collection.cp,
             )
             self.rotary_pos_emb.mrope_section = mrope_section
+
+    @classmethod
+    def estimate_flops(
+        cls,
+        config: "Qwen4ExpModelConfig",
+        *,
+        total_real_tokens_in_batch: float,
+        seqlen_squared_sum_in_batch: float,
+    ) -> float:
+        """Compose block forward estimates and logits without allocating a model."""
+        from .flops import estimate_language_flops
+
+        return estimate_language_flops(
+            config,
+            batch_size=1,
+            seqlen_sum=total_real_tokens_in_batch,
+            seqlen_squared_sum=seqlen_squared_sum_in_batch,
+            include_backward=False,
+        )
 
     def forward(
         self,

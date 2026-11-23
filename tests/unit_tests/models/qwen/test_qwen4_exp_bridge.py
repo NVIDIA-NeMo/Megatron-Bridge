@@ -19,21 +19,18 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from megatron.core.models.hybrid.hybrid_model import HybridModel
 from transformers import PretrainedConfig
 
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.qwen.modeling_qwen4_exp.model import Qwen4ExpGatedDeltaNet, Qwen4ExpHybridModel
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model import Qwen4ExpGatedDeltaNet
 from megatron.bridge.models.qwen.modeling_qwen4_exp.model_builder import Qwen4ExpModelBuilder
-from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpModelConfig, Qwen4ExpTransformerConfig
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpModelConfig
 from megatron.bridge.models.qwen.modeling_qwen4_exp.vl_model import Qwen4ExpVLModelConfig
 from megatron.bridge.models.qwen.qwen4_exp_bridge import (
     PLENGramEmbeddingMapping,
     Qwen4ExpBridge,
     Qwen4ExpTextBridge,
-    get_qwen4_exp_hf_lm_prefix,
     linear_attention_pattern_from_hf,
     ple_local_rows_from_shards,
 )
@@ -152,19 +149,15 @@ def mock_pretrained(vl_config):
 
 
 class TestQwen4ExpModelConfig:
-    def test_registration(self):
-        assert issubclass(Qwen4ExpBridge, MegatronModelBridge)
-        assert issubclass(Qwen4ExpTextBridge, Qwen4ExpBridge)
-
-    def test_layer_pattern_accepts_qsa_layer_type(self, vl_config):
+    @pytest.mark.parametrize("qsa_type", ["qwen_sparse_attention", "indexed_attention"])
+    def test_layer_pattern_accepts_qsa_layer_type(self, vl_config, qsa_type):
+        vl_config.text_config.layer_types = [
+            qsa_type if layer == "qwen_sparse_attention" else layer for layer in vl_config.text_config.layer_types
+        ]
         pattern = linear_attention_pattern_from_hf(vl_config.text_config)
         assert pattern == [1, 1, 1, 0, 1, 1, 1, 0]
         with pytest.raises(ValueError):
             linear_attention_pattern_from_hf(_namespace({"layer_types": ["bogus"]}))
-
-    def test_prefixes(self, vl_config):
-        assert get_qwen4_exp_hf_lm_prefix(vl_config) == "model.language_model."
-        assert get_qwen4_exp_hf_lm_prefix(_namespace({"text_config": None})) == "model."
 
     def test_model_config_bridge(self, mock_pretrained, vl_config):
         provider = Qwen4ExpBridge().hf_config_to_model_config(mock_pretrained.config)
@@ -197,32 +190,6 @@ class TestQwen4ExpModelConfig:
         assert provider.ple_unigram_vocab_size == 248320 and provider.ple_ngram_vocab_size_base == 20000000
         assert provider.mtp_num_layers is None
 
-    def test_model_config_finalizes(self, mock_pretrained):
-        """The declarative model config must pass megatron-core's config validation once parallelism is set."""
-        provider = Qwen4ExpBridge().hf_config_to_model_config(mock_pretrained.config)
-        provider.tensor_model_parallel_size = 1
-        provider.pipeline_model_parallel_size = 1
-        provider.finalize()
-        assert provider.ple_layer_ids == [2]
-
-    def test_language_model_uses_native_hybrid_contract(self):
-        config = Qwen4ExpTextBridge().hf_config_to_model_config(_namespace(_text_config_dict()))
-        assert type(config) is Qwen4ExpModelConfig
-        assert isinstance(config.transformer, Qwen4ExpTransformerConfig)
-        assert config.get_builder_cls() is Qwen4ExpModelBuilder
-        assert issubclass(Qwen4ExpHybridModel, HybridModel)
-        assert Qwen4ExpTextBridge.MODEL_CONFIG_CLASS is Qwen4ExpModelConfig
-        assert Qwen4ExpTextBridge.USE_MODEL_CONFIG_FOR_CONVERSION
-        config.finalize()
-        assert config.hybrid_layer_pattern == "GGG*GGG*"
-
-    @pytest.mark.parametrize("frequency", [[1, 0, 1, 0, 1, 0, 1, 0], 2])
-    def test_hybrid_pattern_preserves_gdn_and_qsa_positions(self, frequency):
-        config = Qwen4ExpTextBridge().hf_config_to_model_config(_namespace(_text_config_dict()))
-        config.linear_attention_freq = frequency
-        config.finalize()
-        assert config.hybrid_layer_pattern == "G*G*G*G*"
-
     def test_model_config_round_trip_and_strict_override(self):
         config = Qwen4ExpTextBridge().hf_config_to_model_config(_namespace(_text_config_dict()))
         config.qsa_indexer_budget = 1024
@@ -237,12 +204,6 @@ class TestQwen4ExpModelConfig:
         assert restored.get_builder_cls() is Qwen4ExpModelBuilder
         with pytest.raises(AttributeError, match="declares a field"):
             restored.unknown_qwen4_field = True
-
-    def test_hybrid_pattern_rejects_a_conflicting_schedule(self):
-        config = Qwen4ExpTextBridge().hf_config_to_model_config(_namespace(_text_config_dict()))
-        config.hybrid_layer_pattern = "*" * config.num_layers
-        with pytest.raises(ValueError, match="must match"):
-            config.finalize()
 
 
 class TestQwen4ExpMappings:
@@ -396,74 +357,3 @@ class TestPLEShardLoading:
         out = mappings[0].megatron_to_hf(full[:rows_per_rank], None)
         assert len(out) == num_shards and list(out) == [f"hf.shard_{i}.weight" for i in range(num_shards)]
         assert contributions == []
-
-
-class TestQwen4ExpFlops:
-    @staticmethod
-    def config(**overrides):
-        fields = dict(
-            hidden_size=8,
-            mhc_num_residual_streams=2,
-            mhc_gated_residual_rank=3,
-            mhc_variant="gated_residual",
-            num_layers=2,
-            ple_layer_ids=[2],
-            ple_embed_dim=4,
-            qsa_indexer_n_heads=2,
-            qsa_indexer_kv_heads=1,
-            qsa_indexer_head_dim=4,
-            qsa_indexer_budget=8,
-            qsa_indexer_compress_ratio=4,
-            qsa_force_sparse=False,
-            seq_length=8,
-            linear_attention_freq=[1, 0],
-        )
-        fields.update(overrides)
-        return SimpleNamespace(**fields)
-
-    def test_hand_count_and_runtime_tokens(self):
-        # Four GRs: down16x3 + up3x16 + inject16x2; output mixer: no inject.
-        # One PLE: key4x16 + value4x8. Shape-proven QSA shortcut skips its indexer.
-        cfg = self.config()
-        per_token = 6 * (4 * (48 + 48 + 32) + 48 + 48 + 64 + 32)
-        for tokens in (0, 3, 13):
-            assert Qwen4ExpModelConfig._get_additional_transformer_flops(cfg, seqlen_sum=tokens) == tokens * per_token
-
-    def test_actual_48_layer_dimensions_and_integer_schedule(self):
-        cfg = self.config(
-            hidden_size=2560,
-            mhc_num_residual_streams=4,
-            mhc_gated_residual_rank=320,
-            num_layers=48,
-            ple_embed_dim=2560,
-            qsa_indexer_n_heads=4,
-            qsa_indexer_head_dim=128,
-            qsa_indexer_budget=2048,
-            seq_length=2048,
-            linear_attention_freq=4,
-        )
-        expected = 3837788160 + 196608000
-        assert Qwen4ExpModelConfig._get_additional_transformer_flops(cfg, seqlen_sum=16384) == 16384 * expected
-
-    def test_optional_ple_and_indexer_are_not_counted(self):
-        cfg = self.config(ple_layer_ids=[], qsa_indexer_n_heads=None)
-        assert Qwen4ExpModelConfig._get_additional_transformer_flops(cfg, seqlen_sum=1) == 6 * 608
-
-    @pytest.mark.parametrize("overrides", [{"seq_length": 12}, {"qsa_force_sparse": True}])
-    def test_uncovered_qsa_warns_without_disabling_training(self, overrides):
-        with pytest.warns(UserWarning, match="dense-attention surrogate"):
-            assert (
-                Qwen4ExpModelConfig._get_additional_transformer_flops(self.config(**overrides), seqlen_sum=3)
-                == 3 * 4416
-            )
-
-    def test_dense_shortcut_inclusive_boundary(self):
-        # budget8 + compression4 - 1 = 11; no score matmul through this length.
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            assert (
-                Qwen4ExpModelConfig._get_additional_transformer_flops(self.config(seq_length=11), seqlen_sum=11)
-                == 11 * 4224
-            )

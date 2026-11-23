@@ -308,6 +308,19 @@ class PerLayerEmbedding(MegatronModule):
     PLE index through ``config.ple_layer_ids``.
     """
 
+    @classmethod
+    def estimate_flops(
+        cls,
+        config: TransformerConfig,
+        *,
+        total_real_tokens_in_batch: float,
+        seqlen_squared_sum_in_batch: float,
+    ) -> float:
+        """Count trainable key/value projections; lookup tables have no matrix FLOPs."""
+        width = config.mhc_num_residual_streams * config.hidden_size
+        weights = (config.ple_embed_dim or config.hidden_size) * (width + config.hidden_size)
+        return 2 * total_real_tokens_in_batch * weights
+
     def __init__(self, config: TransformerConfig, layer_number: int, *, pg_collection: ProcessGroupCollection):
         super().__init__(config)
         self.config = config
