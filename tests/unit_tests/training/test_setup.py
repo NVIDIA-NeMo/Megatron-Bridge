@@ -224,6 +224,8 @@ def test_data_init_warmup_preserves_checkpoint_restored_rng_state():
         ),
         optimizer=SimpleNamespace(overlap_param_gather_with_optimizer_step=False),
         optimizer_config_override_provider=None,
+        optimizer_config_overrides=None,
+        optimizer_config_overrides_mode="extend",
         peft=None,
         profiling=SimpleNamespace(),
         rng=SimpleNamespace(data_parallel_random_init=False),

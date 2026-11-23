@@ -19,7 +19,7 @@ import warnings
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, Literal, Optional, Tuple, Union
+from typing import Any, Dict, Literal, Mapping, Optional, Tuple, Union
 
 import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
@@ -42,6 +42,15 @@ from megatron.training.config import RNGConfig, ValidationConfig
 from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
+from megatron.training.config.optimizer_config import (
+    OptimizerConfigOverrideHook as OptimizerConfigOverrideHook,
+)
+from megatron.training.config.optimizer_config import (
+    OptimizerConfigOverrides as OptimizerConfigOverrides,
+)
+from megatron.training.config.optimizer_config import (
+    serialize_optimizer_config_overrides,
+)
 from megatron.training.determinism import apply_determinism_to_args
 
 from megatron.bridge.data.base import (
@@ -1049,9 +1058,17 @@ class ConfigContainer(Container):
         | HybridModelConfig
     )
     optimizer: OptimizerConfig
-    optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
+    optimizer_config_override_provider: OptimizerConfigOverrideProvider | None = field(
         default_factory=OptimizerConfigOverrideProvider
     )
+    """Compatibility API: providers return the complete standard/custom policy.
+    Custom providers cannot be combined with the mapping/callable API below."""
+    optimizer_config_overrides: OptimizerConfigOverrides | OptimizerConfigOverrideHook | None = None
+    """Core mapping or callable receiving optimizer_config and the constructed model.
+    An empty mapping in extend mode retains standard weight-decay and decoupled-LR rules."""
+    optimizer_config_overrides_mode: Literal["extend", "replace"] = "extend"
+    """Extend or replace standard rules. Enabled muP rules compose in either mode;
+    conflicts raise instead of silently taking the last assignment."""
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     scheduler: SchedulerConfig
@@ -1079,6 +1096,15 @@ class ConfigContainer(Container):
     tensor_inspect: TensorInspectConfig | None = None
     inprocess_restart: Optional[InProcessRestartConfig] = None
     _checkpoint_load_required: bool = field(default=False, init=False, repr=False)
+
+    def to_dict(self, **section_overrides: Mapping[str, Any]) -> dict[str, Any]:
+        """Serialize optimizer selector mappings using the shared config targets."""
+        result: dict[str, Any] = super().to_dict(**section_overrides)
+        if isinstance(self.optimizer_config_overrides, dict) and self.optimizer_config_overrides:
+            result["optimizer_config_overrides"] = serialize_optimizer_config_overrides(
+                self.optimizer_config_overrides
+            )
+        return result
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""

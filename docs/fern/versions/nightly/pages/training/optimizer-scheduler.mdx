@@ -22,6 +22,46 @@ The `OptimizerConfig` contains all parameters for the optimization algorithm and
 | `bf16` | `bool` | Use BF16 precision for training |
 | `fp16` | `bool` | Use FP16 precision for training |
 
+## Recipe parameter-group overrides
+
+Use the same Core mapping as MLM, or a callable that receives the constructed
+model and optimizer config:
+
+```python
+from megatron.core.optimizer import ParamKey
+
+cfg.optimizer_config_overrides = {
+    ParamKey(name="*.linear_out.weight"): {"max_lr": 0.001, "min_lr": 0.0001}
+}
+cfg.optimizer_config_overrides_mode = "extend"  # default
+```
+
+A callable is invoked as `hook(optimizer_config=..., model=...)` after model
+construction and must return a mapping, including an empty one. Use an importable
+function or configured dataclass callable for serialized recipes. Static selector
+mappings use the shared config serializer and existing target allowlist; this
+changes configuration serialization, not optimizer checkpoint data.
+
+Default `extend` mode retains standard weight-decay and decoupled-LR rules.
+Explicit `replace` mode replaces those standard rules, including with an empty
+mapping. Enabled muP rules are composed in either mode. Core's
+`merge_config_overrides` merges equal/disjoint fields on identical selectors;
+conflicts raise, including overlaps detected when constructing actual parameter
+groups. There is no dictionary-order precedence. To change a standard WD rule,
+use replace mode and provide the intended complete mapping.
+
+Existing `optimizer_config_override_provider` implementations remain supported
+as complete policies. Providers using `super().build_config_overrides()`,
+including LSQ, keep their standard rules; a custom provider returning `None` or
+`{}` retains its previous behavior. LoRA+ warmup constraints remain enforced for
+both APIs. A custom provider and the new mapping/callable cannot be configured
+together. When porting a complete provider mapping to the new API, select replace
+mode; for contributions containing only additions, select extend mode.
+
+The ordinary hook rejects custom MIMO policy, which must be configured in MIMO's
+per-module optimizer factories. This interface requires the companion Core
+mapping-composition and configuration-serialization helpers.
+
 ## SchedulerConfig
 
 The `SchedulerConfig` controls learning rate scheduling and weight decay progression throughout training.

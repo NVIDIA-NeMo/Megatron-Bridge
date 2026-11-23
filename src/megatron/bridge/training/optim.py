@@ -17,29 +17,73 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from fnmatch import fnmatch
 from types import MethodType
-from typing import Optional, Union, cast
+from typing import Literal, Optional, Union, cast
 
 import torch
 from megatron.core.optimizer import (
     MegatronOptimizer,
     OptimizerConfig,
+    ParamKey,
     get_megatron_optimizer,
     get_mup_config_overrides,
+    get_standard_config_overrides,
+    merge_config_overrides,
 )
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler, combine_param_group_overrides
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.utils import get_model_config
+from megatron.core.utils import get_model_config, unwrap_model
 
 from megatron.bridge.training.config import (
+    OptimizerConfigOverrideHook,
     OptimizerConfigOverrideProvider,
     OptimizerConfigOverrideProviderContext,
+    OptimizerConfigOverrides,
     SchedulerConfig,
 )
 from megatron.bridge.training.utils.optimizer_utils import normalize_optimizer_config
 
 
 G_LOGGER = logging.getLogger(__name__)
+
+
+def _resolve_optimizer_config_overrides(
+    context: OptimizerConfigOverrideProviderContext,
+    provider: OptimizerConfigOverrideProvider | None,
+    overrides: OptimizerConfigOverrides | OptimizerConfigOverrideHook | None,
+    mode: Literal["extend", "replace"],
+) -> OptimizerConfigOverrides | None:
+    """Adapt existing complete-policy providers and new contribution mappings."""
+    if mode not in ("extend", "replace"):
+        raise ValueError(f"Unknown optimizer override mode: {mode!r}; use 'extend' or 'replace'.")
+    if overrides is None and mode == "extend":
+        # Existing providers own their standard rules. In particular, None/{} from
+        # a custom provider must not acquire standard rules during adaptation.
+        provider = provider if provider is not None else OptimizerConfigOverrideProvider()
+        resolved = provider.build_config_overrides(context)
+        return merge_config_overrides(resolved) if resolved is not None else None
+    if provider is not None and type(provider) is not OptimizerConfigOverrideProvider:
+        raise ValueError(
+            "Choose either optimizer_config_override_provider or optimizer_config_overrides; "
+            "custom providers already return a complete policy."
+        )
+    model_chunks = context.model if isinstance(context.model, list) else [context.model]
+    resolved = (
+        overrides(optimizer_config=context.optimizer_config, model=model_chunks) if callable(overrides) else overrides
+    )
+    if resolved is None and overrides is None:
+        resolved = {}
+    if not isinstance(resolved, dict) or any(not isinstance(key, ParamKey) for key in resolved):
+        raise TypeError("Optimizer override hooks must return a ParamKey-to-override dictionary.")
+    if resolved or mode == "replace":
+        from megatron.core.models.mimo.model.base import MimoModel
+
+        unwrapped = unwrap_model(context.model)
+        first_chunk = unwrapped[0] if isinstance(unwrapped, list) else unwrapped
+        if isinstance(first_chunk, MimoModel):
+            raise NotImplementedError("MIMO optimizer overrides must be configured per module.")
+    standard = get_standard_config_overrides(context.optimizer_config) if mode == "extend" else {}
+    return merge_config_overrides(standard, resolved)
 
 
 def setup_optimizer(
@@ -49,6 +93,9 @@ def setup_optimizer(
     use_gloo_process_groups: bool = False,
     pg_collection: Optional[ProcessGroupCollection] = None,
     optimizer_config_override_provider: Optional[OptimizerConfigOverrideProvider] = None,
+    *,
+    optimizer_config_overrides: OptimizerConfigOverrides | OptimizerConfigOverrideHook | None = None,
+    optimizer_config_overrides_mode: Literal["extend", "replace"] = "extend",
 ) -> tuple[MegatronOptimizer, OptimizerParamScheduler]:
     """Set up the optimizer and scheduler.
 
@@ -58,6 +105,9 @@ def setup_optimizer(
         model: The model to optimize
         use_gloo_process_groups: Whether to use Gloo process groups
         pg_collection: Optional process group collection for distributed training
+        optimizer_config_override_provider: Existing provider of a complete standard/custom policy.
+        optimizer_config_overrides: Core mapping or callable receiving optimizer_config and a list of model chunks.
+        optimizer_config_overrides_mode: Extend standard rules (default), or explicitly replace them.
 
     Returns:
         tuple containing the optimizer and scheduler
@@ -67,12 +117,11 @@ def setup_optimizer(
         # directly, without ConfigContainer validation.
         normalize_optimizer_config(optimizer_config)
 
-    if optimizer_config_override_provider is None:
-        optimizer_config_override_provider = OptimizerConfigOverrideProvider()
-
-    # Build config overrides for weight decay based on scheduler config and model params
-    config_overrides = optimizer_config_override_provider.build_config_overrides(
-        OptimizerConfigOverrideProviderContext(scheduler_config, optimizer_config, model)
+    config_overrides = _resolve_optimizer_config_overrides(
+        OptimizerConfigOverrideProviderContext(scheduler_config, optimizer_config, model),
+        optimizer_config_override_provider,
+        optimizer_config_overrides,
+        optimizer_config_overrides_mode,
     )
 
     # Apply μP optimizer scaling if enabled on the model config.
@@ -85,7 +134,7 @@ def setup_optimizer(
             optimizer_type=optimizer_config.optimizer,
         )
         if mup_overrides:
-            config_overrides = {**(config_overrides or {}), **mup_overrides}
+            config_overrides = merge_config_overrides(config_overrides, mup_overrides)
             G_LOGGER.info(
                 f"μP enabled (width_mult={model_config.mup_width_mult:.4g}): "
                 f"applied {len(mup_overrides)} optimizer param-group override(s)."
