@@ -2084,6 +2084,117 @@ class TestDummyTrainStep:
         assert [counter.reads for counter in counters] == [0] * len(counters)
 
 
+class _CountingIterator:
+    """Outer data iterator that records how many global batches were read."""
+
+    def __init__(self, rows):
+        self._rows = iter(rows)
+        self.reads = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        row = next(self._rows)
+        self.reads += 1
+        return row
+
+
+def _global_batches(num_microbatches, count):
+    """Return ``count`` global batches of ``num_microbatches`` rows; every token of batch ``i`` is ``i``."""
+    return [{"tokens": torch.full((num_microbatches, 8), index)} for index in range(count)]
+
+
+@pytest.mark.parametrize("step_name", ["gpt", "dsv4", None], ids=["gpt_step", "dsv4_step", "custom_step"])
+def test_skipped_batch_mode_iteration_reads_what_train_step_reads_on_a_middle_stage(monkeypatch, step_name):
+    """With dataloader_type='batch', a middle stage reads one global batch per iteration, skipped or not.
+
+    train_step reads the global batch through prepare_finetuning_batch on every rank with an iterator,
+    before the forward step decides which micro-batch fields the stage needs. The step here reads none
+    on this stage, so its read policy is false; a skipped iteration must still read one global batch.
+    """
+    from megatron.bridge.models.deepseek import deepseek_v4_step
+    from megatron.bridge.training import gpt_step
+
+    num_microbatches = 3
+    for module in (
+        "megatron.bridge.training.train",
+        "megatron.bridge.training.gpt_step",
+        "megatron.bridge.models.deepseek.deepseek_v4_step",
+    ):
+        monkeypatch.setattr(f"{module}.is_pp_first_stage", lambda pg: False)
+        monkeypatch.setattr(f"{module}.is_pp_last_stage", lambda pg: False)
+    monkeypatch.setattr("megatron.bridge.training.train.get_num_microbatches", lambda: num_microbatches)
+    monkeypatch.setattr("megatron.bridge.training.train.get_model_config", lambda model: SimpleNamespace(seq_length=8))
+    rerun_state_machine = Mock()
+    # One forward-backward pass for the normal iteration, then one for the skipped iteration.
+    rerun_state_machine.should_run_forward_backward.side_effect = [True, False, True, False]
+    rerun_state_machine.should_checkpoint_and_exit.return_value = (False, False, 0)
+    monkeypatch.setattr("megatron.bridge.training.train.get_rerun_state_machine", lambda: rerun_state_machine)
+
+    dataset = GPTDatasetConfig(seq_length=8, random_seed=1234)
+    if not hasattr(dataset, "dataloader_type"):
+        raise ValueError("Config has no field 'dataloader_type'")
+    dataset.dataloader_type = "batch"
+    global_state = SimpleNamespace(
+        cfg=SimpleNamespace(
+            data_parallel_size=1,
+            model=SimpleNamespace(seq_length=8, qk_clip=False, log_max_attention_logit=False),
+            dataset=dataset,
+            dist=SimpleNamespace(use_decentralized_pg=True),
+            ddp=SimpleNamespace(overlap_param_gather=False),
+            optimizer=SimpleNamespace(
+                barrier_with_L1_time=False,
+                log_num_zeros_in_grad=False,
+                reuse_grad_buf_for_mxfp8_param_ag=False,
+            ),
+            train=SimpleNamespace(
+                check_optimizer_step_success=False,
+                empty_unused_memory_level=0,
+                micro_batch_size=1,
+                skip_sync_grad_norm_across_mp=True,
+            ),
+        ),
+        timers=Mock(),
+    )
+    pg_collection = SimpleNamespace(pp=object(), cp=SimpleNamespace(size=lambda: 1), mp=Mock())
+    steps = {"gpt": gpt_step, "dsv4": deepseek_v4_step}
+    reads_batch_on_skip = steps[step_name].forward_step.reads_batch_on_skip if step_name else None
+    if reads_batch_on_skip is not None:
+        assert reads_batch_on_skip(global_state.cfg, pg_collection) is False
+
+    micro_batch_iterators = []
+
+    def middle_stage_forward_backward(*, data_iterator, num_microbatches, **kwargs):
+        # The stage needs no micro-batch fields, so it reads nothing from the micro-batch iterator.
+        micro_batch_iterators.append((data_iterator, num_microbatches))
+        return []
+
+    optimizer = Mock(chained_optimizers=[])
+    optimizer.step.return_value = (True, 1.0, 0)
+    normal = _CountingIterator(_global_batches(num_microbatches, 3))
+    train_step(
+        forward_step_func=Mock(),
+        data_iterator=normal,
+        model=[Mock()],
+        optimizer=optimizer,
+        scheduler=Mock(),
+        global_state=global_state,
+        pg_collection=pg_collection,
+        forward_backward_func=middle_stage_forward_backward,
+        p2p_communicator=SimpleNamespace(is_pp_last_stage=False),
+    )
+    skipped = _CountingIterator(_global_batches(num_microbatches, 3))
+    _dummy_train_step(global_state, skipped, pg_collection, reads_batch_on_skip=reads_batch_on_skip)
+
+    assert normal.reads == 1
+    [(micro_batches, scheduled)] = micro_batch_iterators
+    assert scheduled == num_microbatches
+    assert next(micro_batches)["tokens"].unique().tolist() == [0]
+    assert skipped.reads == normal.reads
+    assert next(skipped)["tokens"].unique().tolist() == next(normal)["tokens"].unique().tolist() == [1]
+
+
 @pytest.mark.parametrize(
     "microbatches, remote, expected",
     [

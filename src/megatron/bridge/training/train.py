@@ -1730,7 +1730,8 @@ def _num_batches_read_on_skip(
 
     1. Global-batch packing: TP rank 0 of the first/last pipeline stage reads ``num_microbatches``
        samples for the packing scheduler.
-    2. ``dataloader_type="batch"``: the first and last pipeline stages read one global batch.
+    2. ``dataloader_type="batch"``: every rank with an iterator reads one global batch, as
+       ``train_step`` does through ``prepare_finetuning_batch`` before the forward step runs.
     3. Otherwise the forward step reads micro-batches itself. ``reads_batch_on_skip`` says whether
        it does on this rank for steps that define it; without it the first and last pipeline
        stages read. A reading rank reads ``num_microbatches`` batches.
@@ -1741,7 +1742,8 @@ def _num_batches_read_on_skip(
         reads = pg_collection.tp.rank() == 0 and (is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group))
         return get_num_microbatches() if reads else 0
     if cfg.dataset.dataloader_type == "batch":
-        return 1 if is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group) else 0
+        # The training loop reads the global batch on every rank, whatever the stage needs from it.
+        return 1
     if reads_batch_on_skip is not None:
         reads = reads_batch_on_skip(cfg, pg_collection)
     else:
