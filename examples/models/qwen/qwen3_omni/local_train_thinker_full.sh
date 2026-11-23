@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 ROOT_DIR=$(cd -- "${SCRIPT_DIR}/../../../.." && pwd -P)
 
 export PYTHONNOUSERSITE=1
-export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/3rdparty/megatron-core${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/3rdparty/Megatron-LM${PYTHONPATH:+:${PYTHONPATH}}"
 
 WORKSPACE=${WORKSPACE:-${ROOT_DIR}/.cache/qwen3_omni_train}
 HF_HOME=${HF_HOME:-${WORKSPACE}/hf_home}

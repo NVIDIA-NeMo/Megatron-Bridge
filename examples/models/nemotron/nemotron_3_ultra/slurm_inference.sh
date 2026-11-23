@@ -105,7 +105,7 @@ cd "$WORKDIR"
 rm -f /opt/venv/lib/python3.12/site-packages/__editable__*megatron*.pth \
       /opt/venv/lib/python3.12/site-packages/__editable__*megatron*.py 2>/dev/null || true
 
-export PYTHONPATH="$WORKDIR/src:$WORKDIR/3rdparty/megatron-core:${PYTHONPATH:-}"
+export PYTHONPATH="$WORKDIR/src:$WORKDIR/3rdparty/Megatron-LM:${PYTHONPATH:-}"
 
 MEGATRON_MODEL_ARGS=()
 if [ -n "${MEGATRON_MODEL_PATH:-}" ]; then

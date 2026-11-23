@@ -112,7 +112,7 @@ CMD='
 set -euo pipefail
 cd "$WORKDIR"
 mkdir -p "$WORKSPACE/results" "$SAVE_DIR/wandb" "$SAVE_DIR/tb_logs" "$DCLM_CACHE"
-export PYTHONPATH="$WORKDIR/src:$WORKDIR/3rdparty/megatron-core:${PYTHONPATH:-}"
+export PYTHONPATH="$WORKDIR/src:$WORKDIR/3rdparty/Megatron-LM:${PYTHONPATH:-}"
 
 BLEND_PATHS=""
 shopt -s nullglob

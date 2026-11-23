@@ -210,7 +210,7 @@ def _validate_args(
 def _task_environment() -> dict[str, str]:
     """Build source-agnostic rank-local environment defaults."""
     return {
-        "PYTHONPATH": f"{CONTAINER_REPO_ROOT}/src:{CONTAINER_REPO_ROOT}/3rdparty/megatron-core:$PYTHONPATH",
+        "PYTHONPATH": f"{CONTAINER_REPO_ROOT}/src:{CONTAINER_REPO_ROOT}/3rdparty/Megatron-LM:$PYTHONPATH",
     }
 
 

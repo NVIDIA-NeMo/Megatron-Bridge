@@ -150,7 +150,7 @@ CLI_OVERRIDES="\
     dist.distributed_timeout_minutes=90"
 
 CMD="cd ${WORKDIR} && mkdir -p ${WORKSPACE}/results ${SAVE_DIR}/wandb ${SAVE_DIR}/tb_logs && \
-export PYTHONPATH=${WORKDIR}/src:${WORKDIR}/3rdparty/megatron-core:\${PYTHONPATH:-} && \
+export PYTHONPATH=${WORKDIR}/src:${WORKDIR}/3rdparty/Megatron-LM:\${PYTHONPATH:-} && \
 uv run --no-sync python scripts/training/run_recipe.py \
 --recipe ${RECIPE_NAME} --mode ${PEFT_SCHEME} \
 ${CLI_OVERRIDES}"

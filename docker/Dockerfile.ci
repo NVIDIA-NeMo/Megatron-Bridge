@@ -159,8 +159,9 @@ COPY docker/common/uv_retry.sh /opt/uv_retry.sh
 RUN python /opt/preserve_base_runtime.py record /opt/base-runtime-packages.json
 
 COPY pyproject.toml uv.lock /opt/Megatron-Bridge/
-COPY 3rdparty/megatron-core /opt/Megatron-Bridge/3rdparty/megatron-core
 COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
+
+COPY scripts/prepare_mcore.sh /opt/prepare_mcore.sh
 
 ARG BASELINE_MCORE_REF
 
@@ -171,7 +172,8 @@ RUN if [ -n "$BASELINE_MCORE_REF" ]; then \
         git -C 3rdparty/Megatron-LM fetch --depth 1 origin "$BASELINE_MCORE_REF" && \
         git -C 3rdparty/Megatron-LM checkout --detach FETCH_HEAD && \
         test "$(git -C 3rdparty/Megatron-LM rev-parse HEAD)" = "$BASELINE_MCORE_REF" && \
-        test -f 3rdparty/Megatron-LM/pyproject.toml; \
+        test -f 3rdparty/Megatron-LM/pyproject.toml && \
+        bash /opt/prepare_mcore.sh /opt/Megatron-Bridge/3rdparty/Megatron-LM; \
     fi
 
 # Build arg to skip --locked when testing with different MCore versions
@@ -214,6 +216,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 RUN rm -rf 3rdparty/Megatron-LM
 COPY 3rdparty/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM
+# The path build context must be prepared before Docker copies the submodule.
+RUN test ! -e 3rdparty/Megatron-LM/megatron/bridge && \
+    test ! -e 3rdparty/Megatron-LM/build && \
+    test ! -e 3rdparty/Megatron-LM/megatron_core.egg-info
 
 # Mamba hard-codes nvcc --threads 4 for 9 GPU targets per file. Unset keeps that; CI passes
 # --build-arg MAMBA_NVCC_THREADS=<n>, which install_mamba.sh applies to the Mamba build only.
@@ -260,7 +266,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json && \
     # uv may retain the baseline editable MCore wheel when only its source tree changes.
     # Rebuild the dispatched checkout so its optional dataset helper is present.
-    uv pip install --no-deps --reinstall -e 3rdparty/megatron-core && \
+    uv pip install --no-deps --reinstall -e 3rdparty/Megatron-LM && \
     test -n "$(find 3rdparty/Megatron-LM/megatron/core/datasets -maxdepth 1 -name 'helpers_cpp*.so' -print -quit)" && \
     # Create symlink for tilelang's libcudart_stub.so to the actual libcudart.so
     # Otherwise, the stub will be called in some cases and fail
@@ -286,6 +292,7 @@ RUN --mount=type=bind,from=mok-wheel,source=/opt/mok-wheels,target=/opt/mok-whee
     chown -R 1000:1000 ${UV_PROJECT_ENVIRONMENT}
 
 COPY --chown=1000:1000 . /opt/Megatron-Bridge
+RUN test ! -e 3rdparty/Megatron-LM/megatron/bridge
 
 RUN python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json
 

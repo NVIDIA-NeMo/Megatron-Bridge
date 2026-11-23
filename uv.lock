@@ -3757,8 +3757,8 @@ requires-dist = [
     { name = "hydra-core", specifier = ">=1.3.4,<1.4" },
     { name = "librosa", marker = "extra == 'audio'" },
     { name = "mamba-ssm", marker = "extra == 'ssm'", specifier = "==2.3.1" },
-    { name = "megatron-core", extras = ["dev", "inference", "mlm", "te"], editable = "3rdparty/megatron-core" },
-    { name = "megatron-core", extras = ["te"], marker = "extra == 'te'", editable = "3rdparty/megatron-core" },
+    { name = "megatron-core", extras = ["dev", "inference", "mlm", "te"], editable = "3rdparty/Megatron-LM" },
+    { name = "megatron-core", extras = ["te"], marker = "extra == 'te'", editable = "3rdparty/Megatron-LM" },
     { name = "mistral-common", specifier = ">=1.10.0" },
     { name = "mlflow", specifier = ">=3.16.0" },
     { name = "nemo-run", marker = "extra == 'recipes'" },
@@ -3833,7 +3833,7 @@ test = [
 
 [[package]]
 name = "megatron-core"
-source = { editable = "3rdparty/megatron-core" }
+source = { editable = "3rdparty/Megatron-LM" }
 dependencies = [
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "numpy", version = "2.5.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13' and python_full_version < '3.15'" },

@@ -228,8 +228,7 @@ requires-dist = [
 ]
 
 [tool.uv.sources]
-# Install only MCore/training while this repository owns megatron.bridge.
-megatron-core = { path = "3rdparty/megatron-core/", editable = true }
+megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
 transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "131157b5750b8578cb8efb78554f6fe6a671cc53" }

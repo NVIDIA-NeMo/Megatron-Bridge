@@ -39,7 +39,7 @@ if grep -q -- '--mount=type=secret,id=GH_TOKEN' "$dockerfile"; then
   echo "Baseline MCore clone must not require a GitHub token" >&2
   exit 1
 fi
-mcore_reinstall_line=$(grep -n 'uv pip install --no-deps --reinstall -e 3rdparty/megatron-core' "$dockerfile" | cut -d: -f1)
+mcore_reinstall_line=$(grep -n 'uv pip install --no-deps --reinstall -e 3rdparty/Megatron-LM' "$dockerfile" | cut -d: -f1)
 helper_assertion_line=$(grep -n "find 3rdparty/Megatron-LM/megatron/core/datasets -maxdepth 1 -name 'helpers_cpp\*\.so'" "$dockerfile" | cut -d: -f1)
 final_copy_line=$(grep -nE '^COPY (--chmod=644|--chown=1000:1000) \. /opt/Megatron-Bridge$' "$dockerfile" | cut -d: -f1)
 [[ -n "$mcore_reinstall_line" ]]
@@ -247,7 +247,7 @@ if ! grep -A1 '^te = \[$' pyproject.toml | grep -Fxq '    "megatron-core[te]",';
   exit 1
 fi
 if ! grep -Fq \
-  '{ name = "megatron-core", extras = ["te"], marker = "extra == '\''te'\''", editable = "3rdparty/megatron-core" }' \
+  '{ name = "megatron-core", extras = ["te"], marker = "extra == '\''te'\''", editable = "3rdparty/Megatron-LM" }' \
   uv.lock; then
   echo "Bridge's lock metadata must preserve the MCore TE extra" >&2
   exit 1

@@ -111,16 +111,26 @@ For development installation and additional details, please refer to our [Contri
 
 Megatron Bridge pins [Megatron-Core](https://github.com/NVIDIA/Megatron-LM) as a git submodule at `3rdparty/Megatron-LM`. The repository tracks two pinned commits — one from the upstream **main** branch (default) and one from **dev** — managed by `scripts/switch_mcore.sh`.
 
-While the standalone Bridge repository is supported, `uv sync` installs MCore through
-`3rdparty/megatron-core`. This directory links to the pinned upstream build metadata and
-the `megatron.core` and `megatron.training` sources, excluding MLM's new `megatron.bridge`
-package. Both editable installs and wheels built from this directory leave
-`megatron.bridge` owned by this repository. For a manual MCore install or build, use
-`uv pip install -e 3rdparty/megatron-core` or `uv build --wheel 3rdparty/megatron-core`;
-do not install the raw submodule alongside standalone Bridge. Custom `PYTHONPATH`
-settings should likewise use `3rdparty/megatron-core`, not the raw MLM checkout.
-The submodule itself remains unchanged, and switching its pin updates these links
-automatically. This temporary separation can be removed when standalone Bridge retires.
+Before the first `uv sync` (or a manual MCore install/wheel build), run:
+
+```bash
+bash scripts/prepare_mcore.sh
+uv sync --locked
+```
+
+This keeps the existing submodule and excludes only its `megatron/bridge` directory
+with Git sparse checkout, so this repository provides `megatron.bridge`. It does
+not change the upstream commit or tracked files. Preparation removes ignored MCore
+`build/` and `megatron_core.egg-info/` output to prevent stale files entering wheels;
+it stops if local source changes or unexpected files need your attention.
+Run it for each fresh clone and before `docker build` from a local checkout.
+`scripts/switch_mcore.sh`, CI container builds, and installation tests prepare MCore
+automatically. Existing `PYTHONPATH` and editable-install paths stay unchanged.
+
+If this environment already installed an unfiltered MCore wheel, use a fresh
+virtual environment, or uninstall MCore and reinstall both MCore and standalone
+Bridge after preparation. Sparse checkout alone cannot remove already installed
+files. This temporary exclusion can be removed when standalone Bridge retires.
 
 The submodule committed to the repo always points to the **main** commit. Use the **dev** commit when you need a Megatron-Core feature or fix that has not yet landed on main, or to validate forward-compatibility with upcoming MCore changes:
 
