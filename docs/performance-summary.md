@@ -47,18 +47,10 @@ The performance data includes:
 
 #### Model: DeepSeekV4 Flash
 
-> **Note:** DeepSeek V4 requires checking out the Megatron-Core `dev` branch. See the [DeepSeek V4 reference directory](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/r0.6.0/examples/models/deepseek_v4) for setup instructions.
-
 | System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
 |--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
 | DGX-GB300 | 128 | MXFP8 | 2048 | 2 | 4096 | 1 | 1 | 1 | n/a | 32 | 9102 | 828 |
 | DGX-GB200 | 128 | MXFP8 | 2048 | 1 | 4096 | 1 | 1 | 1 | n/a | 32 | 8061 | 733 |
-
-#### Model: DeepSeekV4 Pro
-
-| System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
-|--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
-| DGX-GB300 | 256 | MXFP8 | 4096 | 1 | 4096 | 1 | 4 | 1 | 4 | 64 | 2576 | 833 |
 
 #### Model: Qwen3_235B_a22B
 
