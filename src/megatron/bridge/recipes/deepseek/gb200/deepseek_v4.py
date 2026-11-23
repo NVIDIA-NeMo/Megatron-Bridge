@@ -159,7 +159,9 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_fsdp_config() -> ConfigContainer
     counted as successful graph replay. This is not a long-run convergence or
     checkpoint-I/O claim. The measured run released unused allocator cache before
     capture; that diagnostic intervention is not installed by this recipe.
-    Supply the dataset, tokenizer, and pretrained checkpoint through the launcher.
+    Supply the dataset and tokenizer through the launcher. The current Bridge
+    FSDP v2 contract rejects pretrained_checkpoint; this recipe's native bring-up
+    path starts from random initialization, not the measured pretrained weights.
     """
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config()
     cfg.model.pipeline_model_parallel_size = 1
