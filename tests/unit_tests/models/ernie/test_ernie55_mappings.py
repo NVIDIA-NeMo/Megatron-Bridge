@@ -344,10 +344,12 @@ def _load(model, config: dict, tensors: dict[str, torch.Tensor]) -> _Ernie55Test
     return bridge
 
 
-def _export(bridge, model, config: dict, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+def _export(
+    bridge, model, config: dict, tensors: dict[str, torch.Tensor], *, conversion_tasks=None
+) -> dict[str, torch.Tensor]:
     exported: dict[str, torch.Tensor] = {}
     for name, tensor in bridge.stream_weights_megatron_to_hf(
-        [model], _hf_pretrained(config, tensors), cpu=True, show_progress=False
+        [model], _hf_pretrained(config, tensors), cpu=True, show_progress=False, conversion_tasks=conversion_tasks
     ):
         assert name not in exported, f"{name} exported twice"
         exported[name] = tensor.detach().clone()
@@ -681,60 +683,150 @@ class TestProxyCheckpointKeys:
         with pytest.raises(ValueError, match="which the reference implementation reads"):
             check_ernie55_checkpoint_keys(config, _PROXY_DTYPES)
 
-    def test_export_declares_the_checkpoints_mtp_body_copies(self):
-        """Export leaves a released checkpoint's MTP body copies out of the expected shards, and nothing else."""
-        bridge = _Ernie55TestBridge()
-        hf = _hf_pretrained(_PROXY_CONFIG, {})
-        copies = sorted(mappings.ernie55_mtp_body_copy_keys(_PROXY_CONFIG))
-        assert copies
-        assert bridge.hf_export_ignored_source_keys(hf, [*_PROXY_DTYPES, *copies]) == copies
-        assert bridge.hf_export_ignored_source_keys(hf, _PROXY_DTYPES) == []
-        # only the copies the checkpoint holds, never a tensor the registry writes
-        assert bridge.hf_export_ignored_source_keys(hf, [*_PROXY_DTYPES, copies[0]]) == [copies[0]]
+
+def _released_copies(config: dict, tensors: dict[str, torch.Tensor]) -> dict[str, str]:
+    """The copy names a released checkpoint holds for ``config``, each with the body tensor it copies."""
+    copies = {}
+    for body, group in mappings.ernie55_mtp_body_copy_names(config).items():
+        # The released checkpoints spell the copied hyper-connections with ``transformer_layer.``.
+        released = [copy for copy in group if ("transformer_layer." in copy) == ("_hyper_connection." in body)]
+        assert len(released) == 1, (body, group)
+        copies[released[0]] = body
+    assert copies and all(body in tensors for body in copies.values())
+    return copies
 
 
-class TestStrictExportOfReleasedCheckpoints:
-    """``run_conversion.py export`` in strict mode on a checkpoint that stores the shared MTP body under its MTP
-    layer."""
+def _with_released_copies(config: dict, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """``tensors`` as a released checkpoint holds them: the shared MTP body also under the MTP layer."""
+    # Clone: a checkpoint holds the two names as two tensors.
+    return {**tensors, **{copy: tensors[body].clone() for copy, body in _released_copies(config, tensors).items()}}
+
+
+def _save_in_two_shards(config: dict, tensors: dict[str, torch.Tensor], directory: Path) -> dict[str, str]:
+    """Save ``tensors`` as a checkpoint of two shards and return each tensor's shard.
+
+    The second shard holds the last decoder layer and the MTP layer, so the copies of the shared MTP body share it
+    with tensors the registry writes.
+    """
+    from safetensors.torch import save_file
+
+    last = f"model.layers.{config['num_hidden_layers'] - 1}."
+    mtp = f"model.layers.{config['num_hidden_layers']}."
+    shards = {
+        name: "model-00002-of-00002.safetensors"
+        if name.startswith((last, mtp))
+        else "model-00001-of-00002.safetensors"
+        for name in tensors
+    }
+    directory.mkdir()
+    for shard in sorted(set(shards.values())):
+        save_file({n: t.contiguous() for n, t in tensors.items() if shards[n] == shard}, directory / shard)
+    (directory / "model.safetensors.index.json").write_text(json.dumps({"weight_map": shards}))
+    return shards
+
+
+class TestExportOfReleasedCheckpoints:
+    """``run_conversion.py export`` on a checkpoint that stores the shared MTP body under its MTP layer, as the
+    released checkpoints do: the export holds that checkpoint's tensors, the copies included."""
+
+    def test_export_writes_the_copies_the_source_holds(self, toy):
+        """Inference engines read their MTP draft layer from the copies, so an export without them does not load
+        there with speculative decoding."""
+        copies = _released_copies(toy.config, toy.tensors)
+        source = _with_released_copies(toy.config, toy.tensors)
+        bridge = _load(toy.model, toy.config, source)
+        assert bridge._ernie55_export_writes_mtp is True
+        exported = _export(bridge, toy.model, toy.config, source)
+        _assert_bitwise_equal(exported, source)
+        for copy, body in copies.items():
+            assert exported[copy].dtype == exported[body].dtype == toy.tensors[body].dtype
+
+    def test_export_writes_no_copy_the_source_lacks(self, toy):
+        """A source checkpoint written without the copies, or with some of them, is reproduced as it is."""
+        copies = _released_copies(toy.config, toy.tensors)
+        one = sorted(copies)[0]
+        source = {**toy.tensors, one: toy.tensors[copies[one]].clone()}
+        bridge = _load(toy.model, toy.config, source)
+        _assert_bitwise_equal(_export(bridge, toy.model, toy.config, source), source)
+        _assert_bitwise_equal(_export(bridge, toy.model, toy.config, toy.tensors), toy.tensors)
 
     def test_strict_save_writes_the_shards_that_hold_the_copies(self, toy, tmp_path):
-        """The copies are declared ignored, so the shard they share with real tensors is written; undeclared, the
-        strict save drops that shard with every tensor in it and fails, as it did on the released checkpoints."""
-        from safetensors.torch import save_file
-
-        last = f"model.layers.{toy.config['num_hidden_layers'] - 1}."
-        mtp = f"model.layers.{toy.config['num_hidden_layers']}."
-        copies = sorted(mappings.ernie55_mtp_body_copy_keys(toy.config))
-
-        def body_of(copy: str) -> str:
-            return last + copy[len(mtp) :].replace("transformer_layer.", "", 1)
-
-        assert copies and all(body_of(copy) in toy.tensors for copy in copies)
-        source = dict(toy.tensors)
-        # Clone: safetensors refuses to write two names that share one storage, as a real checkpoint never does.
-        source.update({copy: toy.tensors[body_of(copy)].clone() for copy in copies})
+        """The copies share a shard with tensors the registry writes. The export yields every tensor of that
+        shard, so a strict save writes it; an export without the copies would leave it incomplete."""
+        source = _with_released_copies(toy.config, toy.tensors)
         # Two shards: the copies share the second one with the last decoder layer and the MTP's own tensors.
-        shards = {
-            name: "model-00002-of-00002.safetensors"
-            if name.startswith((last, mtp))
-            else "model-00001-of-00002.safetensors"
-            for name in source
-        }
-        source_dir = tmp_path / "source"
-        source_dir.mkdir()
-        for shard in sorted(set(shards.values())):
-            save_file({n: t.contiguous() for n, t in source.items() if shards[n] == shard}, source_dir / shard)
-        (source_dir / "model.safetensors.index.json").write_text(json.dumps({"weight_map": shards}))
-
-        ignored = _Ernie55TestBridge().hf_export_ignored_source_keys(_hf_pretrained(toy.config, source), list(source))
-        assert ignored == copies
-        state = SafeTensorsStateSource(source_dir)
+        shards = _save_in_two_shards(toy.config, source, tmp_path / "source")
+        state = SafeTensorsStateSource(tmp_path / "source")
         with pytest.raises(RuntimeError, match="not written|Missing"):
-            state.save_generator(iter(toy.exported.items()), tmp_path / "undeclared", strict=True)
-        state.save_generator(iter(toy.exported.items()), tmp_path / "strict", strict=True, ignored_source_keys=ignored)
+            state.save_generator(iter(toy.exported.items()), tmp_path / "without_copies", strict=True)
+        bridge = _load(toy.model, toy.config, source)
+        # The live stream, not a cloned dict: the saver gets each copy and its body as the hook yields them.
+        stream = bridge.stream_weights_megatron_to_hf(
+            [toy.model], _hf_pretrained(toy.config, source), cpu=True, show_progress=False
+        )
+        state.save_generator(stream, tmp_path / "strict", strict=True)
         written = json.loads((tmp_path / "strict" / "model.safetensors.index.json").read_text())["weight_map"]
-        assert set(written) == set(toy.exported) == set(toy.tensors)
+        assert set(written) == set(source)
         assert set(written.values()) == set(shards.values())
+        saved = SafeTensorsStateSource(tmp_path / "strict")
+        for copy, body in _released_copies(toy.config, toy.tensors).items():
+            assert torch.equal(saved[copy], saved[body]), copy
+
+    def test_export_with_tasks_built_by_another_bridge(self, toy):
+        """``AutoBridge`` resolves a new bridge per call: the tasks of ``get_conversion_tasks`` reach
+        ``export_hf_weights`` on a bridge that built none. The copies are written all the same."""
+        source = _with_released_copies(toy.config, toy.tensors)
+        _load(toy.model, toy.config, source)
+        tasks = _Ernie55TestBridge().build_conversion_tasks(_hf_pretrained(toy.config, source), [toy.model])
+        exported = _export(_Ernie55TestBridge(), toy.model, toy.config, source, conversion_tasks=tasks)
+        _assert_bitwise_equal(exported, source)
+
+
+@pytest.fixture(scope="module")
+def toy_without_mtp(pg_collection):
+    """The proxy-layout toy built without its MTP depth, loaded from the checkpoint of the layout with it."""
+    config = _toy_hf_config()
+    source = _with_released_copies(config, _toy_hf_tensors(config, seed=1))
+    model = _build_model(pg_collection, pattern=_PATTERN.split("/")[0], seed=0, **_megatron_overrides())
+    _load(model, config, source)
+    mtp = f"model.layers.{config['num_hidden_layers']}."
+    assert any(name.startswith(mtp) for name in source)
+    decoder = {name: tensor for name, tensor in source.items() if not name.startswith(mtp)}
+    return SimpleNamespace(config=config, source=source, model=model, decoder=decoder)
+
+
+class TestExportOfAModelWithoutMtp:
+    """A model built without MTP, exported against a checkpoint that has an MTP layer and the body's copies: the
+    export holds the decoder's tensors and nothing under the MTP layer, neither its own tensors nor the copies."""
+
+    def test_export_with_its_own_tasks(self, toy_without_mtp):
+        toy = toy_without_mtp
+        bridge = _Ernie55TestBridge()
+        _assert_bitwise_equal(_export(bridge, toy.model, toy.config, toy.source), toy.decoder)
+        assert bridge._ernie55_export_writes_mtp is False
+
+    def test_export_with_tasks_built_by_another_bridge(self, toy_without_mtp):
+        """The bridge that exports never built tasks; it decides from the tasks it is given."""
+        toy = toy_without_mtp
+        tasks = _Ernie55TestBridge().build_conversion_tasks(_hf_pretrained(toy.config, toy.source), [toy.model])
+        exported = _export(_Ernie55TestBridge(), toy.model, toy.config, toy.source, conversion_tasks=tasks)
+        _assert_bitwise_equal(exported, toy.decoder)
+
+    def test_supplied_tasks_decide_and_not_an_earlier_export(self, toy_without_mtp, toy):
+        """One exporting bridge, two exports with supplied tasks: the model without MTP, then the model with it.
+        Each task list comes from a bridge of its own, as a bridge keeps the parameter names of the model it
+        built tasks for."""
+        without = toy_without_mtp
+        source = _with_released_copies(toy.config, toy.tensors)
+        _load(toy.model, toy.config, source)
+        bridge = _Ernie55TestBridge()
+        tasks = _Ernie55TestBridge().build_conversion_tasks(
+            _hf_pretrained(without.config, without.source), [without.model]
+        )
+        exported = _export(bridge, without.model, without.config, without.source, conversion_tasks=tasks)
+        _assert_bitwise_equal(exported, without.decoder)
+        tasks = _Ernie55TestBridge().build_conversion_tasks(_hf_pretrained(toy.config, source), [toy.model])
+        _assert_bitwise_equal(_export(bridge, toy.model, toy.config, source, conversion_tasks=tasks), source)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1267,7 +1359,9 @@ def case_expert_parallel_round_trip(rank) -> None:
     model = _build_model(
         ProcessGroupCollection.use_mpu_process_groups(), pattern=_PATTERN, seed=0, **_megatron_overrides()
     )
-    bridge = _load(model, config, tensors)
+    # A released checkpoint: the shared MTP body, routed experts included, is also stored under the MTP layer.
+    released = _with_released_copies(config, tensors)
+    bridge = _load(model, config, released)
     local = _EXPERTS // rank.world_size
     for layer, hf_layer in ((3, 1), (5, 2), (7, 3)):
         experts = model.get_submodule(f"decoder.layers.{layer}.inner_layer.mlp.experts.local_experts")
@@ -1277,7 +1371,7 @@ def case_expert_parallel_round_trip(rank) -> None:
             fc1 = torch.cat([tensors[f"{source}.w1.weight"], tensors[f"{source}.w3.weight"]])
             assert torch.equal(expert.linear_fc1.weight.detach(), fc1), (layer, index)
             assert torch.equal(expert.linear_fc2.weight.detach(), tensors[f"{source}.w2.weight"]), (layer, index)
-    _assert_bitwise_equal(_export(bridge, model, config, tensors), tensors)
+    _assert_bitwise_equal(_export(bridge, model, config, released), released)
 
 
 def case_pipeline_parallel_round_trip(rank) -> None:
@@ -1309,7 +1403,9 @@ def case_pipeline_parallel_round_trip(rank) -> None:
     local_layers = [layer.layer_number - 1 for layer in model.decoder.layers]
     assert local_layers == ([0, 1, 2, 3] if first else [4, 5, 6, 7])
     assert hasattr(model, "output_layer") is last and getattr(model, "mtp_process", False) is last
-    bridge = _load(model, config, tensors)
+    # A released checkpoint: the copies are written on every stage, from the tensors the last stage broadcasts.
+    released = _with_released_copies(config, tensors)
+    bridge = _load(model, config, released)
     # The second stage's first D layer is hybrid layer 6 (Hugging Face layer 3), local layer 2.
     if last:
         attention = model.decoder.layers[2].inner_layer.self_attention
@@ -1318,7 +1414,7 @@ def case_pipeline_parallel_round_trip(rank) -> None:
         assert torch.equal(attention.k_b_proj.detach(), k_b_proj) and torch.equal(
             attention.v_b_proj.detach(), v_b_proj
         )
-    _assert_bitwise_equal(_export(bridge, model, config, tensors), tensors)
+    _assert_bitwise_equal(_export(bridge, model, config, released), released)
 
 
 _EP_CASES = ["case_expert_parallel_round_trip"]
@@ -1399,6 +1495,46 @@ class TestFP8Checkpoints:
         for name in set(source) - set(names):
             expected = source[name] if source[name].dtype == _BF16 else source[name].float()
             assert torch.equal(exported[name], expected), name
+
+    def test_fp8_checkpoint_with_mtp_body_copies_exports_them_dequantized(self, pg_collection, tmp_path):
+        """A released FP8 checkpoint stores the shared MTP body under its MTP layer too, its linear weights
+        quantized there as well, with inverse scales of their own. The export writes each copy as it writes the
+        body, dequantized, and no scales; a strict save writes the shards that hold them."""
+        block_size = 8
+        quantization = dict(FP8_QUANTIZATION, weight_block_size=[block_size, block_size])
+        config = _toy_hf_config(quantization_config=quantization)
+        plain = _with_released_copies(config, _toy_hf_tensors(config, seed=3))
+        copies = _released_copies(config, plain)
+        linear = self._linear_weights(config)
+        quantized_copies = sorted(copy for copy, body in copies.items() if body in linear)
+        # the copies of linear weights, and copies of tensors the checkpoint does not quantize
+        assert quantized_copies and len(quantized_copies) < len(copies)
+        tensors = fp8_quantize(plain, linear + quantized_copies, block_size)
+        assert all(tensors[copy].dtype == _FP8 and f"{copy}_scale_inv" in tensors for copy in quantized_copies)
+        model = self._model(pg_collection)
+        bridge = _load(model, config, tensors)
+        exported = _export(bridge, model, config, tensors)
+        assert sorted(exported) == sorted(plain)  # every tensor once, the copies included, no scales
+        for copy, body in copies.items():
+            assert exported[copy].dtype == exported[body].dtype and torch.equal(exported[copy], exported[body]), copy
+
+        # The shard that holds the copies also holds their scales, which the export does not write.
+        shards = _save_in_two_shards(config, tensors, tmp_path / "source")
+        stream = bridge.stream_weights_megatron_to_hf(
+            [model], _hf_pretrained(config, tensors), cpu=True, show_progress=False
+        )
+        SafeTensorsStateSource(tmp_path / "source").save_generator(
+            stream,
+            tmp_path / "strict",
+            strict=True,
+            ignored_source_key_suffixes=bridge.DEQUANTIZED_SOURCE_KEY_SUFFIXES,
+        )
+        written = json.loads((tmp_path / "strict" / "model.safetensors.index.json").read_text())["weight_map"]
+        assert set(written) == set(plain)
+        assert set(written.values()) == set(shards.values())
+        saved = SafeTensorsStateSource(tmp_path / "strict")
+        for copy in quantized_copies:
+            assert saved[copy].dtype == _BF16 and torch.equal(saved[copy], saved[copies[copy]]), copy
 
     def test_fp8_latent_projections_load_widened(self, pg_collection):
         """The released checkpoints quantize the latent projections too; they load dequantized, widened into their

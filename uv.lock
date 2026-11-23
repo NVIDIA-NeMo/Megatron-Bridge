@@ -30,6 +30,7 @@ prerelease-mode = "allow"
 
 [manifest]
 constraints = [
+    { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "httpx", specifier = "<1" },
     { name = "pyarrow", specifier = "<26" },
     { name = "tokenizers", specifier = "!=0.23.0rc0" },
