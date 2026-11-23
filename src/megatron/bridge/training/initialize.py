@@ -215,6 +215,7 @@ def torch_dist_init(
             restart_store=restart_store,
             use_inprocess_restart=use_inprocess_restart,
         )
+        _bind_cuda_context_on_autograd_worker()
 
         # Random seeds for reproducibility.
         if get_rank_safe() == 0:
@@ -558,7 +559,11 @@ def _create_pg_collection(
         tp_dp_cp=tp_dp_cp_pg,
         dp=dp_pg,
         dp_cp=dp_cp_pg,
+        # GTP is rejected with decentralized process groups, so gtp_remat_size is 1.
+        dp_cp_gtp_remat=dp_cp_pg,
         expt_dp=expt_dp_pg,
+        # Expert GTP is rejected as well. TE grouped-expert checkpointing reads this group for replica ids.
+        expt_dp_gtp_remat=expt_dp_pg,
         intra_dp_cp=dp_cp_pg,
         intra_expt_dp=intra_expt_dp_pg if intra_expt_dp_pg is not None else expt_dp_pg,
         inter_dist_opt=inter_dist_opt_pg,
@@ -1004,6 +1009,28 @@ def force_nccl_backend_init(device_id: torch.device) -> None:
     tensor = torch.ones(128, device=device_id)
     torch.distributed.all_reduce(tensor)
     torch.cuda.synchronize()
+
+
+def _bind_cuda_context_on_autograd_worker() -> None:
+    """Make PyTorch's autograd worker thread for the current GPU hold that GPU's CUDA context.
+
+    PyTorch runs CUDA backward work on one worker thread per GPU. A worker calls ``cudaSetDevice`` only
+    when its GPU is not already the thread's current device, so the worker for GPU 0 holds no CUDA
+    context until its first CUDA runtime call. Transformer Engine 2.18 and later set up their
+    runtime-compiled normalization kernels per thread through CUDA driver calls that do not bind a
+    context. A recomputed TE norm that is the first CUDA work of a backward pass on GPU 0, for example
+    in a pipeline stage that ends in an MoE layer, then fails with "CUDA Error: invalid device context".
+    A one-element backward pass makes the worker's first CUDA call a kernel launch through the CUDA
+    runtime, which binds the GPU's primary context to the worker for the rest of the process.
+
+    Remove this once Bridge pins a Transformer Engine whose RTC helpers in ``common/util/rtc.cpp``
+    (the occupancy query and the function-attribute setters) call ``cuda_driver::ensure_context_exists()``.
+    """
+    if not torch.cuda.is_available():
+        return
+    with torch.enable_grad():
+        probe = torch.ones(1, device=torch.cuda.current_device(), requires_grad=True)
+        (probe * 2.0).sum().backward()
 
 
 def is_rank_in_pg(pg_collection: ProcessGroupCollection) -> bool:

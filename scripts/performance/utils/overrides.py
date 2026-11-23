@@ -554,6 +554,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
                 pin_memory=recipe.dataset.pin_memory,
                 persistent_workers=recipe.dataset.persistent_workers,
                 create_attention_mask=getattr(recipe.dataset, "create_attention_mask", True),
+                prefetch_factor=getattr(recipe.dataset, "prefetch_factor", None),
             )
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:

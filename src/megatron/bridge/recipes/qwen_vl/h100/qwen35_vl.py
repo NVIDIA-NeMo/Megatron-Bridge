@@ -967,6 +967,11 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        # PyTorch builds that back the nccl backend with ProcessGroupNCCL2 (NeMo 26.12 images) create every
+        # process group's NCCL communicator eagerly: 8.6 GiB per GPU outside PyTorch instead of at most 4.9 GiB,
+        # so the first pipeline stage runs out of memory at step 2 of MedPix SFT on 16 H100s. 0 keeps the
+        # communicators lazy, as on earlier images; builds without the switch ignore it.
+        "TORCH_DIST_USE_NCCL2": 0,
     }
     return cfg
 

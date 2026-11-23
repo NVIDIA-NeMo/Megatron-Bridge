@@ -154,6 +154,9 @@ def process_config_with_overrides(
     """
     # Convert config to OmegaConf, tracking excluded callable fields
     omega_conf, excluded_fields = create_omegaconf_dict_config(config)
+    # Normalize mirrored defaults before merging so only a user-supplied flat
+    # YAML key can take precedence over its nested spelling.
+    _nest_flat_builder_fields(omega_conf)
 
     # Merge YAML config file if provided
     if config_filepath:
@@ -235,9 +238,10 @@ def _nested_transformer(cfg: DictConfig, section_name: str) -> DictConfig | None
 def _nest_flat_builder_fields(cfg: DictConfig) -> None:
     """Move flat keys of builder-backed model sections to where the config declares them.
 
-    No builder config declares a field both on itself and on its transformer
-    config, or declares the provider's HF source fields, so such a key is a
-    flat override, for example from a merged YAML file. The flat value wins.
+    A key present at both levels is a flat override, for example from a
+    merged YAML file. The flat value wins. Mirrored builder fields are
+    synchronized back to the outer config when overrides are applied.
+    Provider HF source fields belong in checkpoint metadata.
     """
     for section_name in list(cfg.keys()):
         transformer = _nested_transformer(cfg, section_name)
@@ -651,3 +655,14 @@ def _apply_overrides(config_obj: DataclassInstance, overrides_dict: Dict[str, An
                 logger.warning(
                     f"Could not set attribute {type(config_obj).__name__}.{key} to value '{value}'. Error: {e}"
                 )
+
+    # Routing collapses mirrored builder fields into transformer overrides so
+    # flat and nested CLI spellings retain their normal precedence. Apply the
+    # resolved value through the builder setter to keep both owners consistent.
+    transformer_overrides = overrides_dict.get(_TRANSFORMER_KEY)
+    if isinstance(transformer_overrides, dict):
+        for name in getattr(type(config_obj), "_mirrored_transformer_fields", ()):
+            if name in overrides_dict:
+                setattr(config_obj, name, overrides_dict[name])
+            elif name in transformer_overrides:
+                setattr(config_obj, name, getattr(config_obj.transformer, name))

@@ -508,10 +508,10 @@ class TestCheckpointUtilities:
 
         # Verify that the parent directory is created
         with tempfile.TemporaryDirectory() as temp_dir:
-            ensure_directory_exists(f"msc://default{temp_dir}/checkpoints/iter_0000001", check_parent=True)
+            ensure_directory_exists(f"msc://__filesystem__{temp_dir}/checkpoints/iter_0000001", check_parent=True)
             assert os.path.exists(f"{temp_dir}/checkpoints")
 
-            ensure_directory_exists(f"msc://default{temp_dir}/checkpoints/iter_0000001", check_parent=False)
+            ensure_directory_exists(f"msc://__filesystem__{temp_dir}/checkpoints/iter_0000001", check_parent=False)
             assert os.path.exists(f"{temp_dir}/checkpoints/iter_0000001")
 
 
@@ -2534,6 +2534,96 @@ class TestLoadCheckpoint:
         optimizer.load_state_dict.assert_not_called()
         scheduler.load_state_dict.assert_not_called()
 
+    def test_torch_dist_resume_releases_loaded_state_dict_before_empty_cache(self, load_checkpoint_fixtures):
+        """The loaded resume state dict is unreachable by the time the cache is emptied."""
+        cfg = load_checkpoint_fixtures["mock_cfg"]
+        cfg.checkpoint.ckpt_format = "torch_dist"
+        cfg.checkpoint.load_rng = False
+        cfg.peft = None
+
+        state = load_checkpoint_fixtures["mock_state"]
+        state.train_state.step = 0
+        state.train_state.floating_point_operations_so_far = 0
+
+        optimizer = load_checkpoint_fixtures["mock_optimizer"]
+        optimizer.is_stub_optimizer = False
+        scheduler = load_checkpoint_fixtures["mock_scheduler"]
+        pg_collection = Mock()
+
+        class _LoadedStateDict(dict):
+            pass
+
+        loaded_ref = None
+        tensor_refs = {}
+
+        def _generate(*args, **kwargs):
+            tensor = torch.randn(4, 4)
+            tensor_refs["request"] = weakref.ref(tensor)
+            return {"model": {"weight": tensor}}
+
+        def _load_base(*args, **kwargs):
+            nonlocal loaded_ref
+            if loaded_ref is None:
+                loaded_ref = False
+                return {}, "/checkpoints/iter_0000003", False, CheckpointType.GLOBAL
+            loaded = _LoadedStateDict(model={"weight": torch.randn(4, 4)}, checkpoint_version=3.0)
+            loaded_ref = weakref.ref(loaded)
+            tensor_refs["loaded"] = weakref.ref(loaded["model"]["weight"])
+            return loaded, "/checkpoints/iter_0000003", False, CheckpointType.GLOBAL
+
+        released_at_empty_cache = []
+
+        def _empty_cache():
+            gc.collect()
+            released_at_empty_cache.append(
+                bool(loaded_ref)
+                and loaded_ref() is None
+                and set(tensor_refs) == {"request", "loaded"}
+                and all(ref() is None for ref in tensor_refs.values())
+            )
+
+        run_config = {
+            "model": {
+                "tensor_model_parallel_size": 1,
+                "pipeline_model_parallel_size": 1,
+            },
+            "checkpoint": {
+                "save_optim": False,
+                "save_rng": False,
+                "fully_parallel_save": False,
+            },
+        }
+
+        with (
+            patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False),
+            patch("megatron.bridge.training.checkpointing.is_checkpoint_iteration_directory", return_value=True),
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=True),
+            patch("megatron.bridge.training.checkpointing.read_run_config", return_value=run_config),
+            patch("megatron.bridge.training.checkpointing.read_train_state", return_value=state.train_state),
+            patch("megatron.bridge.training.checkpointing.update_num_microbatches"),
+            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
+            patch("megatron.bridge.training.checkpointing._load_model_state_dict", new=lambda *args, **kwargs: None),
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing.load_content_metadata", return_value={}),
+            patch("megatron.bridge.training.checkpointing.generate_state_dict", new=_generate),
+            patch("megatron.bridge.training.checkpointing.torch.distributed.is_initialized", return_value=False),
+            patch("megatron.bridge.training.checkpointing.torch.cuda.empty_cache", side_effect=_empty_cache),
+            patch("megatron.bridge.training.checkpointing.wandb_utils.on_load_checkpoint_success"),
+            patch("megatron.bridge.training.checkpointing.mlflow_utils.on_load_checkpoint_success"),
+            patch("megatron.bridge.training.checkpointing.comet_utils.on_load_checkpoint_success"),
+            patch("megatron.bridge.training.checkpointing._load_base_checkpoint", new=_load_base),
+        ):
+            result = _load_checkpoint_from_path(
+                "/checkpoints/iter_0000003",
+                state,
+                load_checkpoint_fixtures["mock_model"],
+                optimizer,
+                scheduler,
+                pg_collection=pg_collection,
+            )
+
+        assert result == (0, 0)
+        assert released_at_empty_cache == [True]
+
     @patch("torch.distributed.is_initialized")
     @patch("megatron.bridge.training.checkpointing._build_auto_bridge_for_save")
     def test_load_hf_pretrained_checkpoint_initializes_from_hf_source(
@@ -2968,7 +3058,7 @@ class TestCleanupNonPersistentCheckpoints:
         """Retention removes old checkpoints from an MSC-backed root."""
         MultiStorageClientFeature.enable()
         msc = MultiStorageClientFeature.import_package()
-        save_dir = f"msc://default{tmp_path}/checkpoints"
+        save_dir = f"msc://__filesystem__{tmp_path}/checkpoints"
         for name in ("iter_0001000", "iter_0002000", "iter_0003000"):
             msc.os.makedirs(os.path.join(save_dir, name), exist_ok=True)
 
@@ -3534,20 +3624,20 @@ class TestLoadBaseCheckpoint:
         mock_get_format.return_value = "torch_dist"
         mock_load_global.return_value = (
             {"model": "x"},
-            "msc://default/ckpt/iter_0001000",
+            "msc://__filesystem__/ckpt/iter_0001000",
             False,
             CheckpointType.GLOBAL,
         )
 
         ctx = {}
         _load_base_checkpoint(
-            "msc://default/ckpt/iter_0001000",
+            "msc://__filesystem__/ckpt/iter_0001000",
             base_config,
             checkpointing_context=ctx,
             pg_collection=mock_pg_collection,
         )
 
-        assert ctx["dataloader_state_dir"] == "msc://default/ckpt/energon"
+        assert ctx["dataloader_state_dir"] == "msc://__filesystem__/ckpt/energon"
 
     @patch("megatron.bridge.training.checkpointing.file_exists")
     @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
@@ -6685,7 +6775,7 @@ class TestMaybeLoadDataloaderState:
         """An Energon state colocated with an MSC checkpoint restores through the remote adapter."""
         MultiStorageClientFeature.enable()
         msc = MultiStorageClientFeature.import_package()
-        state_root = f"msc://default{tmp_path}/energon"
+        state_root = f"msc://__filesystem__{tmp_path}/energon"
         iter_dir = get_checkpoint_name(state_root, 10)
         msc.os.makedirs(iter_dir, exist_ok=True)
         state_path = os.path.join(iter_dir, "train_dataloader_dprank000.pt")
@@ -6995,7 +7085,7 @@ class TestMaybeSaveDataloaderState:
         """An Energon state colocated with an MSC checkpoint is written through the remote adapter."""
         MultiStorageClientFeature.enable()
         msc = MultiStorageClientFeature.import_package()
-        state_root = f"msc://default{tmp_path}/energon"
+        state_root = f"msc://__filesystem__{tmp_path}/energon"
         train_iterator = self._iterator()
 
         with patch("megatron.bridge.training.checkpointing.torch.distributed.barrier"):

@@ -588,11 +588,14 @@ def main():
     sys.argv = _build_megatron_argv(args.megatron_ckpt, tp=args.tp, bf16=args.bf16, seq=seq_len)
 
     from megatron.core import mpu
+    from megatron.training.argument_utils import pretrain_cfg_container_from_args
     from megatron.training.arguments import parse_and_validate_args
     from megatron.training.checkpointing import load_checkpoint
+    from megatron.training.global_vars import set_run_config
     from megatron.training.initialize import initialize_megatron
 
-    parse_and_validate_args()
+    megatron_args = parse_and_validate_args()
+    set_run_config(pretrain_cfg_container_from_args(megatron_args))
     initialize_megatron()
     rank = dist.get_rank()
 

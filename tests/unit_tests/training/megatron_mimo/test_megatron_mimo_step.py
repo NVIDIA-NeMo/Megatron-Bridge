@@ -313,7 +313,7 @@ class TestForwardStep:
     @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
     def test_forward_step_packs_language_shard_with_mask_lengths(self, mock_unwrap, mock_get_batch):
         """Packing wiring: lengths come from the batch's attention_mask, the shard is
-        packed to one [1, T] row, and packing_kwargs reach the model call."""
+        packed to one [1, T] row, and the packed-sequence metadata reaches the model call."""
         from types import SimpleNamespace
 
         from megatron.bridge.training.megatron_mimo_step import forward_step
@@ -345,9 +345,50 @@ class TestForwardStep:
 
         call_kwargs = mock_model.call_args.kwargs
         assert call_kwargs["input_ids"] is None
-        assert call_kwargs["packing_kwargs"]["cu_seqlens_q"].tolist() == [0, 3, 5]
+        assert call_kwargs["cu_seqlens"].tolist() == [[0, 3, 5]]
+        assert call_kwargs["cu_seqlens_padded"].tolist() == [[0, 3, 5]]
+        assert call_kwargs["max_seqlen"].tolist() == [3]
         assert call_kwargs["position_ids"].tolist() == [[0, 1, 2, 0, 1]]
         assert call_kwargs["attention_mask"] is None
+
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_packed_kwargs_match_mimo_model_forward(self, mock_unwrap, mock_get_batch):
+        """Packed forward_step kwargs bind to the real MimoModel.forward signature."""
+        import inspect
+
+        from megatron.core.models.mimo import MimoModel
+
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True)
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.language_model.mtp_process = False
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+
+        mock_get_batch.return_value = {
+            "input_ids": torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]]),
+            "position_ids": torch.tensor([[0, 1, 2, 3], [0, 1, 2, 3]]),
+            "attention_mask": torch.tensor([[1, 1, 1, 0], [1, 1, 0, 0]]),
+            "labels": None,
+            "loss_mask": None,
+            "modality_inputs": None,
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        call_kwargs = mock_model.call_args.kwargs
+        inspect.signature(MimoModel.forward).bind(MagicMock(), **call_kwargs)
+        assert call_kwargs["input_ids"].tolist() == [[1, 2, 3, 4, 5]]
+        assert call_kwargs["max_seqlen"].dtype == torch.int32
 
     @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
     @patch("megatron.bridge.training.megatron_mimo_step.get_batch")

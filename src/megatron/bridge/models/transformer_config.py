@@ -230,6 +230,9 @@ class TransformerConfig(MCoreTransformerConfig):
         if name in inferred:
             # Replace the mapping so a shallow config copy cannot alter the original's inputs.
             object.__setattr__(self, "_inferred_cp_values", {key: val for key, val in inferred.items() if key != name})
+            if name == "linear_cp_layout" and hasattr(self, "_linear_cp_layout_explicit"):
+                # Dev preserves this flag across config copies. A user assignment is a new input.
+                object.__setattr__(self, "_linear_cp_layout_explicit", None)
         super().__setattr__(name, value)
 
     def __post_init__(self) -> None:
@@ -268,11 +271,16 @@ class TransformerConfig(MCoreTransformerConfig):
 
     def _inferred_cp_inputs(self) -> dict[str, None]:
         """Recover unset CP inputs that have not been explicitly reassigned."""
-        return {
+        inputs = {
             name: None
             for name, resolved in getattr(self, "_inferred_cp_values", {}).items()
             if getattr(self, name) == resolved
         }
+        if hasattr(self, "_linear_cp_layout_explicit"):
+            # Re-derive Core's runtime marker from the restored inputs. Otherwise an old
+            # False value reapplied after a CLI/YAML override hides an explicit layout.
+            inputs["_linear_cp_layout_explicit"] = None
+        return inputs
 
     @contextmanager
     def _preserve_inferred_cp_inputs(self):
