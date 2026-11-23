@@ -278,8 +278,11 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "overlap-param-gather":              ("ddp.overlap_param_gather",          "flag"),
     "no-check-for-nan-in-loss-and-grad": ("ddp.check_for_nan_in_grad",        "flag_invert"),
     "grad-reduce-in-fp32":               ("ddp.grad_reduce_in_fp32",          "flag"),
+    "overlap-param-gather-with-optimizer-step": ("ddp.overlap_param_gather_with_optimizer_step", "flag"),
+    "use-precision-aware-optimizer":     ("optimizer.use_precision_aware_optimizer", "flag"),
+    "reuse-grad-buf-for-mxfp8-param-ag":  ("ddp.reuse_grad_buf_for_mxfp8_param_ag", "flag"),
 
-    # ── Precision / FP8 ─────────────────────────────────────────────────
+    # ── Precision / FP8 / FP4 ───────────────────────────────────────────
     "bf16":                              ("mixed_precision._bf16",             "flag"),
     "fp16":                              ("mixed_precision._fp16",             "flag"),
     "fp8-format":                        ("mixed_precision.fp8",               None),
@@ -289,6 +292,9 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "fp8-amax-compute-algo":            ("mixed_precision.fp8_amax_compute_algo", None),
     "no-fp8-wgrad":                      ("mixed_precision.fp8_wgrad",         "flag_invert"),
     "fp8-param-gather":                  ("mixed_precision.fp8_param_gather",  "flag"),
+    "fp4-format":                        ("mixed_precision.fp4",               None),
+    "fp4-recipe":                        ("mixed_precision.fp4_recipe",        None),
+    "fp4-param-gather":                  ("mixed_precision.fp4_param_gather",  "flag"),
 
     # ── Logger ──────────────────────────────────────────────────────────
     "log-interval":                      ("logger.log_interval",               None),
@@ -746,6 +752,7 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
     logger_fields: dict[str, Any] = {}
     misc_overrides: dict[str, Any] = {}
     mixed_precision_str: str | None = None
+    mixed_precision_fields: dict[str, Any] = {}
 
     for path, val in result.overrides.items():
         parts = path.split(".", 1)
@@ -776,7 +783,7 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
             if field is None:
                 mixed_precision_str = str(val)
             else:
-                misc_overrides[path] = val
+                mixed_precision_fields[field] = val
         else:
             misc_overrides[path] = val
 
@@ -874,6 +881,8 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
     lines.append("    TrainingConfig,")
     lines.append("    ValidationConfig,")
     lines.append(")")
+    if mixed_precision_fields:
+        lines.append("from megatron.bridge.training.mixed_precision import get_mixed_precision_config")
     lines.append("")
     lines.append("")
 
@@ -1097,6 +1106,11 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
 
     lines.append("    )")
     lines.append("")
+    if mixed_precision_fields:
+        lines.append("    cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)")
+        for key, value in mixed_precision_fields.items():
+            lines.append(f"    cfg.mixed_precision.{key} = {_fmt_val(value)}")
+        lines.append("")
     lines.append("    return cfg")
 
     return "\n".join(lines)
@@ -1138,7 +1152,6 @@ BRIDGE_BOOL_TO_MLM: dict[str, str] = {
     "checkpoint.use_persistent_ckpt_worker": "use-persistent-ckpt-worker",
     "checkpoint.fully_parallel_load": "ckpt-fully-parallel-load",
     "logging.log_progress": "log-progress",
-    "model.fp8_param": "fp8-param-gather",
     "model.overlap_p2p_comm_warmup_flush": "overlap-p2p-communication-warmup-flush",
 }
 
@@ -1243,6 +1256,17 @@ BRIDGE_IGNORE_KEYS: frozenset[str] = frozenset(
 
 # Extra direct-value mappings for Bridge YAML paths not in ARG_MAP
 BRIDGE_TO_MLM_EXTRA: dict[str, str] = {
+    "ddp.bucket_size": "ddp-bucket-size",
+    "ddp.num_distributed_optimizer_instances": "num-distributed-optimizer-instances",
+    "optimizer.main_params_dtype": "main-params-dtype",
+    "optimizer.main_grads_dtype": "main-grads-dtype",
+    "optimizer.exp_avg_dtype": "exp-avg-dtype",
+    "optimizer.exp_avg_sq_dtype": "exp-avg-sq-dtype",
+    "optimizer.loss_scale": "loss-scale",
+    "optimizer.initial_loss_scale": "initial-loss-scale",
+    "optimizer.min_loss_scale": "min-loss-scale",
+    "optimizer.loss_scale_window": "loss-scale-window",
+    "optimizer.hysteresis": "hysteresis",
     "model.num_layers_in_first_pipeline_stage": "decoder-first-pipeline-num-layers",
     "model.num_layers_in_last_pipeline_stage": "decoder-last-pipeline-num-layers",
     "model.microbatch_group_size_per_vp_stage": "microbatch-group-size-per-virtual-pipeline-stage",
@@ -1360,7 +1384,13 @@ def parse_bridge_overrides(overrides_str: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _load_recipe_to_flat_dict(recipe_name: str) -> dict[str, Any]:
+def _load_recipe_to_flat_dict(
+    recipe_name: str,
+    *,
+    world_size: int | None = None,
+    config_filepath: str | None = None,
+    cli_overrides: list[str] | None = None,
+) -> dict[str, Any]:
     """Load a Bridge recipe by name and flatten it to a ``section.field`` dict.
 
     Requires ``megatron.bridge`` to be importable.
@@ -1401,6 +1431,12 @@ def _load_recipe_to_flat_dict(recipe_name: str) -> dict[str, Any]:
         )
 
     cfg = recipe_builder()
+    if world_size is not None:
+        from megatron.bridge.training.config import resolve_optimizer_runtime_config
+        from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+        cfg = process_config_with_overrides(cfg, config_filepath, cli_overrides)
+        resolve_optimizer_runtime_config(cfg, world_size=world_size)
 
     def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -1411,7 +1447,9 @@ def _load_recipe_to_flat_dict(recipe_name: str) -> dict[str, Any]:
                 val = getattr(obj, f.name)
                 key = f"{prefix}.{f.name}" if prefix else f.name
                 if dataclasses.is_dataclass(val) and not isinstance(val, type):
-                    out.update(_flatten(val, key))
+                    # Builder-backed configs keep TransformerConfig in a nested field;
+                    # the translation vocabulary uses the provider-style flat model keys.
+                    out.update(_flatten(val, prefix if prefix == "model" and f.name == "transformer" else key))
                 elif callable(val) and not isinstance(val, type):
                     if _act_to_str is not None:
                         try:
@@ -1519,7 +1557,21 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
     if "model.gated_linear_unit" in overrides and "model.gated_linear_unit" not in consumed:
         consumed.add("model.gated_linear_unit")
 
-    # --- Special: mixed_precision → --bf16 / --fp16 / --fp8-* ------------
+    # Precision policy overrides its model/DDP copies during runtime setup.
+    # Honor explicit False as well as True, independent of input key order.
+    for precision in ("fp8", "fp4"):
+        gather_keys = (
+            f"mixed_precision.{precision}_param_gather",
+            f"mixed_precision.{precision}_param",
+            f"ddp.{precision}_param_gather",
+            f"model.{precision}_param",
+        )
+        gather = next((overrides[key] for key in gather_keys if overrides.get(key) is not None), False)
+        consumed.update(gather_keys)
+        if gather:
+            result.add_arg(f"{precision}-param-gather")
+
+    # --- Special: mixed_precision → --bf16 / --fp16 / --fp8-* / --fp4-* --
     # Handles two forms depending on how the YAML was serialised:
     #   a) flat string: mixed_precision="bf16_mixed"  (from --args or recipe)
     #   b) nested dict: mixed_precision.bf16=true, mixed_precision.fp8="hybrid", ...
@@ -1535,11 +1587,10 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
             result.add_note(f"mixed_precision={mp}: unknown precision mode")
 
     # Form (b): flattened MixedPrecisionConfig fields
-    # Consume all mixed_precision.* keys up front so they are not silently
-    # dropped by the BRIDGE_IGNORE_KEYS prefix check in the main loop.
+    # Handle special fields here; leave other mapped precision fields to the
+    # generated reverse mapping below (margin, amax history, FP4 format, etc.).
     mp_flat: dict[str, Any] = {k: v for k, v in overrides.items() if k.startswith("mixed_precision.")}
-    for k in mp_flat:
-        consumed.add(k)
+    consumed.update(f"mixed_precision.{field}" for field in ("bf16", "fp16", "fp8", "fp8_recipe", "fp8_wgrad"))
     if mp_flat:
         mp_bf16 = mp_flat.get("mixed_precision.bf16")
         mp_fp16 = mp_flat.get("mixed_precision.fp16")
@@ -1558,6 +1609,12 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
                 result.add_arg("fp8-recipe", mp_fp8_recipe)
             if mp_fp8_wgrad is False:
                 result.add_arg("no-fp8-wgrad")
+
+    if mp is None and not mp_flat:
+        if overrides.get("model.bf16", overrides.get("optimizer.bf16", False)):
+            result.add_arg("bf16")
+        elif overrides.get("model.fp16", overrides.get("optimizer.fp16", False)):
+            result.add_arg("fp16")
 
     # --- Special: dataset.data_path → --data-path --------------------------
     data_path = overrides.get("dataset.data_path")
@@ -1685,6 +1742,9 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
         if bridge_key in BRIDGE_TO_MLM_EXTRA:
             mlm_name = BRIDGE_TO_MLM_EXTRA[bridge_key]
             if val is not None:
+                if mlm_name in {"main-params-dtype", "main-grads-dtype", "exp-avg-dtype", "exp-avg-sq-dtype"}:
+                    dtype_names = {"float32": "fp32", "float16": "fp16", "bfloat16": "bf16", "uint8": "fp8"}
+                    val = dtype_names.get(str(val).removeprefix("torch."), str(val))
                 result.add_arg(mlm_name, val)
             else:
                 result.add_unsupported(bridge_key, f"mapped to --{mlm_name} but value is None (not set)")
@@ -1814,8 +1874,15 @@ def main():
     )
     parser.add_argument("--recipe-name", type=str, default="custom_model", help="Recipe name for --emit recipe")
     parser.add_argument("--output", "-o", type=str, help="Write output to file instead of stdout")
+    parser.add_argument(
+        "--world-size",
+        type=int,
+        help="With --reverse --recipe, resolve precision, optimizer/DDP and overlap policy for this rank count.",
+    )
 
     cli_args = parser.parse_args()
+    if cli_args.world_size is not None and (not cli_args.reverse or not cli_args.recipe or cli_args.world_size < 1):
+        parser.error("--world-size requires --reverse --recipe and a positive rank count")
 
     # ── Input validation ──
     if cli_args.reverse:
@@ -1834,7 +1901,14 @@ def main():
         # 1) Load recipe defaults as base
         if cli_args.recipe:
             try:
-                bridge_overrides = _load_recipe_to_flat_dict(cli_args.recipe)
+                bridge_overrides = _load_recipe_to_flat_dict(
+                    cli_args.recipe,
+                    world_size=cli_args.world_size,
+                    config_filepath=cli_args.yaml if cli_args.world_size is not None else None,
+                    cli_overrides=shlex.split(cli_args.args)
+                    if cli_args.args and cli_args.world_size is not None
+                    else None,
+                )
                 print(
                     f"# Loaded recipe '{cli_args.recipe}': {len(bridge_overrides)} fields",
                     file=sys.stderr,
@@ -1848,7 +1922,9 @@ def main():
                 sys.exit(1)
 
         # 2) Merge CLI overrides on top
-        if cli_args.yaml:
+        if cli_args.world_size is not None:
+            pass  # Applied to the recipe object before runtime policy resolution above.
+        elif cli_args.yaml:
             if not HAS_YAML:
                 print("ERROR: PyYAML required. Install with: pip install pyyaml", file=sys.stderr)
                 sys.exit(1)
@@ -1859,6 +1935,12 @@ def main():
             bridge_overrides.update(parse_bridge_overrides(cli_args.args))
 
         result = translate_bridge_to_mlm(bridge_overrides)
+        if cli_args.recipe:
+            result.add_note(
+                f"Optimizer runtime policy resolved for world_size={cli_args.world_size}; review unmapped fields."
+                if cli_args.world_size is not None
+                else "Recipe defaults are unresolved; use --world-size to apply precision and optimizer/DDP overlap policy."
+            )
         output = emit_mlm_args(result)
 
         _write_output(output, cli_args.output)
