@@ -248,6 +248,11 @@ def test_qwen35_text_recipe_builds_a_builder_backed_config(monkeypatch, tmp_path
     assert not uses_mrope(recipe.model)
     # TrainingEngine.from_recipe deep-copies the recipe; the copy must keep the outer config.
     _assert_35b_a3b_execution_settings(copy.deepcopy(recipe).model, 4096)
+    # Every MoE position of Bridge's hybrid pattern maps back to its own HF layer.
+    pattern = recipe.model.hybrid_layer_pattern.split("/")[0].replace("|", "")
+    moe_layers = [index for index, symbol in enumerate(pattern) if symbol == "E"]
+    hf_layers = [recipe.router_replay_layer_index(index) for index in moe_layers]
+    assert hf_layers == list(range(_TINY_QWEN35_TEXT["num_hidden_layers"]))
 
 
 def test_qwen35_vl_recipe_builds_a_builder_backed_config(monkeypatch, tmp_path):

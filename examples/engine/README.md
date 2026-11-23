@@ -200,7 +200,8 @@ the reference with `forward_only(disable_adapters=True)`, after the critic's upd
   (`[prompt + response - 1, num_moe_layers, topk]`, the last sampled token has none). vllm records a
   slot for every decoder layer, so the adapter keeps only the policy's MoE layers, passed as
   `moe_layers=policy.router_replay_layers`; for a model mixing dense and MoE layers that is where the
-  numbering is translated.
+  numbering is translated. Where Megatron's layer numbering differs from the HF model's (Qwen3.5 is
+  built as two Megatron layers per HF layer), the recipe's `router_replay_layer_index` translates it.
 
 ## Residency protocol used by the RL examples
 

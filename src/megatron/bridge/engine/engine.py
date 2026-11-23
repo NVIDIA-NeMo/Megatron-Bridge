@@ -1010,10 +1010,23 @@ class TrainingEngine:
 
     @property
     def router_replay_layers(self) -> list[int]:
-        """Zero-based decoder layer indices whose routing ``routed_experts`` replays, in field order; empty
-        without ``recipe.router_replay``. A generation backend that records every decoder layer must keep
-        exactly these columns (dense layers have no router)."""
-        return self._router_replay.layer_indices if self._recipe.router_replay else []
+        """Zero-based layer indices, in the generation backend's numbering, whose routing ``routed_experts``
+        replays, in field order; empty without ``recipe.router_replay``. A generation backend that records
+        every decoder layer must keep exactly these columns (dense layers have no router). The recipe's
+        ``router_replay_layer_index`` translates from Megatron's numbering when the two differ."""
+        if not self._recipe.router_replay:
+            return []
+        layers = self._router_replay.layer_indices
+        to_backend_layer = self._recipe.router_replay_layer_index
+        if to_backend_layer is None:
+            return layers
+        backend_layers = [to_backend_layer(layer) for layer in layers]
+        if len(set(backend_layers)) != len(backend_layers):
+            raise ValueError(
+                f"recipe.router_replay_layer_index maps Megatron MoE layers {layers} to {backend_layers}; "
+                "each MoE layer needs its own backend layer."
+            )
+        return backend_layers
 
     # ---- introspection ------------------------------------------------------------------------
 

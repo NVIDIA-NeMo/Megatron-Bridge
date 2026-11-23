@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -91,6 +92,9 @@ class TrainingRecipe:
         lora_target_modules: Megatron module names a ``LoraConfig`` without ``target_modules`` attaches
             adapters to. Bridge's four default linears, extended by a recipe whose model has other
             linears worth adapting (Qwen3.5 adds its GatedDeltaNet ``in_proj`` and ``out_proj``).
+        router_replay_layer_index: Maps the zero-based Megatron decoder layer index of an MoE layer to the
+            layer index a generation backend records its routing under (the HF layer). ``None`` when the
+            two are the same; a model whose Megatron layout splits one HF layer into several sets it.
     """
 
     model: ModelConfig | ModelProviderMixin
@@ -108,6 +112,7 @@ class TrainingRecipe:
     hf_revision: str | None = None
     router_replay: bool = False
     lora_target_modules: list[str] = field(default_factory=lambda: list(BRIDGE_LORA_TARGET_MODULES))
+    router_replay_layer_index: Callable[[int], int] | None = None
 
 
 SUPPORTED_BATCH_LAYOUTS = ("thd", "bshd")

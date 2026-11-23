@@ -83,11 +83,18 @@ class LinearForLastLayer(nn.Linear):
         input_: torch.Tensor,
         weight: torch.Tensor | None = None,
         runtime_gather_output: bool | None = None,
+        output_dtype: torch.dtype | None = None,
     ) -> tuple[torch.Tensor, None]:
-        """Run the final projection and return Megatron-style ``(output, bias)``."""
+        """Run the final projection and return Megatron-style ``(output, bias)``.
+
+        Megatron Core passes ``output_dtype`` to every output layer; when it is set the output is cast
+        to it, otherwise ``output_in_fp32`` decides.
+        """
         del weight, runtime_gather_output
         logits = super().forward(self.dropout(input_))
-        if self.output_in_fp32:
+        if output_dtype is not None:
+            logits = logits.to(output_dtype)
+        elif self.output_in_fp32:
             logits = logits.float()
         if self.sequence_parallel:
             logits = tensor_parallel.gather_from_sequence_parallel_region(
