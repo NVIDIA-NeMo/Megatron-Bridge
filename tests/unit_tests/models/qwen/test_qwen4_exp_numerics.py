@@ -15,10 +15,16 @@
 """Numerical contracts for the model-local optimizations, independent of CUDA kernels."""
 
 import math
+from types import SimpleNamespace
 
 import pytest
 import torch
+from megatron.core.transformer.hyper_connection import (
+    HyperConnectionExecutionContext,
+    HyperConnectionResidualConnection,
+)
 
+from megatron.bridge.models.qwen.modeling_qwen4_exp.gated_residual import GatedResidualHyperConnection
 from megatron.bridge.models.qwen.modeling_qwen4_exp.gated_residual_math import (
     activate_residual_gate,
     mix_residual_streams,
@@ -31,6 +37,57 @@ def _reference_norm(x, weight, groups, eps):
     values = x.float().unflatten(-1, (groups, -1))
     normalized = values * torch.rsqrt(values.square().mean(-1, keepdim=True) + eps)
     return (normalized.flatten(-2) * (1.0 + weight.float())).to(x.dtype)
+
+
+@pytest.mark.parametrize("use_input_residual", [False, True])
+def test_gated_residual_core_read_write_and_gradients(use_input_residual):
+    torch.manual_seed(29)
+    config = SimpleNamespace(
+        mhc_num_residual_streams=2,
+        hidden_size=4,
+        mhc_gated_residual_rank=2,
+        layernorm_epsilon=1e-6,
+        params_dtype=torch.float32,
+        perform_initialization=True,
+        init_method_std=0.1,
+        sequence_parallel=False,
+    )
+    owner = GatedResidualHyperConnection(config)
+    context = HyperConnectionExecutionContext(owner)
+    read = HyperConnectionResidualConnection(config, operation="read", use_input_residual=use_input_residual)
+    write = HyperConnectionResidualConnection(config, operation="write")
+    x = torch.randn(3, 1, 8, requires_grad=True)
+    bias = torch.randn(4, requires_grad=True)
+    branch, state = read(x, execution_context=context)
+    assert state[0] is x and state[1].numel() == 0
+    actual = write(
+        (branch.square(), bias), state=state, dropout_probability=0.0, training=True, execution_context=context
+    )
+
+    normalized = _reference_norm(x, owner.hc_norm.weight, 2, config.layernorm_epsilon)
+    gate = owner.input_mix_weight_up(torch.nn.functional.silu(owner.input_mix_weight_down(normalized) / 2)).sigmoid()
+    reference_branch = (gate * normalized).unflatten(-1, (2, 4)).mean(-2)
+    inject = 2 * (owner.block_inject_weight(normalized) / 2).sigmoid()
+    expected = (
+        x.unflatten(-1, (2, 4)) + inject[..., None] * (reference_branch.square() + bias).unsqueeze(-2)
+    ).flatten(-2)
+    torch.testing.assert_close(actual, expected)
+    inputs = (x, bias, *owner.parameters())
+    for a, b in zip(torch.autograd.grad(actual.sum(), inputs), torch.autograd.grad(expected.sum(), inputs)):
+        torch.testing.assert_close(a, b, rtol=3e-5, atol=3e-5)
+    with pytest.raises(NotImplementedError, match="recomputation"):
+        owner(x, checkpoint_fn=lambda function, *args: function(*args))
+    with pytest.raises(NotImplementedError, match="recomputation"):
+        owner.fused_h_res_h_post_bda(
+            state[1],
+            x,
+            state[2],
+            (branch, bias),
+            0.0,
+            True,
+            False,
+            checkpoint_fn=lambda function, *args: function(*args),
+        )
 
 
 @pytest.mark.parametrize("dtype,groups,rows", [(torch.float32, 1, 0), (torch.float16, 4, 1), (torch.bfloat16, 4, 17)])

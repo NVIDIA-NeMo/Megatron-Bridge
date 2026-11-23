@@ -14,6 +14,7 @@
 
 """Qwen4-Exp gated residual streams and learned output contraction."""
 
+from collections.abc import Callable
 from typing import Optional, Tuple
 
 import torch
@@ -60,7 +61,7 @@ class GatedResidualHyperConnection(MegatronModule):
     The interface matches :class:`HyperConnectionModule` so that
     :class:`~megatron.core.transformer.transformer_layer.HyperConnectionTransformerLayer` drives
     both formulations: ``forward`` returns ``(block_input, h_res, h_post)`` where ``h_res`` is
-    ``None`` (the residual mixing is the identity) and ``h_post`` is ``inject``, and
+    an empty tensor (the residual mixing is the identity) and ``h_post`` is ``inject``, and
     :meth:`fused_h_res_h_post_bda` applies the write gate. With ``use_combine=False`` the module
     is the block-level output mixer: it only returns ``block_in`` (see
     :class:`GatedResidualOutputMixer`).
@@ -127,24 +128,34 @@ class GatedResidualHyperConnection(MegatronModule):
         return block_input, inject
 
     def forward(
-        self, hidden_states: Tensor, mhc_recompute_manager: object | None = None, return_residual: bool = False
-    ) -> tuple[Tensor, None, Tensor | None] | tuple[Tensor, None, Tensor | None, Tensor]:
+        self,
+        hidden_states: Tensor,
+        mhc_recompute_manager: object | None = None,
+        return_residual: bool = False,
+        *,
+        checkpoint_fn: Callable[..., Tensor] | None = None,
+    ) -> tuple[Tensor, Tensor, Tensor | None] | tuple[Tensor, Tensor, Tensor | None, Tensor]:
         """Read the streams.
 
         Args:
             hidden_states: [s, b, n*C] n-stream hidden states.
-            mhc_recompute_manager: Accepted for interface compatibility; not used.
+            mhc_recompute_manager: Must be None; residual recomputation is unsupported.
             return_residual: Also return the (unchanged) n-stream residual as a 4th element,
                 like :class:`HyperConnectionModule`.
+            checkpoint_fn: Must be None; residual recomputation is unsupported.
 
         Returns:
-            ``(block_input [s, b, C], h_res=None, h_post [s, b, n])``. ``h_post`` is ``None``
+            ``(block_input [s, b, C], h_res=empty tensor, h_post [s, b, n])``. ``h_post`` is ``None``
             for the output mixer (``use_combine=False``).
         """
+        if mhc_recompute_manager is not None or checkpoint_fn is not None:
+            raise NotImplementedError("Qwen4-Exp gated residual recomputation is not supported.")
         block_input, inject = self._mix(hidden_states)
+        # Core carries tensor-only residual state. Identity mixing needs no matrix.
+        h_res = hidden_states.new_empty(0)
         if return_residual:
-            return block_input, None, inject, hidden_states
-        return block_input, None, inject
+            return block_input, h_res, inject, hidden_states
+        return block_input, h_res, inject
 
     def apply_h_res(self, h_res: Optional[Tensor], residual: Tensor) -> Tensor:
         """The gated residual keeps the streams untouched (identity residual mixing)."""
@@ -170,6 +181,8 @@ class GatedResidualHyperConnection(MegatronModule):
         training: bool,
         fused: bool,
         manager: object | None = None,
+        *,
+        checkpoint_fn: Callable[..., Tensor] | None = None,
     ) -> Tensor:
         """Write the sub-layer output back to every stream: ``x + inject_j * (F(x) + bias)``.
 
@@ -180,11 +193,14 @@ class GatedResidualHyperConnection(MegatronModule):
             layer_output_with_bias: ``(x [s, b, C], bias [C] or None)``.
             dropout_prob / training / fused: bias-dropout-add settings; dropout is applied to the
                 broadcast update when non-zero.
-            manager: Accepted for interface compatibility; not used.
+            manager: Must be None; residual recomputation is unsupported.
+            checkpoint_fn: Must be None; residual recomputation is unsupported.
 
         Returns:
             [s, b, n*C] updated streams.
         """
+        if manager is not None or checkpoint_fn is not None:
+            raise NotImplementedError("Qwen4-Exp gated residual recomputation is not supported.")
         x, bias = layer_output_with_bias
         if dropout_prob == 0.0 or not training:
             return self._inject(original_residual, h_post, x, bias, self.n)
