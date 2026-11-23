@@ -18,8 +18,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from megatron.bridge.data.loaders import build_train_valid_test_data_iterators
 from megatron.bridge.training.callbacks import CallbackManager
+from megatron.bridge.training.config import GPTDatasetConfig
 from megatron.bridge.training.eval import evaluate, evaluate_and_print_results
+from megatron.bridge.training.state import TrainState
 
 
 pytestmark = pytest.mark.unit
@@ -570,3 +573,181 @@ def test_evaluate_and_print_results_skips_writers_for_empty_eval_set(
     state.wandb_logger.log.assert_any_call({"lm loss validation": 2.0}, 0)
     state.mlflow_logger.log_metrics.assert_any_call({"val/lm loss": 2.0}, step=0)
     state.comet_logger.log_metrics.assert_any_call({"lm loss validation": 2.0}, step=0)
+
+
+def _gpt_batch_mode_config(*, skip_train):
+    """Return a config that loads GPTDatasetConfig rows with dataloader_type='batch' at eval MBS1 and 2 micro-batches."""
+    dataset = GPTDatasetConfig(seq_length=8, random_seed=1234)
+    for key, value in {
+        "dataloader_type": "batch",
+        "num_workers": 0,
+        "pin_memory": False,
+        "persistent_workers": False,
+    }.items():
+        if not hasattr(dataset, key):
+            raise ValueError(f"Config has no field '{key}'")
+        setattr(dataset, key, value)
+    cfg = _make_evaluate_state(eval_iters=1).cfg
+    cfg.dataset = dataset
+    cfg.model.seq_length = 8
+    cfg.validation = SimpleNamespace(
+        eval_interval=1,
+        eval_iters=1,
+        eval_global_batch_size=2,
+        eval_micro_batch_size=1,
+        skip_train=skip_train,
+    )
+    cfg.train = SimpleNamespace(
+        train_samples=None,
+        train_iters=1,
+        global_batch_size=2,
+        micro_batch_size=1,
+        num_epochs=None,
+        exit_signal=None,
+        exit_signal_handler_for_dataloader=False,
+        empty_unused_memory_level=0,
+        exit_duration_in_mins=None,
+    )
+    return cfg
+
+
+def _build_eval_iterators(cfg):
+    """Build the validation and test iterators the way setup does, on the CPU and with one rank."""
+
+    def rows(count, first):
+        return [{"tokens": torch.full((8,), first + index)} for index in range(count)]
+
+    def datasets_provider(train_val_test_num_samples, dataset_config):
+        return rows(8, 0), rows(8, 100), rows(8, 200)
+
+    real_tensor = torch.tensor
+
+    def tensor_on_cpu(*args, **kwargs):
+        kwargs.pop("device", None)
+        return real_tensor(*args, **kwargs)
+
+    with (
+        patch("torch.distributed.broadcast"),
+        patch("torch.distributed.get_world_size", return_value=1),
+        patch("torch.distributed.get_rank", return_value=0),
+        patch("megatron.bridge.data.loaders.torch.tensor", side_effect=tensor_on_cpu),
+    ):
+        _, valid_iterator, test_iterator = build_train_valid_test_data_iterators(
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=datasets_provider,
+            dp_group=object(),
+        )
+    return valid_iterator, test_iterator
+
+
+@pytest.mark.parametrize(
+    "skip_train, is_test",
+    [(False, False), (True, False), (False, True)],
+    ids=["validation_during_training", "validation_without_training", "test_split"],
+)
+def test_batch_mode_evaluation_reads_gpt_loaders_at_their_own_granularity(skip_train, is_test):
+    """With dataloader_type='batch', each eval step runs eval_num_microbatches single-row micro-batches.
+
+    During training, Bridge validates GPTDatasetConfig with a cyclic loader that yields micro-batches,
+    while the validation loader of an evaluation-only run and the test loader yield global batches.
+    """
+    cfg = _gpt_batch_mode_config(skip_train=skip_train)
+    valid_iterator, test_iterator = _build_eval_iterators(cfg)
+    state = _make_evaluate_state(eval_iters=1)
+    state.cfg = cfg
+    pg_collection = SimpleNamespace(pp=SimpleNamespace(size=lambda: 1), dp=SimpleNamespace(size=lambda: 1))
+    micro_batches = []
+
+    def forward_backward_func(*, data_iterator, num_microbatches, **kwargs):
+        micro_batches.extend(next(data_iterator)["tokens"] for _ in range(num_microbatches))
+        return [{}]
+
+    with (
+        patch("megatron.bridge.training.eval.prepare_forward_step_func", return_value=MagicMock()),
+        patch("megatron.bridge.training.eval.get_model_config", return_value=SimpleNamespace()),
+        patch("megatron.bridge.training.eval.get_rerun_state_machine", return_value=MagicMock()),
+        patch("megatron.bridge.training.eval.is_full_iteration_cuda_graph", return_value=False),
+        patch("megatron.bridge.training.eval.get_forward_backward_func", return_value=forward_backward_func),
+        patch("megatron.bridge.training.eval.is_pp_last_stage", return_value=False),
+        patch("megatron.bridge.training.eval.fault_tolerance.on_eval_step_start"),
+        patch("megatron.bridge.training.eval.fault_tolerance.on_eval_step_end"),
+    ):
+        evaluate(
+            state=state,
+            forward_step_func=MagicMock(),
+            data_iterator=test_iterator if is_test else valid_iterator,
+            model=[_ModeTrackingModel()],
+            process_non_loss_data_func=None,
+            config=SimpleNamespace(timers=state.timers),
+            p2p_communicator=MagicMock(),
+            pg_collection=pg_collection,
+            is_test=is_test,
+        )
+
+    assert [tuple(tokens.shape) for tokens in micro_batches] == [(1, 8), (1, 8)]
+    first_row = 200 if is_test else 100
+    rows = {tokens[0, 0].item() for tokens in micro_batches}
+    assert len(rows) == 2 and rows <= set(range(first_row, first_row + 8))
+
+
+class _CountingRows:
+    """Outer eval iterator of single-row micro-batches; row ``i`` holds token ``i``."""
+
+    def __init__(self):
+        self.reads = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        row = {"tokens": torch.full((1, 8), self.reads)}
+        self.reads += 1
+        return row
+
+
+def test_non_loss_collection_gives_every_model_chunk_the_same_micro_batches():
+    """With two model chunks, non-loss collection reads each eval micro-batch once and serves it to both chunks.
+
+    During training, GPTDatasetConfig with dataloader_type='batch' is validated from micro-batches, so
+    nothing is split, but the interleaved schedule still expects one iterator view per chunk.
+    """
+    cfg = _gpt_batch_mode_config(skip_train=False)
+    cfg.validation.eval_iters = 0
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    state = _make_evaluate_state(eval_iters=0)
+    state.cfg = cfg
+    pg_collection = SimpleNamespace(pp=SimpleNamespace(size=lambda: 2), dp=SimpleNamespace(size=lambda: 1))
+    outer = _CountingRows()
+    rows_seen = {0: [], 1: []}
+    reads_during_collection = []
+
+    def forward_backward_func(*, data_iterator, num_microbatches, collect_non_loss_data=False, **kwargs):
+        assert collect_non_loss_data
+        reads_before = outer.reads
+        for _ in range(num_microbatches):
+            for chunk in (1, 0):
+                rows_seen[chunk].append(next(data_iterator[chunk])["tokens"][0, 0].item())
+        reads_during_collection.append(outer.reads - reads_before)
+        return []
+
+    with (
+        patch("megatron.bridge.training.eval.prepare_forward_step_func", return_value=MagicMock()),
+        patch("megatron.bridge.training.eval.get_model_config", return_value=SimpleNamespace()),
+        patch("megatron.bridge.training.eval.get_rerun_state_machine", return_value=MagicMock()),
+        patch("megatron.bridge.training.eval.is_full_iteration_cuda_graph", return_value=False),
+        patch("megatron.bridge.training.eval.get_forward_backward_func", return_value=forward_backward_func),
+    ):
+        evaluate(
+            state=state,
+            forward_step_func=MagicMock(),
+            data_iterator=outer,
+            model=[_ModeTrackingModel(), _ModeTrackingModel()],
+            process_non_loss_data_func=MagicMock(),
+            config=SimpleNamespace(timers=state.timers),
+            p2p_communicator=MagicMock(),
+            pg_collection=pg_collection,
+        )
+
+    assert rows_seen == {0: [0, 1], 1: [0, 1]}
+    assert reads_during_collection == [2]
