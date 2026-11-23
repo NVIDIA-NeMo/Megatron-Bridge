@@ -83,27 +83,29 @@ weight dtypes such as `float8_e4m3fn` (FP8) or `uint8`/`uint4` with accompanying
 - Safetensors contain `weight_scale_inv` keys alongside the main weight keys
 - The model card mentions FP8/FP4/INT4 weights
 
-**Why this matters:** The bridge's `import_ckpt` path does **not** automatically dequantize — it
-loads raw quantized values as-is. This produces a silently broken model (random-level loss, huge
-grad norms) instead of raising an error.
+**Why this matters:** Apart from fine-grained FP8 (below), the bridge's `import_ckpt` path does
+**not** automatically dequantize — it loads raw quantized values as-is. This produces a silently
+broken model (random-level loss, huge grad norms) instead of raising an error.
 
-**Fix:** Dequantize before or during conversion. The current in-repo pattern is to
+**Fine-grained FP8 needs no bridge code.** Checkpoints with `quant_method: "fp8"` store FP8 weights
+with a `<name>_scale_inv` block-scale companion, as DeepSeek-V3 does. The base `_load_hf_weights`
+dequantizes them with the checkpoint's `quantization_config.weight_block_size`. Do not dequantize
+them in `maybe_modify_loaded_hf_weight()`: that hook runs first, so a fixed 128x128 block there
+ignores a different declared block size.
+
+**Other formats:** Dequantize before or during conversion. The current in-repo pattern is to
 use a bridge hook plus the shared helpers in
-`src/megatron/bridge/models/conversion/quantization_utils.py`. Existing examples
-include `src/megatron/bridge/models/ministral3/ministral3_bridge.py`,
-`src/megatron/bridge/models/deepseek/deepseek_v3_bridge.py`, and
-`src/megatron/bridge/models/minimax_m2/minimax_m2_bridge.py`.
-
-Override `maybe_modify_loaded_hf_weight()` in the bridge class to dequantize on
-the fly during import:
+`src/megatron/bridge/models/conversion/quantization_utils.py`. For example,
+`src/megatron/bridge/models/gpt_oss/gpt_oss_bridge.py` dequantizes its MXFP4 experts, stored as
+`<name>_blocks` and `<name>_scales`, on the fly during import:
 
    ```python
    def maybe_modify_loaded_hf_weight(self, hf_param, hf_state_dict):
-       weight = hf_state_dict[hf_param]
-       scale_key = hf_param + "_scale_inv"
-       if weight.dtype == torch.float8_e4m3fn and scale_key in hf_state_dict:
-           return weight.to(torch.bfloat16) * hf_state_dict[scale_key].to(torch.bfloat16)
-       return weight
+       if isinstance(hf_param, str) and hf_param not in hf_state_dict:
+           return quantization_utils.dequantize_mxfp4(
+               hf_state_dict[hf_param + "_blocks"], hf_state_dict[hf_param + "_scales"]
+           )
+       return super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
    ```
 
 Always add a sanity check in the verification workflow (e.g., print `std` of a weight tensor —
