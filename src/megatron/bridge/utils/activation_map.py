@@ -28,6 +28,12 @@ from megatron.core.activations import fast_gelu, squared_relu
 
 
 try:
+    from megatron.core.activations import situlu
+except ImportError:
+    situlu = None
+
+
+try:
     from megatron.core.fusions.fused_bias_geglu import quick_gelu
 except ImportError:
     # Fallback if fused_bias_geglu is not available in the pinned MCore version
@@ -61,6 +67,9 @@ ACTIVATION_FUNC_MAP.update(
         "torch.tanh": torch.tanh,
     }
 )
+
+if situlu is not None:
+    ACTIVATION_FUNC_MAP["situlu"] = situlu
 
 # Reverse map: callable id -> canonical short name (used during serialization).
 # Only short names (no dots) are used as canonical representations.

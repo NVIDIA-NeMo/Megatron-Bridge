@@ -2,9 +2,117 @@
 
 [Kimi K3](https://huggingface.co/moonshotai/Kimi-K3) is a large sparse MoE model from Moonshot AI. Megatron Bridge supports the **language backbone** of the published multimodal checkpoint through the `KimiK3Bridge`.
 
-```{note}
-Support for this model is in progress. Conversion (HF → Megatron) and Megatron greedy inference are verified; strict full-checkpoint export, exact round-trip parity, and every training workflow are not. See Known Limitations and the machine-readable [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/kimi-k3/card.yaml) before relying on this path.
+The historical public-checkpoint results below were collected with the legacy
+GPT implementation. They do not certify the new Hybrid path. Native migration
+coverage and its remaining limitations are described here; the existing
+[verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/kimi-k3/card.yaml)
+retains those earlier results.
+
+## Native Hybrid migration
+
+`AutoBridge` now selects `KimiK3Bridge` with `KimiK3HybridModelConfig`. Each HF
+block becomes two native entries: KDA (`K`) or MLA (`+`), followed by dense MLP
+(`-`) or MoE (`E`). KDA placement, expert placement, head dimensions, gates,
+normalization, vocabulary, and AttnRes boundaries come from the HF configuration.
+Native layer counts and AttnRes block sizes are twice their HF block counts.
+The bridge preserves separate KDA Q/K/V projections, head-sharded beta projection,
+FP32 convolution weights, and the source BF16 cast boundaries for backward parity.
+
+This requires Core dev plus the Kimi precision/projection controls and full
+AttnRes recomputation changes in
+[Megatron-LM #9725](https://github.com/NVIDIA/Megatron-LM/pull/9725). Bridge's pinned Core main
+`9261f941cb0a1882b052cdaac950248121dcaf76` lacks the needed KDA/AttnRes support;
+the unmodified pinned dev `264817a74075a0c4b003723054c3ae71020058ad` also lacks
+these additional controls. Merely running `scripts/switch_mcore.sh dev` is
+insufficient. The configuration raises an explicit error when those APIs are
+missing. This migration does not change the repository-wide Core pins.
+
+### Checkpoints and recipes
+
+Existing serialized `KimiK3ModelConfig` and `KimiK3ModelProvider` remain GPT-based
+so they can reconstruct old checkpoints. `KimiK3GPTBridge` retains their export
+mapping. To migrate model weights, restore the old GPT checkpoint with its saved
+configuration, export through `KimiK3GPTBridge` to HF, and import through the new
+`KimiK3Bridge`. Native layer names, convolution packing, and norm names differ;
+a GPT distributed checkpoint cannot be directly loaded into Hybrid. This route
+transfers model weights and starts a new optimizer/scheduler. It does not convert
+old optimizer moments or promise identical training continuation. Published
+MXFP4 expert import/export remains a lossy dequantize/requantize path.
+
+`kimi_k3_pretrain_config()` obtains the canonical model from `KIMI_K3_HF_PATH`
+and keeps the HF tokenizer configuration. Complete HF blocks are balanced over
+pipeline stages (93 blocks become 24/23/23/23 with PP4). Set
+`model.pipeline_block_counts` to an explicit tuple when a different split is
+needed. Pipeline boundaries cannot split an attention/MLP pair.
+
+`kimi_k3_pretrain_64gpu_gb300_bf16_proxy_config()` derives its first 24 attention
+blocks from that model and explicitly replaces their MLP entries with experts.
+For the three-KDA/one-MLA source ordering, this gives `KEKEKE+E` repeated six
+times, as in PR #7066. Reduced depth, random initialization, mock data,
+NullTokenizer, and forced balanced routing are confined to this proxy. Its BF16
+Adam setup does not reproduce that PR's MXFP8/MoK/Muon performance results.
+Neither recipe establishes full-model throughput, memory fit, or convergence.
+
+### Numerical coverage and limitations
+
+The migration checks use a synthetic six-block model with four KDA layers, two
+MLA layers, one dense MLP, five real-router MoE layers with shared experts, and
+three AttnRes blocks. Weights include nontrivial norm and KDA gate parameters.
+All logical weights/buffers and gradient-presence values must match exactly.
+Every parameter gradient, logits, cross-entropy loss, and embedding gradient is
+compared. FP32 uses `atol=2e-5, rtol=2e-4`; BF16 uses
+`atol=2e-3, rtol=2e-2` plus a per-tensor relative-L2 limit of 0.02.
+These tolerances are fixed across the comparisons.
+
+Measured forward/backward coverage includes FP32 and BF16, ordinary 128-token
+sequences, packed 85+172-token sequences, TP2 with sequence parallelism, EP2,
+PP2 with 3/3 and 4/2 block splits, selective recomputation, and full recomputation
+including a PP boundary inside an AttnRes block. The pipeline tests run two
+scheduler invocations with four distinct microbatches each. These are bounded
+local tests, not public-checkpoint HF execution or full-scale training results.
+
+The two-GPU Core DDP/Adam one-update comparison also matches exactly for every
+logical parameter group, gradient, updated weight, FP32 master weight, and both
+Adam moments. TP2 native checkpoint save/reload restores all 187 local tensors
+exactly and retains forward/backward parity. A DP2 model-plus-optimizer
+checkpoint round trip restores 706 tensors per rank exactly. Synthetic HF
+import/export round trips preserve all 190 source keys exactly.
+
+The focused regression can be run with a compatible CUDA/TE/FLA environment:
+
+```bash
+NVIDIA_TF32_OVERRIDE=0 FLA_DISABLE_BACKEND_DISPATCH=1 \
+uv run python -m torch.distributed.run --nproc_per_node=1 \
+  tests/functional_tests/training/kimi_k3_hybrid_parity.py \
+  --dtype bf16 --packed --report kimi-parity.json
 ```
+
+Use `--dtype fp32` for the control and `--recompute full` or
+`--recompute selective` for recomputation. The test pins kernel choices rather
+than timed autotuning; its purpose is reproducible comparison, not throughput.
+
+KDA context parallelism (including dynamic CP), virtual pipeline parallelism,
+and nonzero hidden dropout are rejected. KV-cache generation, multimodal
+execution, quantized training, and arbitrary padding masks are not established
+by these tests. Packed training uses explicit cumulative sequence lengths and the FLA convolution
+path (`deterministic_mode=False`); deterministic comparison pins kernel choices.
+The torch convolution fallback rejects packing because it does not reset at
+sequence boundaries. Native Core KDA currently rejects inference contexts.
+Use the retained GPT configuration and `KimiK3GPTBridge` for the legacy generation
+path; KV-cache migration to native KDA is not implemented here.
+Keep DDP gradient overlap disabled: the source model has unused first-attention
+AttnRes parameters, which the pinned overlap implementation cannot handle across
+iterations. Raw gradients remain `None`; Core DDP uses zero main-gradient
+buffers for its optimizer, including those unused parameters.
+
+Default Adam parameter grouping is preserved. Custom name-based optimizer
+rules need translation to native names. In particular,
+`apply_wd_to_qk_layernorm`, `rmsnorm_weight_decay_mult`, and
+`muon_split_mla_qkv` can select different native modules; their nondefault
+settings are outside the verified migration contract. Fresh initialization
+preserves the source query distribution, but different module construction
+order does not promise seed-identical initial tensors. All parity comparisons
+start from identical mapped weights.
 
 {/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 

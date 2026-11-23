@@ -32,8 +32,8 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.kimi import kimi_k3_spec
-from megatron.bridge.models.kimi.kimi_k3_bridge import KimiK3Bridge
 from megatron.bridge.models.kimi.kimi_k3_config import KimiK3ModelConfig, KimiK3TransformerConfig
+from megatron.bridge.models.kimi.kimi_k3_gpt_bridge import KimiK3GPTBridge as KimiK3Bridge
 from megatron.bridge.models.kimi.kimi_k3_layers import KimiK3Attention, KimiK3MoELayer, KimiK3TransformerLayer
 from megatron.bridge.models.kimi.kimi_k3_pipeline import (
     bank_num_rows,

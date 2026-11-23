@@ -15,6 +15,8 @@
 from megatron.bridge.models.kimi.kimi_bridge import KimiK2Bridge  # noqa: F401
 from megatron.bridge.models.kimi.kimi_k3_bridge import KimiK3Bridge
 from megatron.bridge.models.kimi.kimi_k3_config import KimiK3ModelConfig
+from megatron.bridge.models.kimi.kimi_k3_gpt_bridge import KimiK3GPTBridge
+from megatron.bridge.models.kimi.kimi_k3_hybrid_config import KimiK3HybridModelConfig
 from megatron.bridge.models.kimi.kimi_k3_provider import KimiK3ModelProvider
 
 
@@ -22,5 +24,7 @@ __all__ = [
     "KimiK2Bridge",
     "KimiK3Bridge",
     "KimiK3ModelConfig",
+    "KimiK3GPTBridge",
+    "KimiK3HybridModelConfig",
     "KimiK3ModelProvider",
 ]
