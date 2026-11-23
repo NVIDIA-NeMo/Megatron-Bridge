@@ -43,6 +43,7 @@ from megatron.core.utils import (
     get_te_version,
     is_te_min_version,
     is_torch_min_version,
+    set_default_log_ranks,
 )
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -60,7 +61,6 @@ from megatron.bridge.utils.common_utils import (
     get_rank_safe,
     get_world_size_safe,
 )
-from megatron.bridge.utils.mcore_logging import set_default_log_ranks
 
 
 def initialize_megatron(

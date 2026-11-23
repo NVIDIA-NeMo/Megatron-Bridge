@@ -158,13 +158,9 @@ def test_current_hardware_name_resolves_without_deprecation_warning(caplog):
     ("recipe_name", "num_gpus", "hardware"),
     [
         ("deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config", 256, "gb300"),
-        ("deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config", 256, "gb300"),
         ("deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config", 64, "gb300"),
-        ("deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config", 64, "gb300"),
         ("deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config", 64, "vrnvl72"),
-        ("deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config", 64, "vrnvl72"),
         ("deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config", 256, "vrnvl72"),
-        ("deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config", 256, "vrnvl72"),
     ],
 )
 def test_pro_log_recipes_select_packed_deepseek_forward_step(recipe_name: str, num_gpus: int, hardware: str) -> None:

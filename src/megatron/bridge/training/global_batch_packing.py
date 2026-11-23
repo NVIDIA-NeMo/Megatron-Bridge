@@ -73,25 +73,15 @@ def fixed_thd_dsv4_packing_enabled(model_config: Any) -> bool:
     matching offline-packed dataset and rejects an explicit online-packing request.
     """
     metadata_capacity = getattr(model_config, "cuda_graph_thd_max_packed_sequences", None)
-    if metadata_capacity is not None:
-        # Native MCore uses fixed metadata capacity and per-layer CP layouts.
-        # Padding needs one real-document slot and one dummy-document slot.
-        fixed_shape_contract = (
-            isinstance(metadata_capacity, int)
-            and not isinstance(metadata_capacity, bool)
-            and metadata_capacity >= 2
-            and getattr(model_config, "attention_cp_layout", None) == "contiguous"
-            and getattr(model_config, "linear_cp_layout", None) == "contiguous"
-        )
-    else:
-        fixed_shape_contract = (
-            getattr(model_config, "pipeline_p2p_fixed_shape", False) is True
-            and getattr(model_config, "cp_partition_mode", None) == "contiguous"
-        )
     return (
         getattr(model_config, "experimental_attention_variant", None) == "dsv4_hybrid"
         and getattr(model_config, "sequence_packing_scheduler", None) == "dp_balanced"
-        and fixed_shape_contract
+        # Padding needs one real-document slot and one dummy-document slot.
+        and isinstance(metadata_capacity, int)
+        and not isinstance(metadata_capacity, bool)
+        and metadata_capacity >= 2
+        and getattr(model_config, "attention_cp_layout", None) == "contiguous"
+        and getattr(model_config, "linear_cp_layout", None) == "contiguous"
         and getattr(model_config, "pad_packed_seq_alignment", None) == "max"
         and not dynamic_context_parallel_enabled(model_config)
     )

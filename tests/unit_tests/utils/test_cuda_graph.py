@@ -15,15 +15,12 @@
 """Tests for the Megatron-Core CUDA graph helpers in ``megatron.bridge.utils.cuda_graph``."""
 
 import dataclasses
-from types import SimpleNamespace
-from unittest.mock import Mock
 
 import pytest
-from megatron.core.transformer import cuda_graphs as mcore_cuda_graphs
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
-from megatron.bridge.utils.cuda_graph import enable_hybrid_cuda_graph_pairs, get_vision_cuda_graph_seq_length
+from megatron.bridge.utils.cuda_graph import enable_hybrid_cuda_graph_pairs
 
 
 pytestmark = pytest.mark.unit
@@ -106,44 +103,3 @@ def test_megatron_core_cuda_graph_pair_contract() -> None:
     config = _small_transformer_config(TransformerConfig)
     assert enable_hybrid_cuda_graph_pairs(config) is True
     assert config.cuda_graph_pair_hybrid_layers is True
-
-
-@pytest.mark.parametrize("helper_name", ["get_vision_te_cuda_graph_seq_length", "get_vision_cuda_graph_seq_length"])
-def test_vision_graph_length_supports_mcore_helper_names(monkeypatch, helper_name: str) -> None:
-    """Both MCore revisions preserve the config and explicit fallback length."""
-    monkeypatch.delattr(mcore_cuda_graphs, "get_vision_te_cuda_graph_seq_length", raising=False)
-    monkeypatch.delattr(mcore_cuda_graphs, "get_vision_cuda_graph_seq_length", raising=False)
-    helper = Mock(return_value=123)
-    monkeypatch.setattr(mcore_cuda_graphs, helper_name, helper, raising=False)
-    config = SimpleNamespace()
-
-    assert get_vision_cuda_graph_seq_length(config, default_seq_length=73) == 123
-    helper.assert_called_once_with(config, default_seq_length=73)
-
-
-def test_vision_graph_length_prefers_current_helper_without_hiding_errors(monkeypatch) -> None:
-    current = Mock(side_effect=ValueError("invalid vision configuration"))
-    legacy = Mock(return_value=123)
-    monkeypatch.setattr(mcore_cuda_graphs, "get_vision_te_cuda_graph_seq_length", current, raising=False)
-    monkeypatch.setattr(mcore_cuda_graphs, "get_vision_cuda_graph_seq_length", legacy, raising=False)
-
-    with pytest.raises(ValueError, match="invalid vision configuration"):
-        get_vision_cuda_graph_seq_length(SimpleNamespace())
-    legacy.assert_not_called()
-
-
-def test_vision_graph_length_reports_missing_mcore_helpers(monkeypatch) -> None:
-    monkeypatch.delattr(mcore_cuda_graphs, "get_vision_te_cuda_graph_seq_length", raising=False)
-    monkeypatch.delattr(mcore_cuda_graphs, "get_vision_cuda_graph_seq_length", raising=False)
-
-    with pytest.raises(
-        ImportError, match="neither get_vision_te_cuda_graph_seq_length nor get_vision_cuda_graph_seq_length"
-    ):
-        get_vision_cuda_graph_seq_length(SimpleNamespace())
-
-
-def test_vision_graph_length_delegates_to_installed_mcore() -> None:
-    """Exercise the real helper API without constructing a vision encoder or CUDA state."""
-    config = SimpleNamespace(num_position_embeddings=4096, spatial_merge_size=2)
-    assert get_vision_cuda_graph_seq_length(config) == 1024
-    assert get_vision_cuda_graph_seq_length(SimpleNamespace(), default_seq_length=73) == 73

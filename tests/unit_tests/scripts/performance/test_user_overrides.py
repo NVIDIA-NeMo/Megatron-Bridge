@@ -62,7 +62,7 @@ def test_seq_length_updates_model_and_mock_dataset(tmp_path):
 
 
 def test_mock_override_preserves_recipe_owned_thd_metadata(tmp_path):
-    from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import FixedTHDMockDatasetConfig
+    from megatron.bridge.models.deepseek.deepseek_v4_data import FixedTHDMockDatasetConfig
 
     recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
     dataset = FixedTHDMockDatasetConfig(seq_length=128, vocab_size=256, seed=1234, metadata_capacity=8)

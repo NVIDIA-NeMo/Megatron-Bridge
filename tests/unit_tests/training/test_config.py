@@ -5812,29 +5812,11 @@ def test_fsdp_v1_meta_initialization_checks_all_strategies(expert, monkeypatch):
         restore_get_world_size_safe(original, module)
 
 
-@pytest.mark.skipif(
-    not all(
-        hasattr(GPTModelProvider, name)
-        for name in ("experimental_attention_variant", "sequence_packing_scheduler", "pad_packed_seq_alignment")
-    ),
-    reason="Fixed-THD DSv4 requires Megatron-Core packed-sequence configuration fields",
-)
 class TestFixedTHDDeepSeekV4PackingValidation:
-    @pytest.fixture(params=["dev", "main"])
-    def fixed_thd_config(self, monkeypatch, request):
+    @pytest.fixture
+    def fixed_thd_config(self, monkeypatch):
         from megatron.bridge.data.packing import PackedSequenceSpecs
 
-        if request.param == "main":
-            contract = {
-                "cuda_graph_thd_max_packed_sequences": 8,
-                "attention_cp_layout": "contiguous",
-                "linear_cp_layout": "contiguous",
-            }
-        else:
-            contract = {"pipeline_p2p_fixed_shape": True, "cp_partition_mode": "contiguous"}
-        declared_fields = {item.name for item in fields(GPTModelProvider)}
-        if not contract.keys() <= declared_fields:
-            pytest.skip(f"Installed Megatron-Core does not declare the {request.param} fixed-THD contract")
         model_cfg = create_test_gpt_config(
             num_layers=4,
             pipeline_model_parallel_size=2,
@@ -5842,15 +5824,14 @@ class TestFixedTHDDeepSeekV4PackingValidation:
             experimental_attention_variant="dsv4_hybrid",
             sequence_packing_scheduler="dp_balanced",
             pad_packed_seq_alignment="max",
-            cuda_graph_impl="transformer_engine",
-            use_te_rng_tracker=True,
             calculate_per_token_loss=True,
-            **contract,
+            cuda_graph_thd_max_packed_sequences=8,
+            attention_cp_layout="contiguous",
+            linear_cp_layout="contiguous",
         )
         # These tests isolate Bridge's data routing contract; the tiny GPT
         # stand-in does not implement DSv4's model geometry or kernels.
         monkeypatch.setattr(model_cfg, "finalize", lambda: None)
-        set_cuda_graph_modules(model_cfg, ["attn"])
         dataset_cfg = create_test_gpt_sft_dataset_config(512)
         dataset_cfg.enable_offline_packing = True
         dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512, pad_cu_seqlens=True)
@@ -5867,7 +5848,7 @@ class TestFixedTHDDeepSeekV4PackingValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_fixed_thd_with_pipeline_and_attention_graphs_keeps_scheduler_marker(self, fixed_thd_config, monkeypatch):
+    def test_fixed_thd_keeps_scheduler_marker_without_probing_online_scheduler(self, fixed_thd_config, monkeypatch):
         from megatron.bridge.training import global_batch_packing
 
         probe = MagicMock(side_effect=AssertionError("Prepacked batches must not probe the online scheduler"))
@@ -5880,7 +5861,7 @@ class TestFixedTHDDeepSeekV4PackingValidation:
         assert not global_batch_packing.global_batch_packing_enabled(fixed_thd_config.model)
 
     def test_fixed_thd_mock_dataset_satisfies_static_contract(self, fixed_thd_config):
-        from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import FixedTHDMockDatasetConfig
+        from megatron.bridge.models.deepseek.deepseek_v4_data import FixedTHDMockDatasetConfig
 
         fixed_thd_config.dataset = FixedTHDMockDatasetConfig(
             seq_length=512, vocab_size=128, seed=1234, metadata_capacity=8

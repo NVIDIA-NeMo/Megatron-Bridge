@@ -108,24 +108,18 @@ def test_enabled_flags():
     assert not global_batch_packing.dynamic_context_parallel_enabled(Mock())
 
 
-def _fixed_thd_model(contract, **overrides):
+def _fixed_thd_model(**overrides):
     fields = {
         "experimental_attention_variant": "dsv4_hybrid",
         "pad_packed_seq_alignment": "max",
+        "cuda_graph_thd_max_packed_sequences": 8,
+        "attention_cp_layout": "contiguous",
+        "linear_cp_layout": "contiguous",
     }
-    if contract == "main":
-        fields.update(
-            cuda_graph_thd_max_packed_sequences=8,
-            attention_cp_layout="contiguous",
-            linear_cp_layout="contiguous",
-        )
-    else:
-        fields.update(pipeline_p2p_fixed_shape=True, cp_partition_mode="contiguous")
     fields.update(overrides)
     return _model(**fields)
 
 
-@pytest.mark.parametrize("contract", ["dev", "main"])
 @pytest.mark.parametrize(
     "overrides, online_packing",
     [
@@ -136,22 +130,11 @@ def _fixed_thd_model(contract, **overrides):
         ({"dynamic_context_parallel": True}, True),
     ],
 )
-def test_only_fixed_thd_dsv4_bypasses_online_scheduler(contract, overrides, online_packing):
-    model = _fixed_thd_model(contract, **overrides)
+def test_only_fixed_thd_dsv4_bypasses_online_scheduler(overrides, online_packing):
+    model = _fixed_thd_model(**overrides)
 
     assert global_batch_packing.global_batch_packing_enabled(model) is online_packing
     assert global_batch_packing.fixed_thd_dsv4_packing_enabled(model) is not online_packing
-
-
-@pytest.mark.parametrize(
-    "overrides",
-    [{"pipeline_p2p_fixed_shape": False}, {"cp_partition_mode": "zigzag"}],
-)
-def test_dev_fixed_thd_requires_legacy_contract(overrides):
-    model = _fixed_thd_model("dev", **overrides)
-
-    assert global_batch_packing.global_batch_packing_enabled(model)
-    assert not global_batch_packing.fixed_thd_dsv4_packing_enabled(model)
 
 
 @pytest.mark.parametrize(
@@ -169,20 +152,8 @@ def test_dev_fixed_thd_requires_legacy_contract(overrides):
         {"linear_cp_layout": "zigzag"},
     ],
 )
-def test_main_fixed_thd_requires_native_contract(overrides):
-    model = _fixed_thd_model("main", **overrides)
-
-    assert global_batch_packing.global_batch_packing_enabled(model)
-    assert not global_batch_packing.fixed_thd_dsv4_packing_enabled(model)
-
-
-def test_invalid_native_capacity_does_not_fall_back_to_legacy_contract():
-    model = _fixed_thd_model(
-        "dev",
-        cuda_graph_thd_max_packed_sequences=1,
-        attention_cp_layout="contiguous",
-        linear_cp_layout="contiguous",
-    )
+def test_fixed_thd_requires_metadata_capacity_and_contiguous_layouts(overrides):
+    model = _fixed_thd_model(**overrides)
 
     assert global_batch_packing.global_batch_packing_enabled(model)
     assert not global_batch_packing.fixed_thd_dsv4_packing_enabled(model)

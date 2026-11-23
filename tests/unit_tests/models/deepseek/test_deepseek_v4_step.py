@@ -14,7 +14,6 @@
 
 """Unit tests for deepseek_v4_step.py contiguous CP partition logic."""
 
-from dataclasses import make_dataclass
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -22,18 +21,11 @@ import pytest
 import torch
 
 import megatron.bridge.models.deepseek.deepseek_v4_step as dsv4_step
+from megatron.bridge.models.deepseek.deepseek_v4_data import FixedTHDMockDatasetConfig
 from megatron.bridge.models.deepseek.deepseek_v4_step import _partition_packed_batch_contiguous
-from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import FixedTHDMockDatasetConfig
 
 
 pytestmark = pytest.mark.unit
-
-
-def _patch_legacy_cp_field(monkeypatch, supported):
-    declared_fields = [("cp_partition_mode", str, "zigzag")] if supported else []
-    namespace = {} if supported else {"cp_partition_mode": property(lambda self: "zigzag")}
-    params_type = make_dataclass("TestPackedSeqParams", declared_fields, namespace=namespace)
-    monkeypatch.setattr(dsv4_step, "PackedSeqParams", params_type)
 
 
 def _make_batch(tokens=None, cu_seqlens=None, **extra):
@@ -184,12 +176,10 @@ def test_explicit_rank_preserves_global_metadata_and_token_fields(rank):
     assert result["total_tokens"] == 16 and result["max_seqlen_q"] == 12
 
 
-@pytest.mark.parametrize("supports_cp_mode", [False, True])
 @pytest.mark.parametrize("cp_size", [2, 4])
 @pytest.mark.parametrize("stage", ["first", "middle", "last"])
-def test_native_layout_dispatch_preserves_packed_boundaries(monkeypatch, cp_size, stage, supports_cp_mode):
+def test_native_layout_dispatch_preserves_packed_boundaries(monkeypatch, cp_size, stage):
     """Use the explicit CP rank and carry metadata through intermediate PP stages."""
-    _patch_legacy_cp_field(monkeypatch, supports_cp_mode)
     cp_rank = cp_size - 1
     tokens = torch.arange(16).view(1, 16)
     cu = torch.tensor([[0, 4, 16]], dtype=torch.int32)
@@ -232,10 +222,7 @@ def test_native_layout_dispatch_preserves_packed_boundaries(monkeypatch, cp_size
     assert result[5]["cu_seqlens_q"] is cu
     assert result[5]["cu_seqlens_q_padded"] is cu
     assert result[5]["pad_between_seqs"] is False
-    if supports_cp_mode:
-        assert result[5]["cp_partition_mode"] == "contiguous"
-    else:
-        assert "cp_partition_mode" not in result[5]
+    assert "cp_partition_mode" not in result[5]
     assert loader.call_args.kwargs["include_full_batch_fields"] == (stage == "middle")
 
 
@@ -278,13 +265,11 @@ def test_native_cp_requires_packed_metadata(monkeypatch):
 
 @pytest.mark.unit
 class TestFixedTHDBatches:
-    @pytest.mark.parametrize("supports_cp_mode", [False, True])
     @pytest.mark.parametrize(("pp_rank", "pp_size", "vp_stage"), [(0, 4, 0), (1, 4, 2), (3, 4, 3), (0, 1, None)])
     def test_contiguous_cp_retains_padding_metadata_on_every_pipeline_stage(
-        self, monkeypatch, pp_rank, pp_size, vp_stage, supports_cp_mode
+        self, monkeypatch, pp_rank, pp_size, vp_stage
     ):
         """First, middle, MTP and PP1 stages see the same global THD boundaries."""
-        _patch_legacy_cp_field(monkeypatch, supports_cp_mode)
         monkeypatch.setattr(torch.Tensor, "cuda", lambda self, **kwargs: self)
         monkeypatch.setattr(dsv4_step.parallel_state, "get_context_parallel_rank", lambda: 1)
         monkeypatch.setattr(dsv4_step, "is_pp_first_stage", lambda group: pp_rank == 0)
@@ -295,7 +280,6 @@ class TestFixedTHDBatches:
             model=SimpleNamespace(
                 virtual_pipeline_model_parallel_size=4 if pp_size > 1 else None,
                 pipeline_model_parallel_layout=None,
-                cp_partition_mode="contiguous",
                 attention_cp_layout="contiguous",
                 linear_cp_layout="contiguous",
             ),
@@ -329,45 +313,27 @@ class TestFixedTHDBatches:
         assert metadata["max_seqlen_q"].item() == 8
         assert metadata["pad_between_seqs"].item() is True
         assert metadata["padding_mask"].tolist() == [[False, False, False, True]]
-        if supports_cp_mode:
-            assert metadata["cp_partition_mode"] == "contiguous"
-        else:
-            assert "cp_partition_mode" not in metadata
 
-    @pytest.mark.parametrize("supports_routes", [False, True])
-    def test_packed_params_prepare_routes_without_allocating_ssm_indices(self, monkeypatch, supports_routes):
-        """Development MCore routes are built once before model execution."""
+    def test_packed_params_omit_ssm_sequence_index(self, monkeypatch):
+        """DSv4 has no SSM layers, so total_tokens never reaches PackedSeqParams."""
         boundaries = torch.tensor([0, 7, 7], dtype=torch.int32)
-        metadata = {"cu_seqlens_q": boundaries, "total_tokens": 4, "cp_partition_mode": "contiguous"}
-        params = SimpleNamespace(cp_partition_route=None)
+        metadata = {"cu_seqlens_q": boundaries, "total_tokens": 4}
+        params = object()
         build = Mock(return_value=params)
-        routed = SimpleNamespace(
-            cp_partition_route=object(), thd_cp_host_cu_seqlens_q=(0, 7, 7), thd_cp_host_cu_seqlens_kv=(0, 7, 7)
-        )
-        finalize = Mock(return_value=routed)
         monkeypatch.setattr(dsv4_step, "get_packed_seq_params", build)
-        monkeypatch.setattr(dsv4_step, "finalize_packed_seq_params", finalize if supports_routes else None)
 
-        result = dsv4_step._get_dsv4_packed_seq_params(metadata)
-        assert result is (routed if supports_routes else params)
-        assert result.cp_partition_route is (routed.cp_partition_route if supports_routes else None)
-        build.assert_called_once_with({"cu_seqlens_q": boundaries, "cp_partition_mode": "contiguous"})
+        assert dsv4_step._get_dsv4_packed_seq_params(metadata) is params
+        build.assert_called_once_with({"cu_seqlens_q": boundaries})
         assert metadata["total_tokens"] == 4
-        if supports_routes:
-            assert result.thd_cp_host_cu_seqlens_q == result.thd_cp_host_cu_seqlens_kv == (0, 7, 7)
-            finalize.assert_called_once_with(params)
-        else:
-            finalize.assert_not_called()
 
 
 @pytest.mark.parametrize("boundary_key", ["cu_seqlens", "cu_seqlens_q"])
 def test_padding_mask_requires_explicit_fixed_thd_opt_in(boundary_key):
     boundaries = torch.tensor([[0, 7, 8]], dtype=torch.int32)
     mask = torch.tensor([[False] * 7 + [True]])
-    batch = {boundary_key: boundaries, "padding_mask": mask, "cp_partition_mode": "contiguous"}
+    batch = {boundary_key: boundaries, "padding_mask": mask}
     native = dsv4_step._packed_metadata_for_forward(batch)
     fixed_thd = dsv4_step._packed_metadata_for_forward(batch, include_padding_mask=True)
     assert native[boundary_key] is fixed_thd[boundary_key] is boundaries
     assert "padding_mask" not in native
     assert fixed_thd["padding_mask"] is mask
-    assert "cp_partition_mode" not in native and "cp_partition_mode" not in fixed_thd

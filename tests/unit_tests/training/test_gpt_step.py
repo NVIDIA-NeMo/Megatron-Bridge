@@ -981,7 +981,7 @@ class TestGetBatch:
 
     @pytest.mark.unit
     def test_forward_common_preserves_dsv4_builder_with_padding_mask(self, monkeypatch):
-        """DSv4 finalizes CP routes while router padding stays out of packed parameters."""
+        """DSv4 builds its own packed parameters while router padding stays out of them."""
         from megatron.bridge.models.deepseek import deepseek_v4_step
 
         tokens = torch.arange(8).unsqueeze(0)
@@ -996,7 +996,6 @@ class TestGetBatch:
             "max_seqlen_q": torch.tensor(8, dtype=torch.int32),
             "max_seqlen_kv": torch.tensor(8, dtype=torch.int32),
             "pad_between_seqs": torch.tensor(True),
-            "cp_partition_mode": "contiguous",
             "padding_mask": padding_mask,
         }
         model = _RecordingModel(pre_process=False)
@@ -1024,11 +1023,9 @@ class TestGetBatch:
             "megatron.bridge.training.gpt_step.get_packed_seq_params",
             Mock(side_effect=AssertionError("DSv4 must use its custom packed-parameter builder")),
         )
-        initial_params, finalized_params = object(), object()
-        build_params = Mock(return_value=initial_params)
-        finalize_params = Mock(return_value=finalized_params)
+        packed_params = object()
+        build_params = Mock(return_value=packed_params)
         monkeypatch.setattr(deepseek_v4_step, "get_packed_seq_params", build_params)
-        monkeypatch.setattr(deepseek_v4_step, "finalize_packed_seq_params", finalize_params)
         custom_builder = Mock(wraps=deepseek_v4_step._get_dsv4_packed_seq_params)
         get_batch_mock = Mock(return_value=(tokens, labels, loss_mask, None, tokens.clone(), packed_seq_metadata))
 
@@ -1047,12 +1044,11 @@ class TestGetBatch:
         build_params.assert_called_once_with(
             {key: value for key, value in packed_seq_metadata.items() if key != "padding_mask"}
         )
-        finalize_params.assert_called_once_with(initial_params)
         assert "total_tokens" not in packed_seq_metadata
         assert packed_seq_metadata["padding_mask"] is padding_mask
         assert output is model.output
         assert returned_loss_mask is loss_mask
-        assert model.forward_kwargs["packed_seq_params"] is finalized_params
+        assert model.forward_kwargs["packed_seq_params"] is packed_params
         assert model.forward_kwargs["padding_mask"] is padding_mask
 
     @pytest.mark.parametrize(

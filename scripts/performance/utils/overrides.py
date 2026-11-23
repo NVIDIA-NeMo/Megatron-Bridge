@@ -19,6 +19,7 @@ from typing import List, Optional
 
 from omegaconf import OmegaConf
 
+from megatron.bridge.models.deepseek.deepseek_v4_data import FixedTHDMockDatasetConfig
 from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
@@ -545,8 +546,6 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     # Create dataset configuration based on type
     if args.data == "mock":
         if args.domain == "llm":
-            from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import FixedTHDMockDatasetConfig
-
             # Override the dataset configuration for LLM models.
             # For vlm models, use the default dataset configuration in model recipe,
             # becuase preprocess of dataset is different for each vlm model.

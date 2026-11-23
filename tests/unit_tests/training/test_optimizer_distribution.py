@@ -2,7 +2,6 @@
 
 """Regression tests for optimizer selection, DDP layout and checkpoint state."""
 
-from dataclasses import fields
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -43,9 +42,7 @@ def test_distributed_emerging_optimizer_normalization(name, source):
         assert cfg.optimizer.optimizer == name.removeprefix("dist_")
         assert cfg.optimizer.use_layer_wise_distributed_optimizer
         assert not cfg.optimizer.use_distributed_optimizer
-        assert cfg.ddp.use_distributed_optimizer is (
-            "use_layer_wise_param_layout" in {item.name for item in fields(cfg.ddp)}
-        )
+        assert not cfg.ddp.use_distributed_optimizer
         assert uses_distributed_optimizer(cfg.optimizer)
 
 
@@ -246,9 +243,7 @@ def test_layerwise_layout_defaults_to_compact_after_normalization(name: str) -> 
     cfg.optimizer.finalize()
     assert cfg.optimizer.use_layer_wise_distributed_optimizer
     assert not cfg.optimizer.use_layer_wise_param_layout
-    assert cfg.ddp.use_distributed_optimizer is (
-        "use_layer_wise_param_layout" in {item.name for item in fields(cfg.ddp)}
-    )
+    assert not cfg.ddp.use_distributed_optimizer
 
 
 @pytest.mark.parametrize(
@@ -331,9 +326,7 @@ def test_runtime_overlap_override_precedes_layerwise_validation(name, source, ov
     assert cfg.optimizer.optimizer == name.removeprefix("dist_")
     assert cfg.optimizer.use_layer_wise_distributed_optimizer is layerwise
     assert cfg.optimizer.use_distributed_optimizer is not layerwise
-    assert cfg.ddp.use_distributed_optimizer is (
-        not layerwise or "use_layer_wise_param_layout" in {item.name for item in fields(cfg.ddp)}
-    )
+    assert cfg.ddp.use_distributed_optimizer is not layerwise
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is (override is not False)
 
 

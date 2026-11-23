@@ -28,7 +28,6 @@ support validates the supported model topology.
 """
 
 import logging
-from dataclasses import fields
 from typing import Iterable
 
 import torch
@@ -43,6 +42,7 @@ from megatron.core.pipeline_parallel.utils import (
 )
 from megatron.core.utils import get_batch_on_this_cp_rank
 
+from megatron.bridge.models.deepseek.deepseek_v4_data import FixedTHDMockDatasetConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import (
     _create_loss_function,
@@ -54,13 +54,6 @@ from megatron.bridge.training.gpt_step import (
 )
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
-
-
-try:
-    from megatron.core.context_parallel_layout import finalize_packed_seq_params
-except ImportError:
-    # Older MCore releases do not expose precomputed THD CP layout routes.
-    finalize_packed_seq_params = None
 
 
 logger = logging.getLogger(__name__)
@@ -106,14 +99,10 @@ def _packed_metadata_for_forward(batch: dict, *, include_padding_mask: bool = Fa
 
 
 def _get_dsv4_packed_seq_params(batch: dict) -> PackedSeqParams:
-    """Prepare THD CP routes before the attention forward or graph capture."""
+    """Build packed-sequence parameters without the SSM sequence index."""
     # DSv4 has no SSM layers, so it does not need the seq_idx allocation that
     # PackedSeqParams derives from total_tokens for generic hybrid models.
-    metadata = {key: value for key, value in batch.items() if key != "total_tokens"}
-    params = get_packed_seq_params(metadata)
-    if finalize_packed_seq_params is not None:
-        params = finalize_packed_seq_params(params)
-    return params
+    return get_packed_seq_params({key: value for key, value in batch.items() if key != "total_tokens"})
 
 
 # Sequence-length metadata keys — excluded from token-dimension slicing.
@@ -242,23 +231,13 @@ def get_batch(  # pragma: no cover
     elif not has_packed:
         batch = get_batch_on_this_cp_rank(batch, dynamic_cp=False, cp_group=pg_collection.cp)
 
-    from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import FixedTHDMockDatasetConfig
-
-    metadata = _packed_metadata_for_forward(
-        batch, include_padding_mask=isinstance(cfg.dataset, FixedTHDMockDatasetConfig)
-    )
-    if cp_size > 1 and "cp_partition_mode" in {field.name for field in fields(PackedSeqParams)}:
-        # Development MCore still consumes this field; never let a contiguous
-        # native batch silently use its legacy zigzag default.
-        metadata["cp_partition_mode"] = "contiguous"
-
     return (
         batch["tokens"],
         batch["labels"],
         batch["loss_mask"],
         batch.get("attention_mask"),
         batch["position_ids"],
-        metadata,
+        _packed_metadata_for_forward(batch, include_padding_mask=isinstance(cfg.dataset, FixedTHDMockDatasetConfig)),
     )
 
 

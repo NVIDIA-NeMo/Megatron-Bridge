@@ -1380,7 +1380,7 @@ class ConfigContainer(Container):
             raise ValueError(f"dataset.seq_length={seq_length} exceeds model.seq_length={model.seq_length}.")
 
     def _validate_fixed_thd_dsv4_packing(self) -> None:
-        """Require static offline batches for the development DSv4 scheduler marker."""
+        """Require prepacked, fixed-width batches for the fixed-THD DSv4 contract."""
         if getattr(self.dataset, "enable_global_batch_packing", False):
             raise ValueError(
                 "Fixed-THD DSv4 consumes prepacked batches and does not run the online scheduler; "
@@ -2517,14 +2517,10 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
     if uses_layer_wise_optimizer(config.optimizer):
         if config.ddp.num_distributed_optimizer_instances != 1:
             raise ValueError("Layer-wise optimizers require num_distributed_optimizer_instances=1.")
-        if "use_layer_wise_param_layout" in {item.name for item in fields(config.ddp)}:
-            # New MCore separates compact Muon buffers from sharded fallback Adam
-            # while retaining the shared DDP distributed-optimizer setting.
-            config.ddp.use_distributed_optimizer = True
-            config.ddp.use_layer_wise_param_layout = config.optimizer.use_layer_wise_param_layout
-        else:
-            # Older main selects the LayerWise buffer layout in the model wrapper.
-            config.ddp.use_distributed_optimizer = False
+        # This flag selects the ordinary DistributedOptimizer DDP layout. The
+        # model wrapper enables it only when a shard-aligned LayerWise layout is
+        # requested; compact LayerWise mode intentionally leaves it disabled.
+        config.ddp.use_distributed_optimizer = False
     elif ddp_setting or optimizer_setting:
         if ddp_setting != optimizer_setting:
             warn_rank_0(

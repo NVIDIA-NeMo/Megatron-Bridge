@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Guard the logged GB300 Pro topology and the reduced-depth debugging proxy."""
+"""Guard the DeepSeek V4 Pro benchmark topology, its reduced-depth proxy and the BF16 benchmark."""
 
 import importlib
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, fields, make_dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 import pytest
@@ -24,27 +24,13 @@ import torch
 
 from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.models.deepseek.deepseek_v4_config import DeepSeekV4ModelConfig
-from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
+from megatron.bridge.models.deepseek.deepseek_v4_data import FixedTHDMockDatasetConfig, _FixedTHDMockDataset
 from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config,
-    deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config,
-    deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config,
+    deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
-    deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config,
     deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config,
-    deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config,
-)
-from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import (
-    _DEV_MCORE_CAPABILITIES,
-    _MAIN_MCORE_CAPABILITIES,
-    _MCORE_CAPABILITIES,
-    _MHC_GRAPH_SPLIT_FIELD,
-    FixedTHDMockDatasetConfig,
-    _FixedTHDMockDataset,
-    configure_dsv4_perf_model,
-    dsv4_hybrid_stack_spec,
-    has_mhc_param_readiness,
 )
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
     _deepseek_v4_pro_pretrain_256gpu_gb300_common,
@@ -63,53 +49,24 @@ from tests.unit_tests.recipes.recipe_test_utils import (
 pytestmark = pytest.mark.unit
 
 
-def _required_capabilities(*, attention_graphs: bool) -> set[str]:
-    # Only attention-graph variants need MCore #7337; eager ones also run on main without it.
-    required = set(_MCORE_CAPABILITIES)
-    if attention_graphs:
-        required.add(_MHC_GRAPH_SPLIT_FIELD)
-    return required
-
-
-def _build_recipe(recipe_factory: Callable[[], ConfigContainer], *, attention_graphs: bool = True) -> ConfigContainer:
-    available = {field.name for field in fields(DeepSeekV4HybridModelProvider)}
-    api_fields = _DEV_MCORE_CAPABILITIES if "o_groups" in available else _MAIN_MCORE_CAPABILITIES
-    missing = sorted((_required_capabilities(attention_graphs=attention_graphs) | set(api_fields)) - available)
-    if missing:
-        pytest.skip(f"DSv4 runtime support required; missing declared fields: {', '.join(missing)}")
-    return recipe_factory()
-
-
 @pytest.mark.parametrize(
-    ("recipe_factory", "num_gpus", "logical_layers", "pp", "vp", "attention_graphs"),
+    ("recipe_factory", "num_gpus", "logical_layers", "pp", "vp"),
     [
-        (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, 256, 61, 4, 4, True),
-        (deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config, 64, 16, 1, None, True),
-        (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config, 256, 61, 4, 4, False),
-        (deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config, 64, 16, 1, None, False),
-        (deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config, 64, 16, 1, None, False),
-        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config, 256, 61, 4, 4, True),
-        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config, 256, 61, 4, 4, False),
+        (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, 256, 61, 4, 4),
+        (deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config, 64, 16, 1, None),
+        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config, 256, 61, 4, 4),
+        (deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config, 64, 16, 1, None),
     ],
-    ids=[
-        "full-pro",
-        "proxy",
-        "full-pro-eager",
-        "proxy-eager",
-        "rubin-proxy-eager",
-        "rubin-full-pro",
-        "rubin-full-pro-eager",
-    ],
+    ids=["full-pro", "proxy", "rubin-full-pro", "rubin-proxy"],
 )
-def test_pro_log_model_and_batch_contract(
+def test_pro_model_and_batch_contract(
     recipe_factory: Callable[[], ConfigContainer],
     num_gpus: int,
     logical_layers: int,
     pp: int,
     vp: int | None,
-    attention_graphs: bool,
 ) -> None:
-    cfg = _build_recipe(recipe_factory, attention_graphs=attention_graphs)
+    cfg = recipe_factory()
     model = cfg.model
 
     assert model.num_layers == 2 * logical_layers
@@ -126,8 +83,6 @@ def test_pro_log_model_and_batch_contract(
     assert (model.expert_model_parallel_size, model.expert_tensor_parallel_size) == (64, 1)
     assert (model.pipeline_model_parallel_size, model.virtual_pipeline_model_parallel_size) == (pp, vp)
     assert model.sequence_parallel is False
-    if "cp_partition_mode" in {item.name for item in fields(model)}:
-        assert model.cp_partition_mode == "contiguous"
     assert model.attention_cp_layout == model.linear_cp_layout == "contiguous"
     assert cfg.train.global_batch_size == 256
     assert cfg.train.micro_batch_size == 1
@@ -139,25 +94,22 @@ def test_pro_log_model_and_batch_contract(
     assert num_gpus // expert_mesh == 1
     assert cfg.train.global_batch_size // (cfg.train.micro_batch_size * (num_gpus // dense_mesh)) == 64
 
-    # Preserve the HCA/CSA prefix from the logs, including their non-windowed first blocks.
+    # Preserve the reference HCA/CSA prefix, including its non-windowed first blocks.
     main_pattern = model.hybrid_layer_pattern.partition("/")[0].replace("|", "")
-    expected_pattern = ("HEHE" + "CEHE" * 30)[: 2 * logical_layers]
-    assert main_pattern == expected_pattern
+    assert main_pattern == ("HEHE" + "CEHE" * 30)[: 2 * logical_layers]
     assert main_pattern.count("E") == logical_layers
+    # One ratio per hybrid layer, MTP included: H -> 128, C -> 4, W and E -> 0.
+    ratios = {"H": 128, "C": 4, "W": 0, "E": 0}
+    assert model.csa_compress_ratios == [ratios[symbol] for symbol in main_pattern + "WE"]
 
 
 @pytest.mark.parametrize(
-    ("recipe_factory", "attention_graphs"),
-    [
-        (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, True),
-        (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config, False),
-        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config, True),
-        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config, False),
-    ],
-    ids=["graphs", "eager", "rubin-graphs", "rubin-eager"],
+    "recipe_factory",
+    [deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config],
+    ids=["gb300", "rubin"],
 )
-def test_full_pro_pipeline_chunks_match_logged_logical_blocks(recipe_factory, attention_graphs) -> None:
-    cfg = _build_recipe(recipe_factory, attention_graphs=attention_graphs)
+def test_full_pro_pipeline_chunks_match_reference_logical_blocks(recipe_factory) -> None:
+    cfg = recipe_factory()
     main_pattern = cfg.model.hybrid_layer_pattern.partition("/")[0]
     counts = [3] + [4] * 14 + [2]
     layout = cfg.model.pipeline_model_parallel_layout
@@ -171,27 +123,9 @@ def test_full_pro_pipeline_chunks_match_logged_logical_blocks(recipe_factory, at
     assert sum(stage.count("loss") for stage in layout) == 1
 
 
-@pytest.mark.parametrize(
-    ("full_factory", "proxy_factory", "attention_graphs"),
-    [
-        (
-            deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
-            deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config,
-            True,
-        ),
-        (
-            deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config,
-            deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config,
-            False,
-        ),
-    ],
-    ids=["graphs", "eager"],
-)
-def test_proxy_preserves_parent_settings_outside_depth_and_pipeline(
-    full_factory, proxy_factory, attention_graphs
-) -> None:
-    full = _build_recipe(full_factory, attention_graphs=attention_graphs)
-    proxy = _build_recipe(proxy_factory, attention_graphs=attention_graphs)
+def test_proxy_preserves_parent_settings_outside_depth_and_pipeline() -> None:
+    full = deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config()
+    proxy = deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config()
     depth_fields = {
         "num_layers",
         "hybrid_layer_pattern",
@@ -210,31 +144,24 @@ def test_proxy_preserves_parent_settings_outside_depth_and_pipeline(
     assert proxy.model.pipeline_model_parallel_layout is None
     assert "|" not in proxy.model.hybrid_layer_pattern
     assert proxy.model.virtual_pipeline_model_parallel_size is None
+    assert proxy.comm_overlap.overlap_p2p_comm is False
 
 
 @pytest.mark.parametrize(
-    ("gb300_factory", "rubin_factory", "attention_graphs"),
+    ("gb300_factory", "rubin_factory"),
     [
+        (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config),
         (
-            deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
-            deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config,
-            True,
-        ),
-        (
-            deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config,
-            deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config,
-            False,
+            deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config,
+            deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config,
         ),
     ],
-    ids=["graphs", "eager"],
+    ids=["full-pro", "proxy"],
 )
-def test_rubin_full_pro_differs_from_gb300_only_in_mok_comm_sms(
-    gb300_factory, rubin_factory, attention_graphs
-) -> None:
-    gb300 = _build_recipe(gb300_factory, attention_graphs=attention_graphs)
-    rubin = _build_recipe(rubin_factory, attention_graphs=attention_graphs)
+def test_rubin_differs_from_gb300_only_in_mok_comm_sms(gb300_factory, rubin_factory) -> None:
+    gb300 = gb300_factory()
+    rubin = rubin_factory()
 
-    # No full-model Rubin run has been measured, so everything else is carried over from GB300.
     assert rubin.model.moe_megakernel_backend_config == {
         **gb300.model.moe_megakernel_backend_config,
         "fwd_num_comm_sms": 40,
@@ -249,53 +176,31 @@ def test_rubin_full_pro_differs_from_gb300_only_in_mok_comm_sms(
 
 
 @pytest.mark.parametrize(
-    ("recipe_factory", "attention_graphs", "comm_sms"),
+    ("recipe_factory", "comm_sms"),
     [
-        (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, True, 28),
-        (deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config, True, 28),
-        (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config, False, 28),
-        (deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config, False, 28),
-        (deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config, False, 40),
-        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config, True, 40),
-        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config, False, 40),
+        (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, 28),
+        (deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config, 28),
+        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config, 40),
+        (deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config, 40),
     ],
-    ids=[
-        "full-pro",
-        "proxy",
-        "full-pro-eager",
-        "proxy-eager",
-        "rubin-proxy-eager",
-        "rubin-full-pro",
-        "rubin-full-pro-eager",
-    ],
+    ids=["full-pro", "proxy", "rubin-full-pro", "rubin-proxy"],
 )
-def test_pro_log_optimizer_and_execution_contract(
-    recipe_factory: Callable[[], ConfigContainer], attention_graphs: bool, comm_sms: int
-) -> None:
-    cfg = _build_recipe(recipe_factory, attention_graphs=attention_graphs)
-
-    assert _required_capabilities(attention_graphs=attention_graphs) <= {field.name for field in fields(cfg.model)}
-    assert {"muon_coefficient_type", "muon_num_ns_steps"} <= {field.name for field in fields(cfg.optimizer)}
+def test_pro_optimizer_and_execution_contract(recipe_factory: Callable[[], ConfigContainer], comm_sms: int) -> None:
+    cfg = recipe_factory()
 
     assert cfg.optimizer.optimizer == "muon"
     assert cfg.optimizer.muon_coefficient_type == "deepseekv4"
     assert cfg.optimizer.muon_num_ns_steps == 10
-    # Configuration normalization must preserve compact Muon ownership. MCore #5479 adds
-    # the DDP layout field that also keeps fallback Adam sharded; main without it does not.
-    sharded_fallback_adam = "use_layer_wise_param_layout" in {item.name for item in fields(cfg.ddp)}
-    # Without MCore #7337 mHC cannot wait for an overlapped gather, so eager variants gather synchronously.
-    overlap_param_gather = has_mhc_param_readiness(cfg.model)
-    assert overlap_param_gather or not attention_graphs
+    # Configuration normalization must preserve compact layer-wise Muon ownership.
     for _ in range(2):
         _validate_and_sync_distributed_optimizer_settings(cfg)
         assert cfg.optimizer.use_distributed_optimizer is False
         assert cfg.optimizer.use_layer_wise_distributed_optimizer is True
         assert cfg.optimizer.use_layer_wise_param_layout is False
-        if sharded_fallback_adam:
-            assert cfg.ddp.use_layer_wise_param_layout is False
-        assert cfg.ddp.use_distributed_optimizer is sharded_fallback_adam
-        assert cfg.ddp.overlap_param_gather is cfg.optimizer.overlap_param_gather is overlap_param_gather
-    assert cfg.comm_overlap.overlap_param_gather is overlap_param_gather
+        assert cfg.ddp.use_distributed_optimizer is False
+        # mHC cannot wait for an overlapped parameter gather on MCore main.
+        assert cfg.ddp.overlap_param_gather is cfg.optimizer.overlap_param_gather is False
+    assert cfg.comm_overlap.overlap_param_gather is False
     assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is False
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
     assert cfg.optimizer.lr == 2e-4
@@ -311,36 +216,18 @@ def test_pro_log_optimizer_and_execution_contract(
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["mla_up_proj", "mhc"]
     assert cfg.model.mhc_recompute_layer_num == 2
-    if attention_graphs:
-        assert cfg.model.mhc_recompute_attn_cuda_graph_split is True
-        assert cfg.model.cuda_graph_impl == "transformer_engine"
-        assert cuda_graph_module_names(cfg.model) == ["attn"]
-        assert cfg.model.cuda_graph_warmup_steps == 1
-    else:
-        assert cfg.model.cuda_graph_impl == "none"
-        assert cfg.model.cuda_graph_warmup_steps == 0
-        assert cuda_graph_module_names(cfg.model) == []
-        assert getattr(cfg.model, "mhc_recompute_attn_cuda_graph_split", False) is False
-        assert cfg.model.use_te_rng_tracker is cfg.rng.te_rng_tracker is False
-        assert cfg.comm_overlap.align_param_gather is False
-        assert cfg.ddp.align_param_gather is False
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.cuda_graph_warmup_steps == 0
+    assert cuda_graph_module_names(cfg.model) == []
     assert not is_full_iteration_cuda_graph(cfg.model)
-    declared = {item.name for item in fields(cfg.model)}
-    if "o_groups" in declared:
-        assert cfg.model.cuda_graph_dynamic_microbatches is attention_graphs
-        assert cfg.model.thd_max_packed_sequences == cfg.dataset.metadata_capacity == 8
-        assert cfg.model.dsa_indexer_precision == "mxfp8"
-        assert cfg.model.o_groups == 16
-        assert cfg.model.o_lora_rank == 1024
-        assert cfg.model.moe_n_hash_layers == 3
-        assert cfg.model.actual_vocab_size == 129280
-    else:
-        assert cfg.model.cuda_graph_thd_max_packed_sequences == cfg.dataset.metadata_capacity == 8
-        assert cfg.model.output_projection_groups == 16
-        assert cfg.model.output_projection_lora_rank == 1024
-        assert cfg.model.moe_num_hash_layers == 3
-        assert cfg.model.hash_moe_vocab_size == 129280
-        assert not set(_DEV_MCORE_CAPABILITIES) & vars(cfg.model).keys()
+    assert cfg.model.use_te_rng_tracker is cfg.rng.te_rng_tracker is False
+    assert cfg.comm_overlap.align_param_gather is False
+    assert cfg.ddp.align_param_gather is False
+    assert cfg.model.cuda_graph_thd_max_packed_sequences == cfg.dataset.metadata_capacity == 8
+    assert cfg.model.output_projection_groups == 16
+    assert cfg.model.output_projection_lora_rank == 1024
+    assert cfg.model.moe_num_hash_layers == 3
+    assert cfg.model.hash_moe_vocab_size == 129280
     assert cfg.model.fine_grained_activation_offloading is False
     assert cfg.model.offload_modules is None
     assert cfg.model.moe_paged_stash is False
@@ -363,20 +250,18 @@ def test_pro_log_optimizer_and_execution_contract(
 
 
 @pytest.mark.parametrize(
-    ("recipe_factory", "num_gpus", "gpu", "variant", "num_layers", "pp", "attention_graphs"),
+    ("num_gpus", "gpu", "variant", "num_layers", "pp"),
     [
-        (deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config, 64, "gb300", "proxy", 32, 1, True),
-        (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config, 256, "gb300", "eager", 122, 4, False),
-        (deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config, 64, "gb300", "proxy_eager", 32, 1, False),
-        (deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config, 64, "vrnvl72", "proxy_eager", 32, 1, False),
-        (deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config, 256, "vrnvl72", "eager", 122, 4, False),
+        (256, "gb300", None, 122, 4),
+        (64, "gb300", "proxy", 32, 1),
+        (256, "vrnvl72", None, 122, 4),
+        (64, "vrnvl72", "proxy", 32, 1),
     ],
-    ids=["proxy", "full-pro-eager", "proxy-eager", "rubin-proxy-eager", "rubin-full-pro-eager"],
+    ids=["full-pro", "proxy", "rubin-full-pro", "rubin-proxy"],
 )
-def test_benchmark_variants_are_available_through_performance_selector(
-    monkeypatch: pytest.MonkeyPatch, recipe_factory, num_gpus, gpu, variant, num_layers, pp, attention_graphs
+def test_pro_recipes_are_available_through_performance_selector(
+    monkeypatch: pytest.MonkeyPatch, num_gpus, gpu, variant, num_layers, pp
 ) -> None:
-    _build_recipe(recipe_factory, attention_graphs=attention_graphs)
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / "scripts" / "performance"))
     from utils.utils import get_perf_recipe_by_name, list_available_config_variants
 
@@ -390,172 +275,6 @@ def test_benchmark_variants_are_available_through_performance_selector(
         compute_dtype="fp8_mx",
         task="pretrain",
     )
-
-
-@pytest.mark.parametrize(
-    "recipe_factory",
-    [deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config],
-)
-def test_pro_recipes_reject_unsupported_mcore(recipe_factory: Callable[[], ConfigContainer]) -> None:
-    available = {field.name for field in fields(DeepSeekV4HybridModelProvider)}
-    if _required_capabilities(attention_graphs=True) <= available:
-        pytest.skip("Installed MCore declares the DSv4 mHC graph capabilities.")
-    with pytest.raises(
-        RuntimeError,
-        match="require MCore",
-    ):
-        recipe_factory()
-
-
-def test_capability_guard_requires_declared_dataclass_fields() -> None:
-    @dataclass
-    class UnsupportedModel:
-        num_layers: int = 32
-
-        @property
-        def mhc_recompute_layer_num(self) -> int:
-            return 2
-
-    # A readable property is insufficient: this setting must survive config serialization.
-    with pytest.raises(RuntimeError, match="mhc_recompute_layer_num"):
-        configure_dsv4_perf_model(UnsupportedModel())
-
-
-def _model_api_fixture(*, development: bool, omit: str | None = None) -> type:
-    api_fields = _DEV_MCORE_CAPABILITIES if development else _MAIN_MCORE_CAPABILITIES
-    mhc_fields = (
-        [("enable_hyper_connections", bool, False), ("num_residual_streams", int, 1)]
-        if development
-        else [("enable_mhc_connections", bool, False), ("mhc_num_residual_streams", int, 1)]
-    )
-    return make_dataclass(
-        "DevelopmentModel" if development else "NativeMainModel",
-        [
-            (name, object, None)
-            for name in dict.fromkeys((*_MCORE_CAPABILITIES, "mhc_recompute_attn_cuda_graph_split", *api_fields))
-            if name != omit
-        ]
-        + mhc_fields
-        + [
-            ("hybrid_stack_spec", object, None),
-            ("hybrid_layer_pattern", str, "HEHE|CEHE"),
-            ("mtp_hybrid_override_pattern", str, "WE"),
-            ("mtp_num_layers", int, 1),
-            ("csa_compress_ratios", object, None),
-        ],
-    )
-
-
-@pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
-def test_api_mapping_preserves_geometry_and_compression_ratios(
-    development: bool, caplog: pytest.LogCaptureFixture
-) -> None:
-    model = _model_api_fixture(development=development)()
-    configure_dsv4_perf_model(model)
-    assert model.is_hybrid_model is True
-    assert model.csa_compress_ratios == [128, 0, 128, 0, 4, 0, 128, 0, 0, 0]
-    assert model.attention_cp_layout == model.linear_cp_layout == "contiguous"
-    assert callable(model.hybrid_stack_spec)
-    assert set(vars(model)) == {item.name for item in fields(model)}
-    if development:
-        assert model.o_groups == 16
-        assert model.o_lora_rank == 1024
-        assert model.moe_n_hash_layers == 3
-        assert model.actual_vocab_size == 129280
-        assert model.enable_hyper_connections is True
-        assert model.num_residual_streams == 4
-        assert model.dsa_indexer_precision == "mxfp8"
-        assert model.cp_partition_mode == "contiguous"
-        assert model.pipeline_p2p_fixed_shape is True
-        assert model.thd_max_packed_sequences == 8
-        assert model.cuda_graph_dynamic_microbatches is True
-    else:
-        assert model.output_projection_groups == 16
-        assert model.output_projection_lora_rank == 1024
-        assert model.moe_num_hash_layers == 3
-        assert model.hash_moe_vocab_size == 129280
-        assert model.enable_mhc_connections is True
-        assert model.mhc_num_residual_streams == 4
-        assert model.cuda_graph_thd_max_packed_sequences == 8
-        assert not set(_DEV_MCORE_CAPABILITIES) & vars(model).keys()
-        assert "indexer scoring uses BF16" in caplog.text
-
-
-@pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
-def test_missing_mhc_graph_split_is_rejected_before_configuration(development: bool) -> None:
-    model = _model_api_fixture(development=development, omit="mhc_recompute_attn_cuda_graph_split")()
-    original = vars(model).copy()
-    with pytest.raises(RuntimeError, match=r"pull/7337.*mhc_recompute_attn_cuda_graph_split"):
-        configure_dsv4_perf_model(model)
-    assert vars(model) == original
-
-
-@pytest.mark.parametrize(
-    ("development", "missing", "attention_graphs"),
-    [
-        (False, "mhc_recompute_attn_cuda_graph_split", True),
-        (True, "mhc_recompute_attn_cuda_graph_split", True),
-        (True, "dsa_indexer_precision", False),
-        (True, "dsa_indexer_precision", True),
-    ],
-)
-def test_reference_runtime_rejects_missing_support_before_mutation(development, missing, attention_graphs):
-    model = _model_api_fixture(development=development, omit=missing)()
-    original = vars(model).copy()
-    with pytest.raises(RuntimeError, match=missing):
-        configure_dsv4_perf_model(model, attention_graphs=attention_graphs)
-    assert vars(model) == original
-
-
-@pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
-def test_eager_variant_accepts_mcore_without_mhc_graph_split(development: bool) -> None:
-    model = _model_api_fixture(development=development, omit="mhc_recompute_attn_cuda_graph_split")()
-
-    configure_dsv4_perf_model(model, attention_graphs=False)
-
-    # MCore without #7337: the model is configured, and the recipe must not overlap the parameter gather.
-    assert not has_mhc_param_readiness(model)
-    assert model.is_hybrid_model is True
-    assert set(vars(model)) == {item.name for item in fields(model)}
-
-
-@pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
-def test_eager_api_mapping_disables_declared_graph_split(development: bool) -> None:
-    model = _model_api_fixture(development=development)()
-    model.mhc_recompute_attn_cuda_graph_split = True
-
-    configure_dsv4_perf_model(model, attention_graphs=False)
-
-    assert model.mhc_recompute_attn_cuda_graph_split is False
-
-
-@pytest.mark.parametrize("development", [False, True], ids=["main", "dev"])
-def test_eager_variant_still_requires_mhc_recompute_support(development: bool) -> None:
-    model = _model_api_fixture(development=development, omit="mhc_recompute_layer_num")()
-    original = vars(model).copy()
-
-    with pytest.raises(RuntimeError, match="mhc_recompute_layer_num"):
-        configure_dsv4_perf_model(model, attention_graphs=False)
-
-    assert vars(model) == original
-
-
-@pytest.mark.parametrize("static_spec", [False, True], ids=["dev-factory", "main-static-spec"])
-def test_hybrid_stack_spec_resolves_both_mcore_apis(monkeypatch: pytest.MonkeyPatch, static_spec: bool) -> None:
-    from megatron.core.models.hybrid import hybrid_layer_specs
-    from megatron.core.transformer.spec_utils import ModuleSpec
-
-    model = _model_api_fixture(development=not static_spec)()
-    expected = ModuleSpec(module=torch.nn.Identity)
-    received = []
-
-    def factory(config):
-        received.append(config)
-        return expected
-
-    monkeypatch.setattr(hybrid_layer_specs, "hybrid_dsv4_stack_spec", expected if static_spec else factory)
-    assert dsv4_hybrid_stack_spec(model) is expected
-    assert received == ([] if static_spec else [model])
 
 
 def test_fixed_thd_samples_have_shifted_targets_and_static_packed_boundaries() -> None:

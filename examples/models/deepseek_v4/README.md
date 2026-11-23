@@ -47,8 +47,8 @@ and do not establish THD support for the native main-branch HybridModel.
 Pipeline layouts split complete attention/MoE pairs in `hybrid_layer_pattern`,
 with matching physical-layer metadata for embedding and MTP/loss placement.
 The Flash library recipe uses PP4/VPP4; the 128-GPU Flash benchmark uses PP1.
-The Pro benchmark uses the separate runtime described below, including mHC
-recompute with scoped attention CUDA graphs.
+The Pro MXFP8 benchmark uses PP4/VPP4 and runs eagerly with mHC recompute; see
+[Pro benchmark](#pro-benchmark).
 
 When `train.sh` overrides `model.pipeline_model_parallel_size` or
 `model.virtual_pipeline_model_parallel_size`, the pattern segments and layout
@@ -157,302 +157,57 @@ exported, but new launches should use the hardware-qualified names above.
 Canonical benchmark recipes under `src/megatron/bridge/perf_recipes/` are
 performance references, not substitutes for the library recipes.
 
-### GB300 Pro performance reproduction and debugging proxy
+### Pro benchmark
 
-These benchmark recipes retain the model geometry, parallelism, batch sizes,
-Muon optimizer, model MXFP8, MoK/HybridEP, and mHC attention-graph settings from
-the supplied full and proxy MCore logs. Runtime-specific differences are listed
-below; matching these settings does not establish numerical or timing parity.
-The earlier 50-step GB300 runs used the private `dsv4` revision
-`d211e50e888fcb8640ddc9923e98940800afcfd3` and its compatible kernel container.
-They completed with finite reported losses and gradient norms and no skipped or
-NaN iterations; this is execution evidence, not convergence or numerical parity.
+The Pro benchmark recipes follow the MCore reference run: full Pro widths with
+384 experts, one MTP module, 65,536-token sequences, CP16/EP64, GBS256/MBS1,
+MXFP8 with FP8 parameter gathering, layer-wise Muon (`deepseekv4` coefficients,
+ten Newton–Schulz iterations), MoK with HybridEP, and selective
+`mla_up_proj`/mHC recompute. The proxy keeps the first 16 blocks on a quarter
+of the GPUs and does not exercise the PP/VPP schedule.
 
-The attention-graph benchmarks run on MCore `main` with
-[MCore #7337](https://github.com/NVIDIA/Megatron-LM/pull/7337) merged in. #7337
-adds attention graph support around the mHC wrappers and makes mHC's direct
-projection-weight reads wait for an overlapped parameter gather. The graph
-recipes reject an MCore without it. The eager recipes also run on `main`
-without it, with the parameter gather no longer overlapped; see
-[Eager Pro functional tests](#eager-pro-functional-tests). A conflict-free merge of main
-`c1ad819d07cb946620341a317b8d06e74207e0f1` with #7337 at
-`12880406160688146b19733996d0ede8bd3a2726`, with no other changes, is
-[`28c439772712240602a28123b462d8e374bec67f`](https://github.com/malay-nagda/Megatron-LM/commit/28c439772712240602a28123b462d8e374bec67f).
-Use its full SHA for nemo-ci's `--mcore-ref`, and mount this Bridge revision and
-that MCore source explicitly; changing the Bridge source alone does not replace
-the image's baked-in MCore.
+| Recipe | GPUs | Blocks + MTP | PP / VPP | MoK comm SMs |
+|--------|------|--------------|----------|--------------|
+| `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config` | 256 | 61 + 1 | 4 / 4 | 28 |
+| `deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config` | 64 | 16 + 1 | 1 / none | 28 |
+| `deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config` | 256 | 61 + 1 | 4 / 4 | 40 |
+| `deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config` | 64 | 16 + 1 | 1 / none | 40 |
 
-Open [MCore #5479](https://github.com/NVIDIA/Megatron-LM/pull/5479) is optional.
-With it, Muon keeps compact buffers while fallback Adam stays sharded
-(`ddp.use_distributed_optimizer=True`), as in the reference logs. Without it,
-configuration finalization sets `ddp.use_distributed_optimizer=False` and
-LayerWise owns both in its compact layout. That costs optimizer memory per rank;
-the amount has not been measured. Native indexer scoring uses BF16.
-
-GB300 needs no special image: the regular nightly's MoK build covers SM100 and
-SM103. Rubin needs a MoK build with SM107 kernels, such as the image from
-pipeline 82972924 (`nvcr.io/nvidian/nemo:dgxctestingtemp-nemofw-nightly.83236778`,
-MoK `31a3dd0e`). Compatible Transformer Engine, HybridEP/MoK, fused mHC, cuDNN
-DSA, and emerging-optimizers implementations are required.
-
-PyTorch 26.11 (`2.15.0a0+fd23299d96.nv26.11`, the base of that image) makes
-`nccl2` the default `nccl` backend, and its snapshot has two defects these
-recipes hit. Both are fixed upstream but not in that image:
-
-- An async barrier followed by `block_current_stream()` deadlocks
-  ([pytorch#202783](https://github.com/pytorch/pytorch/pull/202783)). MoK's
-  workspace setup makes that call, so training stalls in the first MoK forward.
-- `all_gather` fails with `shape '[N]' is invalid for input of size M` when its
-  first two output tensors are empty
-  ([pytorch#200585](https://github.com/pytorch/pytorch/pull/200585)). LayerWise
-  parameter gathering passes one slot per rank, and most ranks own nothing in a
-  given bucket.
-
-The Pro benchmark recipes therefore export `TORCH_DIST_USE_NCCL2=0`, which
-selects the legacy NCCL backend. A value set by the launcher takes precedence.
-With that setting and `NCCL_NVLS_ENABLE=0`, the VRNVL72 eager proxy gets past
-the parameter gather. Separately,
-[MoK #10](https://github.com/QiZhangNV/mixture-of-kittens/pull/10) replaces
-MoK's async barrier with a blocking one, pinned by
-[Bridge #6687](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6687);
-whether the unpatched MoK works on the legacy backend is untested. Remove the
-setting once the image carries both upstream fixes.
-
-The adapter also retains the development API used with MCore
-`264817a74075a0c4b003723054c3ae71020058ad`. It selects declared dataclass fields
-and resolves main's static hybrid spec or development's spec factory.
-Native main uses **BF16 indexer scoring**; development retains its compact
-MXFP8 indexer. Both runtimes retain model MXFP8 and FP8 parameter gathering.
-`optimizer.overlap_param_gather` and `ddp.overlap_param_gather` are true
-wherever MCore has #7337.
-Muon remains layer-wise (`optimizer.use_distributed_optimizer=False`,
-`use_layer_wise_distributed_optimizer=True`) with compact parameter layout.
-Where MCore has #5479, the shared DDP flag retains sharding for fallback Adam;
-it does not change Muon to the ordinary distributed Adam optimizer. Optimizer-step gather overlap stays
-disabled because it is incompatible with this LayerWise/MXFP8-buffer-reuse path.
-
-The main plus #7337 runtime still has these differences:
-
-- Native CSA indexer scoring uses BF16 and has no indexer precision selector;
-  model training remains MXFP8. The development MXFP8 indexer port is not required.
-- #7337 enables attention graphs with mHC recompute group two, but retains a
-  copied attention aggregate in the static graph buffer. Its memory/performance
-  behavior differs from development's aggregate recomputation implementation.
-- Main infers the fixed microbatch graph count and uses
-  `cuda_graph_thd_max_packed_sequences=8`; the development-only dynamic graph
-  flag is unnecessary for these fixed 64-microbatch optimizer steps.
-- Main uses native pipeline shape exchange. The development fixed-P2P-shape
-  optimization is absent; this matters for full PP4/VPP4, not PP1 proxy traffic.
-- Grouped output projection uses main's existing implementation. The separate
-  BatchedLinear optimization is not part of this runtime.
-- Without #5479, fallback Adam state is not sharded across data-parallel ranks.
-
-Configuration tests do not exercise GPU kernels. For a functional run, verify
-finite completed LM/MTP/auxiliary losses and gradient norms, no skipped/NaN
-iterations, actual Muon execution, graph capture and post-capture steps, and a
-clean training exit. Do not infer attention graph execution from config alone.
-
-The earlier public-development target was the immutable merge revision
-`159e66cd2491b1bf4fdb0fa0895dd58f4dd9e4ed` of MCore
-[PR #5722](https://github.com/NVIDIA/Megatron-LM/pull/5722), with
-`nvcr.io/nvidian/nemo:nightly-2026-10-16`. Historical timing and memory results
-are not guarantees for the refreshed source and kernel combination.
-
-The recipes set both native CP layouts to `contiguous` and retain fixed THD
-boundaries. Development-only route finalization is used only when available.
-Bridge's shared DSA initialization and logging own the metric lifecycle;
-training-attempt resets clear metric storage in place so captured graph
-addresses remain valid. The recipes explicitly set `is_hybrid_model=True`,
-matching native MCore argument processing for output-weight initialization and
-layer accounting. Earlier Bridge runs inherited the non-hybrid default, so
-their initial weights are not reproduced by the updated recipes.
-
-| Recipe | GPUs | Main logical blocks | TP / CP / EP | PP / VPP | GBS / MBS |
-|--------|------|---------------------|--------------|----------|-----------|
-| `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config` | 256 | 61 | 1 / 16 / 64 | 4 / 4 | 256 / 1 |
-| `deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config` | 64 | 16 | 1 / 16 / 64 | 1 / none | 256 / 1 |
-| `deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config` | 64 | 16 | 1 / 16 / 64 | 1 / none | 256 / 1 |
-| `deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config` | 256 | 61 | 1 / 16 / 64 | 4 / 4 | 256 / 1 |
-
-All four retain the Pro widths, expert count, one MTP module, 65,536-token sequence
-length, MXFP8 parameter gathering, and Muon with the `deepseekv4` coefficients
-and ten Newton–Schulz iterations. Each main logical block contains one attention
-layer and one MoE layer, so MCore reports 122 and 32 main physical layers,
-respectively. Both configurations have dense DP4, expert DP1, and 64
-microbatches per optimizer step. The full model splits its logical blocks across
-the sixteen VPP chunks as `[3] + [4] * 14 + [2]`.
-
-Both use selective `mla_up_proj` and mHC recompute with mHC group size two,
-Transformer Engine attention CUDA graphs with one warmup step and support for
-the fixed microbatch count, and no activation offload or paged stash. The proxy reduces the
-allocation by four while retaining the long-context attention, MoE, mHC, MTP,
-and optimizer paths. Its PP1 schedule does not exercise the full recipe's
-pipeline communication or interleaved scheduling, and the smaller allocation
-does not guarantee a fourfold reduction in step time.
-
-Start with the proxy, then run the full recipe using the same runtime. With
-four GPUs per node, the canonical launches are:
+They run on MCore `main` and are synthetic-data performance benchmarks, not
+convergence recipes: load balancing is forced, and the dataset emits one
+full-length sequence per microbatch with fixed THD metadata, which the
+launchers route through `dsv4_step`.
 
 ```bash
 ./scripts/training/train.sh --nodes 16 --gpus-per-node 4 \
   --recipe deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config \
   --mode pretrain
-
-./scripts/training/train.sh --nodes 64 --gpus-per-node 4 \
-  --recipe deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config \
-  --mode pretrain
 ```
 
-Use the account, partition, and container variables described above, and adjust
-the node count if the cluster exposes a different number of GPUs per node.
-These recipes own their mock dataset and 50-step benchmark schedule. Forced
-load balancing and disabled benchmark correctness checks mean a completed run
-is only an execution smoke test, not a convergence or numerical-parity test.
-For a stricter diagnostic run, enable `ddp.check_for_nan_in_grad=true` and
-`rerun_state_machine.check_for_nan_in_loss=true`; record those overrides when
-comparing performance.
-
-For the Rubin proxy, select
-`deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config` instead. It uses the
-same model and training contract, with MoK communication SMs set to 40/40 from
-the Rubin reference, compared with GB300's 28/28.
-
-For the full model on Rubin, select
-`deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config`. It is the GB300 full
-recipe with the same 40/40 communication SMs. No full-model Rubin run has been
-measured, so its pipeline split and SM counts are carried over rather than
-matched to a log.
-
-The launchers select `dsv4_step` automatically for these recipes. The
-synthetic dataset emits fixed THD packed metadata, including boundaries on
-intermediate pipeline stages, with one full-length sequence per microbatch.
-It reproduces the fixed pack shape used in the logs, rather than their random
-token stream or the general variable-length `dp_balanced` data scheduler.
-
-### Eager Pro functional tests
-
-These explicit variants run on the same main plus #7337 runtime as the graph
-benchmarks, and also on MCore `main` without #7337. Without #7337, mHC reads
-its projection weight directly and cannot wait for an overlapped parameter
-gather, so a rank could compute with the previous step's weight. The recipes
-therefore turn parameter-gather overlap off on such an MCore, and the gather
-finishes before the forward pass starts. The reference runs overlap it, so
-step time on plain `main` is not comparable with them.
-
-| Recipe | Performance selector variant |
-|--------|------------------------------|
-| `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_eager_config` | `eager` |
-| `deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_eager_config` | `proxy_eager` |
-| `deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_eager_config` | `proxy_eager` |
-| `deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_eager_config` | `eager` |
-
-For the performance launcher's Rubin proxy, retain your allocation, image and
-source-mount arguments and use this model selection:
+With the performance launcher, select the proxy with `--config_variant proxy`:
 
 ```bash
--m deepseek -mr deepseek_v4_pro -g vrnvl72 -c fp8_mx -ng 64 \
-  --task pretrain --config_variant proxy_eager
+-m deepseek -mr deepseek_v4_pro -g gb300 -c fp8_mx -ng 64 \
+  --task pretrain --config_variant proxy
 ```
 
-For the full Rubin model, use `-ng 256` with `--config_variant eager`.
+Differences from the reference run:
 
-Keep the flat performance recipe path (`--use_recipes` omitted). Remove explicit
-CUDA-graph or parameter-gather-overlap overrides from an earlier launch so they
-do not override the recipe's restored policy. For the training launcher, select the
-full factory name from the table with `--recipe`.
+- Execution is eager and the parameter gather is not overlapped with the
+  forward pass. Attention CUDA graphs and the overlapped gather both need
+  [MCore #7337](https://github.com/NVIDIA/Megatron-LM/pull/7337), so step time
+  is not comparable with the reference until the recipes adopt them.
+- Indexer scoring is BF16; the reference uses a compact MXFP8 indexer that
+  MCore `main` does not have.
+- Fallback Adam state is not sharded across data-parallel ranks.
 
-These variants retain all model layers for their respective full/proxy sizes,
-one MTP, sequence 65,536, CP16/EP64, GBS256/MBS1, Muon, model MXFP8 and parameter
-gather buffer reuse, and selective `mla_up_proj`/mHC recompute with
-`mhc_recompute_layer_num=2`. Eager mode retains native BF16 indexer scoring
-(or MXFP8 with the development runtime).
-Fixed THD metadata capacity remains eight in eager mode.
-
-The deliberate execution changes are:
-
-- `cuda_graph_impl="none"`, empty graph scopes/modules and zero graph warmup.
-- Both model and RNG TE-tracker flags are false.
-- Gather alignment is disabled. Parameter-gather overlap remains enabled in
-  both DDP and the optimizer where MCore has #7337, and is disabled where it
-  does not; optimizer-step gather overlap remains disabled.
-  Gradient-reduction overlap and the full model's PP overlap remain configured
-  by the corresponding benchmark.
-
-The helper requires the declared mHC readiness/graph-split capability for the
-graph variants. For eager variants it sets the split false where MCore
-declares it; where MCore does not, the recipe disables parameter-gather
-overlap instead. Select an explicit eager variant before construction rather
-than overriding a graph recipe later.
-
-The value two groups physical HybridStack layers for activation recomputation;
-in this attention/MoE pattern that is one logical block. It does not reduce model
-depth. Eager runs omit graph replay, so they are functional-test variants and
-their throughput is not directly comparable to the
-graph-enabled reference. GPU execution must still be validated on the target
-cluster.
-
-### MCore graph-helper import compatibility
-
-[MCore #8924](https://github.com/NVIDIA/Megatron-LM/pull/8924) renamed
-`get_vision_cuda_graph_seq_length` to `get_vision_te_cuda_graph_seq_length` on
-main, preserving its signature and behavior. This is unrelated to mHC #7337 or
-Rubin kernels. The shared training module imports vision support even for a
-text-only DSv4 run; Bridge resolves either helper name through its compatibility
-utility. Validation includes importing `megatron.bridge.training.pretrain` in
-addition to constructing recipe configs.
-
-The Slurm performance launcher bind-mounts its Bridge source, but its Git packager
-excludes submodules. Bridge imported from a shared checkout and MCore imported from
-`/opt` can therefore be intentional. Check the actual imported files and their Git
-revisions in the training container; a path difference alone does not establish a
-revision mismatch.
-
-For an explicit MCore checkout, select it in the launcher's Python environment and mount
-the same source for workers. Set `BRIDGE_SOURCE` and `MCORE_SOURCE` to your existing
-checkouts, and verify `git -C "$MCORE_SOURCE" rev-parse HEAD` against the desired pinned
-revision. Before invoking `scripts/performance/setup_experiment.py`:
-
-```bash
-export PYTHONPATH="${BRIDGE_SOURCE}/src:${MCORE_SOURCE}${PYTHONPATH:+:${PYTHONPATH}}"
-```
-
-Add these arguments to that invocation, combining the mount with any existing mounts:
-
-```bash
---custom_mounts "${MCORE_SOURCE}:/opt/dsv4-mcore" \
---custom_bash_cmds 'export PYTHONPATH=/opt/dsv4-mcore:$PYTHONPATH'
-```
-
-The pre-command runs inside the worker container before Python. Use this explicit
-pre-command rather than relying solely on `--custom_env_vars PYTHONPATH=...`: NeMo-Run
-merges the task environment after executor variables, and this launcher supplies its own
-task `PYTHONPATH` prefix.
-
-Inside the same container and source environment as the training process, this read-only
-check verifies imports and identifies their source revisions:
-
-```python
-import importlib
-import logging
-import subprocess
-from pathlib import Path
-
-logging.basicConfig(level=logging.INFO)
-
-for name in ("megatron.bridge", "megatron.core", "megatron.bridge.training.pretrain"):
-    module = importlib.import_module(name)
-    path = Path(module.__file__).resolve()
-    result = subprocess.run(
-        ["git", "-C", str(path.parent), "rev-parse", "HEAD"],
-        check=False, capture_output=True, text=True,
-    )
-    revision = result.stdout.strip() if result.returncode == 0 else "Git revision unavailable"
-    logging.info("%s: %s (%s)", name, path, revision)
-```
-
-For an unpacked snapshot without `.git`, the path and installed package version cannot
-establish the source commit: retain the launch's source manifest and pin the checkout
-before packaging. A successful import check does not validate GPU kernels or training.
+The recipes export `TORCH_DIST_USE_NCCL2=0`. PyTorch 26.11 makes `nccl2` the
+default `nccl` backend, and that snapshot deadlocks MoK's async barrier
+([pytorch#202783](https://github.com/pytorch/pytorch/pull/202783)) and fails
+the layer-wise parameter gather
+([pytorch#200585](https://github.com/pytorch/pytorch/pull/200585)). Remove the
+setting once the image carries both fixes. Rubin also needs a MoK build with
+Rubin kernels ([#6687](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6687)).
 
 ## Supervised Fine-Tuning
 

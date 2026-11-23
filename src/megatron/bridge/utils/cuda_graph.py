@@ -23,25 +23,6 @@ except ImportError:
     CudaGraphModule = None
 
 
-def get_vision_cuda_graph_seq_length(vision_config: Any, default_seq_length: int = 4096) -> int:
-    """Resolve the vision graph length through the installed MCore helper.
-
-    MCore renamed this helper to ``get_vision_te_cuda_graph_seq_length`` when
-    separating the TE graph implementation. Both names have the same contract.
-    """
-    from megatron.core.transformer import cuda_graphs
-
-    get_seq_length = getattr(cuda_graphs, "get_vision_te_cuda_graph_seq_length", None)
-    if get_seq_length is None:
-        get_seq_length = getattr(cuda_graphs, "get_vision_cuda_graph_seq_length", None)
-    if get_seq_length is None:
-        raise ImportError(
-            "The installed Megatron-Core exposes neither get_vision_te_cuda_graph_seq_length "
-            "nor get_vision_cuda_graph_seq_length."
-        )
-    return get_seq_length(vision_config, default_seq_length=default_seq_length)
-
-
 def _as_list(value: Any) -> list[Any]:
     if value is None:
         return []
