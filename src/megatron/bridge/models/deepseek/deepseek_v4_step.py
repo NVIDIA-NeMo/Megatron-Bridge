@@ -48,6 +48,7 @@ from megatron.bridge.training.gpt_step import (
     _forward_step_common,
     _has_packed_sequence_metadata,
     _middle_pp_stage_needs_batch,
+    _uses_inter_document_masking,
     get_batch_from_iterator,
 )
 from megatron.bridge.training.state import GlobalState
@@ -206,6 +207,7 @@ def get_batch(  # pragma: no cover
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
         include_full_batch_fields=include_full_batch_fields,
+        inter_document_masking=_uses_inter_document_masking(cfg),
     )
 
     has_packed = _has_packed_sequence_metadata(batch)
