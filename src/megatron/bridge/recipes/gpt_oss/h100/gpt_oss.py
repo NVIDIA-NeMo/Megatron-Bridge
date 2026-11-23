@@ -42,7 +42,7 @@ def gpt_oss_20b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("openai/gpt-oss-20b").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("openai/gpt-oss-20b").get_model_config()
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -167,7 +167,7 @@ def gpt_oss_120b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("openai/gpt-oss-120b").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("openai/gpt-oss-120b").get_model_config()
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -303,7 +303,7 @@ def gpt_oss_20b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "openai/gpt-oss-20b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -450,7 +450,7 @@ def gpt_oss_120b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "openai/gpt-oss-120b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -604,6 +604,12 @@ def gpt_oss_120b_sft_48gpu_h100_bf16_32k_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        # PyTorch builds that back the nccl backend with ProcessGroupNCCL2 (NeMo 26.12 images) create every
+        # process group's NCCL communicator eagerly. The first pipeline stage then holds about 10.4 GiB per GPU
+        # outside PyTorch when step 2 of 32K SFT on 48 H100s runs out of memory, against at most 7.3 GiB with lazy
+        # communicators, with which it peaks at 77.2 of 79.1 GiB. 0 keeps the communicators lazy, as on earlier
+        # images; builds without the switch ignore it.
+        "TORCH_DIST_USE_NCCL2": 0,
     }
     return cfg
 
@@ -642,7 +648,7 @@ def gpt_oss_20b_peft_1gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "openai/gpt-oss-20b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -781,7 +787,7 @@ def gpt_oss_120b_peft_8gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "openai/gpt-oss-120b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path

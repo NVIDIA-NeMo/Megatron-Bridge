@@ -136,6 +136,9 @@ def test_sharded_load_uses_device_map_without_moving_model(monkeypatch):
         def modules(self):
             return iter((self,))
 
+        def get_submodule(self, name):
+            return torch.nn.Identity()
+
     transformers = types.ModuleType("transformers")
     transformers.AutoModelForCausalLM = _LoadedModel
     transformers.AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: _Tokenizer())
@@ -146,6 +149,8 @@ def test_sharded_load_uses_device_map_without_moving_model(monkeypatch):
         trust_remote_code=True,
         dtype="bfloat16",
         device_map="auto",
+        tp_plan=None,
+        max_gpu_memory_gib=None,
         device="cuda",
         require_gpu_only=True,
     )
@@ -164,6 +169,114 @@ def test_sharded_load_uses_device_map_without_moving_model(monkeypatch):
             },
         )
     ]
+
+
+def test_device_map_shards_run_with_their_own_current_cuda_device(monkeypatch):
+    module = _load_module()
+    model = torch.nn.Module()
+    model.embed = torch.nn.Linear(2, 2)
+    model.layer = torch.nn.Linear(2, 2)
+    model.offloaded = torch.nn.Linear(2, 2)
+    model.hf_device_map = {"embed": 0, "layer": "cuda:1", "offloaded": "cpu"}
+
+    class _LoadedModel:
+        @staticmethod
+        def from_pretrained(model_name, **kwargs):
+            return model, {key: [] for key in module._LOADING_ISSUE_KEYS}
+
+    transformers = types.ModuleType("transformers")
+    transformers.AutoModelForCausalLM = _LoadedModel
+    transformers.AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: _Tokenizer())
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+    current_devices = []
+    monkeypatch.setattr(torch.cuda, "set_device", current_devices.append)
+    args = types.SimpleNamespace(
+        image=None,
+        hf_model="model",
+        trust_remote_code=False,
+        dtype="float32",
+        device_map="balanced",
+        tp_plan=None,
+        max_gpu_memory_gib=None,
+        device="cuda",
+        require_gpu_only=False,
+    )
+
+    _, loaded_model, _ = module._load_runtime(args)
+    inputs = torch.ones(1, 2)
+    loaded_model.layer(inputs)
+    loaded_model.embed(inputs)
+    loaded_model.offloaded(inputs)
+
+    assert current_devices == [1, 0]
+
+
+def test_gpu_memory_cap_bounds_every_gpu_and_offloads_to_cpu(monkeypatch):
+    module = _load_module()
+    calls = []
+
+    class _LoadedModel:
+        hf_device_map = {"model.layers.0": 0, "model.layers.1": 1, "model.layers.2": "cpu"}
+
+        @classmethod
+        def from_pretrained(cls, model_name, **kwargs):
+            calls.append(kwargs)
+            return cls(), {key: [] for key in module._LOADING_ISSUE_KEYS}
+
+        def eval(self):
+            return self
+
+        def modules(self):
+            return iter((self,))
+
+        def get_submodule(self, name):
+            return torch.nn.Identity()
+
+    transformers = types.ModuleType("transformers")
+    transformers.AutoModelForCausalLM = _LoadedModel
+    transformers.AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: _Tokenizer())
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+    monkeypatch.setitem(
+        sys.modules,
+        "psutil",
+        types.SimpleNamespace(virtual_memory=lambda: types.SimpleNamespace(available=100 * 1024**3)),
+    )
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    args = types.SimpleNamespace(
+        image=None,
+        hf_model="model",
+        trust_remote_code=False,
+        dtype="bfloat16",
+        device_map="auto",
+        tp_plan=None,
+        max_gpu_memory_gib=125.0,
+        device="cuda",
+        require_gpu_only=False,
+    )
+
+    module._load_runtime(args)
+
+    assert calls[0]["device_map"] == "auto"
+    assert calls[0]["max_memory"] == {0: 125 * 1024**3, 1: 125 * 1024**3, "cpu": 90 * 1024**3}
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["--max-gpu-memory-gib", "125"],
+        ["--device-map", "auto", "--max-gpu-memory-gib", "0"],
+    ],
+)
+def test_gpu_memory_cap_requires_device_map_and_positive_budget(monkeypatch, extra_args):
+    module = _load_module()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["verify_hf_inference.py", "--hf-model", "model", "--prompt", "prompt", "--max-new-tokens", "2", *extra_args],
+    )
+
+    with pytest.raises(SystemExit):
+        module._parse_args()
 
 
 def test_model_input_device_prefers_input_embeddings():
@@ -301,6 +414,8 @@ def test_runtime_supports_explicit_multi_gpu_device_map(
     args = SimpleNamespace(
         device="cuda",
         device_map=device_map,
+        tp_plan=None,
+        max_gpu_memory_gib=None,
         dtype="bfloat16",
         hf_model="exported-model",
         image="image.png",

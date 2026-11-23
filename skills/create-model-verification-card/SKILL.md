@@ -39,24 +39,12 @@ Record the public HF model name in commands, its immutable revision in
 `model.hf_revision`, and the minimum supported Transformers version in
 `model.min_transformers_version`. Do not introduce an HF snapshot path.
 
-Record only two execution-environment facts: the base container provenance
-and the exact Bridge commit used for verification. Put them in
+Record only two execution-environment facts: the public base container
+identifier and the exact Bridge commit used for verification. Put them in
 `verification_environment.base_container` and
 `verification_environment.bridge_commit`. If the run mounted a checkout over
-the container, record the mounted checkout commit.
-
-For a public image, use its `nvcr.io/nvidia/nemo:<tag>` or
-`nvcr.io/nvidia/pytorch:<tag>` identifier. When qualification used a non-public
-release candidate, use the strict sanitized form
-`NeMo 26.10 RC4 (non-public release candidate)` or the corresponding `PyTorch`
-label. The grammar is product, `YY.MM` (month 01–12), a positive `RC` number,
-and the mandatory `(non-public release candidate)` suffix. This records the
-actual product/release candidate without claiming public availability or a
-pullable image. It is not a substitute for exact private run provenance.
-Never publish the private registry/path, invent a public tag, or add arbitrary
-text to this label; ordinary privacy and caller-denylist checks still apply.
-This form supports prerelease qualification across models and does not change
-any verification status or numerical evidence requirement.
+the container, record the mounted checkout commit. Never substitute a private
+image path for the public base container identifier.
 
 The top-level Bridge commit is the default for every item leaf. If one verified
 item was run from a different clean checkout, put that exact 40-hex commit in
@@ -91,11 +79,21 @@ unverified.
 Add `pretrain_fsdp` as an optional hardware-scoped item when a first-class
 Megatron FSDP performance recipe exists for the exact model variant. Record
 the FSDP result under `pretrain_fsdp.<hardware>`. Keep it separate from
-checkpoint-resume and tuned non-FSDP `pretrain_performance` results. Do not
+checkpoint-resume and non-FSDP `pretrain_performance` results. Do not
 embed a baseline, control, computed delta, or relative speedup under another
 item; agents can derive valid comparisons from the standalone commands,
 resolved recipes, and raw metrics. The FSDP item does not claim checkpoint
 save/load unless a separate functional item records that evidence.
+
+Add `pretrain_performance_hsdp` as an optional hardware-scoped item when a
+tuned Hybrid FSDP (HSDP) performance recipe exists for the exact model
+variant. Use it instead of `pretrain_fsdp` when the recipe shards dense and
+expert parameters under different strategies, which the single
+`enabled_features.megatron_fsdp` scalar cannot express. Record the result
+under `pretrain_performance_hsdp.<hardware>` and mirror it in
+`verification_index.performance_hsdp`. Keep it separate from
+`pretrain_performance`: an HSDP recipe usually runs a different convergence
+contract, so the two are not commensurable.
 
 When the same hardware has multiple first-class FSDP runs with different
 precisions or convergence contracts, use one aggregate hardware container and
@@ -153,10 +151,16 @@ the public command. It must not override micro batch size. Record raw point
 metrics only; derive aggregate throughput and scaling efficiency when reading
 the card rather than storing comparison payloads.
 
-A concrete `pretrain_performance.<hardware>` leaf means a tuned canonical
-performance recipe exists for that hardware. Its item status states whether
-the card's benchmark run has been verified; an `unverified` leaf still records
-the existence of the recipe. If the card has no concrete performance leaf,
+A concrete `pretrain_performance.<hardware>` leaf means a canonical performance
+recipe exists for that hardware, including one explicitly marked **early,
+unoptimized**. Its item status states whether the card's benchmark run has been
+verified; an `unverified` leaf still records the existence of the recipe.
+Existence or functional verification alone does not justify a tuned/optimized
+claim: require workload-appropriate measured performance and preserve any
+early, unoptimized label in both the summary and the affected item's
+`expected_result` so generated pages display it. The library-pretraining
+readiness targets below are not benchmark-recipe acceptance thresholds.
+If the card has no concrete performance leaf,
 start `summary` with this exact disclaimer before the functional-support
 summary:
 
@@ -427,6 +431,19 @@ hardware. It may vary across models or be tuned for throughput:
 - MoE transport/dispatcher backend such as all-to-all, DeepEP, or HybridEP,
   provided routing, capacity, token dropping, and auxiliary losses are
   unchanged.
+
+For the final verification-card recipe, no recompute and selective recompute
+on cheap supported modules are both appropriate starting choices. Choose by
+measured memory headroom and steady-state performance; selective recompute
+does not require a no-recompute OOM first. Full recompute is acceptable
+temporarily for diagnostic bring-up, but can severely reduce throughput.
+Retain it only when target-scale measurements show lighter choices still fail
+to fit, or matched runs show better end-to-end throughput with full recompute,
+for example through larger MBS or lower TP. Keep the workload, GBS, and
+convergence settings fixed; validate recipe-owned MBS/layout changes in the
+recipe rather than overriding batch size in the card. Record memory evidence,
+boundaries/layouts tested, and steady-state performance in the recipe's
+supporting record; keep public card metrics standalone as required below.
 
 Treat micro batch size and gradient-accumulation layout as execution
 fingerprints. They may be tuned while global batch size, global batch
@@ -813,6 +830,18 @@ Optionally record `peak_allocated_memory_gib` and
 `peak_reserved_memory_gib`. They are required on verified `pretrain_fsdp`
 leaves, including every verified precision variant.
 
+For a new **pretraining library recipe** used by a card's `pretrain` item,
+apply the [performance-readiness guidance](../nemo-mbridge-recipe-recommender/SKILL.md#performance-readiness-for-new-recipes):
+for BF16, aim for roughly 200 model TFLOP/s/GPU on H100 or 400 on GB200 using
+steady-state metrics from the intended library workload. SFT, PEFT, and
+long-context SFT are excluded. A `pretrain_performance` benchmark result does
+not satisfy this library-recipe requirement. For other hardware/precisions,
+use a workload-matched measured target as described in that guidance.
+If performance is severely below the target, withhold the library recipe or
+mark it **early, unoptimized** in the recipe, card summary, affected `pretrain`
+item's `expected_result`, and PR, with its measured performance and limits.
+Functional verification alone does not establish that a recipe is optimized.
+
 Record raw metrics for each run only. Do not store comparison payloads,
 throughput or memory deltas, speedups, or prose ranking one performance run
 against another. Agents can calculate those from standalone leaves after
@@ -912,8 +941,7 @@ entry in the generator's `MODEL_PAGE_PATHS` table.
   use `fp8_mx` and `nvfp4` only for training leaves that ran in those modes.
   For a multi-variant FSDP container, put precision on each variant.
 - Pin a public immutable HF revision, minimum Transformers version, public base
-  container or sanitized non-public release-candidate provenance, and exact
-  Bridge verification commit; use an item override only
+  container, and exact Bridge verification commit; use an item override only
   for a verified workload run from a different clean commit.
 - Use the public model name in commands.
 - Include commands and concrete expected results for verified items.

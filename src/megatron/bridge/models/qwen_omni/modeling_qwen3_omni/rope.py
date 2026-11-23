@@ -39,7 +39,8 @@ def get_llm_pos_ids_for_vision(
     llm_grid_w = grid_ws[vision_idx] // spatial_merge_size
     h_index = torch.arange(llm_grid_h).view(1, -1, 1).expand(len(t_index), -1, llm_grid_w).flatten()
     w_index = torch.arange(llm_grid_w).view(1, 1, -1).expand(len(t_index), llm_grid_h, -1).flatten()
-    t_index = t_index.view(-1, 1).expand(-1, llm_grid_h * llm_grid_w).flatten().long()
+    # Video time coordinates can be fractional; preserve them to match HF.
+    t_index = t_index.view(-1, 1).expand(-1, llm_grid_h * llm_grid_w).flatten().float()
     return torch.stack([t_index, h_index, w_index]) + start_idx
 
 

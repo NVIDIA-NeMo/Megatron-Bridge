@@ -26,7 +26,6 @@ import pytest
 import torch
 import torch.nn.functional as F
 from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.core.optimizer import OptimizerConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.config import (
@@ -36,6 +35,7 @@ from megatron.bridge.training.config import (
     InProcessRestartConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
+    OptimizerConfig,
     RNGConfig,
     SchedulerConfig,
     TokenizerConfig,

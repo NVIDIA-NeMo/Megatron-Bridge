@@ -48,12 +48,12 @@ by `AutoBridge`. Normalize it to the masked-LM architecture and add the tokenize
 using the directory with Megatron Bridge:
 
     uv run python - <<'PY'
-    from transformers import AutoTokenizer, MegatronBertForMaskedLM
+    from transformers import BertTokenizerFast, MegatronBertForMaskedLM
 
     checkpoint_path = "megatron-bert-uncased-345m-hf"
     model = MegatronBertForMaskedLM.from_pretrained(checkpoint_path)
     model.save_pretrained(checkpoint_path, safe_serialization=True)
-    tokenizer = AutoTokenizer.from_pretrained("nvidia/megatron-bert-uncased-345m")
+    tokenizer = BertTokenizerFast.from_pretrained("nvidia/megatron-bert-uncased-345m")
     tokenizer.save_pretrained(checkpoint_path)
     PY
 

@@ -14,8 +14,10 @@
 
 import copy
 import functools
+import pickle
 import re
 import types
+from collections import defaultdict
 from typing import Iterable, List, Optional, Tuple
 
 import torch
@@ -224,11 +226,11 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
 
     Returns:
         The cleaned object with non-pickleables removed
-    """
 
-    # Stop recursion if max depth reached
-    if current_depth >= max_depth:
-        return obj
+    Raises:
+        TypeError: Metadata at the recursion limit cannot be serialized. Unknown
+            metadata is never silently discarded to make serialization succeed.
+    """
 
     # Handle None
     if obj is None:
@@ -254,34 +256,74 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
         ):  # bound methods
             return None
 
+    # Remove known runtime leaves even at the boundary, but do not discard an
+    # entire metadata subtree merely because one of its descendants is unsafe.
+    if current_depth >= max_depth:
+        try:
+            pickle.dumps(obj)
+        except (pickle.PicklingError, TypeError, AttributeError, RecursionError) as exc:
+            raise TypeError(
+                f"Cannot serialize conversion metadata of type {type(obj).__name__} "
+                f"at max_depth={max_depth}; separate runtime state from conversion metadata."
+            ) from exc
+        return obj
+
+    # Check containers before objects: OrderedDict has a __dict__, but its
+    # hook values are mapping entries rather than object attributes.
+    if isinstance(obj, list):
+        cleaned_obj = copy.copy(obj)
+        for index, item in enumerate(obj):
+            cleaned_obj[index] = remove_non_pickleables(item, max_depth, current_depth + 1)
+    elif isinstance(obj, tuple):
+        # Build the tuple storage directly: named tuples and other subclasses
+        # may have constructors that take positional fields, not an iterable.
+        items = [remove_non_pickleables(item, max_depth, current_depth + 1) for item in obj]
+        if all(cleaned is original for cleaned, original in zip(items, obj)):
+            # Keep native tuple types such as torch.Size on their own copy path.
+            cleaned_obj = copy.copy(obj)
+        else:
+            cleaned_obj = tuple.__new__(type(obj), items)
+        if hasattr(obj, "__dict__"):
+            vars(cleaned_obj).update(vars(obj))
+    elif isinstance(obj, dict):
+        # A shallow copy retains OrderedDict/defaultdict behavior and attributes.
+        cleaned_obj = copy.copy(obj)
+        if isinstance(obj, defaultdict):
+            cleaned_obj.default_factory = remove_non_pickleables(obj.default_factory, max_depth, current_depth + 1)
+        for key, value in obj.items():
+            cleaned_obj[key] = remove_non_pickleables(value, max_depth, current_depth + 1)
+    else:
+        cleaned_obj = None
+
     # Handle dataclass/object with attributes
     if hasattr(obj, "__dict__"):
         # Create a copy to avoid modifying the original
-        cleaned_obj = copy.copy(obj)
+        if cleaned_obj is None:
+            cleaned_obj = copy.copy(obj)
 
         # Read stored attributes from ``__dict__`` directly. Configuration classes may
         # deliberately reject dynamic attribute access for values whose meaning is
         # layer-dependent, even though the raw value still needs to be copied for IPC.
         for attr_name, attr_value in list(vars(cleaned_obj).items()):
+            # Setup recreates these registries when constructing a model. They
+            # are not conversion metadata; keep them off the detached IPC copy
+            # without unregistering any hooks on the live training provider.
+            if attr_name in {"_pre_wrap_hooks", "_megatron_bridge_setup_pre_wrap_hooks"}:
+                delattr(cleaned_obj, attr_name)
+                continue
             # Recursively clean attribute
-            cleaned_value = remove_non_pickleables(attr_value, max_depth, current_depth + 1)
+            try:
+                cleaned_value = remove_non_pickleables(attr_value, max_depth, current_depth + 1)
+            except TypeError as exc:
+                raise TypeError(f"Cannot clean conversion metadata attribute {attr_name!r}: {exc}") from exc
 
             # Set the cleaned value (or None if it was removed)
             setattr(cleaned_obj, attr_name, cleaned_value)
 
         return cleaned_obj
 
-    # Handle lists
-    elif isinstance(obj, list):
-        return [remove_non_pickleables(item, max_depth, current_depth + 1) for item in obj]
-
-    # Handle tuples
-    elif isinstance(obj, tuple):
-        return tuple(remove_non_pickleables(item, max_depth, current_depth + 1) for item in obj)
-
-    # Handle dictionaries
-    elif isinstance(obj, dict):
-        return {key: remove_non_pickleables(value, max_depth, current_depth + 1) for key, value in obj.items()}
+    if cleaned_obj is not None:
+        return cleaned_obj
 
     # For primitive types and other safe objects, return as-is
     return obj
@@ -387,6 +429,64 @@ def conform_config_to_reference(
         if key not in filtered_config_dict:
             filtered_config_dict[key] = value
     return filtered_config_dict
+
+
+# RoPE parameters that describe the model, not a scaling method; kept when the RoPE type changes.
+_MODEL_ROPE_PARAMETERS = frozenset({"rope_theta", "partial_rotary_factor", "mrope_section", "mrope_interleaved"})
+
+
+def carry_rope_into_rope_parameters(
+    hf_config_dict: dict[str, object], conformed_dict: dict[str, object]
+) -> dict[str, object]:
+    """Carry the legacy RoPE keys of ``hf_config_dict`` into the ``rope_parameters`` of ``conformed_dict``.
+
+    ``megatron_to_hf_config`` emits ``rope_theta``, ``partial_rotary_factor`` and ``rope_scaling``, but
+    transformers 5 configs keep their RoPE settings in ``rope_parameters`` (``partial_rotary_factor`` only there
+    since transformers 5.20). :func:`conform_config_to_reference` therefore drops these keys and backfills the
+    reference model's ``rope_parameters``, and an explicit ``rope_parameters`` overrides the legacy keyword
+    arguments in the config constructor. This writes the Megatron-side values into the reference's flat
+    ``rope_parameters`` where they differ, reading a missing ``partial_rotary_factor`` as 1.0. A scaling of a
+    different type replaces the reference's scaling entries, so a bridge reports a model without scaling as
+    ``{"rope_type": "default"}``. Where the reference keeps ``partial_rotary_factor`` as a top-level key and
+    not in ``rope_parameters``, the projection has already carried it. Equal values are left as the reference
+    has them, so an unchanged model keeps the reference's ``rope_parameters`` exactly. Nested
+    ``rope_parameters`` (one dict per attention type) and configs without them are returned unchanged.
+
+    Args:
+        hf_config_dict: HF config dict emitted by ``megatron_to_hf_config``, before conforming.
+        conformed_dict: The same dict after :func:`conform_config_to_reference`.
+
+    Returns:
+        ``conformed_dict``, with ``rope_parameters`` replaced when the Megatron side sets RoPE values.
+    """
+    rope_parameters = conformed_dict.get("rope_parameters")
+    if not isinstance(rope_parameters, dict) or "rope_theta" not in rope_parameters:
+        return conformed_dict
+    rope_theta = hf_config_dict.get("rope_theta")
+    partial_rotary_factor = hf_config_dict.get("partial_rotary_factor")
+    rope_scaling = hf_config_dict.get("rope_scaling")
+    if rope_theta is None and partial_rotary_factor is None and not isinstance(rope_scaling, dict):
+        return conformed_dict
+
+    carried = dict(rope_parameters)
+    if isinstance(rope_scaling, dict) and rope_scaling:
+        scaling = {"rope_type" if key == "type" else key: value for key, value in rope_scaling.items()}
+        if scaling.get("rope_type", carried.get("rope_type")) != carried.get("rope_type"):
+            carried = {key: value for key, value in carried.items() if key in _MODEL_ROPE_PARAMETERS}
+            carried.update(scaling)
+        else:
+            carried.update({key: value for key, value in scaling.items() if key in carried and carried[key] != value})
+    if rope_theta is not None and carried["rope_theta"] != rope_theta:
+        carried["rope_theta"] = rope_theta
+    if (
+        partial_rotary_factor is not None
+        and ("partial_rotary_factor" in carried or "partial_rotary_factor" not in conformed_dict)
+        and carried.get("partial_rotary_factor", 1.0) != partial_rotary_factor
+    ):
+        carried["partial_rotary_factor"] = partial_rotary_factor
+    if carried == rope_parameters:
+        return conformed_dict
+    return {**conformed_dict, "rope_parameters": carried}
 
 
 def persistent_buffers(model: torch.nn.Module) -> Iterable[Tuple[str, torch.Tensor]]:

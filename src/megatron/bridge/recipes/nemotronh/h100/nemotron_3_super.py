@@ -42,7 +42,7 @@ def _configure_super_source(
         kwargs["trust_remote_code"] = True
         cfg.checkpoint.hf_trust_remote_code = True
     bridge = AutoBridge.from_hf_pretrained(hf_path or NEMOTRON_3_SUPER_HF_MODEL_ID, **kwargs)
-    cfg.model = bridge.to_megatron_provider(load_weights=False)
+    cfg.model = bridge.get_model_config()
     cfg.tokenizer.tokenizer_model = hf_path or "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
     if hf_path:
         cfg.tokenizer.hf_tokenizer_kwargs = dict(cfg.tokenizer.hf_tokenizer_kwargs or {})
@@ -124,7 +124,6 @@ def nemotron_3_super_pretrain_16gpu_h100_bf16_config(
     # MTP Settings (HF config has num_nextn_predict_layers=1 for the shared block;
     # mtp_num_layers=2 controls forward-pass repetitions with mtp_use_repeated_layer)
     cfg.model.mtp_num_layers = 2
-    cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.calculate_per_token_loss = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True
@@ -374,7 +373,6 @@ def nemotron_3_super_sft_16gpu_h100_bf16_config(
     # MTP Settings (HF config has num_nextn_predict_layers=1 for the shared block;
     # mtp_num_layers=2 controls forward-pass repetitions with mtp_use_repeated_layer)
     cfg.model.mtp_num_layers = 2
-    cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.use_te_rng_tracker = True
@@ -477,6 +475,11 @@ def nemotron_3_super_sft_16gpu_h100_bf16_32k_config(
     # cross-stage tied-embedding reduction and PP send/recv operations.
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    # The first step compiles and autotunes Triton kernels (mostly the Mamba layers') stage by
+    # stage through the eight-stage pipeline. With an empty Triton cache, iteration 1 takes about
+    # 13.5 minutes on H100 and stage 0 waits about 11 of them for its first backward, past the
+    # 10-minute default timeout. 30 minutes leaves room for about 2.6 times that wait.
+    cfg.dist.distributed_timeout_minutes = 30
     # Keep the complete process environment visible on the recipe and PP
     # sends/receives ordered for the long-context PP8 schedule.
     cfg.env_vars = {
@@ -552,7 +555,6 @@ def nemotron_3_super_peft_1gpu_h100_bf16_config(
     # MTP Settings (HF config has num_nextn_predict_layers=1 for the shared block;
     # mtp_num_layers=2 controls forward-pass repetitions with mtp_use_repeated_layer)
     cfg.model.mtp_num_layers = 2
-    cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.use_te_rng_tracker = True

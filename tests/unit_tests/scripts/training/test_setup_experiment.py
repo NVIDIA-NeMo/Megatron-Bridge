@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import importlib.util
-import subprocess
 import sys
 import types
 from pathlib import Path
@@ -264,10 +263,10 @@ def test_parser_consumes_peak_mem_clk(option):
 @pytest.mark.parametrize(
     ("requested_peak_mem_clk", "hardware", "expected"),
     [
-        (None, "vr200", 4752),
+        (None, "vrnvl72", 4752),
         (None, "h100", None),
-        (2600, "vr200", 2600),
-        (-1, "vr200", None),
+        (2600, "vrnvl72", 2600),
+        (-1, "vrnvl72", None),
     ],
 )
 def test_peak_mem_clk_resolution(requested_peak_mem_clk, hardware, expected):
@@ -300,7 +299,15 @@ def test_peak_mem_clk_is_applied_once_per_slurm_node():
     assert "sudo nvidia-smi -lmc 4752,4752" in executor.setup_lines
 
 
-def test_main_applies_vr200_peak_mem_clk_default(monkeypatch):
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_bf16_config",
+        # The deprecated hardware name resolves to the same benchmark recipe.
+        "qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config",
+    ],
+)
+def test_main_applies_vrnvl72_peak_mem_clk_default(monkeypatch, recipe_name):
     module = _load_setup_experiment_module()
     configured_clocks = []
     sentinel_executor = object()
@@ -349,7 +356,7 @@ def test_main_applies_vr200_peak_mem_clk_default(monkeypatch):
             "image.sqsh",
             "--submission-dry-run",
             "--recipe",
-            "qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config",
+            recipe_name,
         ]
     )
 
@@ -734,37 +741,3 @@ def test_main_shell_quotes_forwarded_training_arguments(monkeypatch):
     )
 
     assert scripts[0].args == ["'logger.wandb_exp_name=benign; echo should-not-run'"]
-
-
-@pytest.mark.parametrize("failing_setup", [False, True])
-def test_allocation_setup_is_captured_and_failure_prevents_worker(tmp_path, failing_setup):
-    module = _load_setup_experiment_module()
-    script = tmp_path / "setup with spaces.sh"
-    script.write_text("exit 23\n" if failing_setup else "test \"$(printf '%s' 'quoted value')\" = 'quoted value'\n")
-    executor = types.SimpleNamespace(setup_lines="test 1 = 1\n")
-    module._configure_slurm_setup_script(executor, script)
-    script.unlink()  # Execution does not depend on the submitting host's path.
-    worker_marker = tmp_path / "worker-started"
-    result = subprocess.run(
-        ["bash", "-c", "set +e\n" + executor.setup_lines + 'touch "$1"', "setup-test", str(worker_marker)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == (23 if failing_setup else 0)
-    assert worker_marker.exists() is not failing_setup
-    assert executor.setup_lines.startswith("test 1 = 1\n")
-
-
-def test_setup_script_is_launcher_only_and_empty_script_is_rejected(tmp_path):
-    module = _load_setup_experiment_module()
-    script = tmp_path / "setup.sh"
-    script.write_text("\n")
-    args, training_args = module.parse_args(["--setup-script", str(script), "--recipe", "example_config"])
-    assert args.setup_script == script
-    assert training_args == ["--recipe", "example_config"]
-    executor = types.SimpleNamespace(setup_lines=None)
-    with pytest.raises(ValueError, match="non-empty"):
-        module._configure_slurm_setup_script(executor, args.setup_script)
-    module._configure_slurm_setup_script(executor, None)
-    assert executor.setup_lines is None

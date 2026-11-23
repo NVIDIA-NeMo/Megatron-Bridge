@@ -152,3 +152,11 @@ def apply_container_runtime(
     # (including PYTHONPATH) in the batch script. Keep values/secrets inherited.
     executor.additional_parameters["export"] = ",".join(dict.fromkeys(["PATH", "HOME", *names]))
     return run.Script(inline=inline, entrypoint="bash", env=task.env)
+
+
+def run_from_container_repo_root(task: run.Script) -> run.Script:
+    """Run the Pyxis worker from the container checkout instead of NeMo-Run's job directory."""
+    import nemo_run as run
+
+    command = " ".join([shlex.quote(task.entrypoint), shlex.quote(task.path), *task.args])
+    return run.Script(inline=f"set -e\ncd /opt/Megatron-Bridge\nexec {command}\n", entrypoint="bash", env=task.env)

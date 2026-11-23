@@ -17,10 +17,10 @@ from dataclasses import dataclass
 import pytest
 import yaml
 from megatron.core.quantization.quant_config import GlobMatcher, MatchContext, Matcher, RecipeConfig
+from megatron.training.utils.checkpoint_utils import read_run_config
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.model_load_save import load_model_config
-from megatron.bridge.training.utils.checkpoint_utils import read_run_config
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
 from megatron.bridge.utils.instantiate_utils import instantiate, target_allowlist
 
@@ -134,27 +134,6 @@ def test_quant_recipe_round_trips_through_run_config(tmp_path) -> None:
         )
         == "fallback"
     )
-
-
-@pytest.mark.parametrize("include_call_flag", [False, True])
-def test_legacy_stateless_quant_recipe_is_ignored(tmp_path, caplog, include_call_flag) -> None:
-    run_config_path = tmp_path / "run_config.yaml"
-    _RunConfig(model=_model_provider()).to_yaml(str(run_config_path))
-    run_config = yaml.safe_load(run_config_path.read_text())
-    legacy_recipe = {
-        "_target_": "megatron.core.quantization.quant_config.RecipeConfig",
-    }
-    if include_call_flag:
-        legacy_recipe["_call_"] = True
-    run_config["model"]["quant_recipe"] = legacy_recipe
-    run_config_path.write_text(yaml.safe_dump(run_config))
-
-    with caplog.at_level("WARNING"):
-        loaded_model, mlm_args = load_model_config(str(tmp_path))
-
-    assert mlm_args is None
-    assert loaded_model.quant_recipe is None
-    assert "legacy quantization recipe whose state was not preserved" in caplog.text
 
 
 def test_unsupported_quant_recipe_matcher_fails_loudly() -> None:

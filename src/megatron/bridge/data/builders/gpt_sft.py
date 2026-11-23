@@ -244,6 +244,11 @@ class GPTSFTDatasetConfig(DataloaderConfig):
     scheduler, which packs the global batch per step across DP x CP ranks."""
     global_batch_packing_pad_to_multiple_of: int = 1
     """Per-sequence alignment multiple for CP THD slicing; ``ConfigContainer.validate`` sets it."""
+    fold_alignment_padding: bool = False
+    """Report the alignment padding as part of each sequence (loss-masked) so packed bins carry no
+    padding between sequences. Set it when attention runs on FlashAttention under context
+    parallelism, e.g. head dimension 256 on Blackwell; see
+    ``megatron.bridge.data.packing.global_batch.fold_alignment_padding``."""
     dataset_kwargs: dict[str, Any] | None = None
     do_validation: bool = True
     do_test: bool = True
@@ -622,6 +627,7 @@ def build_gpt_sft_split(
     in_batch_packing_pad_to_multiple_of: int = 1,
     enable_global_batch_packing: bool = False,
     global_batch_packing_pad_to_multiple_of: int = 1,
+    fold_alignment_padding: bool = False,
     is_test: bool = False,
     dataset_kwargs: dict[str, Any] | None = None,
 ) -> Any | None:
@@ -642,6 +648,7 @@ def build_gpt_sft_split(
                 in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
                 enable_global_batch_packing=enable_global_batch_packing,
                 global_batch_packing_pad_to_multiple_of=global_batch_packing_pad_to_multiple_of,
+                fold_alignment_padding=fold_alignment_padding,
                 is_test=is_test,
                 dataset_kwargs=dataset_kwargs,
             )
@@ -663,6 +670,7 @@ def build_gpt_sft_split(
                 in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
                 enable_global_batch_packing=enable_global_batch_packing,
                 global_batch_packing_pad_to_multiple_of=global_batch_packing_pad_to_multiple_of,
+                fold_alignment_padding=fold_alignment_padding,
                 is_test=is_test,
                 dataset_kwargs=blend_options,
             )
@@ -767,6 +775,7 @@ def build_gpt_sft_split(
             in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
             enable_global_batch_packing=enable_global_batch_packing,
             global_batch_packing_pad_to_multiple_of=global_batch_packing_pad_to_multiple_of,
+            fold_alignment_padding=fold_alignment_padding,
             **options,
         )
     return GPTSFTDataset(
@@ -775,6 +784,7 @@ def build_gpt_sft_split(
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         enable_global_batch_packing=enable_global_batch_packing,
         global_batch_packing_pad_to_multiple_of=global_batch_packing_pad_to_multiple_of,
+        fold_alignment_padding=fold_alignment_padding,
         **options,
     )
 
@@ -818,6 +828,7 @@ class GPTSFTDatasetBuilder:
         self.in_batch_packing_pad_to_multiple_of = config.in_batch_packing_pad_to_multiple_of
         self.enable_global_batch_packing = config.enable_global_batch_packing
         self.global_batch_packing_pad_to_multiple_of = config.global_batch_packing_pad_to_multiple_of
+        self.fold_alignment_padding = config.fold_alignment_padding
         self.enable_offline_packing = config.enable_offline_packing
         self.offline_packing_specs = config.offline_packing_specs
         self.packed_sequence_size = (
@@ -1024,6 +1035,7 @@ class GPTSFTDatasetBuilder:
             in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
             enable_global_batch_packing=self.enable_global_batch_packing,
             global_batch_packing_pad_to_multiple_of=self.global_batch_packing_pad_to_multiple_of,
+            fold_alignment_padding=self.fold_alignment_padding,
             dataset_kwargs={"max_num_samples": self.max_train_samples, **self.dataset_kwargs},
         )
 
@@ -1042,6 +1054,7 @@ class GPTSFTDatasetBuilder:
                 in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
                 enable_global_batch_packing=self.enable_global_batch_packing,
                 global_batch_packing_pad_to_multiple_of=self.global_batch_packing_pad_to_multiple_of,
+                fold_alignment_padding=self.fold_alignment_padding,
                 is_test=True,
                 dataset_kwargs=self.dataset_kwargs,
             )
@@ -1060,6 +1073,7 @@ class GPTSFTDatasetBuilder:
                 in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
                 enable_global_batch_packing=self.enable_global_batch_packing,
                 global_batch_packing_pad_to_multiple_of=self.global_batch_packing_pad_to_multiple_of,
+                fold_alignment_padding=self.fold_alignment_padding,
                 is_test=True,
                 dataset_kwargs=self.dataset_kwargs,
             )

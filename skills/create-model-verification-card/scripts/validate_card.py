@@ -52,7 +52,12 @@ REQUIRED_ITEM_NAMES = (
     "peft",
     "checkpoint_resume",
 )
-OPTIONAL_ITEM_NAMES = ("pretrain_performance", "pretrain_fsdp", "pretrain_weak_scaling")
+OPTIONAL_ITEM_NAMES = (
+    "pretrain_performance",
+    "pretrain_performance_hsdp",
+    "pretrain_fsdp",
+    "pretrain_weak_scaling",
+)
 ITEM_NAMES = REQUIRED_ITEM_NAMES + OPTIONAL_ITEM_NAMES
 MODEL_LEVEL_INDEX_SCOPE = (
     "hf_to_megatron_cpu",
@@ -78,6 +83,7 @@ TRAINING_ITEMS = frozenset(
         "peft",
         "checkpoint_resume",
         "pretrain_performance",
+        "pretrain_performance_hsdp",
         "pretrain_fsdp",
         "pretrain_weak_scaling",
     }
@@ -137,7 +143,9 @@ PERFORMANCE_DISCLAIMERS = (
 )
 
 TOP_LEVEL_KEYS = frozenset({"title", "model", "verification_environment", "summary", "verification_index", "items"})
-VERIFICATION_INDEX_KEYS = frozenset({"model_level", "training", "performance", "fsdp", "weak_scaling"})
+VERIFICATION_INDEX_KEYS = frozenset(
+    {"model_level", "training", "performance", "performance_hsdp", "fsdp", "weak_scaling"}
+)
 MODEL_KEYS = frozenset({"hf_id", "hf_revision", "architecture", "min_transformers_version"})
 ENVIRONMENT_KEYS = frozenset({"base_container", "bridge_commit"})
 ITEM_KEYS = frozenset(
@@ -186,11 +194,6 @@ HF_ID_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 REVISION_RE = re.compile(r"[0-9a-f]{40}")
 VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
 PUBLIC_BASE_CONTAINER_RE = re.compile(r"nvcr\.io/nvidia/(?:nemo|pytorch):[A-Za-z0-9._-]+")
-# Release provenance only, deliberately not an image reference or pull target.
-SANITIZED_RC_BASE_CONTAINER_RE = re.compile(
-    r"(?:NeMo|PyTorch) [0-9]{2}\.(?:0[1-9]|1[0-2]) RC[1-9][0-9]* "
-    r"\(non-public release candidate\)"
-)
 URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 IPV4_RE = re.compile(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)")
@@ -530,6 +533,7 @@ def _validate_verification_index(
 
     for index_name, item_name in (
         ("performance", "pretrain_performance"),
+        ("performance_hsdp", "pretrain_performance_hsdp"),
         ("fsdp", "pretrain_fsdp"),
         ("weak_scaling", "pretrain_weak_scaling"),
     ):
@@ -785,6 +789,7 @@ def _resume_reference_settings(command: str) -> list[tuple[str, str, str | None]
         "checkpoint.save_rng",
     }
     ignored_runtime_overrides = {
+        "checkpoint.stage_precision_aware_optimizer_state_on_cpu",
         "logger.save_config_filepath",
         "train.empty_unused_memory_level",
     }
@@ -2043,14 +2048,10 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
             errors=errors,
         )
         base_container = environment.get("base_container")
-        if not isinstance(base_container, str) or not (
-            PUBLIC_BASE_CONTAINER_RE.fullmatch(base_container)
-            or SANITIZED_RC_BASE_CONTAINER_RE.fullmatch(base_container)
-        ):
+        if not isinstance(base_container, str) or PUBLIC_BASE_CONTAINER_RE.fullmatch(base_container) is None:
             errors.append(
                 f"{_pointer('verification_environment', 'base_container')}: "
-                "expected a public NVIDIA NeMo or PyTorch container, or a sanitized label such as "
-                "'NeMo 26.10 RC4 (non-public release candidate)'"
+                "expected a public NVIDIA NeMo or PyTorch container"
             )
         bridge_commit = environment.get("bridge_commit")
         if not isinstance(bridge_commit, str) or REVISION_RE.fullmatch(bridge_commit) is None:

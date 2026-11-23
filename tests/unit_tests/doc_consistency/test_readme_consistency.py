@@ -61,6 +61,7 @@ DATA_PREPARATION_DOCS = (
     REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "training" / "data-preparation.mdx",
 )
 QWEN3_VL_README = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "README.md"
+MEGATRON_BERT_README = REPO_ROOT / "examples" / "models" / "bert" / "megatron-bert" / "README.md"
 QWEN25_VL_DOCS = (
     REPO_ROOT / "docs" / "models" / "qwen" / "qwen2.5-vl.md",
     REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "models" / "qwen" / "qwen2.5-vl.mdx",
@@ -201,6 +202,17 @@ def test_shell_conversion_launcher_is_not_run_through_python():
                 offenders.append(str(path.relative_to(REPO_ROOT)))
 
     assert not offenders, f"convert.sh is invoked through Python or torchrun: {offenders}"
+
+
+def test_model_example_scripts_reference_existing_conversion_scripts():
+    """Every examples/conversion/*.py path in a model example shell script exists in the repo."""
+    offenders: list[str] = []
+    for path in sorted((REPO_ROOT / "examples" / "models").rglob("*.sh")):
+        for ref in sorted(set(re.findall(r"examples/conversion/[\w./-]+\.py", _read(path)))):
+            if not (REPO_ROOT / ref).is_file():
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {ref}")
+
+    assert not offenders, f"model example scripts reference missing conversion scripts: {offenders}"
 
 
 def test_llama_readme_gptdataset_field_name():
@@ -415,11 +427,11 @@ def test_model_examples_use_current_run_recipe_arguments():
 def test_nemotron_and_qwen2_audio_finetune_launchers_use_exported_recipes():
     """SFT and PEFT example recipes must match their launcher-visible aliases."""
     launcher_expectations = {
-        MODEL_EXAMPLES / "nemotron" / "nemotron_3" / "nano" / "slurm_sft.sh": (
+        MODEL_EXAMPLES / "nemotron" / "nemotron_3_nano" / "slurm_sft.sh": (
             "${MODEL_NAME}_sft_config",
             "nemotron_3_nano_finetune_config",
         ),
-        MODEL_EXAMPLES / "nemotron" / "nemotron_3" / "nano" / "slurm_peft.sh": (
+        MODEL_EXAMPLES / "nemotron" / "nemotron_3_nano" / "slurm_peft.sh": (
             "${MODEL_NAME}_peft_config",
             "nemotron_3_nano_finetune_config",
         ),
@@ -565,7 +577,12 @@ def _normalize_model_guide_format(text: str) -> str:
             f"{{/* {boundary} GENERATED VERIFIED CONFIGURATIONS */}}",
             f"<!-- {boundary} GENERATED VERIFIED CONFIGURATIONS -->",
         )
-    text = re.sub(r"<p>(.*?)</p>", lambda match: "<p>" + " ".join(match[1].split()) + "</p>", text, flags=re.DOTALL)
+    text = re.sub(
+        r"<p>(.*?)</p>",
+        lambda match: "<p>" + " ".join(match[1].split()).replace("&#123;", "{").replace("&#125;", "}") + "</p>",
+        text,
+        flags=re.DOTALL,
+    )
     return re.sub(
         r'(<code class="language-bash">)(.*?)(</code>)',
         lambda match: match[1] + match[2].replace("&#123;", "{").replace("&#125;", "}") + match[3],
@@ -578,19 +595,24 @@ def test_model_guide_format_normalization_preserves_content() -> None:
     """Format parity must still detect changed prose, commands, and code spacing."""
     sphinx = (
         "<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->\n"
-        "<p>Expected result\n</p>\n"
+        "<p>Expected result {&quot;loss&quot;: 0.5} from ${MODEL}\n</p>\n"
         '<code class="language-bash">echo ${MODEL}\n  --flag</code>\n'
         "<!-- END GENERATED VERIFIED CONFIGURATIONS -->\n"
     )
     fern = (
         "{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}\n"
-        "<p>Expected result</p>\n"
+        "<p>Expected result &#123;&quot;loss&quot;: 0.5&#125; from $&#123;MODEL&#125;</p>\n"
         '<code class="language-bash">echo $&#123;MODEL&#125;\n  --flag</code>\n'
         "{/* END GENERATED VERIFIED CONFIGURATIONS */}\n"
     )
     expected = _normalize_model_guide_format(sphinx)
     assert expected == _normalize_model_guide_format(fern)
-    for old, new in (("Expected result", "Different result"), ("MODEL", "OTHER"), ("  --flag", " --flag")):
+    for old, new in (
+        ("Expected result", "Different result"),
+        ("0.5", "0.6"),
+        ("MODEL", "OTHER"),
+        ("  --flag", " --flag"),
+    ):
         assert expected != _normalize_model_guide_format(fern.replace(old, new))
     assert _normalize_model_guide_format("Prose &#123;value&#125;") == "Prose &#123;value&#125;"
 
@@ -688,6 +710,17 @@ def test_sphinx_docs_link_out_of_tree_tutorials_as_urls():
     for path in SPHINX_TUTORIAL_LINK_DOCS:
         relative_tutorial_links = re.findall(r"\]\((?:\.\./)+tutorials/[^)]+\)", _read(path))
         assert not relative_tutorial_links, f"{path} has out-of-tree Sphinx links: {relative_tutorial_links}"
+
+
+def test_megatron_bert_readme_saves_a_bert_tokenizer():
+    """The Megatron BERT README must load the Hub tokenizer through a BERT tokenizer class."""
+    loaders = re.findall(
+        r"(\w+)\.from_pretrained\(\s*[\"']nvidia/megatron-bert-uncased-345m[\"']", _read(MEGATRON_BERT_README)
+    )
+    assert loaders, f"{MEGATRON_BERT_README} no longer loads the nvidia/megatron-bert-uncased-345m tokenizer"
+    assert all(re.fullmatch(r"BertTokenizer(Fast)?", name) for name in loaders), (
+        f"non-BERT tokenizer loaders: {loaders}"
+    )
 
 
 if __name__ == "__main__":

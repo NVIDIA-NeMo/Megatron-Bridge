@@ -86,11 +86,26 @@ def no_mtp(monkeypatch):
     )
 
 
-def test_enabled_flag():
+def _get_batch_with_dynamic_cp(
+    data_iterator,
+    vpp_size=None,
+    mtp_on_this_rank=False,
+    vp_stage=None,
+    dynamic_cp=False,
+    pg_collection=None,
+    config=None,
+):
+    return ("tokens", "labels", "loss_mask", None, "position_ids", SimpleNamespace(cp_group=dynamic_cp), None)
+
+
+def test_enabled_flags():
     assert global_batch_packing.global_batch_packing_enabled(_model())
     assert not global_batch_packing.global_batch_packing_enabled(_model(sequence_packing_scheduler=None))
     # A mock config answers every attribute; only a scheduler name enables packing.
     assert not global_batch_packing.global_batch_packing_enabled(Mock())
+    assert global_batch_packing.dynamic_context_parallel_enabled(_model(dynamic_context_parallel=True))
+    assert not global_batch_packing.dynamic_context_parallel_enabled(_model())
+    assert not global_batch_packing.dynamic_context_parallel_enabled(Mock())
 
 
 def test_wrap_passes_iterator_only_on_tp_rank_zero(monkeypatch):
@@ -134,6 +149,20 @@ def test_get_batch_passes_only_arguments_the_pinned_fetch_accepts(monkeypatch, n
     )
     # The fake echoes the config it received through cp_group.
     assert params.cp_group is (model if get_batch is _get_batch_with_config else None)
+
+
+@pytest.mark.parametrize("dynamic_cp", [True, False])
+def test_get_batch_forwards_dynamic_cp_only_when_enabled(monkeypatch, no_mtp, dynamic_cp):
+    monkeypatch.setattr(global_batch_packing, "_scheduler_api", lambda: (None, _get_batch_with_dynamic_cp))
+    monkeypatch.setattr(global_batch_packing, "finalize_packed_seq_params", lambda psp, pg: psp)
+    model = _model(sequence_packing_scheduler="default_dynamic_cp" if dynamic_cp else "dp_balanced")
+    if dynamic_cp:
+        model.dynamic_context_parallel = True
+    *_, params, _ = global_batch_packing.get_batch_for_global_batch_packing(
+        "iterator", model, pg_collection=_pg(cp=4), vp_stage=None
+    )
+    # The fake echoes the dynamic_cp argument through cp_group; False is its default.
+    assert params.cp_group is dynamic_cp
 
 
 def test_get_batch_passes_the_iterator_only_on_tp_rank_zero(monkeypatch, no_mtp):
@@ -194,6 +223,25 @@ def test_probe_reports_what_the_pinned_scheduler_is_missing(monkeypatch):
     _install_fake_data_schedule(monkeypatch, schedulers=["dp_balanced"], wrap=wrap_without_pg_collection)
     message = global_batch_packing.probe_global_batch_packing_support("dp_balanced")
     assert message is not None and "ProcessGroupCollection" in message
+
+
+def test_probe_requires_dynamic_cp_support_and_points_at_the_dev_pin(monkeypatch):
+    _install_fake_data_schedule(monkeypatch, schedulers=["dp_balanced"])
+    message = global_batch_packing.probe_global_batch_packing_support("default_dynamic_cp", dynamic_cp=True)
+    assert message is not None and "default_dynamic_cp" in message and "switch_mcore.sh dev" in message
+
+    _install_fake_data_schedule(
+        monkeypatch, schedulers=["dp_balanced", "default_dynamic_cp"], get_batch=_get_batch_with_config
+    )
+    message = global_batch_packing.probe_global_batch_packing_support("default_dynamic_cp", dynamic_cp=True)
+    assert message is not None and "dynamic context parallel" in message
+
+    _install_fake_data_schedule(
+        monkeypatch, schedulers=["dp_balanced", "default_dynamic_cp"], get_batch=_get_batch_with_dynamic_cp
+    )
+    assert global_batch_packing.probe_global_batch_packing_support("default_dynamic_cp", dynamic_cp=True) is None
+    # Static packing never needs the dev pin hint.
+    assert global_batch_packing.probe_global_batch_packing_support("dp_balanced") is None
 
 
 def test_probe_reports_a_release_without_the_scheduler(monkeypatch):

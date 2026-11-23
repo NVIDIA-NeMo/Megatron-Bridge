@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from megatron.bridge.models.hybrid.hybrid_builder import (
+    BridgeHybridModelBuilder,
     HybridModelBuilder,
     HybridModelConfig,
     get_default_hybrid_stack_spec,
@@ -20,9 +21,13 @@ from megatron.bridge.models.hybrid.hybrid_builder import (
     transformer_engine_hybrid_stack_spec,
 )
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.hybrid.model_config import BridgeHybridMLAModelConfig, BridgeHybridModelConfig
 
 
 __all__ = [
+    "BridgeHybridMLAModelConfig",
+    "BridgeHybridModelBuilder",
+    "BridgeHybridModelConfig",
     "HybridModelBuilder",
     "HybridModelConfig",
     "HybridModelProvider",

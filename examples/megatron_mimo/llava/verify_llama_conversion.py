@@ -93,7 +93,7 @@ def _init_megatron(tp_size: int = 1):
 
 
 def _make_language_config(dtype: torch.dtype) -> TransformerConfig:
-    """Vicuna-7B / Llama-2-7B config."""
+    """Vicuna-7B config."""
     is_bf16 = dtype == torch.bfloat16
     cfg = TransformerConfig(
         num_layers=32,

@@ -168,6 +168,29 @@ def test_gpt_oss_20b_sft_32k_overrides_batch_and_sequence_length():
     assert cfg.train.micro_batch_size == 1
 
 
+def test_gpt_oss_120b_sft_48gpu_32k_keeps_nccl_communicators_lazy(monkeypatch):
+    """The 48-H100 32K SFT recipe keeps NCCL communicators lazy so its first pipeline stage fits in 80 GB."""
+    from megatron.bridge.recipes.gpt_oss.h100 import gpt_oss as h100_gpt_oss
+    from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
+
+    patch_recipe_construction_dependencies(monkeypatch)
+    monkeypatch.setattr(h100_gpt_oss, "AutoBridge", _BuilderOnlyBridge)
+
+    cfg = h100_gpt_oss.gpt_oss_120b_sft_48gpu_h100_bf16_32k_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 6
+    assert cfg.model.context_parallel_size == 4
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.dataset.seq_length == 32768
+    assert cfg.train.global_batch_size == 4
+    # Eager NCCL communicators leave the first pipeline stage too little memory. Bridge exports str(value) and
+    # PyTorch only honors the exact string "0", so False or 0.0 would silently keep the communicators eager.
+    assert str(cfg.env_vars["TORCH_DIST_USE_NCCL2"]) == "0"
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+
+
 def test_fp8_peft_inherits_base_peft_config():
     """gpt_oss_20b_peft_fp8_current_scaling_config should inherit base PEFT settings."""
     from megatron.bridge.recipes.gpt_oss import (
@@ -261,3 +284,60 @@ def test_mxfp8_peft_supports_lora_and_dora(peft_scheme: str):
     _assert_basic_config(cfg)
     assert cfg.peft is not None
     assert cfg.mixed_precision.fp8_recipe == "mxfp8"
+
+
+def _gpt_oss_hf_config():
+    from transformers import GptOssConfig
+
+    config = GptOssConfig()
+    config.architectures = ["GptOssForCausalLM"]
+    return config
+
+
+class _BuilderOnlyBridge:
+    """Return a real strict ModelConfig while rejecting the provider API."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs) -> "_BuilderOnlyBridge":
+        return _BuilderOnlyBridge()
+
+    def get_model_config(self):
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        return AutoBridge.from_hf_config(_gpt_oss_hf_config()).get_model_config()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("GPT-OSS recipes must use get_model_config(), not the legacy provider API")
+
+
+def _gpt_oss_perf_recipe_factories():
+    from megatron.bridge import perf_recipes
+    from tests.unit_tests.recipes.recipe_test_utils import discover_recipe_factories
+
+    return [
+        factory
+        for factory in discover_recipe_factories(perf_recipes)
+        if factory.__module__.startswith("megatron.bridge.perf_recipes.gpt_oss.")
+    ]
+
+
+_STRICT_RECIPE_CASES = [*_ALL_RECIPE_CASES, *((f.__name__, f) for f in _gpt_oss_perf_recipe_factories())]
+
+
+@pytest.mark.parametrize(("recipe_name", "recipe_func"), _STRICT_RECIPE_CASES, ids=_recipe_ids(_STRICT_RECIPE_CASES))
+def test_each_recipe_uses_strict_builder_config(recipe_name: str, recipe_func: Callable, monkeypatch):
+    """Library and perf recipes only set fields that the builder-backed model config declares."""
+    from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+    from megatron.bridge.recipes.gpt_oss.h100 import gpt_oss as h100_gpt_oss
+    from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
+
+    patch_recipe_construction_dependencies(monkeypatch)
+    monkeypatch.setattr(h100_gpt_oss, "AutoBridge", _BuilderOnlyBridge)
+
+    cfg = _build_recipe_config(recipe_name, recipe_func)
+
+    assert isinstance(cfg.model, BridgeGPTModelConfig)
+    assert cfg.model.softmax_type == "learnable"
+    if recipe_func.__module__.startswith("megatron.bridge.recipes."):
+        # Some perf recipes deliberately benchmark with plain RoPE.
+        assert cfg.model.position_embedding_type == "yarn"

@@ -14,6 +14,7 @@
 """GB200 performance recipes for GLM-5.1 and GLM-5.2 SFT."""
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.glm_moe_dsa.glm5_provider import split_glm_pattern
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.common import _sft_common
@@ -25,7 +26,7 @@ def glm51_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     """GLM-5.1 SFT: 192× GB200, BF16, 128K packed THD, CP=32, cuDNN DSA."""
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-5.1").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-5.1").get_model_config()
     cfg.mixed_precision = _perf_precision("bf16")
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -50,8 +51,8 @@ def glm51_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
-    cfg.model.num_layers_in_first_pipeline_stage = 14
-    cfg.model.num_layers_in_last_pipeline_stage = 16
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
 
     cfg.train.global_batch_size = 56
     cfg.train.micro_batch_size = 1
@@ -110,6 +111,8 @@ def glm51_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    block_counts = [14, 12, 12, 12, 12, 16]
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     return cfg
 
 
@@ -117,7 +120,7 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     """GLM-5.2 SFT: 192× GB200, BF16, 128K packed THD, CP=32, cuDNN DSA."""
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-5.2").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-5.2").get_model_config()
     cfg.mixed_precision = _perf_precision("bf16")
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -142,8 +145,8 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
-    cfg.model.num_layers_in_first_pipeline_stage = 14
-    cfg.model.num_layers_in_last_pipeline_stage = 16
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
 
     cfg.train.global_batch_size = 56
     cfg.train.micro_batch_size = 1
@@ -202,4 +205,6 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    block_counts = [14, 12, 12, 12, 12, 16]
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     return cfg

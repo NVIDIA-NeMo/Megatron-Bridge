@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MistralModelProvider(GPTModelProvider):
     """
-    Base model provider for Mistral 7B Model: https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3
+    Shared Mistral settings, also inherited by the Ministral 3 provider.
+
+    Architecture dimensions must be supplied from the Hugging Face config.
     """
 
     normalization: str = "RMSNorm"
@@ -37,11 +39,6 @@ class MistralModelProvider(GPTModelProvider):
     add_bias_linear: bool = False
     gated_linear_unit: bool = True
 
-    num_layers: int = 32
-    hidden_size: int = 4096
-    num_attention_heads: int = 32
-    num_query_groups: int = 8
-    ffn_hidden_size: int = 14336
     seq_length: int = 32768
     attention_dropout: float = 0.0
     hidden_dropout: float = 0.0
@@ -52,5 +49,4 @@ class MistralModelProvider(GPTModelProvider):
     window_size: List[int] = None
     rotary_base: float = 1000000.0
     params_dtype: torch.dtype = torch.bfloat16
-    vocab_size: int = 32768
     bf16: bool = True

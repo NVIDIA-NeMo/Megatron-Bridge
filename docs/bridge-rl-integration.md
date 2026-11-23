@@ -352,7 +352,28 @@ for name, weight in bridge.export_hf_weights(megatron_model, cpu=True, show_prog
 
 Point your inference engine (e.g., vLLM) to `"/path/to/hf_export"`.
 
-### B) Zero-copy streaming via ZMQ (fast refit, colocated)
+### B) Pipeline-stage-local streaming for RL weight synchronization
+
+When inference workers collectively receive shards from every training pipeline stage, avoid replicating the full
+HF stream across PP ranks:
+
+```python
+for name, weight in bridge.export_hf_weights(
+    megatron_model,
+    show_progress=False,
+    current_pp_stage_only=True,
+):
+    send_to_inference_workers(name, weight)
+```
+
+- `current_pp_stage_only` changes ownership only across the PP axis.
+- TP/EP ranks in the owning stage still gather shards and perform normal HF layout conversion.
+- Combining one representative stream from every PP stage reconstructs the normal complete export.
+- Source-only HF passthrough tensors are assigned to PP stage 0; duplicate Megatron parameters use the lowest PP owner.
+
+This mode is opt-in. Omitting the flag preserves the complete stream on every rank.
+
+### C) Zero-copy streaming via ZMQ (fast refit, colocated)
 
 Stream tensors from the training side to your inference runtime without writing to disk. The transport is ZMQ peer-to-peer with async send/recv and ping‑pong buffers for overlap; Ray is used only for lightweight coordination. This replaces the earlier ad‑hoc per‑tensor IPC handle passing and aligns with the refactor in [NVIDIA-NeMo/RL#1267](https://github.com/NVIDIA-NeMo/RL/pull/1267).
 
@@ -369,6 +390,8 @@ Stream tensors from the training side to your inference runtime without writing 
 `WeightConversionTask.local_hf_param_specs()` is a per-parameter optimization hint. A non-empty tuple describes canonical HF-compatible views of that one local logical Megatron tensor that may be transferred without first running Bridge collectives or layout conversion. It does not certify whole-model HF conversion or M-to-N refit support. An empty tuple means that parameter must use the normal Bridge conversion/packed-broadcast path, not that the model is unsupported.
 
 Mappings that require transpose, permutation, interleaving, or grouped-export transforms return no specs unless they provide an explicit safe override. A transport must validate support across all parameters and separately qualify the destination backend and source/destination topology before selecting an M-to-N path.
+
+`FusedExpertMapping` and `FusedGatedExpertMapping` provide such an override: their specs describe canonical per-expert views before grouped destination assembly and transposition. A non-empty spec does not qualify that grouped destination for direct transport. In particular, native MXFP8 export still rejects `transpose_on_export`; transports must retain the normal conversion fallback for those mappings.
 
 This contract is not BF16-only. For MXFP8 refit, a transport may materialize canonical logical views from quantized training storage and requantize persistent MXFP8 inference destinations in place. Direct transfer of packed MXFP8 data and scales is a different optimization and is valid only when the source and destination storage layouts, quantization backends, and topology are explicitly compatible.
 

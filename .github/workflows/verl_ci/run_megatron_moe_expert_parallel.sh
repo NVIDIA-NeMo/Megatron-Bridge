@@ -71,7 +71,7 @@ ray stop --force
 env "${common_env[@]}" \
     COMMON_EP=4 \
     INFER_TP=2 \
-    ROLLOUT_QUANTIZATION=fp8 \
+    ROLLOUT_QUANTIZATION=fp8_block \
     bash "${TRAINER_SCRIPT}"
 
 cleanup

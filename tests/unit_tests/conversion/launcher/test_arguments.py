@@ -131,6 +131,18 @@ def test_worker_args_enable_distributed_save_by_default_for_gpu_export():
     assert worker_args[:3] == ["export", "--device", "gpu"]
 
 
+@pytest.mark.parametrize("flag", [[], ["--quantized-export"], ["--no-quantized-export"]])
+def test_worker_args_forward_an_explicit_quantized_export_choice(flag):
+    module = _load_arguments_module()
+    args = module.build_parser(include_execution=True).parse_args(
+        ["export", "--hf-model", "hf/model", "--megatron-path", "/megatron", "--hf-path", "/hf", *flag]
+    )
+
+    worker_args = module.conversion_worker_args(args)
+
+    assert [arg for arg in worker_args if arg.endswith("quantized-export")] == flag
+
+
 def test_worker_args_disable_distributed_save_for_cpu_export():
     module = _load_arguments_module()
     args = module.build_parser(include_execution=True).parse_args(
@@ -261,6 +273,19 @@ def test_import_worker_args_forward_low_memory_save():
     worker_args = module.conversion_worker_args(args)
 
     assert "--low-memory-save" in worker_args
+
+
+def test_import_worker_args_forward_bagel_repo():
+    module = _load_arguments_module()
+    parser = module.build_parser(include_execution=True)
+    argv = ["import", "--device", "gpu", "--hf-model", "hf/model", "--megatron-path", "/checkpoint"]
+
+    default_worker_args = module.conversion_worker_args(parser.parse_args(argv))
+    worker_args = module.conversion_worker_args(parser.parse_args(argv + ["--bagel-repo", "work/dependencies/Bagel"]))
+
+    assert "--bagel-repo" not in default_worker_args
+    assert worker_args[worker_args.index("--bagel-repo") + 1] == "work/dependencies/Bagel"
+    assert module.build_parser(include_execution=False).parse_args(worker_args).bagel_repo == "work/dependencies/Bagel"
 
 
 def test_roundtrip_worker_parser_accepts_serialized_args():

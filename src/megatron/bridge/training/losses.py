@@ -22,6 +22,39 @@ from megatron.core.rerun_state_machine import get_rerun_state_machine
 _DEFAULT_SPIKY_LOSS_FACTOR: float = 10.0
 
 
+def validate_local_loss(loss: torch.Tensor, *, check_for_nan_in_loss: bool, check_for_spiky_loss: bool) -> None:
+    """Run the rerun-state-machine NaN/Inf and spiky-loss checks on one rank's loss before the DP all-reduce."""
+    rerun_state_machine = get_rerun_state_machine()
+    if check_for_nan_in_loss:
+        rerun_state_machine.validate_result(
+            result=loss,
+            rejection_func=torch.isnan,
+            message="found NaN in local forward loss calculation",
+            tolerance=0.0,  # forward pass calculations are deterministic
+            fatal=True,
+        )
+        rerun_state_machine.validate_result(
+            result=loss,
+            rejection_func=torch.isinf,
+            message="found Inf in local forward loss calculation",
+            tolerance=0.0,  # forward pass calculations are deterministic
+            fatal=True,
+        )
+    if check_for_spiky_loss:
+        spiky_loss_factor = getattr(rerun_state_machine, "spiky_loss_factor", _DEFAULT_SPIKY_LOSS_FACTOR)
+        rerun_state_machine.validate_result(
+            result=loss,
+            rejection_func=partial(
+                rerun_state_machine.is_unexpectedly_large,
+                threshold=spiky_loss_factor,
+                context="loss",
+            ),
+            message="Spiky loss",
+            tolerance=0.0,  # forward pass calculations are deterministic
+            fatal=False,
+        )
+
+
 def create_masked_next_token_loss_function(
     loss_mask: torch.Tensor, check_for_nan_in_loss: bool, check_for_spiky_loss: bool
 ) -> partial:
@@ -66,38 +99,7 @@ def masked_next_token_loss(
         losses = output_tensor.view(-1).float()
     loss_mask = loss_mask.view(-1).float()
     loss = torch.sum(losses * loss_mask)
-
-    # Check individual rank losses are not NaN prior to DP all-reduce.
-    rerun_state_machine = get_rerun_state_machine()
-    if check_for_nan_in_loss:
-        rerun_state_machine.validate_result(
-            result=loss,
-            rejection_func=torch.isnan,
-            message="found NaN in local forward loss calculation",
-            tolerance=0.0,  # forward pass calculations are determinisic
-            fatal=True,
-        )
-        rerun_state_machine.validate_result(
-            result=loss,
-            rejection_func=torch.isinf,
-            message="found Inf in local forward loss calculation",
-            tolerance=0.0,  # forward pass calculations are determinisic
-            fatal=True,
-        )
-    # Check for spiky loss
-    if check_for_spiky_loss:
-        spiky_loss_factor = getattr(rerun_state_machine, "spiky_loss_factor", _DEFAULT_SPIKY_LOSS_FACTOR)
-        rerun_state_machine.validate_result(
-            result=loss,
-            rejection_func=partial(
-                rerun_state_machine.is_unexpectedly_large,
-                threshold=spiky_loss_factor,
-                context="loss",
-            ),
-            message="Spiky loss",
-            tolerance=0.0,  # forward pass calculations are determinisic
-            fatal=False,
-        )
+    validate_local_loss(loss, check_for_nan_in_loss=check_for_nan_in_loss, check_for_spiky_loss=check_for_spiky_loss)
 
     num_tokens = loss_mask.sum().clone().detach().to(torch.int)
     reporting_loss = torch.cat([loss.clone().detach().view(1), num_tokens.view(1)])

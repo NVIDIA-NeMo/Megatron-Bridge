@@ -58,6 +58,7 @@ __all__ = [
     "qwen3_235b_a22b_peft_16gpu_h100_bf16_config",
     "qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config",  # pragma: allowlist secret
     "qwen3_235b_a22b_sft_64gpu_h100_bf16_config",
+    "qwen3_30b_a3b_dpo_8gpu_h100_bf16_config",
     "qwen3_30b_a3b_peft_4gpu_h100_bf16_config",
     "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
     "qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config",

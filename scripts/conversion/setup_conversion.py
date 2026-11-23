@@ -22,11 +22,10 @@ import os
 import shlex
 import sys
 from pathlib import Path
-from typing import Any
 
 import nemo_run as run
 from arguments import build_parser, conversion_worker_args
-from container_runtime import apply_container_runtime, validate_container_runtime
+from container_runtime import apply_container_runtime, run_from_container_repo_root, validate_container_runtime
 from nemo_run.config import get_nemorun_home
 from slurm_wait import wait_for_slurm_job
 from torchx.specs.api import AppState
@@ -71,11 +70,6 @@ def _parse_mounts(values: list[str]) -> list[str]:
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate execution resources and conversion parallelism before launch."""
     validate_container_runtime(args)
-    if args.setup_script is not None:
-        if args.executor != "slurm":
-            raise ValueError("--setup-script is only supported by the Slurm executor.")
-        if not args.setup_script.is_file():
-            raise ValueError("--setup-script must name an existing file.")
     if args.nodes < 1:
         raise ValueError("--nodes must be at least 1.")
     if args.cpu_processes_per_node < 1:
@@ -116,14 +110,12 @@ def _validate_args(args: argparse.Namespace) -> None:
 
     distributed_cpu = args.device == "cpu" and args.cpu_processes_per_node > 1
     if args.device == "cpu":
-        if distributed_cpu and args.command != "export":
-            raise ValueError("Distributed CPU conversion currently supports export only.")
         if not distributed_cpu and args.nodes != 1:
             raise ValueError("Single-process CPU conversion supports exactly one node.")
         if args.gpus_per_node is not None and args.gpus_per_node < 0:
             raise ValueError("--gpus-per-node must not be negative.")
         if distributed_cpu and args.gpus_per_node not in (None, 0):
-            raise ValueError("Distributed CPU export does not request GPU resources.")
+            raise ValueError("Distributed CPU conversion does not request GPU resources.")
         if args.gres:
             raise ValueError("CPU conversion does not accept --gres.")
         if not distributed_cpu and any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp")):
@@ -147,6 +139,8 @@ def _validate_args(args: argparse.Namespace) -> None:
                 worker_values.append(args.megatron_path)
             if args.command == "export":
                 worker_values.append(args.hf_path)
+            if args.command == "import" and args.bagel_repo is not None:
+                worker_values.append(args.bagel_repo)
             if any(shlex.quote(value) != value for value in worker_values):
                 raise ValueError(
                     "Local GPU execution cannot pass model IDs or paths containing whitespace or shell "
@@ -174,21 +168,6 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--save-every-n-ranks requires --distributed-save.")
         if args.device == "cpu" and not distributed_cpu and args.export_weight_dtype is not None:
             raise ValueError("--export-weight-dtype requires distributed CPU export or the GPU backend.")
-
-
-def _configure_slurm_setup_script(executor: Any, setup_script: Path | None) -> None:
-    """Run allocation staging in a strict child shell before conversion workers.
-
-    NeMo Run's batch template disables errexit, so propagate setup failure
-    explicitly. Child environment changes do not affect worker processes.
-    """
-    if setup_script is None:
-        return
-    source = setup_script.read_text()
-    if not source.strip():
-        raise ValueError("--setup-script must contain a non-empty shell script.")
-    command = f"bash -euo pipefail -c {shlex.quote(source)} || exit $?"
-    executor.setup_lines = f"{executor.setup_lines or ''}\n{command}\n"
 
 
 def _build_executor(
@@ -244,21 +223,12 @@ def _build_executor(
     # Values are inherited by Slurm and selected by name for the container;
     # keeping env_vars empty prevents NeMo Run from serializing secrets.
     executor.env_vars = {}
-    _configure_slurm_setup_script(executor, args.setup_script)
     return executor
 
 
 def _build_task(args: argparse.Namespace) -> tuple[run.Script, list[str]]:
     """Build the in-job conversion or round-trip task and its display arguments."""
-    worker_args = argparse.Namespace(**vars(args))
-    if args.executor == "slurm":
-        # NeMo-Run starts in /nemo_run/code. Resolve checkpoint paths against
-        # the mounted checkout, matching the public training launcher's paths.
-        for name in ("megatron_path", "hf_path"):
-            value = getattr(worker_args, name, None)
-            if value is not None:
-                setattr(worker_args, name, str(CONTAINER_REPO_ROOT / value))
-    display_args = conversion_worker_args(worker_args)
+    display_args = conversion_worker_args(args)
     relative_task_path = Path("scripts/conversion/run_conversion.py")
     repo_root = LOCAL_REPO_ROOT if args.executor == "local" else CONTAINER_REPO_ROOT
     task_args = display_args if args.executor == "local" else [shlex.quote(argument) for argument in display_args]
@@ -316,6 +286,8 @@ def main(argv: list[str] | None = None) -> None:
 
     experiment_options = {"skip_status_at_exit": True} if args.executor == "slurm" else {}
     task = apply_container_runtime(args, executor=executor, task=task, mounts=mounts, env_names=env_names)
+    if args.executor == "slurm" and args.container_runtime == "pyxis":
+        task = run_from_container_repo_root(task)
     with run.Experiment(experiment_name, **experiment_options) as experiment:
         experiment.add(task, executor=executor, name=f"{args.command}-{args.device}")
         if args.submission_dry_run:

@@ -672,7 +672,7 @@ def main(
         ]
     )
 
-    if peak_mem_clk is None and gpu == "vr200":
+    if peak_mem_clk is None and gpu == "vrnvl72":
         peak_mem_clk = 4752
     if peak_mem_clk == -1:
         peak_mem_clk = None

@@ -1,0 +1,1109 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Unit tests for the per-sample reorder-buffer building blocks (all-to-all emulated on CPU)."""
+
+import pytest
+import torch
+
+from megatron.bridge.data.megatron_mimo.canonical_sampler import (
+    build_canonical_group_batch_sampler,
+    canonical_grid_size,
+    covered_canonical_groups,
+)
+from megatron.bridge.data.megatron_mimo.reorder_buffer import (
+    ReorderingBuffer,
+    _cu_img_from_counts,
+    _reorder_vision_by_images,
+    assert_intra_no_cross_slot,
+    balanced_assignment,
+    balanced_index_order,
+    build_window_route,
+    deserialize_sample,
+    intra_route,
+    merge_samples,
+    prepare_sample_exchange,
+    reassemble_window,
+    reorder_window_local,
+    sample_byte_size,
+    sample_cost,
+    sample_keys,
+    serialize_sample,
+    split_microbatch,
+    tensor_metadata,
+    window_cost_spread,
+)
+
+
+def _make_sample(global_idx: int, n_tokens: int, n_patches: int) -> dict:
+    return {
+        "input_ids": torch.arange(global_idx * 1000, global_idx * 1000 + n_tokens, dtype=torch.int64),
+        "loss_mask": torch.ones(n_tokens, dtype=torch.bool),
+        "hidden_states": (torch.full((n_patches, 4), float(global_idx), dtype=torch.float32) if n_patches else None),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Serialization round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_serialize_deserialize_roundtrip():
+    flat = _make_sample(global_idx=7, n_tokens=5, n_patches=3)
+    meta = tensor_metadata(flat)
+    keys = sample_keys(meta)
+    assert keys == ["hidden_states", "input_ids", "loss_mask"]  # sorted, None dropped
+
+    buf = serialize_sample(flat, keys)
+    assert buf.numel() == sample_byte_size(meta, keys)
+    assert buf.numel() % 8 == 0  # 8-byte aligned
+
+    out, offset = deserialize_sample(buf, 0, meta, keys)
+    assert offset == buf.numel()
+    for k in keys:
+        assert torch.equal(out[k], flat[k]), k
+    assert set(out.keys()) == set(flat.keys())
+
+
+def test_serialize_text_only_sample():
+    flat = _make_sample(global_idx=2, n_tokens=4, n_patches=0)
+    meta = tensor_metadata(flat)
+    assert meta["hidden_states"] is None
+    keys = sample_keys(meta)
+    assert "hidden_states" not in keys
+    buf = serialize_sample(flat, keys)
+    out, _ = deserialize_sample(buf, 0, meta, keys)
+    assert out["hidden_states"] is None
+    assert torch.equal(out["input_ids"], flat["input_ids"])
+
+
+def test_non_tensor_metadata_roundtrip():
+    flat = {"input_ids": torch.tensor([1, 2]), "sample_id": "abc", "optional": None}
+    meta = tensor_metadata(flat)
+    keys = sample_keys(meta)
+    assert keys == ["input_ids"]
+
+    buf = serialize_sample(flat, keys)
+    out, offset = deserialize_sample(buf, 0, meta, keys)
+
+    assert offset == buf.numel()
+    assert torch.equal(out["input_ids"], flat["input_ids"])
+    assert out["sample_id"] == "abc"
+    assert out["optional"] is None
+
+
+def test_unknown_metadata_dtype_raises():
+    meta = {"input_ids": {"shape": [2], "dtype": "torch.not_a_dtype"}}
+    keys = sample_keys(meta)
+    with pytest.raises(ValueError, match="Unsupported tensor dtype"):
+        sample_byte_size(meta, keys)
+    with pytest.raises(ValueError, match="Unsupported tensor dtype"):
+        deserialize_sample(torch.empty(0, dtype=torch.uint8), 0, meta, keys)
+
+
+def test_tensor_metadata_rejects_unsupported_dtype_early():
+    # float64 is outside the dtype map: fail on the producing rank, before the all-gather.
+    flat = {"input_ids": torch.tensor([1, 2]), "weird": torch.zeros(2, dtype=torch.float64)}
+    with pytest.raises(ValueError, match="Unsupported tensor dtype"):
+        tensor_metadata(flat)
+
+
+# ---------------------------------------------------------------------------
+# Assignment
+# ---------------------------------------------------------------------------
+
+
+def test_balanced_assignment_contiguous_blocks_and_balance():
+    costs = [10.0, 1.0, 9.0, 2.0, 8.0, 3.0, 7.0, 4.0]
+    n_groups, dp_size = 2, 2
+    assignment = balanced_assignment(costs, n_groups, dp_size)
+
+    n = len(costs)
+    local = n // dp_size
+    per_rank = {0: [], 1: []}
+    pos_seen = set()
+    for global_idx, (owner, pos) in enumerate(assignment):
+        per_rank[owner].append(pos)
+        pos_seen.add(pos)
+    assert pos_seen == set(range(n))
+    assert sorted(per_rank[0]) == list(range(0, local))
+    assert sorted(per_rank[1]) == list(range(local, n))
+
+    # LPT bound: rank totals differ by at most one item
+    rank_cost = {0: 0.0, 1: 0.0}
+    for global_idx, (owner, _pos) in enumerate(assignment):
+        rank_cost[owner] += costs[global_idx]
+    assert abs(rank_cost[0] - rank_cost[1]) <= max(costs)
+
+
+def test_balanced_assignment_matches_balanced_index_order():
+    costs = [5.0, 1.0, 4.0, 2.0]
+    assignment = balanced_assignment(costs, n_groups=2, dp_size=2)
+    perm = balanced_index_order(costs, 2)
+    # canonical_pos in the assignment must invert the perm
+    pos2gidx = {pos: g for g, (_owner, pos) in enumerate(assignment)}
+    assert [pos2gidx[p] for p in range(len(costs))] == perm
+
+
+def test_balanced_assignment_invalid_divisibility():
+    for kwargs in (
+        dict(costs=[1.0, 2.0, 3.0], n_groups=2, dp_size=2),  # n_groups does not divide n
+        dict(costs=[1.0, 2.0, 3.0, 4.0], n_groups=4, dp_size=3),  # dp does not divide n_groups
+    ):
+        try:
+            balanced_assignment(**kwargs)
+        except ValueError:
+            continue
+        raise AssertionError(f"expected ValueError for {kwargs}")
+
+
+# ---------------------------------------------------------------------------
+# Het-DP pairing: dp2 (vision) and dp4 (language) over the same costs/canonical groups
+# ---------------------------------------------------------------------------
+
+
+class TestBalancedIndexOrder:
+    def test_valid_permutation_and_equal_groups(self):
+        costs = [5.0, 1.0, 4.0, 2.0, 3.0, 6.0]
+        order = balanced_index_order(costs, n_groups=2)
+        assert sorted(order) == list(range(6))
+        g0, g1 = order[:3], order[3:]
+        assert len(g0) == 3 and len(g1) == 3
+
+    def test_balances_contiguous_shards(self):
+        # Grouped heavies: a naive contiguous split would put all three 10s on one shard.
+        costs = [10.0, 10.0, 10.0, 1.0, 1.0, 1.0]
+        order = balanced_index_order(costs, n_groups=3)
+        groups = [order[0:2], order[2:4], order[4:6]]
+        totals = [sum(costs[i] for i in g) for g in groups]
+        assert max(totals) - min(totals) == 0.0  # each group one heavy + one light
+
+    def test_determinism(self):
+        costs = [3.0, 1.0, 9.0, 0.5, 4.0, 2.0]
+        assert balanced_index_order(costs, 2) == balanced_index_order(costs, 2)
+
+    def test_errors(self):
+        with pytest.raises(ValueError):
+            balanced_index_order([1.0, 2.0, 3.0], 2)  # 3 not divisible by 2
+        with pytest.raises(ValueError):
+            balanced_index_order([1.0], 0)
+
+
+@pytest.mark.parametrize("module_dps", [(1, 2), (2, 4), (2, 3)])
+def test_het_dp_pairing_on_canonical_grid(module_dps):
+    """Every module derives the same canonical order and its owner covers that canonical group."""
+    grid = canonical_grid_size(list(module_dps))
+    n = grid * 3  # 3 samples per canonical group
+    costs = [float((7 * g) % 11 + 1) for g in range(n)]
+    cap = n // grid
+    assignments = {dp: balanced_assignment(costs, grid, dp_size=dp) for dp in module_dps}
+    reference = assignments[module_dps[0]]
+    for dp, assignment in assignments.items():
+        for g in range(n):
+            owner, canonical_pos = assignment[g]
+            assert canonical_pos == reference[g][1], (dp, g)
+            assert canonical_pos // cap in covered_canonical_groups(owner, dp, grid), (dp, g)
+
+
+def test_het_dp_pairing_consistency():
+    # 12 samples, canonical n_groups = max dp = 4. Vision dp2, language dp4.
+    costs = [float(c) for c in [12, 1, 11, 2, 10, 3, 9, 4, 8, 5, 7, 6]]
+    n_groups = 4
+    vis = balanced_assignment(costs, n_groups, dp_size=2)
+    lang = balanced_assignment(costs, n_groups, dp_size=4)
+
+    for g in range(len(costs)):
+        assert vis[g][1] == lang[g][1], g
+
+    # vision rank r must cover exactly language ranks {2r, 2r+1}
+    for g in range(len(costs)):
+        v_owner = vis[g][0]
+        l_owner = lang[g][0]
+        assert l_owner // 2 == v_owner, (g, v_owner, l_owner)
+
+
+# ---------------------------------------------------------------------------
+# Full per-sample all-to-all (emulated collective)
+# ---------------------------------------------------------------------------
+
+
+def _emulate_all_to_all(plans, dp_size):
+    """Emulate dist.all_to_all_single across ``dp_size`` ranks from their plans."""
+    chunks = {}
+    for s in range(dp_size):
+        buf = plans[s]["send_buf"]
+        off = 0
+        for d in range(dp_size):
+            nbytes = plans[s]["send_splits"][d]
+            chunks[(s, d)] = buf[off : off + nbytes]
+            off += nbytes
+        assert off == buf.numel(), f"rank {s} send_splits do not cover send_buf"
+
+    recv_bufs = {}
+    for d in range(dp_size):
+        parts = []
+        for s in range(dp_size):
+            assert plans[d]["recv_splits"][s] == chunks[(s, d)].numel(), (
+                f"recv_splits[{d}][{s}] != bytes sent {s}->{d}"
+            )
+            parts.append(chunks[(s, d)])
+        recv_bufs[d] = torch.cat(parts) if parts else torch.empty(0, dtype=torch.uint8)
+    return recv_bufs
+
+
+def _run_exchange(costs, dp_size, n_groups, sample_specs):
+    """sample_specs[g] = (n_tokens, n_patches); rank r initially holds globals [r*local, (r+1)*local)."""
+    n = len(costs)
+    local = n // dp_size
+    originals = {g: _make_sample(g, *sample_specs[g]) for g in range(n)}
+
+    rank_global_indices = [list(range(r * local, (r + 1) * local)) for r in range(dp_size)]
+    rank_flats = [[originals[g] for g in rank_global_indices[r]] for r in range(dp_size)]
+    all_tensor_meta = [[tensor_metadata(f) for f in rank_flats[r]] for r in range(dp_size)]
+
+    assignment = balanced_assignment(costs, n_groups, dp_size)
+    route = intra_route(assignment, src_slot=0)
+    pos2gidx = {pos: g for g, (_o, pos) in enumerate(assignment)}
+
+    plans = [
+        prepare_sample_exchange(
+            local_flats=rank_flats[r],
+            local_global_indices=rank_global_indices[r],
+            route=route,
+            all_global_indices=rank_global_indices,
+            all_tensor_meta=all_tensor_meta,
+            dp_rank=r,
+            dp_size=dp_size,
+            window_size=1,
+        )
+        for r in range(dp_size)
+    ]
+
+    recv_bufs = _emulate_all_to_all(plans, dp_size)
+
+    for d in range(dp_size):
+        recovered = []
+        for _dst_slot, canonical_pos, local_idx in plans[d]["local_samples"]:
+            recovered.append((canonical_pos, rank_flats[d][local_idx]))
+        buf = recv_bufs[d]
+        offset = 0
+        for src in range(dp_size):
+            for _dst_slot, canonical_pos, src_local_idx in plans[d]["recv_schedule"].get(src, []):
+                meta = all_tensor_meta[src][src_local_idx]
+                flat, offset = deserialize_sample(buf, offset, meta, sample_keys(meta))
+                recovered.append((canonical_pos, flat))
+        assert offset == buf.numel(), f"rank {d} did not consume entire recv_buf"
+
+        recovered.sort(key=lambda x: x[0])
+        positions = [p for p, _ in recovered]
+        assert positions == list(range(d * local, (d + 1) * local)), (d, positions)
+
+        for canonical_pos, flat in recovered:
+            g = pos2gidx[canonical_pos]
+            for k, v in originals[g].items():
+                if v is None:
+                    assert flat[k] is None, (g, k)
+                else:
+                    assert torch.equal(flat[k], v), (g, k)
+
+
+def test_exchange_dp2_mixed_modality():
+    sample_specs = {
+        0: (10, 5),
+        1: (3, 0),
+        2: (8, 2),
+        3: (4, 0),
+        4: (12, 7),
+        5: (2, 1),
+        6: (6, 0),
+        7: (5, 3),
+    }
+    costs = [t + 4.0 * p for t, p in (sample_specs[g] for g in range(8))]
+    _run_exchange(costs, dp_size=2, n_groups=2, sample_specs=sample_specs)
+
+
+def test_exchange_dp4_canonical():
+    sample_specs = {g: (3 + g, (g % 3)) for g in range(12)}
+    costs = [t + 4.0 * p for t, p in (sample_specs[g] for g in range(12))]
+    _run_exchange(costs, dp_size=4, n_groups=4, sample_specs=sample_specs)
+
+
+# ---------------------------------------------------------------------------
+# MIMO data plane: split_microbatch / merge_samples
+# ---------------------------------------------------------------------------
+
+
+def _make_mimo_batch(patches_per_sample):
+    b = len(patches_per_sample)
+    s = 6
+    # Start at 1 so no token collides with pad_token_id=0 (the joint-cost test counts real tokens).
+    input_ids = torch.stack([torch.arange(1 + i * 100, 1 + i * 100 + s, dtype=torch.int64) for i in range(b)])
+    labels = input_ids + 1
+    loss_mask = torch.ones(b, s, dtype=torch.bool)
+    position_ids = torch.stack([input_ids, input_ids, input_ids], dim=0)  # [3, B, S] MRoPE
+    grids = torch.tensor([[1, 1, p] for p in patches_per_sample], dtype=torch.int64)
+    hidden = torch.cat(
+        [torch.full((p, 4), float(i), dtype=torch.float32) for i, p in enumerate(patches_per_sample)], dim=0
+    )
+    return {
+        "input_ids": input_ids,
+        "position_ids": position_ids,
+        "attention_mask": None,
+        "labels": labels,
+        "loss_mask": loss_mask,
+        "modality_inputs": {"images": {"enc": {"hidden_states": hidden, "grid_thw": grids}}},
+    }
+
+
+def _assert_batch_equal(a, b):
+    assert set(a.keys()) == set(b.keys())
+    for k, va in a.items():
+        vb = b[k]
+        if isinstance(va, dict):
+            _assert_batch_equal(va, vb)
+        elif va is None:
+            assert vb is None, k
+        else:
+            assert torch.equal(va, vb), k
+
+
+def test_split_merge_roundtrip_identity():
+    batch = _make_mimo_batch([2, 5, 1, 3])
+    samples = split_microbatch(batch)
+    assert len(samples) == 4
+    assert "modality_inputs.images.enc.hidden_states" in samples[0]
+    merged = merge_samples(samples)
+    _assert_batch_equal(merged, batch)
+
+
+# ---------------------------------------------------------------------------
+# merge_samples robustness to per-sample-varying vision
+# ---------------------------------------------------------------------------
+
+_VKEY = "modality_inputs.images.enc"
+
+
+def _flat_vision_sample(idx: int, n_tokens: int, n_patches: int, *, none_vision: bool = False) -> dict:
+    """Flat dict as ``split_microbatch`` produces; ``n_patches == 0`` is text-only (empty or None vision)."""
+    input_ids = torch.arange(idx * 100, idx * 100 + n_tokens, dtype=torch.int64).reshape(1, -1)
+    if n_patches == 0:
+        if none_vision:
+            hidden, grid = None, None
+        else:
+            hidden = torch.empty((0, 4), dtype=torch.float32)
+            grid = torch.empty((0, 3), dtype=torch.int64)
+    else:
+        hidden = torch.full((n_patches, 4), float(idx), dtype=torch.float32)
+        grid = torch.tensor([[1, 1, n_patches]], dtype=torch.int64)
+    return {"input_ids": input_ids, f"{_VKEY}.hidden_states": hidden, f"{_VKEY}.grid_thw": grid}
+
+
+def test_merge_text_only_first():
+    # Sample 0 is text-only with None vision keys; samples 1-2 carry one image each.
+    flats = [
+        _flat_vision_sample(0, n_tokens=4, n_patches=0, none_vision=True),
+        _flat_vision_sample(1, n_tokens=4, n_patches=3),
+        _flat_vision_sample(2, n_tokens=4, n_patches=2),
+    ]
+    enc = merge_samples(flats)["modality_inputs"]["images"]["enc"]
+    # 0 + 3 + 2 = 5 patches, 0 + 1 + 1 = 2 image rows
+    assert enc["hidden_states"].shape == (5, 4)
+    assert enc["grid_thw"].shape == (2, 3)
+    assert torch.equal(enc["hidden_states"][:3], torch.full((3, 4), 1.0))
+    assert torch.equal(enc["hidden_states"][3:], torch.full((2, 4), 2.0))
+
+
+def test_merge_all_text_only():
+    flats = [_flat_vision_sample(i, n_tokens=4, n_patches=0) for i in range(3)]
+    enc = merge_samples(flats)["modality_inputs"]["images"]["enc"]
+    assert enc["hidden_states"].shape == (0, 4)
+    assert enc["grid_thw"].shape == (0, 3)
+
+
+def test_serialize_empty_vision_roundtrip():
+    flat = _flat_vision_sample(0, n_tokens=4, n_patches=0)
+    meta = tensor_metadata(flat)
+    keys = sample_keys(meta)
+    buf = serialize_sample(flat, keys)
+    assert buf.numel() == sample_byte_size(meta, keys)
+    out, offset = deserialize_sample(buf, 0, meta, keys)
+    assert offset == buf.numel()
+    assert out[f"{_VKEY}.hidden_states"].shape == (0, 4)
+    assert out[f"{_VKEY}.grid_thw"].shape == (0, 3)
+    assert torch.equal(out["input_ids"], flat["input_ids"])
+
+
+# ---------------------------------------------------------------------------
+# Variable images per sample: split / merge / exchange
+# ---------------------------------------------------------------------------
+
+
+def _make_mimo_batch_var(images_per_sample: list[int]) -> dict:
+    """Nested micro-batch with ``images_per_sample[s]`` images; hidden rows are tagged with the global image index."""
+    b = len(images_per_sample)
+    seq = 6
+    input_ids = torch.stack([torch.arange(i * 100, i * 100 + seq, dtype=torch.int64) for i in range(b)])
+    position_ids = torch.stack([input_ids, input_ids, input_ids], dim=0)
+    grids: list[list[int]] = []
+    hidden_blocks: list[torch.Tensor] = []
+    img_gid = 0
+    for n_img in images_per_sample:
+        for _ in range(n_img):
+            p = img_gid + 2
+            grids.append([1, 1, p])
+            hidden_blocks.append(torch.full((p, 4), float(img_gid), dtype=torch.float32))
+            img_gid += 1
+    grid_thw = (
+        torch.tensor(grids, dtype=torch.int64).reshape(-1, 3) if grids else torch.empty((0, 3), dtype=torch.int64)
+    )
+    hidden = torch.cat(hidden_blocks, dim=0) if hidden_blocks else torch.empty((0, 4), dtype=torch.float32)
+    return {
+        "input_ids": input_ids,
+        "position_ids": position_ids,
+        "attention_mask": None,
+        "labels": input_ids + 1,
+        "loss_mask": torch.ones(b, seq, dtype=torch.bool),
+        "modality_inputs": {"images": {"enc": {"hidden_states": hidden, "grid_thw": grid_thw}}},
+    }
+
+
+def test_cu_img_from_counts():
+    assert _cu_img_from_counts([2, 0, 1, 3]) == [0, 2, 2, 3, 6]
+    assert _cu_img_from_counts(torch.tensor([2, 0, 1, 3])) == [0, 2, 2, 3, 6]
+    assert _cu_img_from_counts([0, 0]) == [0, 0, 0]
+
+
+def test_image_count_sourcing():
+    vision_start = 248053
+    input_ids = torch.tensor(
+        [
+            [vision_start, 5, vision_start, 6, 7, 8],  # 2 images
+            [1, 2, 3, 4, 5, 6],  # text-only
+            [vision_start, 9, 9, 9, 9, 9],  # 1 image
+        ],
+        dtype=torch.int64,
+    )
+    counts = (input_ids == vision_start).sum(dim=1)
+    assert counts.tolist() == [2, 0, 1]
+    batch = _make_mimo_batch_var([2, 0, 1])
+    assert int(counts.sum()) == batch["modality_inputs"]["images"]["enc"]["grid_thw"].shape[0]
+
+
+def test_split_merge_roundtrip_multi_image():
+    images_per_sample = [2, 0, 1, 3]
+    batch = _make_mimo_batch_var(images_per_sample)
+    samples = split_microbatch(batch, cu_img=_cu_img_from_counts(images_per_sample))
+    assert len(samples) == 4
+    merged = merge_samples(samples)
+    _assert_batch_equal(merged, batch)
+
+
+def test_split_all_text_only():
+    batch = _make_mimo_batch_var([0, 0])
+    samples = split_microbatch(batch, cu_img=_cu_img_from_counts([0, 0]))
+    for smp in samples:
+        assert smp[f"{_VKEY}.hidden_states"].shape == (0, 4)
+        assert smp[f"{_VKEY}.grid_thw"].shape == (0, 3)
+    _assert_batch_equal(merge_samples(samples), batch)
+
+
+def test_soft_validation_mismatch():
+    batch = _make_mimo_batch_var([1, 1])  # 2 images
+    with pytest.raises(ValueError, match="mis-sourced"):
+        split_microbatch(batch, cu_img=[0, 1, 5])  # sums to 5 != 2 images
+
+
+def test_split_one_image_per_sample_no_cu_img():
+    batch = _make_mimo_batch([2, 5, 1, 3])
+    _assert_batch_equal(merge_samples(split_microbatch(batch)), batch)
+    multi = _make_mimo_batch_var([2, 1])  # 3 images, 2 samples
+    with pytest.raises(ValueError, match="one image per sample"):
+        split_microbatch(multi)
+
+
+def _run_exchange_nested(images_per_sample, dp_size, n_groups):
+    n = len(images_per_sample)
+    local = n // dp_size
+    full = _make_mimo_batch_var(images_per_sample)
+    all_flats = split_microbatch(full, cu_img=_cu_img_from_counts(images_per_sample))
+    costs = [sample_cost(f, encoder_cost_weight=1.0) for f in all_flats]
+
+    rank_global_indices = [list(range(r * local, (r + 1) * local)) for r in range(dp_size)]
+    rank_flats = [[all_flats[g] for g in rank_global_indices[r]] for r in range(dp_size)]
+    all_tensor_meta = [[tensor_metadata(f) for f in rank_flats[r]] for r in range(dp_size)]
+    assignment = balanced_assignment(costs, n_groups, dp_size)
+    route = intra_route(assignment, src_slot=0)
+    pos2gidx = {pos: g for g, (_o, pos) in enumerate(assignment)}
+
+    plans = [
+        prepare_sample_exchange(
+            local_flats=rank_flats[r],
+            local_global_indices=rank_global_indices[r],
+            route=route,
+            all_global_indices=rank_global_indices,
+            all_tensor_meta=all_tensor_meta,
+            dp_rank=r,
+            dp_size=dp_size,
+            window_size=1,
+        )
+        for r in range(dp_size)
+    ]
+    recv_bufs = _emulate_all_to_all(plans, dp_size)
+
+    for d in range(dp_size):
+        recovered = [(pos, rank_flats[d][li]) for _slot, pos, li in plans[d]["local_samples"]]
+        buf = recv_bufs[d]
+        offset = 0
+        for src in range(dp_size):
+            for _dst_slot, canonical_pos, src_local_idx in plans[d]["recv_schedule"].get(src, []):
+                meta = all_tensor_meta[src][src_local_idx]
+                flat, offset = deserialize_sample(buf, offset, meta, sample_keys(meta))
+                recovered.append((canonical_pos, flat))
+        assert offset == buf.numel(), (d, offset, buf.numel())
+        recovered.sort(key=lambda x: x[0])
+        assert [p for p, _ in recovered] == list(range(d * local, (d + 1) * local)), d
+        for canonical_pos, flat in recovered:
+            g = pos2gidx[canonical_pos]
+            for k, v in all_flats[g].items():
+                if v is None:
+                    assert flat[k] is None, (g, k)
+                else:
+                    assert torch.equal(flat[k], v), (g, k)
+
+
+def test_exchange_var_images_dp2():
+    _run_exchange_nested([2, 0, 1, 0, 3, 1, 0, 2], dp_size=2, n_groups=2)
+
+
+# ---------------------------------------------------------------------------
+# 3D routing + per-slot reassembly (reassemble_window)
+# ---------------------------------------------------------------------------
+
+
+def _emulate_window_exchange(rank_flats, rank_global_indices, all_tensor_meta, route, *, dp_size, window_size, local):
+    plans = [
+        prepare_sample_exchange(
+            local_flats=rank_flats[r],
+            local_global_indices=rank_global_indices[r],
+            route=route,
+            all_global_indices=rank_global_indices,
+            all_tensor_meta=all_tensor_meta,
+            dp_rank=r,
+            dp_size=dp_size,
+            window_size=window_size,
+        )
+        for r in range(dp_size)
+    ]
+    recv_bufs = _emulate_all_to_all(plans, dp_size)
+    return [
+        reassemble_window(
+            rank_flats[d],
+            plans[d],
+            recv_bufs[d],
+            all_tensor_meta,
+            dp_size=dp_size,
+            window_size=window_size,
+            local=local,
+        )
+        for d in range(dp_size)
+    ]
+
+
+def test_reassemble_window_w1_matches_canonical_merge():
+    images_per_sample = [2, 0, 1, 0, 3, 1, 0, 2]
+    dp_size, n_groups = 2, 2
+    n = len(images_per_sample)
+    local = n // dp_size
+
+    full = _make_mimo_batch_var(images_per_sample)
+    all_flats = split_microbatch(full, cu_img=_cu_img_from_counts(images_per_sample))
+    costs = [sample_cost(f, encoder_cost_weight=1.0) for f in all_flats]
+    assignment = balanced_assignment(costs, n_groups, dp_size)
+    route = intra_route(assignment, src_slot=0)
+    pos2gidx = {pos: g for g, (_o, pos) in enumerate(assignment)}
+
+    rank_global_indices = [list(range(r * local, (r + 1) * local)) for r in range(dp_size)]
+    rank_flats = [[all_flats[g] for g in rank_global_indices[r]] for r in range(dp_size)]
+    all_tensor_meta = [[tensor_metadata(f) for f in rank_flats[r]] for r in range(dp_size)]
+
+    per_rank = _emulate_window_exchange(
+        rank_flats, rank_global_indices, all_tensor_meta, route, dp_size=dp_size, window_size=1, local=local
+    )
+
+    for d in range(dp_size):
+        assert len(per_rank[d]) == 1
+        owned_positions = sorted(pos for g, (owner, pos) in enumerate(assignment) if owner == d)
+        expected = merge_samples([all_flats[pos2gidx[p]] for p in owned_positions])
+        _assert_batch_equal(per_rank[d][0], expected)
+
+
+def test_reassemble_window_w2_3d_route():
+    dp_size, window_size, local = 2, 2, 1
+    originals = [
+        _flat_vision_sample(0, n_tokens=4, n_patches=3),
+        _flat_vision_sample(1, n_tokens=4, n_patches=2),
+        _flat_vision_sample(2, n_tokens=4, n_patches=0),
+        _flat_vision_sample(3, n_tokens=4, n_patches=1),
+    ]
+    rank_global_indices = [[0, 1], [2, 3]]
+    rank_flats = [[originals[g] for g in rank_global_indices[r]] for r in range(dp_size)]
+    all_tensor_meta = [[tensor_metadata(f) for f in rank_flats[r]] for r in range(dp_size)]
+
+    # route[g] = (dst_slot, owner_rank, canonical_pos):
+    #   g0 -> slot0,rank0   g1 -> slot1,rank1   g2 -> slot0,rank1   g3 -> slot1,rank0
+    route = [(0, 0, 0), (1, 1, 0), (0, 1, 0), (1, 0, 0)]
+
+    per_rank = _emulate_window_exchange(
+        rank_flats, rank_global_indices, all_tensor_meta, route, dp_size=dp_size, window_size=window_size, local=local
+    )
+
+    def first_token(batch):
+        return int(batch["input_ids"][0, 0].item())
+
+    # rank0: slot0 <- g0, slot1 <- g3.  rank1: slot0 <- g2, slot1 <- g1.
+    assert [first_token(b) for b in per_rank[0]] == [0, 300]
+    assert [first_token(b) for b in per_rank[1]] == [200, 100]
+
+    r0_slot1_enc = per_rank[0][1]["modality_inputs"]["images"]["enc"]
+    assert r0_slot1_enc["hidden_states"].shape == (1, 4)
+    assert torch.equal(r0_slot1_enc["hidden_states"], torch.full((1, 4), 3.0))
+    r1_slot0_enc = per_rank[1][0]["modality_inputs"]["images"]["enc"]
+    assert r1_slot0_enc["hidden_states"].shape == (0, 4)
+
+
+def test_reassemble_window_slot_shape_guard():
+    dp_size, window_size, local = 2, 2, 1
+    originals = [_flat_vision_sample(i, n_tokens=4, n_patches=1) for i in range(4)]
+    rank_global_indices = [[0, 1], [2, 3]]
+    rank_flats = [[originals[g] for g in rank_global_indices[r]] for r in range(dp_size)]
+    all_tensor_meta = [[tensor_metadata(f) for f in rank_flats[r]] for r in range(dp_size)]
+    # g0,g1 both -> slot0/rank0; g2,g3 -> slot0/rank1: slot 0 over-fills (2), slot 1 stays empty.
+    route = [(0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1)]
+    with pytest.raises(RuntimeError, match="slot 0 reassembled 2 samples, expected 1"):
+        _emulate_window_exchange(
+            rank_flats,
+            rank_global_indices,
+            all_tensor_meta,
+            route,
+            dp_size=dp_size,
+            window_size=window_size,
+            local=local,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Window route (build_window_route) + multi-slot window exchange
+# ---------------------------------------------------------------------------
+
+
+def test_build_window_route_layout():
+    dp_size, n_groups = 2, 2
+    costs_per_slot = [[4.0, 1.0, 3.0, 2.0], [1.0, 2.0, 3.0, 4.0], [2.0, 2.0, 2.0, 2.0]]
+    b_global = len(costs_per_slot[0])
+    route = build_window_route(costs_per_slot, n_groups, dp_size)
+    assert len(route) == len(costs_per_slot) * b_global
+    for s in range(len(costs_per_slot)):
+        slot_entries = route[s * b_global : (s + 1) * b_global]
+        assert all(dst == s for dst, _owner, _pos in slot_entries)
+        assert sorted(pos for _dst, _owner, pos in slot_entries) == list(range(b_global))
+        assert slot_entries == intra_route(balanced_assignment(costs_per_slot[s], n_groups, dp_size), src_slot=s)
+
+
+def _run_window_exchange(images_per_slot, dp_size, n_groups):
+    """Window exchange over W micro-batches; each slot must equal its independent per-slot balanced shard."""
+    window_size = len(images_per_slot)
+    slot_full = [_make_mimo_batch_var(imgs) for imgs in images_per_slot]
+    slot_flats = [
+        split_microbatch(slot_full[s], cu_img=_cu_img_from_counts(images_per_slot[s])) for s in range(window_size)
+    ]
+    b_global = len(slot_flats[0])
+    local = b_global // dp_size
+    costs_per_slot = [[sample_cost(f, encoder_cost_weight=1.0) for f in slot_flats[s]] for s in range(window_size)]
+
+    # Window-local layout: rank r holds slot-major [slot0 shard, slot1 shard, ...].
+    rank_global_indices = [
+        [s * b_global + r * local + i for s in range(window_size) for i in range(local)] for r in range(dp_size)
+    ]
+    rank_flats = [
+        [slot_flats[s][r * local + i] for s in range(window_size) for i in range(local)] for r in range(dp_size)
+    ]
+    all_tensor_meta = [[tensor_metadata(f) for f in rank_flats[r]] for r in range(dp_size)]
+
+    route = build_window_route(costs_per_slot, n_groups, dp_size)
+    per_rank = _emulate_window_exchange(
+        rank_flats, rank_global_indices, all_tensor_meta, route, dp_size=dp_size, window_size=window_size, local=local
+    )
+
+    for s in range(window_size):
+        assignment_s = balanced_assignment(costs_per_slot[s], n_groups, dp_size)
+        pos2gidx_s = {pos: g for g, (_o, pos) in enumerate(assignment_s)}
+        for d in range(dp_size):
+            owned = sorted(pos for g, (owner, pos) in enumerate(assignment_s) if owner == d)
+            expected = merge_samples([slot_flats[s][pos2gidx_s[p]] for p in owned])
+            _assert_batch_equal(per_rank[d][s], expected)
+
+
+def test_window_exchange_two_slots_dp2():
+    _run_window_exchange([[2, 0, 1, 3], [1, 2, 0, 1]], dp_size=2, n_groups=2)
+
+
+def test_window_exchange_w3_dp2_text_only_and_multi():
+    _run_window_exchange([[0, 2, 1, 0], [3, 0, 0, 1], [1, 1, 1, 1]], dp_size=2, n_groups=2)
+
+
+def test_window_exchange_het_dp_paired_slots():
+    images_per_slot = [[2, 0, 1, 3, 1, 2, 0, 1], [1, 1, 2, 0, 3, 0, 1, 2]]
+    for dp_size in (2, 4):
+        _run_window_exchange(images_per_slot, dp_size=dp_size, n_groups=4)
+
+
+def test_window_cost_spread_tightens_after_balance():
+    dp_size, n_groups = 4, 4
+    # Both slots are skewed across the contiguous shards (rank0 heavy, rank3 light), so each must move samples.
+    costs_per_slot = [
+        [100.0, 90.0, 80.0, 70.0, 8.0, 6.0, 4.0, 2.0, 50.0, 40.0, 30.0, 20.0, 9.0, 7.0, 5.0, 3.0],
+        [80.0, 75.0, 70.0, 65.0, 10.0, 9.0, 8.0, 7.0, 45.0, 40.0, 35.0, 30.0, 12.0, 11.0, 10.0, 9.0],
+    ]
+    route = build_window_route(costs_per_slot, n_groups, dp_size)
+    spreads = window_cost_spread(costs_per_slot, route, dp_size)
+    assert len(spreads) == 2
+    for sp in spreads:
+        before = sp["before_max"] - sp["before_min"]
+        after = sp["after_max"] - sp["after_min"]
+        assert after <= before, sp
+        assert after < before
+    assert all(0 < sp["remote"] <= len(costs_per_slot[0]) for sp in spreads)
+
+
+def test_assert_intra_no_cross_slot_passes_for_window_route():
+    dp_size, n_groups = 2, 2
+    costs_per_slot = [[4.0, 1.0, 3.0, 2.0], [1.0, 2.0, 3.0, 4.0]]
+    route = build_window_route(costs_per_slot, n_groups, dp_size)
+    assert_intra_no_cross_slot(route, b_global=4)
+
+
+def test_assert_intra_no_cross_slot_trips_on_cross_slot_route():
+    b_global = 2  # 2 slots of 2 samples; g//b_global is the source slot
+    route = [(0, 0, 0), (1, 1, 0), (1, 0, 0), (1, 1, 1)]  # g=1 leaks slot0 -> slot1
+    with pytest.raises(RuntimeError, match="cross-slot leak at global index 1"):
+        assert_intra_no_cross_slot(route, b_global=b_global)
+
+
+def test_window_cost_spread_already_balanced_no_remote():
+    dp_size, n_groups = 2, 2
+    costs_per_slot = [[5.0, 5.0, 5.0, 5.0]]
+    route = build_window_route(costs_per_slot, n_groups, dp_size)
+    (sp,) = window_cost_spread(costs_per_slot, route, dp_size)
+    assert sp["before_max"] == sp["before_min"] == sp["after_max"] == sp["after_min"] == 10.0
+
+
+# ---------------------------------------------------------------------------
+# ReorderingBuffer at dp_size == 1: local canonical reorder (no PG) + window cursor logic
+# ---------------------------------------------------------------------------
+
+
+def test_reordering_buffer_window_cursor_single_rank():
+    # n_groups=1 + uniform cost -> identity order; windows of [3, 3, 1] over 7 items.
+    items = [{"input_ids": torch.tensor([[i]])} for i in range(7)]
+    buf = ReorderingBuffer(
+        iter(items),
+        dp_rank=0,
+        dp_size=1,
+        n_groups=1,
+        cost_of=lambda f: 0.0,
+        dp_group_gloo=None,
+        dp_group_nccl=None,
+        overlap=False,
+        window_size=3,
+    )
+    got = [int(b["input_ids"].item()) for b in buf]
+    assert got == list(range(7))
+
+
+def test_reordering_buffer_overlap_single_rank_no_thread():
+    items = [{"input_ids": torch.tensor([[i]])} for i in range(5)]
+    buf = ReorderingBuffer(
+        iter(items),
+        dp_rank=0,
+        dp_size=1,
+        n_groups=1,
+        cost_of=lambda f: 0.0,
+        dp_group_gloo=None,
+        dp_group_nccl=None,
+        overlap=True,
+        window_size=2,
+    )
+    assert buf._thread is None
+    assert [int(b["input_ids"].item()) for b in buf] == list(range(5))
+
+
+def test_reorder_window_local_matches_paired_dp2_order():
+    n_groups = 2
+    costs = [1.0, 5.0, 2.0, 4.0]  # LPT over 2 groups: [1, 0] and [3, 2] -> canonical order [1, 0, 3, 2]
+    expected = [1, 0, 3, 2]
+    batch = {
+        "input_ids": torch.arange(4).view(4, 1),
+        "sample_ids": ["s0", "s1", "s2", "s3"],
+        "vision": {"hidden_states": torch.arange(8.0).view(4, 2), "grid_thw": torch.tensor([[1, 1, 1]] * 4)},
+    }
+
+    def cost_of(flat):
+        return costs[int(flat["input_ids"].item())]
+
+    (out,) = reorder_window_local(
+        [batch],
+        n_groups=n_groups,
+        cost_of=cost_of,
+        image_count_of=lambda b: torch.ones(4, dtype=torch.long),
+    )
+    assert out["input_ids"].view(-1).tolist() == expected
+    assert out["sample_ids"] == [f"s{i}" for i in expected]
+    assert out["vision"]["hidden_states"].tolist() == [[2.0 * i, 2.0 * i + 1] for i in expected]
+    assert out["vision"]["grid_thw"].shape == (4, 3)
+
+    assignment = balanced_assignment(costs, n_groups, dp_size=2)
+    dp2_order = [
+        g
+        for r in range(2)
+        for g in sorted((g for g in range(4) if assignment[g][0] == r), key=lambda g: assignment[g][1])
+    ]
+    assert dp2_order == expected
+
+
+def test_reordering_buffer_single_rank_serves_canonical_order():
+    costs = [1.0, 5.0, 2.0, 4.0]
+    batches = [{"input_ids": (torch.arange(4) + 10 * s).view(4, 1)} for s in range(2)]
+
+    def cost_of(flat):
+        return costs[int(flat["input_ids"].item()) % 10]
+
+    buf = ReorderingBuffer(
+        iter(batches),
+        dp_rank=0,
+        dp_size=1,
+        n_groups=2,
+        cost_of=cost_of,
+        dp_group_gloo=None,
+        dp_group_nccl=None,
+        overlap=True,
+        window_size=2,
+    )
+    assert buf._thread is None
+    assert [b["input_ids"].view(-1).tolist() for b in buf] == [[1, 0, 3, 2], [11, 10, 13, 12]]
+
+
+def test_reordering_buffer_window_size_validation():
+    with pytest.raises(ValueError, match="window_size must be >= 1"):
+        ReorderingBuffer(
+            iter([]),
+            dp_rank=0,
+            dp_size=1,
+            n_groups=1,
+            cost_of=lambda f: 0.0,
+            dp_group_gloo=None,
+            dp_group_nccl=None,
+            overlap=False,
+            window_size=0,
+        )
+
+
+def _buffer_kwargs():
+    return dict(dp_rank=0, dp_size=2, n_groups=2, cost_of=lambda f: 0.0, dp_group_gloo=None, dp_group_nccl=None)
+
+
+def test_reordering_buffer_overlap_refuses_single_hardware_queue(monkeypatch):
+    # CUDA_DEVICE_MAX_CONNECTIONS=1 serializes the worker all-to-all behind the DDP all-reduce (deadlock).
+    monkeypatch.setenv("CUDA_DEVICE_MAX_CONNECTIONS", "1")
+    with pytest.raises(ValueError, match="CUDA_DEVICE_MAX_CONNECTIONS=1"):
+        ReorderingBuffer(iter([]), overlap=True, **_buffer_kwargs())
+
+
+def test_reordering_buffer_no_overlap_allowed_under_single_hardware_queue(monkeypatch):
+    monkeypatch.setenv("CUDA_DEVICE_MAX_CONNECTIONS", "1")
+    buf = ReorderingBuffer(iter([]), overlap=False, **_buffer_kwargs())
+    assert buf._thread is None
+
+
+def test_reordering_buffer_overlap_allowed_without_single_hardware_queue(monkeypatch):
+    monkeypatch.delenv("CUDA_DEVICE_MAX_CONNECTIONS", raising=False)
+    ReorderingBuffer(iter([]), overlap=True, **_buffer_kwargs())
+
+
+# ---------------------------------------------------------------------------
+# Joint per-sample cost
+# ---------------------------------------------------------------------------
+
+
+def test_sample_cost_patches_only():
+    from megatron.bridge.data.megatron_mimo.reorder_buffer import sample_cost
+
+    batch = _make_mimo_batch([2, 5])
+    samples = split_microbatch(batch)
+    # language_cost_weight defaults to 0.0: patch-only cost
+    c0 = sample_cost(samples[0], encoder_cost_weight=1.0)
+    c1 = sample_cost(samples[1], encoder_cost_weight=1.0)
+    assert c0 == 2
+    assert c1 == 5
+    assert sample_cost(samples[0], encoder_cost_weight=3.0) == 3 * 2
+
+
+def test_sample_cost_text_only_is_zero():
+    from megatron.bridge.data.megatron_mimo.reorder_buffer import sample_cost
+
+    flat = {"input_ids": torch.tensor([[5, 5, 0, 0]], dtype=torch.int64)}
+    c = sample_cost(flat, encoder_cost_weight=1.0)
+    assert c == 0
+
+
+def test_sample_cost_joint_vit_and_lm():
+    from megatron.bridge.data.megatron_mimo.reorder_buffer import sample_cost
+
+    batch = _make_mimo_batch([2, 5])  # patches 2 and 5; 6 real tokens each
+    samples = split_microbatch(batch)
+    for sample in samples:
+        sample["attention_mask"] = torch.ones(1, 6, dtype=torch.int64)
+    # cost = encoder_cost_weight*patches + language_cost_weight*real_tokens
+    assert sample_cost(samples[0], encoder_cost_weight=1.0, language_cost_weight=0.5) == 2 + 0.5 * 6
+    assert sample_cost(samples[1], encoder_cost_weight=1.0, language_cost_weight=0.5) == 5 + 0.5 * 6
+    assert sample_cost(samples[0], encoder_cost_weight=0.0, language_cost_weight=2.0) == 2.0 * 6
+
+
+def test_sample_cost_lm_term_ignores_padding():
+    from megatron.bridge.data.megatron_mimo.reorder_buffer import sample_cost
+
+    # Same 3 real tokens at different padded widths -> identical LM cost
+    short = {
+        "input_ids": torch.tensor([[5, 6, 7, 0]], dtype=torch.int64),
+        "attention_mask": torch.tensor([[1, 1, 1, 0]], dtype=torch.int64),
+    }
+    long = {
+        "input_ids": torch.tensor([[5, 6, 7, 0, 0, 0, 0, 0]], dtype=torch.int64),
+        "attention_mask": torch.tensor([[1, 1, 1, 0, 0, 0, 0, 0]], dtype=torch.int64),
+    }
+    assert sample_cost(short, encoder_cost_weight=1.0, language_cost_weight=1.0) == 3
+    assert sample_cost(long, encoder_cost_weight=1.0, language_cost_weight=1.0) == 3
+
+
+def test_sample_cost_lm_term_does_not_compare_pad_id():
+    from megatron.bridge.data.megatron_mimo.reorder_buffer import sample_cost
+
+    # A real token equal to the pad id still counts: the length comes from attention_mask
+    flat = {
+        "input_ids": torch.tensor([[5, 0, 7, 0]], dtype=torch.int64),
+        "attention_mask": torch.tensor([[1, 1, 1, 0]], dtype=torch.int64),
+    }
+    assert sample_cost(flat, encoder_cost_weight=1.0, language_cost_weight=1.0) == 3
+
+
+def test_sample_cost_lm_term_requires_attention_mask():
+    from megatron.bridge.data.megatron_mimo.reorder_buffer import sample_cost
+
+    flat = {"input_ids": torch.tensor([[5, 6, 7, 0]], dtype=torch.int64)}
+    assert sample_cost(flat, encoder_cost_weight=1.0) == 0
+    with pytest.raises(ValueError, match="attention_mask"):
+        sample_cost(flat, encoder_cost_weight=1.0, language_cost_weight=1.0)
+
+
+def test_sample_cost_image_token_id_recovers_patches_from_input_ids():
+    from megatron.bridge.data.megatron_mimo.reorder_buffer import sample_cost
+
+    img = 99
+    # 3 placeholder tokens * square_merge_size(4) = 12 patches
+    flat = {"input_ids": torch.tensor([[1, img, img, img, 2, 0]], dtype=torch.int64)}
+    assert sample_cost(flat, encoder_cost_weight=1.0, image_token_id=img, square_merge_size=4) == 12
+    assert sample_cost(flat, encoder_cost_weight=2.0, image_token_id=img, square_merge_size=4) == 24
+
+
+def test_sample_cost_image_token_id_matches_across_modules():
+    """A vision-style flat (with grid_thw) and a language-style flat (grid_thw nulled) must cost the same."""
+    from megatron.bridge.data.megatron_mimo.reorder_buffer import sample_cost
+
+    img = 99
+    input_ids = torch.tensor([[1, img, img, 2, 0, 0]], dtype=torch.int64)
+    vision_flat = {
+        "input_ids": input_ids,
+        f"{_VKEY}.grid_thw": torch.tensor([[1, 4, 2]], dtype=torch.int64),  # prod = 8 patches
+    }
+    language_flat = {"input_ids": input_ids}
+
+    vc = sample_cost(vision_flat, encoder_cost_weight=1.0, image_token_id=img, square_merge_size=4)
+    lc = sample_cost(language_flat, encoder_cost_weight=1.0, image_token_id=img, square_merge_size=4)
+    assert vc == lc == 2 * 4  # 2 image tokens * square_merge_size
+    # Without image_token_id the two diverge: vision reads grid_thw, language gets 0
+    assert sample_cost(vision_flat, encoder_cost_weight=1.0) == 8
+    assert sample_cost(language_flat, encoder_cost_weight=1.0) == 0
+
+
+# ---------------------------------------------------------------------------
+# Single D2H on the vision reorder path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestReorderVisionSingleD2H:
+    def test_reorder_vision_single_d2h(self, monkeypatch):
+        # The cumsum must be a single .tolist(): no per-image .item() D2H sync in the loop
+        calls = {"item": 0}
+        orig_item = torch.Tensor.item
+
+        def counting_item(self):
+            calls["item"] += 1
+            return orig_item(self)
+
+        grid = torch.tensor([[1, 2, 2], [1, 4, 4], [1, 2, 3]])  # patches 4,16,6
+        hidden = torch.arange(26, dtype=torch.float32).reshape(26, 1)
+        monkeypatch.setattr(torch.Tensor, "item", counting_item)
+        hs, g = _reorder_vision_by_images(hidden, grid, [2, 0, 1])
+        assert calls["item"] == 0
+        expected = torch.cat([hidden[20:26], hidden[0:4], hidden[4:20]])
+        torch.testing.assert_close(hs, expected)
+
+
+class _IndexDataset:
+    def __init__(self, n: int):
+        self.n = n
+
+    def __len__(self) -> int:
+        return self.n
+
+    def __getitem__(self, idx: int) -> int:
+        return idx
+
+
+@pytest.mark.parametrize("dataloader_type", ["single", "cyclic"])
+def test_canonical_grid_shards_are_contiguous_blocks_of_one_global_order(dataloader_type):
+    """exchange_window assumes rank r holds positions [r*local, (r+1)*local) of one order shared by all modules."""
+    module_dps = [1, 2]
+    grid = canonical_grid_size(module_dps)
+    micro_batch = 8
+    dataset = _IndexDataset(64)
+
+    def rank_window(dp_size: int, dp_rank: int):
+        sampler = build_canonical_group_batch_sampler(
+            dataloader_type=dataloader_type,
+            dataset=dataset,
+            consumed_samples=0,
+            micro_batch_size=micro_batch,
+            grid_size=grid,
+            groups=covered_canonical_groups(dp_rank, dp_size, grid),
+            data_sharding=True,
+            drop_last=True,
+        )
+        return next(iter(sampler))
+
+    global_order = rank_window(dp_size=1, dp_rank=0)  # vision (dp=1) reads every group
+    assert len(global_order) == micro_batch
+    local = micro_batch // 2
+    for r in range(2):  # language (dp=2)
+        assert rank_window(dp_size=2, dp_rank=r) == global_order[r * local : (r + 1) * local]

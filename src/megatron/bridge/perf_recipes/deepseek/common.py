@@ -69,6 +69,15 @@ def _enable_deepseek_full_iteration(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
 
 
+def _enable_deepseek_full_iteration_nvfp4(cfg: ConfigContainer) -> None:
+    """Apply the DeepSeek V3 HybridEP full-iteration NVFP4 settings."""
+    _enable_deepseek_full_iteration(cfg)
+    cfg.model.fp8_output_proj = False
+    cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.model.mla_down_proj_fusion = True
+    cfg.model.recompute_modules = []
+
+
 def _enable_deepseek_transformer_engine_graph(cfg: ConfigContainer) -> None:
     """Apply legacy DeepSeek V3 Transformer Engine graph capture settings."""
     cfg.model.cuda_graph_impl = "transformer_engine"
@@ -103,7 +112,7 @@ def _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.cuda_graph_scope = []
-    cfg.model.recompute_modules = ["layernorm", "mla_up_proj", "moe_act"]
+    cfg.model.recompute_modules = ["layernorm", "mla_up_proj"]
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.offload_modules = ["core_attn", "attn_proj"]
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)

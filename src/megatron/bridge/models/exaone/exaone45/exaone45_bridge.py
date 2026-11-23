@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
-from transformers import Exaone4_5_ForConditionalGeneration
+from typing import Any
+
+from transformers import Exaone4_5_ForConditionalGeneration, PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -24,9 +25,13 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.exaone.exaone45.exaone45_provider import Exaone45ModelProvider
+from megatron.bridge.models.exaone.exaone4.exaone4_bridge import Exaone4Bridge
+from megatron.bridge.models.exaone.exaone45.exaone45_config import Exaone45ModelConfig
+from megatron.bridge.models.exaone.exaone45.exaone45_provider import (
+    Exaone45ModelProvider,
+    exaone_45_transformer_layer_spec,
+)
 from megatron.bridge.models.exaone.exaone45.modelling_exaone45.model import Exaone45Model
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 AutoMapping.register_module_type("TERowParallelLinearLayerNorm", "row")
@@ -55,24 +60,20 @@ class Exaone45Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("LGAI-EXAONE/EXAONE-4.5-33B")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Exaone45ModelProvider:
-        """
-        Create a Exaone45ModelProvider from a HuggingFace pretrained model.
+    MODEL_CONFIG_CLASS = Exaone45ModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
-        Args:
-            hf_pretrained: HuggingFace pretrained VLM model
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face EXAONE 4.5 config to builder config kwargs.
 
-        Returns:
-            Exaone45ModelProvider configured with the HF model's parameters
+        The language-model fields start from the EXAONE 4.0 text bridge's, read from ``text_config``,
+        and add the hybrid sliding-window attention, MTP and vision-language fields.
         """
-        hf_config = hf_pretrained.config
-        self.hf_config = hf_config
         text_config = hf_config.text_config
-
-        no_rope_freq, window_attn_skip_freq, window_size = None, None, None
+        config_kwargs = Exaone4Bridge().hf_config_to_model_config_kwargs(text_config)
 
         window_attn_skip_freq, no_rope_freq = [], []
         layer_types = getattr(text_config, "layer_types", None) or []
@@ -84,60 +85,47 @@ class Exaone45Bridge(MegatronModelBridge):
             no_rope_freq.append(0 if is_sliding else 1)
             window_attn_skip_freq.append(1 if is_sliding else 0)
 
+        window_size = None
         sliding_window = getattr(text_config, "sliding_window", None)
         if has_sliding_attention and sliding_window is not None:
             window_size = (sliding_window - 1, 0)
 
-        rope_parameters = getattr(text_config, "rope_parameters")
-        position_embedding_type = "rope"
-        rope_theta = rope_parameters["rope_theta"]
+        # Any RoPE factor enables Megatron Core's llama3-style scaling, whatever the rope_type.
+        rope_parameters = text_config.rope_parameters
         rope_scaling_factor = rope_parameters.get("factor")
-        rope_scaling = rope_scaling_factor is not None
-
-        # Get the model dtype from text config
-        model_dtype = self.dtype_from_hf(text_config, default=torch.float32)
-        moe_layer_freq = [0] * text_config.num_hidden_layers
 
         # Set vision config dtype to match the language model dtype
-        # This ensures vision model parameters are initialized in the same dtype
         vision_config = hf_config.vision_config
-        vision_config.torch_dtype = model_dtype
+        vision_config.torch_dtype = config_kwargs["params_dtype"]
 
-        # Create the provider with text model configuration
-        provider = Exaone45ModelProvider(
-            # Language model configuration from text_config
-            num_layers=text_config.num_hidden_layers,
-            hidden_size=text_config.hidden_size,
-            ffn_hidden_size=text_config.intermediate_size,
-            num_attention_heads=text_config.num_attention_heads,
-            num_query_groups=text_config.num_key_value_heads,  # GQA configuration
-            kv_channels=getattr(text_config, "head_dim", None),
-            init_method_std=text_config.initializer_range,
-            layernorm_epsilon=text_config.rms_norm_eps,
-            gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(text_config.vocab_size),
+        config_kwargs.update(
+            transformer_layer_spec=exaone_45_transformer_layer_spec,
             # VLM weight tying is defined on the top-level config.
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            vocab_size=text_config.vocab_size,
-            seq_length=text_config.max_position_embeddings,
-            fp16=(model_dtype == torch.float16),
-            bf16=(model_dtype == torch.bfloat16),
-            params_dtype=model_dtype,
             add_qkv_bias=getattr(text_config, "attention_bias", False),
             # Hybrid attention config for EXAONE architecture
             no_rope_freq=no_rope_freq,
             window_attn_skip_freq=window_attn_skip_freq,
             window_size=window_size,
-            qk_layernorm=True,
-            # RoPE
-            rotary_base=rope_theta,
-            rope_scaling=rope_scaling,
+            rotary_base=rope_parameters["rope_theta"],
+            rope_scaling=rope_scaling_factor is not None,
             rope_scaling_factor=rope_scaling_factor,
-            position_embedding_type=position_embedding_type,
+            moe_layer_freq=[0] * text_config.num_hidden_layers,
+            # MTP
+            mtp_num_layers=getattr(text_config, "num_nextn_predict_layers", None),
+            mtp_loss_scaling_factor=getattr(text_config, "mtp_loss_scaling_factor", 0.1),
+            mtp_use_repeated_layer=getattr(text_config, "mtp_share_layers", False),
+            # Settings the EXAONE 4.5 provider keeps where the EXAONE 4.0 text mapping differs.
+            # finalize() resolves an unset autocast_dtype to params_dtype.
+            autocast_dtype=None,
+            attention_softmax_in_fp32=True,
+            apply_rope_fusion=False,
+            bias_activation_fusion=False,
+            bias_dropout_fusion=False,
+            gradient_accumulation_fusion=False,
             # Vision configuration
             vision_config=vision_config,
-            # Store the original HF text config for RoPE initialization
-            hf_text_config=text_config,
+            language_max_sequence_length=text_config.max_position_embeddings,
             # VL-specific token IDs
             bos_token_id=getattr(hf_config, "bos_token_id", 1),
             eos_token_id=getattr(hf_config, "eos_token_id", 53),
@@ -146,14 +134,18 @@ class Exaone45Bridge(MegatronModelBridge):
             vision_token_id=getattr(hf_config, "vision_token_id", 67),
             image_token_id=getattr(hf_config, "image_token_id", 67),
             video_token_id=getattr(hf_config, "video_token_id", 68),
-            moe_layer_freq=moe_layer_freq,
-            # MTP
-            mtp_num_layers=getattr(text_config, "num_nextn_predict_layers", None),
-            mtp_loss_scaling_factor=getattr(text_config, "mtp_loss_scaling_factor", 0.1),
-            mtp_use_repeated_layer=getattr(text_config, "mtp_share_layers", False),
         )
+        return config_kwargs
 
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path.
+
+        ``Exaone45ModelProvider.provide()`` reads the language model's maximum sequence length from
+        the Hugging Face text config, so the provider also keeps that config.
+        """
+        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        provider_kwargs["hf_text_config"] = hf_config.text_config
+        return provider_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """

@@ -35,7 +35,7 @@ from megatron.bridge.data.datasets.utils import (
     _preprocess,
     _tokenize,
 )
-from megatron.bridge.data.packing.global_batch import build_unpacked_sequence_sample
+from megatron.bridge.data.packing.global_batch import build_unpacked_sequence_sample, fold_alignment_padding
 from megatron.bridge.data.packing.in_batch import build_mcore_thd_sequence_batch_from_rows
 from megatron.bridge.data.sft_processing import (
     PromptCompletionSFTPreprocessingConfig,
@@ -125,6 +125,7 @@ class GPTSFTDataset(Dataset):
         return_padding_mask: bool = False,
         enable_global_batch_packing: bool = False,
         global_batch_packing_pad_to_multiple_of: int = 1,
+        fold_alignment_padding: bool = False,
     ):
         """
         file_path: Path to a JSONL GPT supervised fine-tuning dataset.
@@ -185,6 +186,9 @@ class GPTSFTDataset(Dataset):
             for Megatron-Core's online sequence-packing scheduler instead of a batch.
         global_batch_packing_pad_to_multiple_of: Per-sequence alignment multiple
             used by global-batch packing for context and sequence parallelism.
+        fold_alignment_padding: Whether to report each row's alignment padding as
+            part of the sequence (still loss-masked) so packed bins carry no padding
+            between sequences; see ``megatron.bridge.data.packing.global_batch.fold_alignment_padding``.
         """
         self.tokenizer = tokenizer
         self.file_path = file_path
@@ -219,6 +223,7 @@ class GPTSFTDataset(Dataset):
         self.in_batch_packing_pad_to_multiple_of = in_batch_packing_pad_to_multiple_of
         self.enable_global_batch_packing = enable_global_batch_packing
         self.global_batch_packing_pad_to_multiple_of = global_batch_packing_pad_to_multiple_of
+        self.fold_alignment_padding = fold_alignment_padding
         if self.enable_global_batch_packing and self.enable_in_batch_packing:
             raise ValueError("enable_global_batch_packing and enable_in_batch_packing are mutually exclusive.")
         if self.global_batch_packing_pad_to_multiple_of <= 0:
@@ -680,15 +685,16 @@ class GPTSFTDataset(Dataset):
                     "Due to truncation to max_seq_length, no assistant tokens are found in sample. "
                     "Keeping loss_mask empty to avoid supervising non-assistant tokens."
                 )
-            samples.append(
-                build_unpacked_sequence_sample(
-                    tokens,
-                    labels,
-                    loss_mask,
-                    pad_to_multiple_of=self.global_batch_packing_pad_to_multiple_of,
-                    pad_token_id=self.tokenizer.eos_id,
-                )
+            sample = build_unpacked_sequence_sample(
+                tokens,
+                labels,
+                loss_mask,
+                pad_to_multiple_of=self.global_batch_packing_pad_to_multiple_of,
+                pad_token_id=self.tokenizer.eos_id,
             )
+            if self.fold_alignment_padding:
+                fold_alignment_padding(sample)
+            samples.append(sample)
         return samples
 
     def _collate_in_batch(self, batch: list[dict[str, Any]]) -> dict[str, Any]:

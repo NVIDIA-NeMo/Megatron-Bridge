@@ -13,9 +13,12 @@
 # limitations under the License.
 
 import os
+import subprocess
+import sys
 import tempfile
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -28,6 +31,8 @@ from megatron.bridge.training.config import DistributedInitConfig
 from megatron.bridge.training.initialize import (
     _initialize_tp_communicators,
     _setup_flight_recorder_env,
+    destroy_global_state,
+    initialize_megatron,
     set_jit_fusion_options,
 )
 
@@ -41,6 +46,28 @@ _FR_ENV_VARS = [
     "TORCH_INCLUDE_ONLY_ACTIVE",
     "TORCH_NCCL_EXTRA_DUMP_ON_EXEC",
 ]
+
+
+@pytest.mark.parametrize("has_initializer", [False, True])
+def test_destroy_global_state_resets_fixed_dsa_tracker(has_initializer):
+    tracker = {"agreed_size": 8, "values": object(), "pp_group": object()}
+    module = SimpleNamespace(DSAIndexerLossLoggingHelper=SimpleNamespace(tracker=tracker))
+    if has_initializer:
+        module.initialize_dsa_metric_tracker = Mock()
+    with (
+        patch("megatron.core.transformer.experimental_attention_variant.dsa_logging", module, create=True),
+        patch("megatron.bridge.training.initialize.destroy_num_microbatches_calculator"),
+        patch("megatron.bridge.training.initialize.parallel_state"),
+        patch("megatron.core.rerun_state_machine.destroy_rerun_state_machine"),
+    ):
+        destroy_global_state()
+        if has_initializer:
+            assert tracker == {}
+            tracker.update(agreed_size=16, values=object(), pp_group=object())
+            destroy_global_state()
+            assert tracker == {}
+        else:
+            assert tracker["agreed_size"] == 8
 
 
 def test_set_jit_fusion_options_preserves_builder_config_for_warmup() -> None:
@@ -547,6 +574,7 @@ def test_torch_dist_init_resets_default_logging_ranks(lazy):
         set_default_log_ranks({0, 4})
         with (
             patch("megatron.bridge.training.initialize._initialize_distributed", return_value=Mock()),
+            patch("megatron.bridge.training.initialize._bind_cuda_context_on_autograd_worker"),
             patch("megatron.bridge.training.initialize._set_random_seed"),
             patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0),
             patch("megatron.bridge.training.initialize.parallel_state"),
@@ -561,3 +589,145 @@ def test_torch_dist_init_resets_default_logging_ranks(lazy):
                 assert get_default_log_ranks() == (0,)
     finally:
         set_default_log_ranks(original)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("lazy", [False, True])
+def test_torch_dist_init_binds_autograd_worker_context_after_device_setup(lazy: bool) -> None:
+    """The autograd worker gets its CUDA context once distributed initialization has set the device."""
+    from megatron.bridge.training.initialize import torch_dist_init
+
+    calls = Mock()
+    with (
+        patch("megatron.bridge.training.initialize._initialize_distributed", return_value=Mock()) as init_dist,
+        patch("megatron.bridge.training.initialize._bind_cuda_context_on_autograd_worker") as bind,
+        patch("megatron.bridge.training.initialize._set_random_seed") as set_seed,
+        patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0),
+        patch("megatron.bridge.training.initialize.parallel_state"),
+    ):
+        calls.attach_mock(init_dist, "init_dist")
+        calls.attach_mock(bind, "bind")
+        calls.attach_mock(set_seed, "set_seed")
+        model = SimpleNamespace(
+            num_moe_experts=None, cuda_graph_impl="none", tp_comm_overlap=False, tensor_model_parallel_size=1
+        )
+        result = torch_dist_init(model, SimpleNamespace(lazy_mpu_init=lazy), Mock(), 1, 1, None, None, False)
+        if lazy:
+            bind.assert_not_called()
+            result()
+
+    called = [name for name, _, _ in calls.mock_calls if name in ("init_dist", "bind", "set_seed")]
+    assert called == ["init_dist", "bind", "set_seed"]
+
+
+# Runs in a fresh process, so PyTorch's autograd worker threads start clean. A custom autograd function makes its
+# backward the first CUDA work of the GPU-0 worker, as a recomputed norm is at the start of a pipeline stage's
+# backward. Only "bind" mode imports Bridge.
+_AUTOGRAD_WORKER_PROBE = r"""
+import ctypes
+import sys
+
+import torch
+
+
+torch.cuda.set_device(0)
+libcuda = ctypes.CDLL("libcuda.so.1")
+
+
+def current_context():
+    context = ctypes.c_void_p()
+    libcuda.cuCtxGetCurrent(ctypes.byref(context))
+    return context.value
+
+
+try:
+    import transformer_engine.pytorch as te
+except ImportError:
+    norm = None
+else:
+    norm = te.ops.RMSNorm(1024, device="cuda", dtype=torch.bfloat16)
+    tokens = torch.randn(256, 1024, device="cuda", dtype=torch.bfloat16)
+    norm(tokens)  # The main thread compiles and loads the norm kernel, as a training forward pass does.
+
+if sys.argv[1] == "bind":
+    from megatron.bridge.training.initialize import _bind_cuda_context_on_autograd_worker
+
+    _bind_cuda_context_on_autograd_worker()
+
+seen = {}
+
+
+class FirstInBackward(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, tensor):
+        return tensor.clone()
+
+    @staticmethod
+    def backward(ctx, grad):
+        seen["context"] = current_context()
+        if norm is not None:
+            try:
+                norm(tokens)
+                seen["norm"] = "ok"
+            except RuntimeError as exc:
+                seen["norm"] = str(exc).replace("\n", " ")
+        return grad
+
+
+leaf = torch.ones(1, device="cuda", requires_grad=True)
+FirstInBackward.apply(leaf).sum().backward()
+print("CONTEXT", seen["context"] is not None)
+print("NORM", seen.get("norm", "skipped"))
+"""
+
+
+def _probe_autograd_worker(mode: str) -> tuple[bool, str]:
+    result = subprocess.run(
+        [sys.executable, "-c", _AUTOGRAD_WORKER_PROBE, mode], capture_output=True, text=True, timeout=600
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    fields = dict(line.split(" ", 1) for line in result.stdout.splitlines() if line.startswith(("CONTEXT ", "NORM ")))
+    return fields["CONTEXT"] == "True", fields["NORM"]
+
+
+@pytest.mark.unit
+@pytest.mark.run_only_on("gpu")
+def test_bind_cuda_context_on_autograd_worker_lets_te_norm_run_first_in_backward() -> None:
+    """After the warm-up, the GPU-0 autograd worker holds a CUDA context and a TE norm can be its first work."""
+    has_context, _ = _probe_autograd_worker("none")
+    if has_context:
+        pytest.skip("PyTorch's GPU-0 autograd worker already holds a CUDA context without the warm-up")
+
+    has_context, norm = _probe_autograd_worker("bind")
+    assert has_context
+    assert norm in ("ok", "skipped"), norm
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("deterministic_mode", [True, False])
+def test_initialize_megatron_pins_triton_autotune_only_in_deterministic_mode(deterministic_mode: bool) -> None:
+    """Timed Triton autotuning is pinned before any kernel runs, only when deterministic_mode is on."""
+    cfg = Mock()
+    cfg.model.deterministic_mode = deterministic_mode
+    cfg.inprocess_restart = None
+    cfg.profiling = None
+
+    with (
+        patch("megatron.bridge.training.initialize.init_num_microbatches_calculator"),
+        patch("megatron.bridge.training.initialize.init_rerun_state"),
+        patch("megatron.bridge.training.initialize.torch_dist_init", return_value=None) as torch_dist_init,
+        patch("megatron.bridge.training.initialize.tuning") as tuning,
+        patch("megatron.bridge.training.initialize.torch.distributed.is_initialized", return_value=False),
+    ):
+        calls = Mock()
+        calls.attach_mock(tuning, "tuning")
+        calls.attach_mock(torch_dist_init, "torch_dist_init")
+        initialize_megatron(cfg, allow_no_cuda=True)
+
+    called = [name for name, _, _ in calls.mock_calls]
+    if deterministic_mode:
+        tuning.install.assert_called_once_with(deterministic=True)
+        assert called.index("tuning.install") < called.index("torch_dist_init")
+    else:
+        tuning.install.assert_not_called()
+    torch_dist_init.assert_called_once()

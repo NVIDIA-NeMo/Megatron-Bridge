@@ -27,8 +27,8 @@ monitoring error or interruption does not cancel the submitted job.
 
 Choose exactly one of a complete recipe or a model selector. `--recipe` and `--model` are mutually exclusive. A complete
 recipe is discovered automatically from its exported function name, whether it is a library or benchmark recipe;
-there is no separate source flag. A model selector requires one of `--mode pretrain`, `--mode sft`, `--mode lora`, or
-`--mode dora`; a conventional complete recipe name infers its mode when `--mode` is omitted.
+there is no separate source flag. A model selector requires one of `--mode pretrain`, `--mode sft`, `--mode lora`,
+`--mode dora`, or `--mode dpo`; a conventional complete recipe name infers its mode when `--mode` is omitted.
 
 ### Library recipe
 
@@ -47,7 +47,8 @@ A complete recipe already identifies the model and default training configuratio
 
 The model selector combines the model stem and mode to load the corresponding library recipe. For example,
 `--model gpt_oss_20b --mode sft` loads `gpt_oss_20b_sft_config`; LoRA and DoRA load the model's PEFT recipe and set the
-requested adapter scheme.
+requested adapter scheme. `--mode dpo` loads `<model>_dpo_config`; a DPO recipe owns its preference dataset and
+scored reference artifact, so `--dataset` presets do not apply and the forward step is always `dpo_step`.
 
 ```bash
 ./scripts/training/train.sh \
@@ -106,6 +107,9 @@ through configurable library recipes. Explicit benchmark dataset replacement rem
 
 Five legacy duplicate names resolve to the benchmark definition; their library workloads remain available through
 the corresponding generic recipe aliases. New recipe names should be unique across both packages.
+
+Benchmark recipe names that use the deprecated `vr200` hardware name resolve to the renamed `vrnvl72` recipe with a
+warning.
 
 Text recipes default to `llm_step`; all recipes infer their modality-specific forward step from the same registry.
 Pass `--step-func NAME` to override that selection. Common training,
@@ -340,8 +344,8 @@ populate the executor's `additional_parameters` and are not forwarded to the
 training command or its srun step.
 
 Use `-lmc FREQ`, `--peak-mem-clk FREQ`, or `--peak_mem_clk FREQ` to lock the GPU memory clock to a fixed frequency in
-MHz once per node before training. VR200 benchmark recipes default to `4752`; other recipes leave the memory clock
-unlocked. Pass `-lmc -1` to disable the VR200 default explicitly.
+MHz once per node before training. VRNVL72 benchmark recipes default to `4752`; other recipes leave the memory clock
+unlocked. Pass `-lmc -1` to disable the VRNVL72 default explicitly.
 
 The compact launcher does not add rank-command prefixes or infer target-specific
 allocation and NUMA policies. Configure those explicitly for the target.
@@ -379,16 +383,3 @@ uv run python -m torch.distributed.run --nproc_per_node=2 \
 
 This entry point loads library recipes for pretraining, SFT, LoRA, and DoRA, and all exact exported
 benchmark recipes when selected explicitly.
-
-
-### Allocation setup
-
-`--setup-script /path/to/setup.sh` captures a caller-owned shell script at
-submission and executes it once on the batch node before the standard training
-worker. This supports staging large checkpoints, datasets, source, and caches
-to node-local storage without editing generated Slurm scripts or replacing the
-recipe runner. Use `srun` inside the setup script when each allocated node needs
-staging. The script runs in a strict child shell; failure stops the job before
-training, and child exports do not alter the worker environment. Keep runtime
-paths and setup scripts outside model verification cards, alongside the
-caller's account, image, and mount configuration.

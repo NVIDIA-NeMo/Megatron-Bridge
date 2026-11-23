@@ -25,9 +25,9 @@ The process is as follows:
 
 Usage:
 torchrun --nproc_per_node 2 examples/quantization/quantize.py \
-    --hf-model-id meta-llama/Llama-3.2-1B --export-quant-cfg fp8
+    --hf-model-id Qwen/Qwen3-0.6B --export-quant-cfg fp8
 torchrun --nproc_per_node 2 examples/quantization/quantize.py \
-    --hf-model-id meta-llama/Llama-3.2-1B --export-quant-cfg fp8 --megatron-save-path ./megatron_checkpoint
+    --hf-model-id Qwen/Qwen3-0.6B --export-quant-cfg fp8 --megatron-save-path ./megatron_checkpoint
 """
 
 import argparse

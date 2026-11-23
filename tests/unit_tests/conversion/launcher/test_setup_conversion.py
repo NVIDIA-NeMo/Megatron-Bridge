@@ -14,7 +14,6 @@
 
 import importlib.util
 import shlex
-import subprocess
 import sys
 import types
 from pathlib import Path
@@ -73,70 +72,6 @@ def _parse(module, *options):
     )
 
 
-def test_allocation_setup_runs_before_worker_and_preserves_failure(tmp_path):
-    module = _load_setup_conversion_module()
-    script = tmp_path / "setup.sh"
-    marker = tmp_path / "worker"
-    script.write_text("false\necho must-not-run\n")
-    executor = types.SimpleNamespace(setup_lines="set +e")
-    module._configure_slurm_setup_script(executor, script)
-    result = subprocess.run(
-        ["bash", "-c", executor.setup_lines + f"\ntouch '{marker}'"], capture_output=True, text=True
-    )
-    assert result.returncode != 0
-    assert not marker.exists()
-    assert "must-not-run" not in result.stdout
-
-
-def test_allocation_setup_preserves_literal_shell_and_order(tmp_path):
-    module = _load_setup_conversion_module()
-    output = tmp_path / "ordered"
-    script = tmp_path / "setup.sh"
-    script.write_text(f"printf '%s\\n' 'setup with a quote: '\"'\"' and $literal' >> '{output}'\n")
-    executor = types.SimpleNamespace(setup_lines=f"printf 'before\\n' > '{output}'")
-    module._configure_slurm_setup_script(executor, script)
-    subprocess.run(["bash", "-c", executor.setup_lines + f"printf 'worker\\n' >> '{output}'"], check=True)
-    assert output.read_text().splitlines() == ["before", "setup with a quote: ' and $literal", "worker"]
-
-
-def test_allocation_setup_is_optional_slurm_only_and_launcher_only(tmp_path):
-    module = _load_setup_conversion_module()
-    executor = types.SimpleNamespace(setup_lines="unchanged")
-    module._configure_slurm_setup_script(executor, None)
-    assert executor.setup_lines == "unchanged"
-    script = tmp_path / "setup.sh"
-    script.write_text("echo staged\n")
-    args = _parse(module, "--setup-script", str(script))
-    with pytest.raises(ValueError, match="only supported by the Slurm"):
-        module._validate_args(args)
-    assert "--setup-script" not in module.conversion_worker_args(args)
-    script.write_text(" \n")
-    with pytest.raises(ValueError, match="non-empty"):
-        module._configure_slurm_setup_script(executor, script)
-
-
-def test_allocation_setup_missing_file_is_rejected(tmp_path):
-    module = _load_setup_conversion_module()
-    args = _parse(module, "--executor", "slurm", "--setup-script", str(tmp_path / "absent.sh"))
-    with pytest.raises(ValueError, match="existing file"):
-        module._validate_args(args)
-
-
-def test_allocation_setup_environment_is_child_only(tmp_path):
-    module = _load_setup_conversion_module()
-    script = tmp_path / "setup.sh"
-    script.write_text("export CONVERSION_SETUP_TEST=child\n")
-    executor = types.SimpleNamespace(setup_lines="export CONVERSION_SETUP_TEST=parent")
-    module._configure_slurm_setup_script(executor, script)
-    result = subprocess.run(
-        ["bash", "-c", executor.setup_lines + 'printf "%s" "$CONVERSION_SETUP_TEST"'],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert result.stdout == "parent"
-
-
 @pytest.mark.parametrize("options", [[], ["--detach"], ["--submission-dry-run"]])
 def test_slurm_main_uses_shared_rate_limited_waiter(monkeypatch, options):
     module = _load_setup_conversion_module()
@@ -165,6 +100,7 @@ def test_slurm_main_uses_shared_rate_limited_waiter(monkeypatch, options):
     module.run.Experiment = Experiment
     monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
     monkeypatch.setattr(module, "_build_task", lambda *_args: (types.SimpleNamespace(path="worker.py"), []))
+    monkeypatch.setattr(module, "run_from_container_repo_root", lambda task: task)
     monkeypatch.setattr(module, "wait_for_slurm_job", lambda _experiment, **kwargs: calls.append(("wait", kwargs)))
     module.main(
         [
@@ -323,14 +259,6 @@ def test_distributed_cpu_export_rejects_incompatible_topology(parallelism_args, 
         module._validate_args(args)
 
 
-def test_distributed_cpu_export_rejects_non_export_command():
-    module = _load_setup_conversion_module()
-    args = _parse(module, "--cpu-processes-per-node", "2")
-
-    with pytest.raises(ValueError, match="supports export only"):
-        module._validate_args(args)
-
-
 def test_distributed_cpu_export_requires_distributed_save():
     module = _load_setup_conversion_module()
     args = _parse_export(module, "--cpu-processes-per-node", "2", "--no-distributed-save")
@@ -477,6 +405,8 @@ def test_roundtrip_rejects_cpu_backend():
             "export",
             ("--device", "gpu", "--gpus-per-node", "2", "--tp", "2", "--hf-path", "/export path"),
         ),
+        ("import", ("--device", "gpu", "--gpus-per-node", "1", "--bagel-repo", "/tmp/Bagel checkout")),
+        ("import", ("--device", "gpu", "--gpus-per-node", "1", "--bagel-repo", "/tmp/Bagel;checkout")),
     ],
 )
 def test_local_gpu_rejects_worker_value_requiring_shell_quoting(command, options):
@@ -486,6 +416,40 @@ def test_local_gpu_rejects_worker_value_requiring_shell_quoting(command, options
 
     with pytest.raises(ValueError, match="cannot pass model IDs or paths containing whitespace"):
         module._validate_args(args)
+
+
+def test_local_gpu_accepts_shell_safe_bagel_repo():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--device", "gpu", "--gpus-per-node", "1", "--bagel-repo", "/tmp/Bagel")
+
+    module._validate_args(args)
+
+
+def test_slurm_gpu_import_quotes_bagel_repo():
+    module = _load_setup_conversion_module()
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    args = _parse(
+        module,
+        "--executor",
+        "slurm",
+        "--device",
+        "gpu",
+        "--gpus-per-node",
+        "1",
+        "--account",
+        "account",
+        "--partition",
+        "partition",
+        "--container-image",
+        "image.sqsh",
+        "--bagel-repo",
+        "/tmp/Bagel checkout",
+    )
+    module._validate_args(args)
+
+    task, _ = module._build_task(args)
+
+    assert task.args[task.args.index("--bagel-repo") + 1] == "'/tmp/Bagel checkout'"
 
 
 def test_local_cpu_executor_uses_one_process_without_launcher():
@@ -584,38 +548,6 @@ def test_slurm_roundtrip_task_uses_container_conversion_worker():
     assert task.args != display_args
     assert display_args[4] == "/model path"
     assert task.args == [*display_args[:4], "'/model path'", *display_args[5:]]
-
-
-@pytest.mark.parametrize("executor", ["local", "slurm"])
-@pytest.mark.parametrize("prefix", ["work/checkpoints", "/checkpoint mount"])
-def test_checkpoint_paths_connect_conversion_to_training_without_changing_local_paths(executor, prefix):
-    module = _load_setup_conversion_module()
-    module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
-    native_path = f"{prefix}/native $literal"
-    hf_path = f"{prefix}/export with 'quote'"
-    args = _parse_export(module, "--executor", executor, "--megatron-path", native_path, "--hf-path", hf_path)
-    original = vars(args).copy()
-
-    task, display_args = module._build_task(args)
-    actual = shlex.split(" ".join(task.args)) if executor == "slurm" else task.args
-
-    for flag, path in (("--megatron-path", native_path), ("--hf-path", hf_path)):
-        expected = f"/opt/Megatron-Bridge/{path}" if executor == "slurm" and not path.startswith("/") else path
-        assert actual[actual.index(flag) + 1] == expected
-    assert actual[actual.index("--hf-model") + 1] == "hf/model"
-    assert actual == display_args
-    assert vars(args) == original
-
-
-def test_slurm_import_resolves_relative_native_output():
-    module = _load_setup_conversion_module()
-    module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
-    args = _parse(module, "--executor", "slurm", "--megatron-path", "work/checkpoints/native")
-
-    task, _ = module._build_task(args)
-
-    assert task.args[task.args.index("--megatron-path") + 1] == "/opt/Megatron-Bridge/work/checkpoints/native"
-    assert "--hf-path" not in task.args
 
 
 @pytest.mark.parametrize("additional", [[], ["--additional-slurm-params", "segment=1;export=ALL"]])
@@ -883,3 +815,85 @@ def test_parse_env_rejects_inline_secret_values(monkeypatch):
 
     with pytest.raises(ValueError, match="accepts NAME only"):
         module._parse_env(["HF_TOKEN=secret"])
+
+
+def _capture_submitted_task(module, monkeypatch, argv):
+    submitted = []
+
+    class _Experiment:
+        def __init__(self, *_args, **_kwargs):
+            self.jobs = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, task, **_kwargs):
+            submitted.append(task)
+
+        def run(self, **_kwargs):
+            pass
+
+        def dryrun(self):
+            pass
+
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**{"inline": "", "path": "", "args": [], **kwargs})
+    module.run.Experiment = _Experiment
+    monkeypatch.setitem(sys.modules, "nemo_run", module.run)
+    monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
+    module.main(argv)
+    return submitted[0]
+
+
+def test_slurm_pyxis_task_runs_from_container_repo_root(monkeypatch):
+    """Slurm Pyxis conversion resolves relative paths from the container checkout."""
+    module = _load_setup_conversion_module()
+    megatron_path = "work/model-verification/card/imported-megatron"
+
+    task = _capture_submitted_task(
+        module,
+        monkeypatch,
+        [
+            "import",
+            "--executor",
+            "slurm",
+            "--device",
+            "gpu",
+            "--gpus-per-node",
+            "1",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--hf-model",
+            "hf/model",
+            "--megatron-path",
+            megatron_path,
+            "--submission-dry-run",
+        ],
+    )
+
+    assert task.entrypoint == "bash"
+    assert task.env["PYTHONPATH"].startswith("/opt/Megatron-Bridge/src:")
+    lines = task.inline.splitlines()
+    assert lines[:2] == ["set -e", "cd /opt/Megatron-Bridge"]
+    assert lines[2].startswith("exec python /opt/Megatron-Bridge/scripts/conversion/run_conversion.py import ")
+    assert f" --megatron-path {shlex.quote(megatron_path)}" in lines[2]
+
+
+def test_local_task_is_not_wrapped(monkeypatch):
+    """Local conversion still submits the plain Python worker script."""
+    module = _load_setup_conversion_module()
+
+    task = _capture_submitted_task(
+        module, monkeypatch, ["import", "--hf-model", "hf/model", "--megatron-path", "work/checkpoint"]
+    )
+
+    assert task.inline == ""
+    assert task.entrypoint == "python"
+    assert task.path == str(REPO_ROOT / "scripts/conversion/run_conversion.py")
+    assert task.args[:3] == ["import", "--device", "cpu"]

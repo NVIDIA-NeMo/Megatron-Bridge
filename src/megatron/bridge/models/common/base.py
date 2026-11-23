@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
+from dataclasses import InitVar, dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
-from dataclasses import is_dataclass
 from typing import Any, ClassVar
 
 from megatron.training.models.base import (
@@ -27,8 +28,13 @@ from megatron.training.models.base import (
     ModelConfig as _MegatronModelConfig,
 )
 
-from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.models.transformer_config import MLATransformerConfig, TransformerConfig
 from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_target_prefix, instantiate
+
+
+def _init_var_names(config_cls: type) -> list[str]:
+    """Return the names of a dataclass's ``InitVar`` arguments in the order its constructor passes them."""
+    return [name for name, f in getattr(config_cls, "__dataclass_fields__", {}).items() if isinstance(f.type, InitVar)]
 
 
 def deserialize_model_config(data: dict[str, Any]) -> _MegatronModelConfig:
@@ -54,7 +60,8 @@ def deserialize_model_config(data: dict[str, Any]) -> _MegatronModelConfig:
         if not isinstance(config_cls, type) or not is_dataclass(config_cls):
             return instantiate(subdata)
 
-        valid_fields = {f.name for f in dataclass_fields(config_cls) if f.init}
+        # Constructor-only (InitVar) arguments are accepted too, so the constructor can check them.
+        valid_fields = {f.name for f in dataclass_fields(config_cls) if f.init} | set(_init_var_names(config_cls))
         filtered_data = {
             key: _restore_value(value, f"{full_key}.{key}")
             for key, value in subdata.items()
@@ -85,6 +92,7 @@ class ModelConfigOverrideMixin:
     """
 
     transformer_config_class: ClassVar[type[TransformerConfig]]
+    _mirrored_transformer_fields: ClassVar[frozenset[str]] = frozenset()
 
     def __setattr__(self, name: str, value: Any, /) -> None:
         """Assign a declared outer or nested field and reject phantom fields."""
@@ -100,6 +108,8 @@ class ModelConfigOverrideMixin:
 
         if name == "transformer" or name in model_fields:
             object.__setattr__(self, name, value)
+            if name in self._mirrored_transformer_fields and name in transformer_fields:
+                setattr(transformer, name, value)
         elif name in transformer_fields:
             setattr(transformer, name, value)
         elif name == "builder" or name.startswith("_") or hasattr(descriptor, "__set__"):
@@ -109,9 +119,99 @@ class ModelConfigOverrideMixin:
                 f"Neither {type(self).__name__} nor {type(transformer).__name__} declares a field named {name!r}."
             )
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> Any:
+        """Deep-copy the outer config together with its nested transformer config.
+
+        Megatron Core's builder configs forward attribute lookups they cannot resolve to the nested
+        transformer config, and ``copy.deepcopy`` looks ``__deepcopy__`` up on the instance. Without this
+        method it would find the transformer config's own and return a copy of the nested config alone,
+        dropping the outer fields (``seq_length``, ``vocab_size``, hooks and builder settings).
+        """
+        result = type(self).__new__(type(self))
+        memo[id(self)] = result
+        for name, value in vars(self).items():
+            object.__setattr__(result, name, copy.deepcopy(value, memo))
+        return result
+
+
+class _TransformerOwnedField:
+    """Outer name of a setting that the nested transformer config stores.
+
+    As the default of an ``InitVar``, it keeps the setting out of the outer
+    config's fields, so the outer config neither stores nor serializes it. A
+    value given to the constructor reaches ``__post_init__``; reads and later
+    assignments use the transformer config.
+    """
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self._name = name
+
+    def __get__(self, instance: Any, owner: type | None = None) -> Any:
+        if instance is None:
+            # Class access supplies the InitVar default: the constructor was not given a value.
+            return None
+        return getattr(instance.transformer, self._name)
+
+    def __set__(self, instance: Any, value: Any) -> None:
+        setattr(instance.transformer, self._name, value)
+
+
+@dataclass(kw_only=True)
+class MLAModelConfigMixin:
+    """Nest an MLA transformer config, which owns the rotary settings that MLA attention applies.
+
+    Megatron Core's MLA transformer config declares ``rotary_base`` and
+    ``rotary_percent``, as do the GPT and Hybrid model configs. MLA attention
+    reads the nested values, so only the transformer config stores and
+    serializes them. On this config they are constructor arguments and views of
+    the nested values. ``__post_init__`` checks a constructor value against the
+    transformer config's own value before copying it there: they must match
+    unless the transformer config kept its default. List this mixin before the
+    model config class it extends.
+    """
+
+    transformer_config_class: ClassVar[type[TransformerConfig]] = MLATransformerConfig
+
+    rotary_base: InitVar[float | None] = _TransformerOwnedField()
+    rotary_percent: InitVar[float | None] = _TransformerOwnedField()
+
+    def __post_init__(self, *constructor_values: Any) -> None:
+        # Dataclasses pass InitVars in field order, which the extended model config sets.
+        supplied = {
+            name: value
+            for name, value in zip(_init_var_names(type(self)), constructor_values, strict=True)
+            if value is not None
+        }
+        defaults = {f.name: f.default for f in dataclass_fields(self.transformer)}
+        for name, value in supplied.items():
+            nested = getattr(self.transformer, name)
+            if nested != value and nested != defaults[name]:
+                raise ValueError(
+                    f"{name}={value!r} conflicts with transformer.{name}={nested!r}. "
+                    f"{type(self.transformer).__name__} stores {name}; give it one value."
+                )
+        for name, value in supplied.items():
+            setattr(self.transformer, name, value)
+
 
 class ModelConfig(_MegatronModelConfig):
     """Bridge compatibility wrapper for Megatron-LM model configs."""
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize nested configs without turning inferred CP defaults into overrides."""
+        data = super().as_dict()
+
+        def restore_cp_inputs(config: Any, serialized: Any) -> None:
+            if not is_dataclass(config) or not isinstance(serialized, dict):
+                return
+            if isinstance(config, TransformerConfig):
+                serialized.update(config._inferred_cp_inputs())
+            for f in dataclass_fields(config):
+                if f.name in serialized:
+                    restore_cp_inputs(getattr(config, f.name), serialized[f.name])
+
+        restore_cp_inputs(self, data)
+        return data
 
     def get_builder_cls(self) -> type:
         """Get the appropriate builder type for this config."""

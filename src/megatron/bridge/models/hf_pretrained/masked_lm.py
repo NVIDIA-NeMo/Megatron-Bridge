@@ -166,7 +166,7 @@ class PreTrainedMaskedLM(PreTrainedBase, Generic[MaskedLMType]):
     def tokenizer(self) -> PreTrainedTokenizer:
         """Lazy load and return the tokenizer."""
         if not hasattr(self, "_tokenizer"):
-            self._tokenizer = self._load_tokenizer()
+            self._tokenizer = self._load_artifact("tokenizer")
         return self._tokenizer
 
     @tokenizer.setter

@@ -4,6 +4,10 @@
     "url": "https://docs.nvidia.com/nemo/megatron-bridge/nightly/"
   },
   {
+    "version": "0.7.0",
+    "url": "https://docs.nvidia.com/nemo/megatron-bridge/0.7.0/"
+  },
+  {
     "name": "0.6.0 (latest) · 26.08",
     "version": "0.6.0",
     "url": "https://docs.nvidia.com/nemo/megatron-bridge/0.6.0/",

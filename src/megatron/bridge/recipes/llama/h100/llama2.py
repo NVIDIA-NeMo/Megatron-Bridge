@@ -15,108 +15,124 @@
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.peft.base import PEFT
+from megatron.bridge.recipes.common import _peft_common
+from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
-def llama2_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a pre-training config for Llama-2 7B.
+def llama2_70b_peft_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return a PEFT config for Llama 2 70B.
 
-    Recommended parallelism: TP=2, PP=1.
+    Default parallelism: TP=8, PP=1
+
+    Args:
+        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+
+    Returns:
+        ConfigContainer with all settings pre-configured for Llama 2 70B PEFT.
     """
-    cfg = _pretrain_common()
+    cfg = _peft_common()
+    # Model config from HuggingFace
+    hf_path = "meta-llama/Llama-2-70b-hf"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
-    # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-2-7b-hf").get_model_config()
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = hf_path
 
-    # Tokenizer - uses NullTokenizer by default
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.tokenizer_model = None
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    # Sequence length
+    seq_length = 8192
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
-    # Dataset config - mock data by default
-    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
-    cfg.dataset.num_workers = 8
+    # PEFT config - 70B uses dim=16, alpha=32
+    peft_cfg = default_peft_config(peft_scheme)
+    cfg.peft = peft_cfg
+    if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
+        peft_cfg.dim = 16
+        peft_cfg.alpha = 32
+        peft_cfg.target_modules = ["linear_qkv", "linear_proj"]
 
-    # Parallelism settings
-    cfg.model.tensor_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_size = 1
+    # Packed sequence settings
+    if cfg.model.context_parallel_size > 1:
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+
+    # Parallelism settings - 70B PEFT uses TP=8
     cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.model.seq_length = 4096
+
+    # Mixed precision
+    cfg.mixed_precision = "bf16_mixed"
 
     # Training config
-    cfg.train.train_iters = 1168251
-    cfg.train.global_batch_size = 512
+    cfg.train.train_iters = 1000
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
+    cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
-    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
-
-    # Scheduler config
-    cfg.scheduler.lr_warmup_iters = 2000
+    cfg.train.manual_gc_eval = 100
 
     # Logger config
-    cfg.logger.log_timers_to_tensorboard = False
+    cfg.logger.log_interval = 1
 
-    # TE (Transformer Engine)
-    cfg.model.transformer_impl = "transformer_engine"
-
-    # CUDA Graph
-    cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = "full"
-    cfg.model.cuda_graph_warmup_steps = 3
-
-    # Kernel selections
-    cfg.model.attention_backend = None
-    cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"
-
-    # Memory saving (recompute & offloading)
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = None
-    cfg.model.fine_grained_activation_offloading = False
-    cfg.model.offload_modules = None
-
-    # FP8 & MXFP8 (mixed_precision settings)
-    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
-    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
-    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
-    # cfg.mixed_precision.fp8 = None  # not enabled
-    # cfg.mixed_precision.fp8_param_gather = False  # default
-    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
-
-    # Optimizer precision settings
+    # Optimizer config
+    cfg.optimizer.adam_beta2 = 0.98
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.optimizer.use_distributed_optimizer = False
+
+    # Scheduler config
+    cfg.scheduler.lr_warmup_iters = 50
+    cfg.scheduler.max_lr = 1e-4
+
+    # TE
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 5
+
+    # Kernel selections
+    cfg.model.cross_entropy_loss_fusion = False
+    cfg.model.cross_entropy_fusion_impl = "native"
+
+    # Memory saving
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
 
     # Checkpoint config
-    cfg.checkpoint.save_interval = 2000
-    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
-    # cfg.checkpoint.save = "path/to/save"
-    # cfg.checkpoint.load = "path/to/load"
+    cfg.checkpoint.save_interval = 50
+    cfg.checkpoint.ckpt_format = "torch_dist"
+    cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
-    cfg.ddp.overlap_grad_reduce = True
-    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
-    cfg.ddp.use_distributed_optimizer = True
-    cfg.ddp.use_megatron_fsdp = False
-    cfg.ddp.grad_reduce_in_fp32 = True
-    cfg.ddp.average_in_collective = True
-    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.grad_reduce_in_fp32 = False
 
-    # Communication overlap
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    # RNG seed
+    cfg.rng.seed = 5678
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
@@ -126,5 +142,5 @@ def llama2_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
 
 
 __all__ = [
-    "llama2_7b_pretrain_2gpu_h100_bf16_config",
+    "llama2_70b_peft_config",
 ]

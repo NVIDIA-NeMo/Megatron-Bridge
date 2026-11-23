@@ -354,10 +354,11 @@ class MegatronQuantizationBridge:
 
         mapping_registry = self.mapping_registry()
         mapping_registry.set_process_groups_from_pg_collection(_get_pg_collection_from_model(megatron_model))
-        model_config = unwrap_model(megatron_model)[0].config
+        unwrapped_model = unwrap_model(megatron_model)[0]
+        model_config = unwrapped_model.config
         pp_rank = _get_pp_rank(megatron_model)
         global_names = self._megatron_global_param_names_all_pp_ranks(megatron_model)
-        if self._share_embeddings_and_output_weights(model_config):
+        if self._share_embeddings_and_output_weights(unwrapped_model):
             global_names = [name for name in global_names if "output_layer" not in name]
 
         num_experts = int(getattr(model_config, "num_moe_experts", 0) or 0)
@@ -725,7 +726,7 @@ class MegatronQuantizationBridge:
         megatron_to_hf_tasks = conversion_tasks
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
+        embeddings_are_tied = self._share_embeddings_and_output_weights(unwrapped_model)
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
         grouped_buffers: dict[str, dict[int, torch.Tensor]] = {}

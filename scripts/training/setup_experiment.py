@@ -126,15 +126,7 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
         dest="peak_mem_clk",
         help=(
             "Lock the GPU memory clock to a fixed frequency in MHz once per node. "
-            "Defaults to 4752 for VR200 benchmark recipes and is disabled otherwise; pass -1 to disable the default."
-        ),
-    )
-    execution.add_argument(
-        "--setup-script",
-        type=Path,
-        help=(
-            "Shell script captured at submission and run once on the batch node before training. "
-            "Use it for allocation-local data/cache staging; a failure prevents training."
+            "Defaults to 4752 for VRNVL72 benchmark recipes and is disabled otherwise; pass -1 to disable the default."
         ),
     )
     execution.add_argument("--experiment-name", help="NeMo-Run experiment name.")
@@ -226,12 +218,12 @@ def _resolve_peak_mem_clk(
     requested_peak_mem_clk: int | None,
     benchmark_metadata: BenchmarkRecipeMetadata | None,
 ) -> int | None:
-    """Resolve the explicit memory clock or the VR200 benchmark default."""
+    """Resolve the explicit memory clock or the VRNVL72 benchmark default."""
     if requested_peak_mem_clk == -1:
         return None
     if requested_peak_mem_clk is not None:
         return requested_peak_mem_clk
-    if benchmark_metadata is not None and benchmark_metadata.hardware == "vr200":
+    if benchmark_metadata is not None and benchmark_metadata.hardware == "vrnvl72":
         return 4752
     return None
 
@@ -262,22 +254,6 @@ def _configure_slurm_peak_mem_clk(executor: Any, peak_mem_clk: int | None) -> No
         ]
     )
     executor.setup_lines = f"{executor.setup_lines or ''}{command}"
-
-
-def _configure_slurm_setup_script(executor: Any, setup_script: Path | None) -> None:
-    """Capture an allocation setup script without changing the training worker.
-
-    NeMo-Run's batch template disables errexit. Run setup in a strict child
-    shell and explicitly propagate failure before the worker srun can start.
-    Child environment changes do not affect the subsequent training command.
-    """
-    if setup_script is None:
-        return
-    source = setup_script.read_text()
-    if not source.strip():
-        raise ValueError("--setup-script must contain a non-empty shell script.")
-    command = f"bash -euo pipefail -c {shlex.quote(source)} || exit $?"
-    executor.setup_lines = f"{executor.setup_lines or ''}\n{command}\n"
 
 
 def _build_executor(
@@ -344,7 +320,6 @@ def main(argv: list[str] | None = None) -> None:
     executor = _build_executor(args, env_names, mounts, task_environment=task_environment)
     peak_mem_clk = _resolve_peak_mem_clk(args.peak_mem_clk, benchmark_metadata)
     _configure_slurm_peak_mem_clk(executor, peak_mem_clk)
-    _configure_slurm_setup_script(executor, args.setup_script)
 
     task = run.Script(
         path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),

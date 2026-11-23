@@ -166,6 +166,7 @@ class Qwen3VLGPTModel(GPTModel):
         *,
         inference_params: Optional[BaseInferenceContext] = None,
         loss_mask: Optional[Tensor] = None,
+        mtp_input_mask: Optional[Tensor] = None,
         padding_mask: Optional[Tensor] = None,
         # args for deepstack
         visual_pos_masks: Optional[torch.Tensor] = None,
@@ -265,6 +266,7 @@ class Qwen3VLGPTModel(GPTModel):
             rotary_pos_sin=rotary_pos_sin,
             mtp_in_postprocess=self.mtp_process,
             loss_mask=loss_mask,
+            mtp_input_mask=mtp_input_mask,
             decoder_input=decoder_input,
             attention_mask=attention_mask,
             padding_mask=padding_mask,

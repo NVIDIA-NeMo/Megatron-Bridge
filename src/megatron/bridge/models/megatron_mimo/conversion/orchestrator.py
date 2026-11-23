@@ -28,6 +28,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import (
@@ -60,13 +61,26 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class MIMOComponent:
-    """One MIMO component route in the source bridge mapping registry."""
+    """One conversion route, optionally sharing another component's parallelism.
+
+    ``name`` uniquely identifies the route and its cached conversion tasks.
+    ``component_name`` selects its process groups and defaults to ``name``.
+    Encoder and projector routes can therefore share one modality's rank grid.
+    """
 
     name: str
     source_prefix: str
     target_module_path: str
+    component_name: str | None = None
+
+    @property
+    def parallelism_name(self) -> str:
+        """Return the component that owns this route's tensors."""
+        return self.name if self.component_name is None else self.component_name
 
     def __post_init__(self) -> None:
+        if self.component_name == "":
+            raise ValueError("MIMOComponent.component_name must be non-empty when supplied")
         if not self.name:
             raise ValueError("MIMOComponent.name must be a non-empty string")
         if not self.source_prefix:
@@ -94,13 +108,13 @@ def validate_route_table(
     if duplicates:
         raise ValueError(f"Duplicate route names: {duplicates}")
 
-    declared_names = set(names)
+    declared_names = {route.parallelism_name for route in routes}
     config_names = set(parallelism_config.module_parallelisms.keys())
 
     extra_routes = sorted(declared_names - config_names)
     if extra_routes:
         raise ValueError(
-            "Route names not present in parallelism_config.module_parallelisms: "
+            "Components owning conversion routes are not present in parallelism_config.module_parallelisms: "
             f"{extra_routes}. Available: {sorted(config_names)}"
         )
 
@@ -108,7 +122,7 @@ def validate_route_table(
     if missing_routes:
         raise ValueError(
             "parallelism_config.module_parallelisms entries without a route: "
-            f"{missing_routes}. Declared routes: {sorted(declared_names)}"
+            f"{missing_routes}. Components owning routes: {sorted(declared_names)}"
         )
 
     if modality_submodules_spec is not None:
@@ -119,11 +133,11 @@ def validate_route_table(
         missing_vs_modality = sorted(expected_names - declared_names)
         if extra_vs_modality or missing_vs_modality:
             raise ValueError(
-                "Route names do not align with modality_submodules_spec keys + "
-                f"{{{MIMO_LANGUAGE_MODULE_KEY!r}}}. Routes: {sorted(declared_names)}; "
+                "Components owning conversion routes do not align with modality_submodules_spec keys + "
+                f"{{{MIMO_LANGUAGE_MODULE_KEY!r}}}. Route owners: {sorted(declared_names)}; "
                 f"expected: {sorted(expected_names)}. "
-                f"Extra in routes: {extra_vs_modality}; missing from routes: {missing_vs_modality}. "
-                "Route names, modality keys, and parallelism-config component keys must match."
+                f"Unexpected component owners: {extra_vs_modality}; components without routes: {missing_vs_modality}. "
+                "Each route must reference a configured component; multiple routes may share that component."
             )
 
     _check_no_prefix_overlap(routes)
@@ -636,6 +650,24 @@ class MegatronMIMOBridge(AutoBridge):
         hf_tokenizer_kwargs: Optional[dict] = None,
     ) -> None:
         """Import HF weights and write a MegatronMIMO checkpoint."""
+        provider = self.to_megatron_mimo_provider(load_weights=False)
+        standard_provider = getattr(provider, "standard_provider", None)
+        if getattr(standard_provider, "gradient_accumulation_fusion", False):
+            # Checkpoint conversion has no backward pass. Non-TE layers otherwise
+            # require the optional Apex wgrad extension even at construction time.
+            standard_provider.gradient_accumulation_fusion = False
+            specs = [provider.language_model_spec]
+            for modality_spec in provider.modality_submodules_spec.values():
+                submodules = modality_spec.submodules or {}
+                specs.extend((submodules.get("encoders") or {}).values())
+                specs.extend((submodules.get("decoders") or {}).values())
+                specs.extend(submodules.get("input_projections") or [])
+                specs.extend(submodules.get("output_projections") or [])
+            for spec in specs:
+                if spec is not None:
+                    for value in (spec.params or {}).values():
+                        if isinstance(value, TransformerConfig):
+                            value.gradient_accumulation_fusion = False
         model = self.to_megatron_model(
             load_weights=True,
             wrap_with_ddp=False,
@@ -798,19 +830,20 @@ def _iter_active_routes(
 ) -> Iterator[tuple[MIMOComponent, Any]]:
     """Yield (route, pg_collection) pairs for components this rank owns.
 
-    Skips any route whose ``pg_collections.get(route.name)`` is ``None``.
-    Raises if a route name is missing from ``pg_collections`` entirely — that
+    Skips any route whose component's process groups are ``None``.
+    Raises if a component name is missing from ``pg_collections`` entirely — that
     means the MIMO infra was built with a different component set than the
     route table declares.
     """
     for route in routes:
-        if route.name not in pg_collections:
+        if route.parallelism_name not in pg_collections:
             raise KeyError(
-                f"Route {route.name!r} is not present in MegatronMIMOInfra.pg_collections "
+                f"Component {route.parallelism_name!r} owning route {route.name!r} "
+                "is not present in MegatronMIMOInfra.pg_collections "
                 f"(available: {sorted(pg_collections.keys())}). Route table and parallelism "
                 f"config are out of sync."
             )
-        pg_collection = pg_collections[route.name]
+        pg_collection = pg_collections[route.parallelism_name]
         if pg_collection is None:
             logger.debug("Skipping route %r on this rank: pg_collection is None", route.name)
             continue
@@ -955,6 +988,9 @@ def save_hf_pretrained_mimo(
         dist.barrier()
 
     if (not dist.is_initialized()) or dist.get_rank() == 0:
+        weight_postprocessor = getattr(type(bridge._model_bridge), "postprocess_hf_export_weights", None)
+        if weight_postprocessor is not None:
+            weight_postprocessor(bridge._model_bridge, output_path)
         logger.info("save_hf_pretrained_mimo: wrote HF checkpoint to %s", output_path)
 
 
@@ -966,13 +1002,18 @@ def _copy_hf_artifacts(
     disable_mtp: bool = False,
 ) -> None:
     output_path.mkdir(parents=True, exist_ok=True)
-    additional_files = getattr(bridge._model_bridge, "ADDITIONAL_FILE_PATTERNS", None) or None
+    model_bridge = bridge._model_bridge
+    additional_files = getattr(model_bridge, "ADDITIONAL_FILE_PATTERNS", None) or None
     with _temporarily_disable_hf_mtp(bridge.hf_pretrained.config, enabled=disable_mtp):
         bridge.hf_pretrained.save_artifacts(
             output_path,
             original_source_path=source_path,
             additional_files=additional_files,
         )
+    # Same model-specific hook the standard AutoBridge export runs.
+    artifact_postprocessor = getattr(type(model_bridge), "postprocess_hf_export_artifacts", None)
+    if artifact_postprocessor is not None:
+        artifact_postprocessor(model_bridge, output_path)
 
 
 @contextlib.contextmanager
@@ -1019,6 +1060,44 @@ def _stream_mimo_weights_to_rank0(
     show_progress: bool,
 ) -> Iterator[tuple[str, torch.Tensor]]:
     """Stream global HF tensors on rank 0 while all active ranks drain collectives."""
+    yield from _dedupe_hf_weight_stream(
+        _stream_mimo_weights_to_rank0_impl(
+            source_bridge=source_bridge,
+            hf_pretrained=hf_pretrained,
+            mimo_model=mimo_model,
+            routes=routes,
+            pg_collections=pg_collections,
+            show_progress=show_progress,
+        )
+    )
+
+
+def _dedupe_hf_weight_stream(stream: Iterator[Any]) -> Iterator[Any]:
+    """Drop repeated HF names.
+
+    Mapped tensors are disjoint across routes by construction. Source-only
+    passthrough buffers (emitted by ``stream_weights_megatron_to_hf`` overrides)
+    have no route and would otherwise be yielded once per route.
+    """
+    seen: set[str] = set()
+    for payload in stream:
+        name = payload[0]
+        if name in seen:
+            logger.debug("Skipping duplicate HF tensor %r emitted by another MIMO route", name)
+            continue
+        seen.add(name)
+        yield payload
+
+
+def _stream_mimo_weights_to_rank0_impl(
+    *,
+    source_bridge: Any,
+    hf_pretrained: Any,
+    mimo_model: nn.Module,
+    routes: list[MIMOComponent],
+    pg_collections: dict[str, Any],
+    show_progress: bool,
+) -> Iterator[tuple[str, torch.Tensor]]:
     if not dist.is_initialized():
         yield from export_megatron_mimo_to_hf(
             source_bridge=source_bridge,
@@ -1035,13 +1114,14 @@ def _stream_mimo_weights_to_rank0(
     world_size = dist.get_world_size()
 
     for route in routes:
-        if route.name not in pg_collections:
+        if route.parallelism_name not in pg_collections:
             raise ValueError(
-                f"Route {route.name!r} is not present in MegatronMIMOInfra.pg_collections "
+                f"Component {route.parallelism_name!r} owning route {route.name!r} "
+                "is not present in MegatronMIMOInfra.pg_collections "
                 f"(available: {sorted(pg_collections.keys())})."
             )
 
-        pg_collection = pg_collections[route.name]
+        pg_collection = pg_collections[route.parallelism_name]
         is_active = pg_collection is not None
         is_representative = is_active and _is_component_export_representative(pg_collection)
         route_iter = None

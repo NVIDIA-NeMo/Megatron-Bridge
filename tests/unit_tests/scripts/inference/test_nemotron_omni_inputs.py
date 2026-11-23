@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import importlib.util
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -246,9 +248,11 @@ def test_hf_video_forward_receives_native_pixels_not_bridge_patches():
     path = ROOT / "examples/conversion/compare_hf_and_megatron/compare.py"
     module = load_functions(
         path,
-        ["_get_hf_forward_model", "_run_hf_inference"],
+        ["_get_hf_forward_model", "_run_hf_inference", "_torch_kernel_fallbacks"],
         _is_rank_0=lambda: True,
         print_rank_0=lambda *args: None,
+        contextlib=contextlib,
+        Iterator=Iterator,
     )
     seen = {}
 

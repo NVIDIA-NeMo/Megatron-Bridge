@@ -14,6 +14,9 @@ SCRIPT_DIR = REPO_ROOT / "scripts" / "conversion"
 
 def _load_cpu_backend():
     calls = []
+    utils_spec = importlib.util.spec_from_file_location("utils", SCRIPT_DIR / "utils.py")
+    conversion_utils = importlib.util.module_from_spec(utils_spec)
+    utils_spec.loader.exec_module(conversion_utils)
 
     class Bridge:
         def __init__(self, config):
@@ -41,17 +44,20 @@ def _load_cpu_backend():
         "megatron": types.ModuleType("megatron"),
         "megatron.bridge": types.ModuleType("megatron.bridge"),
         "megatron.bridge.models": types.ModuleType("megatron.bridge.models"),
+        "megatron.bridge.models.decorators": types.ModuleType("megatron.bridge.models.decorators"),
         "megatron.bridge.models.hf_pretrained": types.ModuleType("megatron.bridge.models.hf_pretrained"),
         "megatron.bridge.models.hf_pretrained.utils": types.ModuleType("megatron.bridge.models.hf_pretrained.utils"),
-        "utils": types.ModuleType("utils"),
+        "utils": conversion_utils,
     }
     modules["megatron.bridge"].AutoBridge = AutoBridge
+    modules["megatron.bridge.models.decorators"].torchrun_main = lambda function: function
     modules["megatron.bridge.models.hf_pretrained.utils"].is_safe_repo = lambda **kwargs: kwargs["trust_remote_code"]
     modules["utils"].parse_dtype = lambda value: f"dtype:{value}"
     modules["utils"].prepare_output_directory = lambda *args, **kwargs: calls.append(
         ("prepare_output_directory", args, kwargs)
     )
     modules["utils"].resolve_hf_model_revision = lambda model, revision: f"{model}@{revision}" if revision else model
+    modules["utils"].validate_output_path = lambda *args, **kwargs: None
 
     previous_modules = {name: sys.modules.get(name) for name in modules}
     sys.modules.update(modules)

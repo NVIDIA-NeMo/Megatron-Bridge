@@ -31,7 +31,7 @@ from megatron.bridge.perf_recipes.qwen import (
     qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config,
-    qwen3_30b_a3b_pretrain_8gpu_vr200_nvfp4_config,
+    qwen3_30b_a3b_pretrain_8gpu_vrnvl72_nvfp4_config,
     qwen3_235b_a22b_pretrain_64gpu_b200_fp8cs_config,
     qwen3_235b_a22b_pretrain_64gpu_b200_nvfp4_config,
     qwen3_235b_a22b_pretrain_64gpu_b300_fp8cs_config,
@@ -52,7 +52,7 @@ from megatron.bridge.perf_recipes.qwen import (
     qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
-    qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config,
 )
 
 
@@ -85,7 +85,7 @@ def test_qwen3_235b_64gpu_blackwell_topology_is_valid(
         qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config,
         qwen3_30b_a3b_pretrain_8gpu_b200_nvfp4_config,
         qwen3_30b_a3b_pretrain_8gpu_b300_nvfp4_config,
-        qwen3_30b_a3b_pretrain_8gpu_vr200_nvfp4_config,
+        qwen3_30b_a3b_pretrain_8gpu_vrnvl72_nvfp4_config,
         qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config,
         qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config,
         qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config,
@@ -94,7 +94,7 @@ def test_qwen3_235b_64gpu_blackwell_topology_is_valid(
         qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config,
         qwen3_235b_a22b_pretrain_64gpu_b300_nvfp4_config,
         qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config,
-        qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config,
+        qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config,
     ],
 )
 def test_nvfp4_disables_tp_comm_overlap(nvfp4_config_fn):

@@ -37,7 +37,7 @@ def qwen2_500m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-0.5B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-0.5B").get_model_config()
 
     # Tokenizer
     # Qwen2 uses NullTokenizer by default for pretraining
@@ -128,7 +128,7 @@ def qwen2_1p5b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-1.5B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-1.5B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -217,7 +217,7 @@ def qwen2_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -307,7 +307,7 @@ def qwen2_72b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-72B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-72B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -402,7 +402,7 @@ def qwen25_500m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-0.5B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-0.5B").get_model_config()
 
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -487,7 +487,7 @@ def qwen25_1p5b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-1.5B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-1.5B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -572,7 +572,7 @@ def qwen25_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-7B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-7B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -657,7 +657,7 @@ def qwen25_14b_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-14B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-14B").get_model_config()
 
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -747,7 +747,7 @@ def qwen25_32b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-32B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-32B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -832,7 +832,7 @@ def qwen25_72b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-72B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-72B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -927,7 +927,7 @@ def qwen2_500m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-0.5B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-0.5B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2-0.5B"
@@ -1029,7 +1029,7 @@ def qwen2_1p5b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-1.5B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-1.5B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2-1.5B"
@@ -1131,7 +1131,7 @@ def qwen2_7b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2-7B"
@@ -1233,7 +1233,7 @@ def qwen2_72b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-72B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-72B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2-72B"
@@ -1340,7 +1340,7 @@ def qwen25_500m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-0.5B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-0.5B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2.5-0.5B"
@@ -1442,7 +1442,7 @@ def qwen25_1p5b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-1.5B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-1.5B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2.5-1.5B"
@@ -1544,7 +1544,7 @@ def qwen25_7b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-7B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-7B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2.5-7B"
@@ -1646,7 +1646,7 @@ def qwen25_14b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-14B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-14B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2.5-14B"
@@ -1748,7 +1748,7 @@ def qwen25_32b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-32B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-32B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2.5-32B"
@@ -1850,7 +1850,7 @@ def qwen25_72b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-72B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-72B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2.5-72B"
@@ -1960,7 +1960,7 @@ def qwen2_500m_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-0.5B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-0.5B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2-0.5B"
@@ -2067,7 +2067,7 @@ def qwen2_1p5b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-1.5B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-1.5B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2-1.5B"
@@ -2174,7 +2174,7 @@ def qwen2_7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2-7B"
@@ -2281,7 +2281,7 @@ def qwen2_72b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Co
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-72B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-72B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2-72B"
@@ -2393,7 +2393,7 @@ def qwen25_500m_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> 
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-0.5B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-0.5B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2.5-0.5B"
@@ -2500,7 +2500,7 @@ def qwen25_1p5b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> 
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-1.5B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-1.5B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2.5-1.5B"
@@ -2607,7 +2607,7 @@ def qwen25_7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Co
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-7B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-7B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2.5-7B"
@@ -2714,7 +2714,7 @@ def qwen25_14b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-14B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-14B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2.5-14B"
@@ -2821,7 +2821,7 @@ def qwen25_32b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-32B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-32B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2.5-32B"
@@ -2928,7 +2928,7 @@ def qwen25_72b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-72B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-72B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen2.5-72B"

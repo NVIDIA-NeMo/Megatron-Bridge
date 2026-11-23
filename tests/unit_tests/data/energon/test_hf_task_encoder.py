@@ -345,6 +345,60 @@ class TestHFTaskEncoderBatch(unittest.TestCase):
 
         self.assertEqual(seen_kwargs, {"min_pixels": 16, "max_pixels": 128})
 
+    def test_batch_omits_padding_mask_by_default(self):
+        sample = HFEnergonSample(
+            __key__="k1",
+            __subflavors__={},
+            example={"conversation": [{"role": "user", "content": "one"}]},
+        )
+
+        self.assertIsNone(self.encoder.batch([sample]).padding_mask)
+
+    def test_batch_derives_padding_mask_from_attention_mask_on_request(self):
+        def _collate(examples, processor, **kwargs):
+            collated = _make_collate_fn()(examples, processor, **kwargs)
+            collated["attention_mask"] = torch.tensor([[1, 1, 1, 0, 0], [1, 1, 1, 1, 1]])
+            return collated
+
+        encoder = HFTaskEncoder(
+            processor=self.processor, seq_length=128, collate_fn=_collate, return_padding_mask=True
+        )
+        samples = [
+            HFEnergonSample(__key__=key, __subflavors__={}, example={"conversation": []}) for key in ("k1", "k2")
+        ]
+
+        batch = encoder.batch(samples)
+
+        expected = torch.tensor([[False, False, False, True, True], [False, False, False, False, False]])
+        self.assertTrue(torch.equal(batch.padding_mask, expected))
+
+    def test_padding_mask_request_leaves_packed_batches_unchanged(self):
+        def _collate(examples, processor, **kwargs):
+            collated = _make_collate_fn()(examples, processor, **kwargs)
+            collated["cu_seqlens_q"] = torch.tensor([0, 5], dtype=torch.int32)
+            return collated
+
+        encoder = HFTaskEncoder(
+            processor=self.processor, seq_length=128, collate_fn=_collate, return_padding_mask=True
+        )
+        sample = HFEnergonSample(__key__="k1", __subflavors__={}, example={"conversation": []})
+
+        self.assertIsNone(encoder.batch([sample]).padding_mask)
+
+    def test_padding_mask_request_requires_a_2d_attention_mask(self):
+        def _collate(examples, processor, **kwargs):
+            collated = _make_collate_fn()(examples, processor, **kwargs)
+            collated["attention_mask"] = None
+            return collated
+
+        encoder = HFTaskEncoder(
+            processor=self.processor, seq_length=128, collate_fn=_collate, return_padding_mask=True
+        )
+        sample = HFEnergonSample(__key__="k1", __subflavors__={}, example={"conversation": []})
+
+        with self.assertRaisesRegex(ValueError, "2D attention_mask"):
+            encoder.batch([sample])
+
     def test_collate_fallback_rejects_oversized_batches(self):
         processor = _make_processor()
         encoder = HFTaskEncoder(
@@ -360,82 +414,6 @@ class TestHFTaskEncoderBatch(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "exceeds seq_length"):
             encoder.batch([sample])
-
-
-def test_nemotron_vl_registry_accepts_decoded_energon_video(monkeypatch):
-    from megatron.bridge.models.nemotron_vl import nemotron_vl_utils
-    from megatron.bridge.models.nemotron_vl.data import collate_fn as nemotron_vl_collate
-
-    class _Tokenizer:
-        pad_token = "<pad>"
-        pad_token_id = 0
-        eos_token = "<eos>"
-        eos_token_id = 1
-
-        def convert_tokens_to_ids(self, token):
-            return {"<video>": 9, "<image>": 10}[token]
-
-    class NemotronNanoVLV2Processor:
-        def __init__(self):
-            self.tokenizer = _Tokenizer()
-            self.video_payloads = None
-
-        def apply_chat_template(self, conversations, **kwargs):
-            del conversations, kwargs
-            return ["rendered prompt"]
-
-        def __call__(self, *, videos, **kwargs):
-            del kwargs
-            self.video_payloads = videos
-            return {
-                "input_ids": torch.tensor([[1, 2, 3]]),
-                "num_patches": torch.tensor([1]),
-                "pixel_values_videos": torch.ones(1, 3, 2, 2),
-            }
-
-    monkeypatch.setattr(
-        nemotron_vl_collate,
-        "extract_skipped_token_ids",
-        lambda processor: torch.empty(0, dtype=torch.long),
-    )
-    monkeypatch.setattr(
-        nemotron_vl_collate,
-        "_nemotron_vl_assistant_mask_boundary_config",
-        lambda processor: None,
-    )
-    monkeypatch.setattr(
-        nemotron_vl_collate,
-        "build_assistant_loss_mask",
-        lambda example, input_ids, *args, **kwargs: torch.zeros_like(input_ids, dtype=torch.float32),
-    )
-    monkeypatch.setattr(
-        nemotron_vl_utils,
-        "adjust_image_tokens",
-        lambda batch, *args, **kwargs: batch,
-    )
-
-    processor = NemotronNanoVLV2Processor()
-    encoder = HFTaskEncoder(processor=processor, seq_length=128)
-    sample = _make_chatml_sample(
-        conversation=json.dumps(
-            [
-                {
-                    "role": "user",
-                    "content": [{"type": "video"}, {"type": "text", "text": "Describe the video."}],
-                },
-                {"role": "assistant", "content": "A moving square."},
-            ]
-        ),
-        videos=[[torch.ones(3, 2, 2)]],
-    )
-
-    encoded = encoder.encode_sample(sample)
-    decoded_frames = encoded.example["conversation"][0]["content"][0]["video"]
-    batch = encoder.batch([encoded])
-
-    assert isinstance(batch, HFEnergonBatch)
-    assert processor.video_payloads is not None
-    assert processor.video_payloads[0][0] is decoded_frames[0]
 
 
 class TestHFTaskEncoderEncodeBatch(unittest.TestCase):

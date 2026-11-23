@@ -44,6 +44,7 @@ from megatron.core.transformer.transformer_layer import (
     get_transformer_layer_offset,
 )
 
+from megatron.bridge.models.ernie.ernie_router import Ernie45TopKRouter
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer import (
     ErnieMultiTypeMoE,
     MultiTypeMoeSubmodules,
@@ -144,6 +145,8 @@ def _get_mlp_module_spec(
         module=MoELayer,
         submodules=MoESubmodules(
             experts=experts_spec,
+            # Softmax gate with an expert-bias selection correction, as in ERNIE 4.5.
+            router=Ernie45TopKRouter,
         ),
     )
 

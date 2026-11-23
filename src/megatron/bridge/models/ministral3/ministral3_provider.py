@@ -46,10 +46,16 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+from megatron.core import parallel_state
 from megatron.core.extensions.transformer_engine import TEDotProductAttention as MCoreTEDotProductAttention
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.enums import AttnMaskType
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider, default_layer_spec
+from megatron.bridge.training.utils.packed_seq_utils import (
+    get_packed_seq_cp_partition_indices,
+    get_packed_seq_q_cu_seqlens,
+)
 
 
 # =============================================================================
@@ -167,6 +173,60 @@ class Ministral3ModelProvider(MistralModelProvider):
         return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
 
+def get_llama_4_scaling_positions(
+    num_local_tokens: int,
+    *,
+    packed_seq_params: PackedSeqParams | None,
+    cp_group: torch.distributed.ProcessGroup | None,
+    device: torch.device,
+) -> torch.Tensor:
+    """Return the position of each local query token within its own sequence.
+
+    Core attention sees only this rank's tokens: packed (THD) input restarts positions
+    at every packed sequence, and context parallelism keeps zigzag chunks ``r`` and
+    ``2 * cp_size - 1 - r`` of each sequence. The Llama 4 attention scale must use the
+    token's real position, as Hugging Face computes it from ``position_ids``.
+
+    Args:
+        num_local_tokens: Number of query tokens on this rank (``query.shape[0]``).
+        packed_seq_params: Packed sequence metadata, or None for unpacked input.
+        cp_group: Context-parallel group the input was sliced with, or None without CP.
+        device: Device of the returned positions.
+
+    Returns:
+        Long tensor of shape ``[num_local_tokens]`` with the in-sequence positions.
+    """
+    cp_size = cp_group.size() if cp_group is not None else 1
+    cp_rank = cp_group.rank() if cp_size > 1 else 0
+
+    if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
+        # Global indices of the local tokens in the full packed stream, sliced the same way as the inputs.
+        stream_indices = get_packed_seq_cp_partition_indices(
+            packed_seq_params,
+            total_tokens=num_local_tokens * cp_size,
+            cp_size=cp_size,
+            cp_rank=cp_rank,
+            device=device,
+            cp_group=cp_group,
+        )
+        # Physical (padded) offsets, as used for RoPE in THD format.
+        _, cu_seqlens = get_packed_seq_q_cu_seqlens(packed_seq_params)
+        cu_seqlens = cu_seqlens.to(device=device, dtype=torch.long)
+        sequence_index = torch.searchsorted(cu_seqlens, stream_indices, right=True) - 1
+        return stream_indices - cu_seqlens[sequence_index]
+
+    positions = torch.arange(num_local_tokens, device=device)
+    if cp_size > 1:
+        # Zigzag CP split of one sequence: this rank holds chunks cp_rank and 2 * cp_size - 1 - cp_rank.
+        chunk = num_local_tokens // 2
+        positions = torch.where(
+            positions < chunk,
+            positions + cp_rank * chunk,
+            positions - chunk + (2 * cp_size - 1 - cp_rank) * chunk,
+        )
+    return positions
+
+
 class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
     """
     Implementation of the TEDotProductAttention mechanism for Ministral (Mistral) 3 models with Llama 4-style attention scaling.
@@ -210,6 +270,16 @@ class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
             self.beta = 0  # No effect
             self.max_position_embeddings = self.config.seq_length
 
+        # CP group the model slices its inputs with, needed to recover the local tokens' positions.
+        self.positions_cp_group = None
+        if self.config.context_parallel_size > 1:
+            pg_collection = kwargs.get("pg_collection")
+            self.positions_cp_group = (
+                pg_collection.cp
+                if pg_collection is not None
+                else parallel_state.get_context_parallel_group(check_initialized=False)
+            )
+
     @staticmethod
     def _get_llama_4_attn_scale(
         positions_ids: torch.Tensor, beta: float, max_position_embeddings: int, query_shape: tuple
@@ -231,7 +301,12 @@ class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
         attn_mask_type: AttnMaskType,
         **kwargs,
     ):
-        positions_ids = torch.arange(query.shape[0], device=query.device)
+        positions_ids = get_llama_4_scaling_positions(
+            query.shape[0],
+            packed_seq_params=kwargs.get("packed_seq_params"),
+            cp_group=self.positions_cp_group,
+            device=query.device,
+        )
         query *= self._get_llama_4_attn_scale(positions_ids, self.beta, self.max_position_embeddings, query.shape).to(
             query.dtype
         )

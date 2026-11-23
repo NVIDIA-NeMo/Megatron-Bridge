@@ -64,6 +64,7 @@ def _prepare_text_dataset(path: Path) -> None:
 
 
 @pytest.mark.run_only_on("GPU")
+@pytest.mark.usefixtures("reset_distributed")
 @pytest.mark.parametrize("topology", ["gtp", "cp"])
 def test_energon_gtp_streams_and_checkpoint_resume(tmp_path, topology):
     if topology == "gtp" and not HAVE_GTP:

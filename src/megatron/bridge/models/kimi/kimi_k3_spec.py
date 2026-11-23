@@ -24,6 +24,7 @@ from megatron.core.transformer.moe.experts import GroupedMLPSubmodules
 from megatron.core.transformer.moe.moe_layer import MoELayer, MoESubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
+from megatron.training.models.gpt import GPTModelConfig as MCoreGPTModelConfig
 
 from megatron.bridge.models.kimi.kimi_k3_layers import KimiK3Attention, KimiK3MoELayer, KimiK3TransformerLayer
 from megatron.bridge.models.kimi.kimi_k3_ops import SiTUAndMul
@@ -50,7 +51,12 @@ def _with_situ_activation(builder):
 
 
 def build_kimi_k3_spec(config, vp_stage=None):
-    """Build the heterogeneous KDA/MLA and dense/MoE Kimi K3 block."""
+    """Build the heterogeneous KDA/MLA and dense/MoE Kimi K3 block.
+
+    Accepts the legacy provider or a builder-backed GPT model config, whose
+    transformer fields live on ``config.transformer``.
+    """
+    config = config.transformer if isinstance(config, MCoreGPTModelConfig) else config
     if config.virtual_pipeline_model_parallel_size is not None:
         raise ValueError("Kimi K3 does not support virtual pipeline parallelism yet")
 

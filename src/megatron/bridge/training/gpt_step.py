@@ -485,7 +485,7 @@ def get_batch(
     else:
         full_position_ids = batch.get("position_ids") if _keep_full_position_ids_for_cp(model_cfg, cp_size) else None
         # slice batch along sequence dimension for context parallelism
-        batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
+        batch = get_batch_on_this_cp_rank(batch, dynamic_cp=False, cp_group=pg_collection.cp)
         if full_position_ids is not None:
             batch["position_ids"] = full_position_ids
 
@@ -632,12 +632,18 @@ def _forward_step_common(
     # FLOPs while attention uses the unchanged sub-sequence boundaries. train.py reduces
     # over pure DP, not CP. A post-process-only PP stage has labels but no input token ids.
     if not packed.flops_from_scheduler:
+        flops_tokens = tokens if tokens is not None else labels
+        cp_size = pg_collection.cp.size()
+        # get_batch has already CP-sharded the sequence dimension. Recover the
+        # physical batch length, not the configured maximum: dense SFT batches can
+        # be shorter, and builder-backed model.config has no seq_length field.
+        full_seq_len = flops_tokens.shape[1] * cp_size if flops_tokens is not None else None
         accumulate_flops_metadata(
             state,
-            tokens if tokens is not None else labels,
+            flops_tokens,
             vp_stage=vp_stage,
-            config_seq_len=getattr(config, "seq_length", None),
-            context_parallel_size=pg_collection.cp.size(),
+            config_seq_len=full_seq_len,
+            context_parallel_size=cp_size,
             cu_seqlens=packed.flops_cu_seqlens,
             cu_seqlens_argmin=packed.flops_cu_seqlens_argmin,
             cu_seqlens_unpadded=packed.flops_cu_seqlens_unpadded,

@@ -168,7 +168,7 @@ def dummy_quantization_checker(param_name):
     return True
 
 
-def test_quantized_stream_uses_model_config_for_tied_embeddings(monkeypatch):
+def test_quantized_stream_resolves_tied_embeddings_from_unwrapped_model(monkeypatch):
     model_bridge_module = types.ModuleType("megatron.bridge.models.conversion.model_bridge")
     model_bridge_module.HFWeightTuple = tuple
     monkeypatch.setitem(
@@ -177,15 +177,14 @@ def test_quantized_stream_uses_model_config_for_tied_embeddings(monkeypatch):
         model_bridge_module,
     )
 
-    model_config = object()
-    model = types.SimpleNamespace(config=model_config)
-    seen_configs = []
+    model = types.SimpleNamespace(config=object())
+    seen_models = []
 
     bridge = MegatronQuantizationBridge()
     monkeypatch.setattr(
         bridge,
         "_share_embeddings_and_output_weights",
-        lambda config: seen_configs.append(config) or False,
+        lambda unwrapped_model: seen_models.append(unwrapped_model) or False,
         raising=False,
     )
     monkeypatch.setattr(bridge, "_with_progress_tracking", lambda tasks, *_args: tasks, raising=False)
@@ -201,7 +200,7 @@ def test_quantized_stream_uses_model_config_for_tied_embeddings(monkeypatch):
     )
 
     assert list(exported) == []
-    assert seen_configs == [model_config]
+    assert seen_models == [model]
 
 
 def test_quantized_stream_accumulates_grouped_experts(monkeypatch):

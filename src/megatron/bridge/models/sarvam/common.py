@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from transformers import PretrainedConfig
 
 
-def get_common_config(hf_pretrained: PreTrainedCausalLM) -> dict:
+def get_common_config(hf_config: PretrainedConfig) -> dict:
     """
     Returns a dictionary of common configurations for the Sarvam family of models.
     """
-    hf_config = hf_pretrained.config
-
     config = {}
 
     config["num_layers"] = hf_config.num_hidden_layers

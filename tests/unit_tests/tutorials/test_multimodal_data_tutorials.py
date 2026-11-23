@@ -293,7 +293,11 @@ def test_multimodal_tutorials_document_runnable_qwen_paths():
     assert "## Start with a hosted chat dataset" in hf_multimodal
     assert 'HFDatasetSourceConfig(dataset_name="medpix")' in hf_multimodal
     assert "--nproc_per_node=1" in hf_multimodal
-    assert "--dataset vlm-hf" in hf_multimodal
+    assert "--dataset local-vlm" in hf_multimodal
+    assert "--dataset medpix" in hf_multimodal
+    assert "--mode lora" in hf_multimodal
+    assert "--dataset vlm-hf" not in hf_multimodal
+    assert "--peft_scheme" not in hf_multimodal
     assert "dataset.source.path_or_dataset=json" in hf_multimodal
     assert "dataset.source.load_kwargs={data_files:{train:" in hf_multimodal
     assert "dataset.source.dataset_name=medpix" in hf_multimodal

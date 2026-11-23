@@ -127,8 +127,8 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     # Use layer.config (not self.config) because the layer's config is what
                     # determines if _should_call_te_cudagraph returns True.
                     layer_uses_te_cudagraph = (
-                        hasattr(layer, "cuda_graphs")
-                        and layer.cuda_graphs
+                        hasattr(layer, "te_cuda_graphs")
+                        and layer.te_cuda_graphs
                         and layer.training
                         and hasattr(layer, "config")
                         and getattr(layer.config, "cuda_graph_impl", "none") == "transformer_engine"
@@ -136,7 +136,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     layer_packed_seq_params = None if layer_uses_te_cudagraph else packed_seq_params
                     with inner_fp8_context:
                         hidden_states, context = layer(
-                            hidden_states=hidden_states,
+                            hidden_states,
                             attention_mask=attention_mask,
                             context=context,
                             context_mask=context_mask,
@@ -342,15 +342,15 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                         # Use layer.config (not self.config) because the layer's config is what
                         # determines if _should_call_te_cudagraph returns True.
                         layer_uses_te_cudagraph = (
-                            hasattr(layer, "cuda_graphs")
-                            and layer.cuda_graphs
+                            hasattr(layer, "te_cuda_graphs")
+                            and layer.te_cuda_graphs
                             and layer.training
                             and hasattr(layer, "config")
                             and getattr(layer.config, "cuda_graph_impl", "none") == "transformer_engine"
                         )
                         layer_packed_seq_params = None if layer_uses_te_cudagraph else packed_seq_params
                         hidden_states, context = layer(
-                            hidden_states=hidden_states,
+                            hidden_states,
                             attention_mask=attention_mask,
                             context=context,
                             context_mask=context_mask,
@@ -534,7 +534,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     )
                     with inner_fp8_context:
                         hidden_states, context = layer(
-                            hidden_states=hidden_states,
+                            hidden_states,
                             attention_mask=attention_mask,
                             context=context,
                             context_mask=context_mask,
@@ -753,7 +753,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     )
                     with self.offload_context, inner_fp8_context:
                         hidden_states, context = layer(
-                            hidden_states=hidden_states,
+                            hidden_states,
                             attention_mask=attention_mask,
                             context=context,
                             context_mask=context_mask,

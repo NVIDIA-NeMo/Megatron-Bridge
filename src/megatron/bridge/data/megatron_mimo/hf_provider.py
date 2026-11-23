@@ -51,7 +51,7 @@ class HFMegatronMIMODatasetProvider(MegatronMIMODatasetProvider):
         >>> provider = HFMegatronMIMODatasetProvider(
         ...     seq_length=2048,
         ...     hf_dataset_path="liuhaotian/LLaVA-Instruct-150K",
-        ...     hf_tokenizer_path="meta-llama/Llama-2-7b-hf",
+        ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
         ...     processor_paths={"vision": "openai/clip-vit-large-patch14"},
         ...     special_token_ids={"vision": 32000},
         ...     encoder_seq_lengths={"vision": 577},  # CLIP ViT-L/14 output tokens

@@ -34,13 +34,22 @@ def wan_14b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.sequence_parallel = True
     cfg.train.global_batch_size = 64
     cfg.train.micro_batch_size = 1
+    cfg.dataset.global_batch_size = 64
+    cfg.dataset.micro_batch_size = 1
+    cfg.train.empty_unused_memory_level = 0
 
     cfg.model.recompute_granularity = "full"
     cfg.model.recompute_method = "block"
     cfg.model.recompute_num_layers = 8
 
+    cfg.optimizer.lr = 5e-6
+    cfg.optimizer.min_lr = 5e-6
+
     _benchmark_common(cfg)
-    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.logger.log_throughput = True
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.scheduler.lr_decay_style = "constant"
+    cfg.scheduler.lr_warmup_iters = 0
     cfg.model.cuda_graph_scope = []
     cfg.model.moe_token_dispatcher_type = "alltoall"
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -54,8 +63,11 @@ def wan_14b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Transformer Engine overlap and kernel settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_FUSED_ATTN": 1,
     }
     return cfg
