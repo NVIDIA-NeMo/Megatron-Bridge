@@ -192,6 +192,59 @@ def test_cyclic_sampler_non_sharded_tail_keeps_data_parallel_epochs_aligned() ->
     assert second_step == resumed_step
 
 
+def _sharded_indices(
+    rank: int, *, total_samples: int, data_parallel_size: int, consumed_samples: int = 0
+) -> list[int]:
+    sampler = MegatronPretrainingRandomSampler(
+        list(range(total_samples)),
+        total_samples=total_samples,
+        consumed_samples=consumed_samples,
+        micro_batch_size=1,
+        data_parallel_rank=rank,
+        data_parallel_size=data_parallel_size,
+        data_sharding=True,
+    )
+    return [index for batch in sampler for index in batch]
+
+
+def test_cyclic_sampler_sharded_ranks_do_not_replay_a_repeating_dataset() -> None:
+    """Shards that hold the same examples must not be read in the same order.
+
+    DirectSFTDataset repeats its base examples (index % base size). With two ranks and twice the base size, each
+    rank's shard holds every example once; one shared shuffle fed both ranks the same example at every step.
+    """
+    num_examples, data_parallel_size = 64, 2
+    examples = [
+        [
+            index % num_examples
+            for index in _sharded_indices(
+                rank, total_samples=num_examples * data_parallel_size, data_parallel_size=data_parallel_size
+            )
+        ]
+        for rank in range(data_parallel_size)
+    ]
+
+    assert all(sorted(rank_examples) == list(range(num_examples)) for rank_examples in examples)
+    assert sum(first == second for first, second in zip(*examples)) < num_examples // 8
+
+
+def test_cyclic_sampler_sharded_rank_zero_keeps_the_epoch_shuffle() -> None:
+    """Rank 0 still shuffles its shard with the epoch seed, so its order does not change."""
+    expected = torch.randperm(6, generator=torch.Generator().manual_seed(0)).tolist()
+
+    assert _sharded_indices(0, total_samples=12, data_parallel_size=2) == expected
+
+
+def test_cyclic_sampler_sharded_resume_continues_each_rank_shuffle() -> None:
+    """A resumed sampler continues every rank's own shuffle where the uninterrupted one would be."""
+    for rank in range(2):
+        uninterrupted = _sharded_indices(rank, total_samples=12, data_parallel_size=2)
+        resumed = _sharded_indices(rank, total_samples=12, data_parallel_size=2, consumed_samples=4)
+
+        assert sorted(uninterrupted) == list(range(rank * 6, rank * 6 + 6))
+        assert resumed == uninterrupted[2:]
+
+
 def _small_loader(dataloader_type: str):
     return build_pretraining_data_loader(
         dataset=list(range(8)),

@@ -13,6 +13,11 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 
+# The sharded random sampler seeds rank r's shuffle in epoch e with e + r * stride, so rank 0 keeps the epoch seed.
+# Epochs and ranks below 2**16 get distinct seeds within the low 32 bits, the only bits torch's CPU generator uses.
+_SHARD_SEED_RANK_STRIDE = 1 << 16
+
+
 def _close_nvidia_device_fds() -> None:
     """Close inherited NVIDIA device descriptors in a DataLoader worker."""
     for fd in os.listdir("/proc/self/fd"):
@@ -486,7 +491,8 @@ class MegatronPretrainingRandomSampler:
         micro_batch_size: Batch size per GPU.
         data_parallel_rank: Rank of the current GPU in the data parallel group.
         data_parallel_size: Total number of GPUs in the data parallel group.
-        data_sharding: Whether data sharding is enabled.
+        data_sharding: Whether each rank reads its own contiguous shard of the epoch, shuffled with a seed
+            from the epoch and the rank, instead of a strided slice of one epoch-wide shuffle.
     """
 
     def __init__(
@@ -543,8 +549,11 @@ class MegatronPretrainingRandomSampler:
             bucket_offset = current_epoch_samples // self.data_parallel_size
             start_idx = self.data_parallel_rank * bucket_size
 
+            # Each rank shuffles its shard with its own seed; rank 0 keeps the epoch seed. With one shared
+            # permutation, a dataset that repeats its examples (DirectSFTDataset wraps its index around the base
+            # examples) fed the same example to every rank whose shard starts at a multiple of the base size.
             g = torch.Generator()
-            g.manual_seed(self.epoch)
+            g.manual_seed(self.epoch + self.data_parallel_rank * _SHARD_SEED_RANK_STRIDE)
             random_idx = torch.randperm(bucket_size, generator=g).tolist()
             idx_range = [start_idx + x for x in random_idx[bucket_offset:]]
         else:
