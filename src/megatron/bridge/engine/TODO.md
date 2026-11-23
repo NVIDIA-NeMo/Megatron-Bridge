@@ -16,6 +16,11 @@ sharing one runtime.
   context buckets with less context parallelism (fewer GPUs) need entries and a gate run each.
 - **Megatron FSDP v2** (`TODO(mfsdp-v2)`, `recipes/base.py`): FSDP wrappers are rejected; the engine must
   zero and scale gradients through the optimizer and run the cross-replica reduction on demand.
+- **GTP weight rematerialization** (`TODO(gtp)`, `recipes/base.py`): a recipe that shards weights
+  beyond tensor parallelism (`tensor_parallel_num_weight_shards`,
+  `expert_tensor_parallel_num_weight_shards`) is rejected. It has never been run through the engine:
+  forward, backward, checkpoints, export and `cpu()`/`cuda()` are untested with sharded weights, and
+  Bridge configures GTP process-wide while the engine builds a policy and a frozen model in one process.
 
 ## Compute
 
