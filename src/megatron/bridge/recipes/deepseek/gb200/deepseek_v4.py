@@ -171,6 +171,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_fsdp_config() -> ConfigContainer
     cfg.model.recompute_modules = ["moe"]
     cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_expert_rank_capacity_factor = 4.0
+    cfg.model.moe_pad_expert_input_to_capacity = False
     cfg.model.cuda_graph_impl = "full_iteration"
     cfg.model.cuda_graph_warmup_steps = 3
     cfg.model.use_te_rng_tracker = True
