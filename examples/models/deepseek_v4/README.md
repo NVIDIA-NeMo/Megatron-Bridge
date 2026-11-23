@@ -200,6 +200,11 @@ Differences from the reference run:
 - Indexer scoring is BF16; the reference uses a compact MXFP8 indexer that
   MCore `main` does not have.
 - Fallback Adam state is not sharded across data-parallel ranks.
+- The launch environment adds this repository's DeepSeek defaults, which the
+  reference scripts leave unset: `TORCH_NCCL_HIGH_PRIORITY=1`,
+  `CUDA_DEVICE_MAX_CONNECTIONS=32`, LayerNorm SM margins of 20 and the
+  NVLink-domain settings (`NVLINK_DOMAIN_SIZE=72`, `USE_MNNVL=1`, 64 ranks per
+  domain).
 
 The recipes export `TORCH_DIST_USE_NCCL2=0`. PyTorch 26.11 makes `nccl2` the
 default `nccl` backend, and that snapshot deadlocks MoK's async barrier

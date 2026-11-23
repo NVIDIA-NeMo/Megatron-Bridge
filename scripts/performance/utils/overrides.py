@@ -552,6 +552,8 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             if isinstance(recipe.dataset, FixedTHDMockDatasetConfig):
                 # DSv4's benchmark owns its THD padding and contiguous-CP contract.
                 recipe.dataset.seq_length = recipe.model.seq_length
+                # Rebuild the packing specs, which validation compares with the model length.
+                recipe.dataset.finalize()
             else:
                 recipe.dataset = create_mock_dataset_config(
                     seq_length=recipe.model.seq_length,

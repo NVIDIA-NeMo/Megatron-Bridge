@@ -244,7 +244,23 @@ def test_pro_optimizer_and_execution_contract(recipe_factory: Callable[[], Confi
     assert cfg.model.dsa_kernel_backend == "cudnn"
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
     assert cfg.comm_overlap.delay_wgrad_compute is False
-    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
+    # The repository's environment defaults must not displace what the reference launch scripts export.
+    reference_environment = {
+        "NCCL_GRAPH_REGISTER": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_IN_FLIGHT_S2G_DISPATCH_API": 8,
+        "NUM_OF_STAGES_DISPATCH_API": 10,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FUSED_ATTN": 1,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+    }
+    assert cfg.env_vars.items() >= reference_environment.items()
     # Legacy NCCL backend: PyTorch 26.11's default nccl2 breaks MoK's barrier and Muon's parameter gather.
     assert cfg.env_vars["TORCH_DIST_USE_NCCL2"] == 0
 

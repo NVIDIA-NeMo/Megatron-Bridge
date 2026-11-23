@@ -72,7 +72,34 @@ def deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     Rubin reference run for the proxy only, so the pipeline split and SM counts here are
     carried over rather than matched to a full-model log.
     """
-    return _use_rubin_mok_comm_sms(deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config())
+    cfg = _use_rubin_mok_comm_sms(deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config())
+
+    # Keep the VRNVL72 launch environment explicit instead of inheriting it from GB300.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_IN_FLIGHT_S2G_DISPATCH_API": 8,
+        "NUM_OF_STAGES_DISPATCH_API": 10,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FUSED_ATTN": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+        # Legacy NCCL backend; see the GB300 recipe.
+        "TORCH_DIST_USE_NCCL2": 0,
+    }
+    return cfg
 
 
 def deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
@@ -81,4 +108,31 @@ def deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContain
     The GB300 proxy with the Rubin reference's communication SM allocation. Needs a MoK
     build with Rubin kernels.
     """
-    return _use_rubin_mok_comm_sms(deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config())
+    cfg = _use_rubin_mok_comm_sms(deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config())
+
+    # Keep the VRNVL72 launch environment explicit instead of inheriting it from GB300.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_IN_FLIGHT_S2G_DISPATCH_API": 8,
+        "NUM_OF_STAGES_DISPATCH_API": 10,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FUSED_ATTN": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+        # Legacy NCCL backend; see the GB300 recipe.
+        "TORCH_DIST_USE_NCCL2": 0,
+    }
+    return cfg

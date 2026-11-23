@@ -261,27 +261,37 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.tokenizer.tensor_model_parallel_size = 1
     cfg.tokenizer.rank = 0
     cfg.dataset = FixedTHDMockDatasetConfig(seq_length=65536, vocab_size=129280, seed=1234, metadata_capacity=8)
-    # Environment values exported by both measured launch scripts.
+    # The NCCL, allocator, dispatch/combine and NVTE kernel settings are the ones the reference
+    # launch scripts export. Those scripts leave the shared settings, the connection count, the
+    # NVLink-domain names and the LayerNorm SM margins unset; they carry this repository's
+    # DeepSeek defaults.
     cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
         "NUM_OF_IN_FLIGHT_S2G_DISPATCH_API": 8,
         "NUM_OF_STAGES_DISPATCH_API": 10,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FUSED_ATTN": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+        # Not from the reference scripts. PyTorch 26.11 makes nccl2 the default "nccl" backend,
+        # and that snapshot deadlocks MoK's async barrier (pytorch#202783) and fails the LayerWise
+        # parameter gather when a bucket's first two ranks own nothing (pytorch#200585). Select
+        # the legacy backend until the image carries both upstream fixes.
+        "TORCH_DIST_USE_NCCL2": 0,
     }
-    # Not from the measured scripts. PyTorch 26.11 makes nccl2 the default "nccl" backend, and
-    # that snapshot deadlocks MoK's async barrier (pytorch#202783) and fails the LayerWise
-    # parameter gather when a bucket's first two ranks own nothing (pytorch#200585). Select the
-    # legacy backend until the image carries both upstream fixes.
-    cfg.env_vars["TORCH_DIST_USE_NCCL2"] = 0
     return cfg
 
 
@@ -302,6 +312,32 @@ def deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config() -> ConfigContainer
     cfg.model.virtual_pipeline_model_parallel_size = None
     set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
     cfg.comm_overlap.overlap_p2p_comm = False
+
+    # Keep the proxy launch environment explicit instead of inheriting it from the full recipe.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_IN_FLIGHT_S2G_DISPATCH_API": 8,
+        "NUM_OF_STAGES_DISPATCH_API": 10,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FUSED_ATTN": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+        # Legacy NCCL backend; see the full recipe.
+        "TORCH_DIST_USE_NCCL2": 0,
+    }
     return cfg
 
 

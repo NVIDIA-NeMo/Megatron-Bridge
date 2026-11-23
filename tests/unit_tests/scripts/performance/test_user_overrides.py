@@ -61,7 +61,8 @@ def test_seq_length_updates_model_and_mock_dataset(tmp_path):
     assert updated.dataset.seq_length == 128
 
 
-def test_mock_override_preserves_recipe_owned_thd_metadata(tmp_path):
+@pytest.mark.parametrize(("extra_args", "seq_length"), [((), 128), (("--seq_length", "64"), 64)])
+def test_mock_override_preserves_recipe_owned_thd_metadata(tmp_path, extra_args, seq_length):
     from megatron.bridge.models.deepseek.deepseek_v4_data import FixedTHDMockDatasetConfig
 
     recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
@@ -69,11 +70,15 @@ def test_mock_override_preserves_recipe_owned_thd_metadata(tmp_path):
     recipe.dataset = dataset
     recipe.model.seq_length = 128
 
-    updated = set_user_overrides(recipe, _parse_args(tmp_path))
+    updated = set_user_overrides(recipe, _parse_args(tmp_path, *extra_args))
 
     assert updated.dataset is dataset
     assert updated.dataset.enable_offline_packing is True
-    assert updated.dataset.metadata_capacity == 8
+    assert (dataset.vocab_size, dataset.seed, dataset.metadata_capacity) == (256, 1234, 8)
+    # Validation compares the packing specs with the model length, so they must follow an override.
+    assert updated.model.seq_length == dataset.seq_length == seq_length
+    specs = dataset.offline_packing_specs
+    assert specs.packed_sequence_size == specs.max_single_sequence_length == seq_length
 
 
 @pytest.mark.parametrize("create_attention_mask", [True, False])
