@@ -27,12 +27,12 @@ verification_index:
       - checkpoint_resume
 model:
   hf_id: Qwen/Qwen3.8-Flash-Next
-  hf_revision: de4b8e4d43b917e7706784d8bb445c9af86a3540
+  hf_revision: de4b8e4d43b917e7706784d8bb445c9af86a3540  # pragma: allowlist secret
   architecture: Qwen4ExpForCausalLM
   min_transformers_version: 5.16.1
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.10
-  bridge_commit: 1359a94264fadc590826edd29638b60bda554f5d
+  bridge_commit: 1359a94264fadc590826edd29638b60bda554f5d  # pragma: allowlist secret
 items:
   hf_to_megatron_cpu:
     status: unverified

@@ -27,12 +27,12 @@ verification_index:
       - checkpoint_resume
 model:
   hf_id: Qwen/Qwen3.8-Flash-Next
-  hf_revision: de4b8e4d43b917e7706784d8bb445c9af86a3540
+  hf_revision: de4b8e4d43b917e7706784d8bb445c9af86a3540  # pragma: allowlist secret
   architecture: Qwen4ExpForConditionalGeneration
   min_transformers_version: 5.16.1
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.10
-  bridge_commit: 1359a94264fadc590826edd29638b60bda554f5d
+  bridge_commit: 1359a94264fadc590826edd29638b60bda554f5d  # pragma: allowlist secret
 items:
   hf_to_megatron_cpu:
     status: unverified
@@ -72,7 +72,7 @@ items:
       weight comparison, causing the original wrapper to exit unsuccessfully. The repaired checker passed separately
       on the same preserved export in the released container. This does not verify inference or training-trajectory
       equivalence.'
-    bridge_commit: 195182b68ef07ccf4b6569da1f51e75dc8c712d8
+    bridge_commit: 195182b68ef07ccf4b6569da1f51e75dc8c712d8  # pragma: allowlist secret
   manual_forward_pass:
     status: unverified
     precision: bf16
@@ -114,7 +114,7 @@ items:
         dataset.path=work/data/datacomp-8192
         logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/sft/resolved-config.yaml
         logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/sft/tensorboard
-      bridge_commit: def1f75cbfac2b7376fb84fe89bd4a3da14d53af
+      bridge_commit: def1f75cbfac2b7376fb84fe89bd4a3da14d53af  # pragma: allowlist secret
       last_verified: '2026-11-23'
       metrics:
         initial_loss: 4.365921497344971
