@@ -109,10 +109,16 @@ class _Qwen4ExpMultimodalRotaryEmbedding(Qwen3VLMultimodalRotaryEmbedding):
     position_ids: torch.Tensor | None = None
     packed_seq_params: PackedSeqParams | None = None
 
-    def forward(self, max_seq_len: int, *, packed_seq: bool = False) -> torch.Tensor:
+    def forward(
+        self,
+        max_seq_len: int,
+        *,
+        packed_seq: bool = False,
+        cp_group: torch.distributed.ProcessGroup | None = None,
+    ) -> torch.Tensor:
         if self.position_ids is None:
             raise ValueError("Qwen4-Exp multimodal rotary embedding requires position_ids.")
-        return super().forward(self.position_ids, self.mrope_section, self.packed_seq_params)
+        return super().forward(self.position_ids, self.mrope_section, self.packed_seq_params, cp_group=cp_group)
 
 
 class Qwen4ExpHybridModel(HybridModel):

@@ -27,6 +27,7 @@ from transformers import PretrainedConfig
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model import _Qwen4ExpMultimodalRotaryEmbedding
 from megatron.bridge.models.qwen.modeling_qwen4_exp.model_builder import Qwen4ExpModelBuilder
 from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpModelConfig
 from megatron.bridge.models.qwen.modeling_qwen4_exp.qsa import QSAIndexer
@@ -39,6 +40,31 @@ from tests.unit_tests.models.qwen.test_qwen4_exp_bridge import _text_config_dict
 
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("runtime_group", [False, True])
+def test_hybrid_mrope_accepts_runtime_cp_group(runtime_group):
+    rope = _Qwen4ExpMultimodalRotaryEmbedding.__new__(_Qwen4ExpMultimodalRotaryEmbedding)
+    torch.nn.Module.__init__(rope)
+    rope.inv_freq = torch.tensor([1.0, 0.1, 0.01])
+    rope.seq_len_interpolation_factor = None
+    rope.is_thd_format = False
+    rope.mrope_section = [1, 1, 1]
+    rope.cp_group = Mock()
+    rope.cp_group.size.return_value = 1
+    group = Mock() if runtime_group else None
+    if group is not None:
+        group.size.return_value = 1
+    positions = torch.arange(4.0)
+    rope.position_ids = torch.stack((positions, positions + 10, positions + 20))[:, None, :]
+
+    result = rope(4, packed_seq=False, cp_group=group)
+
+    angles = torch.stack((positions, (positions + 10) * 0.1, (positions + 20) * 0.01), dim=-1)
+    torch.testing.assert_close(result, torch.cat((angles, angles), dim=-1)[:, None, None, :])
+    (group if runtime_group else rope.cp_group).size.assert_called_once_with()
+    if runtime_group:
+        rope.cp_group.size.assert_not_called()
 
 
 @pytest.fixture
