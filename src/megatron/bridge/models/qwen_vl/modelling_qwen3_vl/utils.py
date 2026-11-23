@@ -148,9 +148,6 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
             tp_group=self.tp_group,
         )
 
-        # HF Qwen3-VL and Qwen3.5-VL build the patch merger (and the deepstack mergers) with a plain
-        # ``nn.GELU()``, i.e. exact erf GELU, while the vision blocks use ``hidden_act`` (tanh GELU).
-        # Do not inherit the vision-block activation from the config here.
         self.activation_func = nn.functional.gelu
 
         self.linear_fc2 = build_module(
