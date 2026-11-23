@@ -5,9 +5,14 @@ the language model, vision encoder and projector. The [text-only guide](qwen3.8-
 records the separate standalone language workflow and fixed-4K pretraining result.
 Both modes share the hybrid decoder, QSA, GDN, MoE, gated residual and PLE modules.
 
-The image-SFT recipe is **EARLY, UNOPTIMIZED**. It trains the language model,
-encoder and projector on 64 GB200 GPUs with TP4/SP, EP64, sequence 2048 and Adam.
-Natural routing and HybridEP with MoE fusions are enabled.
+The image-SFT recipe is **EARLY, UNOPTIMIZED**. Its current defaults use
+64 GB200 GPUs with TP4/SP, EP64, fixed 4096-token padding and Adam. The PLE
+lookup tables are frozen and sharded over EP; the detached QSA indexer is also
+frozen. The remaining language modules, encoder and projector are trainable.
+Natural routing, HybridEP, MoE fusions and manual garbage collection every
+100 steps are enabled. DataComp qualification of these defaults is pending.
+The recorded result below used the earlier 2048-token recipe with trainable
+PLE tables; its exact source revision remains pinned in the card.
 
 Released NeMo 26.10 verification completed on 2026-11-22. Full-VLM GPU
 conversion preserved all 1,627 supported tensors exactly, including 333 vision
