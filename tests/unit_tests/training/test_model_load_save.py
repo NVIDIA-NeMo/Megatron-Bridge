@@ -2046,7 +2046,7 @@ class TestSaveMegatronModel:
         module.register_parameter("linear_fc1_weight", torch.nn.Parameter(runtime_weight.clone()))
         models = [module]
 
-        provider = GPTModelProvider(num_layers=1, hidden_size=8, num_attention_heads=1)
+        provider = GPTModelProvider(num_layers=1, hidden_size=8, num_attention_heads=1, gated_linear_unit=True)
         provider.moe_mlp_glu_interleave_size = interleave_size
 
         def build_factory(

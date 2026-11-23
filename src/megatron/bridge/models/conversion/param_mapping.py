@@ -34,6 +34,12 @@ from megatron.core.utils import (
 )
 from torch.distributed._tensor import DTensor
 
+from megatron.bridge.models.conversion.glu import (
+    classify_glu_fc1,
+    deinterleave_glu_tensor,
+    get_glu_interleave_size,
+    interleave_glu_tensor,
+)
 from megatron.bridge.models.conversion.gtp import _get_mapping_shape, _is_gtp_param
 from megatron.bridge.models.conversion.utils import (
     get_module_and_param_from_name,
@@ -401,6 +407,11 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             raise ValueError(
                 f"{global_param_name}: mapping {type(self).__name__} cannot be represented as canonical local HF views"
             )
+        if self._local_glu_interleave_size(megatron_module, param_name=global_param_name) is not None:
+            raise ValueError(
+                f"{global_param_name}: interleaved GLU storage cannot be represented as canonical local HF views; "
+                "use gathered logical export, or deinterleave the fused tensor before selecting projection views"
+            )
         shard_group, shard_dim, shard_size = self._local_hf_sharding(weight, megatron_module)
 
         params = []
@@ -671,8 +682,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             return tensor
 
         # ------------------------------------------------------------------
-        # 1.  Gather (shape, dtype, tensor_parallel flag, partition_dim) from
-        #     every PP rank so that we can find the source rank.
+        # 1.  Gather the tensor specification from every PP rank so that we
+        #     can find the source rank and preserve layout metadata.
         # ------------------------------------------------------------------
         if cache_key is not None and cache_key in self._tensor_spec_output_cache:
             tensor_spec_output = self._tensor_spec_output_cache[cache_key]
@@ -682,7 +693,10 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 dtype = tensor.dtype
                 tensor_parallel = getattr(tensor, "tensor_model_parallel", None)
                 partition_dim = getattr(tensor, "partition_dim", None)
+                fsdp_full_tensor = getattr(tensor, "_megatron_bridge_fsdp_full_tensor", None)
                 tensor_spec = (shape, dtype, tensor_parallel, partition_dim)
+                if fsdp_full_tensor is not None:
+                    tensor_spec += (fsdp_full_tensor,)
             else:
                 tensor_spec = None
 
@@ -718,7 +732,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         #     and dtype before the broadcast.
         # ------------------------------------------------------------------
         if tensor is None:
-            shape, dtype, tensor_parallel, partition_dim = target_tensor_spec
+            shape, dtype, tensor_parallel, partition_dim, *extra_metadata = target_tensor_spec
             # Use CPU by default, unless CUDA is available
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             tensor = torch.empty(shape, dtype=dtype, device=device)
@@ -726,6 +740,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 tensor.tensor_model_parallel = tensor_parallel
             if partition_dim is not None:
                 tensor.partition_dim = partition_dim
+            if extra_metadata and extra_metadata[0] is not None:
+                tensor._megatron_bridge_fsdp_full_tensor = extra_metadata[0]
 
         # ------------------------------------------------------------------
         # 4.  Broadcast from the source PP rank to all other PP ranks.
@@ -1005,7 +1021,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # Use regex to replace any trailing number with 0
         return re.sub(r"\d+$", "0", param_name)
 
-    def _get_config(self, module: nn.Module) -> Any:
+    def _get_config(self, module: nn.Module, *, required: bool = True) -> Any:
         """Extract configuration from module hierarchy."""
         current = module
         while current is not None:
@@ -1027,10 +1043,22 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 else:
                     current = None
 
+        if not required:
+            return None
         raise ValueError(
             f"Could not find config in module hierarchy for {module.__class__.__name__}. "
             f"Ensure the module or its parent has a 'config' attribute."
         )
+
+    def _local_glu_interleave_size(self, module: nn.Module | None, *, param_name: str | None = None) -> int | None:
+        """Resolve the opt-in layout from the owner, when config is available."""
+        name = self.megatron_param if param_name is None else param_name
+        if module is None or classify_glu_fc1(name) is None:
+            return None
+        config = getattr(module, "config", None)
+        if config is None and isinstance(module, nn.Module):
+            config = self._get_config(module, required=False)
+        return get_glu_interleave_size(config, name)
 
     def gather_from_ep_ranks(
         self,
@@ -3185,6 +3213,12 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             raise ValueError(f"{global_param_name}: mapping does not expose canonical local HF views")
         if megatron_module is None or _module_uses_fsdp(megatron_module):
             raise ValueError(f"{global_param_name}: native MXFP8 export does not support DTensor/FSDP parameters")
+        interleave_size = self._local_glu_interleave_size(megatron_module)
+        if interleave_size is not None:
+            raise ValueError(
+                f"{global_param_name}: direct native MXFP8 export does not support interleaved GLU storage; "
+                "use the logical export path so the weight is dequantized before its row layout is converted"
+            )
         shard_group: MXFP8ShardGroup = "etp" if self.is_expert else "tp"
         return _project_gated_native_mxfp8(
             weight,
@@ -3201,15 +3235,85 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         """Describe fused gate/up projections as column-parallel views."""
         return ("etp" if self.is_expert else "tp"), -2, self.tp_size
 
+    def _to_logical_glu_layout(
+        self,
+        tensor: torch.Tensor,
+        interleave_size: int,
+        *,
+        fsdp_full_tensor: bool,
+    ) -> torch.Tensor:
+        """Restore canonical rows while preserving TP-local physical layouts."""
+        if fsdp_full_tensor:
+            # A gathered FSDP tensor concatenates TP-local physical shards.
+            # Convert all shards in one allocation without mixing their rows.
+            if tensor.shape[0] % self.tp_size:
+                raise ValueError(
+                    f"{self.megatron_param}: gathered FSDP rows ({tensor.shape[0]}) must be divisible "
+                    f"by tensor parallel size ({self.tp_size})"
+                )
+            shards = tensor.reshape(self.tp_size, -1, *tensor.shape[1:])
+            return deinterleave_glu_tensor(shards, interleave_size, row_dim=1).reshape(tensor.shape)
+        return deinterleave_glu_tensor(tensor, interleave_size)
+
+    def _split_logical_tp_shards(
+        self,
+        tensor: torch.Tensor,
+        *,
+        fsdp_full_tensor: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Assemble each projection from TP-local ``[gate; up]`` shards."""
+        if self.tp_size == 1:
+            if tensor.shape[0] % 2:
+                raise ValueError(f"{self.megatron_param}: fused GLU tensor must contain an even number of rows")
+            gate, up = torch.chunk(tensor, 2, dim=0)
+            return gate, up
+        if fsdp_full_tensor:
+            if tensor.shape[0] % self.tp_size:
+                raise ValueError(
+                    f"{self.megatron_param}: gathered FSDP rows ({tensor.shape[0]}) must be divisible "
+                    f"by tensor parallel size ({self.tp_size})"
+                )
+            shards = torch.chunk(tensor, self.tp_size, dim=0)
+        else:
+            shards = self.gather_from_tp_ranks(tensor)
+
+        gate_parts = []
+        up_parts = []
+        for shard in shards:
+            if shard.shape[0] % 2:
+                raise ValueError(f"{self.megatron_param}: each fused GLU shard must contain an even number of rows")
+            gate, up = torch.chunk(shard, 2, dim=0)
+            gate_parts.append(gate)
+            up_parts.append(up)
+        return torch.cat(gate_parts, dim=0), torch.cat(up_parts, dim=0)
+
     def hf_to_megatron(
         self,
         hf_weights: Dict[str, torch.Tensor],
         megatron_module: nn.Module,
     ) -> torch.Tensor:
         """Split gate and up separately, then concatenate corresponding shards."""
+        interleave_size = self._local_glu_interleave_size(megatron_module)
+
+        def to_physical_layout(tensor: torch.Tensor) -> torch.Tensor:
+            if interleave_size is None:
+                return tensor
+            return interleave_glu_tensor(tensor, interleave_size)
+
+        def get_gate_and_up() -> tuple[torch.Tensor, torch.Tensor]:
+            gate = hf_weights["gate"]
+            up = hf_weights["up"]
+            if gate.shape != up.shape:
+                raise ValueError(
+                    f"{self.megatron_param}: gate and up tensors must have the same shape, "
+                    f"got {tuple(gate.shape)} and {tuple(up.shape)}"
+                )
+            return gate, up
+
         # For single TP, just concatenate and return
         if self.tp_size == 1:
-            return torch.cat([hf_weights["gate"], hf_weights["up"]], dim=0)
+            gate, up = get_gate_and_up()
+            return to_physical_layout(torch.cat([gate, up], dim=0))
 
         # Get target parameter info from megatron module
         # Some parameters are named with global expert number, e.g. experts.weight15,
@@ -3220,12 +3324,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         # On rank 0, split gate and up separately, then concatenate corresponding pieces
         if self.tp_rank == 0:
-            gate = hf_weights["gate"]
-            up = hf_weights["up"]
-
-            # Verify shapes match
-            assert gate.shape == up.shape, "Gate and up weights must have the same shape"
-
+            gate, up = get_gate_and_up()
             # Check divisibility for TP splitting
             gate_output_size = gate.shape[0]
             if gate_output_size % self.tp_size != 0:
@@ -3239,7 +3338,9 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             up_splits = torch.chunk(up, self.tp_size, dim=0)
 
             # Concatenate corresponding pieces: [gate_shard_i; up_shard_i] for each rank i
-            splits = [torch.cat([gate_splits[i], up_splits[i]], dim=0) for i in range(self.tp_size)]
+            splits = [
+                to_physical_layout(torch.cat([gate_splits[i], up_splits[i]], dim=0)) for i in range(self.tp_size)
+            ]
         else:
             splits = None
 
@@ -3261,41 +3362,31 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         megatron_module: Optional[nn.Module],
     ) -> Dict[str, torch.Tensor]:
         """Gather concatenated shards and split into gate and up."""
-        # Handle cross-PP broadcast first
+        # Canonicalize on the owning PP stage before broadcasting. The FSDP
+        # layout bit rides in the tensor-spec exchange already required by the
+        # broadcast, avoiding a per-parameter metadata collective.
+        if megatron_weights is not None:
+            fsdp_full_tensor = self.tp_size > 1 and _module_uses_fsdp(megatron_module)
+            interleave_size = self._local_glu_interleave_size(megatron_module)
+            if interleave_size is not None:
+                megatron_weights = self.maybe_dequantize(megatron_weights)
+                megatron_weights = self._to_logical_glu_layout(
+                    megatron_weights,
+                    interleave_size,
+                    fsdp_full_tensor=fsdp_full_tensor,
+                )
+            if fsdp_full_tensor:
+                megatron_weights._megatron_bridge_fsdp_full_tensor = True
+
+        # Broadcast TP-local logical rows (or the already-full FSDP tensor).
         megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
 
         if megatron_weights is None:
             return {}
 
-        # Dequantize if needed
+        fsdp_full_tensor = getattr(megatron_weights, "_megatron_bridge_fsdp_full_tensor", False)
         megatron_weights = self.maybe_dequantize(megatron_weights)
-
-        # Handle TP gathering
-        if self.tp_size == 1:
-            # No TP, just split the concatenated tensor
-            fused_mlp = megatron_weights
-            gate, up = torch.chunk(fused_mlp, 2, dim=0)
-
-        else:
-            if _module_uses_fsdp(megatron_module):
-                gathered_shards = torch.chunk(megatron_weights, self.tp_size, dim=0)
-            else:
-                # Gather shards from all TP ranks
-                gathered_shards = self.gather_from_tp_ranks(megatron_weights)
-
-            # Split each shard back into gate and up parts
-            gate_parts = []
-            up_parts = []
-            for shard in gathered_shards:
-                # Each shard is [gate_shard; up_shard] concatenated along dim 0
-                # This works for both bias (1D) and weight (2D) tensors
-                gate_shard, up_shard = torch.chunk(shard, 2, dim=0)
-                gate_parts.append(gate_shard)
-                up_parts.append(up_shard)
-
-            # Concatenate all gate parts and all up parts separately
-            gate = torch.cat(gate_parts, dim=0)
-            up = torch.cat(up_parts, dim=0)
+        gate, up = self._split_logical_tp_shards(megatron_weights, fsdp_full_tensor=fsdp_full_tensor)
 
         if self.is_expert:
             gathered_gate_weights_dict = self.gather_from_ep_ranks(gate, megatron_module, self.hf_param["gate"])
@@ -3317,9 +3408,12 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             return self.megatron_to_hf(megatron_weights, megatron_module)
 
         fused_q, fused_scale = None, None
-
         if megatron_weights is not None:
             megatron_weights = self.maybe_dequantize(megatron_weights)
+            interleave_size = self._local_glu_interleave_size(megatron_module)
+            if interleave_size is not None:
+                # The quantized stream rejects FSDP before entering mappings.
+                megatron_weights = deinterleave_glu_tensor(megatron_weights, interleave_size)
 
             assert quant_block_size is not None, "quant_block_size must be provided for quantization"
 
@@ -3642,6 +3736,12 @@ class FusedGatedExpertMapping(AutoMapping):
             raise ValueError(f"{global_param_name}: native MXFP8 export does not support mapping transforms")
         if megatron_module is None or _module_uses_fsdp(megatron_module):
             raise ValueError(f"{global_param_name}: native MXFP8 export does not support DTensor/FSDP parameters")
+        interleave_size = self._gated_mapping._local_glu_interleave_size(megatron_module)
+        if interleave_size is not None:
+            raise ValueError(
+                f"{global_param_name}: direct native MXFP8 export does not support interleaved GLU storage; "
+                "use the logical export path so the weight is dequantized before its row layout is converted"
+            )
 
         specs = self.local_hf_param_specs(global_param_name)
         return _project_gated_native_mxfp8(
@@ -3702,6 +3802,38 @@ class FusedGatedExpertMapping(AutoMapping):
                 continue
             concat_dim = 0 if tensor.ndim == 2 else 1
             fused[base_name] = torch.cat([tensor, up_tensor], dim=concat_dim)
+        return fused
+
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Quantize canonical gate/up shards before gathering fused experts."""
+        if self.permute_dims is not None or self.transpose_on_export:
+            return super().megatron_to_hf_quant(
+                megatron_weights, megatron_module, quantization_checker, quant_fn, quant_block_size
+            )
+        if not quantization_checker(self.megatron_param):
+            return self.megatron_to_hf(megatron_weights, megatron_module)
+        converted = self._gated_mapping.megatron_to_hf_quant(
+            megatron_weights, megatron_module, quantization_checker, quant_fn, quant_block_size
+        )
+        fused = {}
+        for name, gate in converted.items():
+            if not name.endswith(".gate"):
+                continue
+            base_name = name.removesuffix(".gate")
+            # EP gathering adds a leading expert axis to both data and scales.
+            # Scale tensors may also have a trailing singleton dimension.
+            concat_dim = 0 if gate.ndim == 2 else 1
+            fused[base_name] = torch.cat((gate, converted[f"{base_name}.up"]), dim=concat_dim)
+            fused[f"{base_name}_scale_inv"] = torch.cat(
+                (converted[f"{base_name}.gate_scale_inv"], converted[f"{base_name}.up_scale_inv"]), dim=concat_dim
+            )
         return fused
 
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":

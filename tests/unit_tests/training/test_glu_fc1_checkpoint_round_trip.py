@@ -19,8 +19,11 @@ from unittest.mock import patch
 
 import pytest
 import torch
+from megatron.core.dist_checkpointing.mapping import ShardedTensor
+from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
 
 from megatron.bridge.training.checkpointing import (
+    _apply_glu_interleave_to_tensor_data,
     _get_model_glu_interleave_sizes,
     _interleave_glu_tensor,
     _process_state_dict_for_glu_interleaving,
@@ -36,6 +39,59 @@ DENSE_FC1_KEY = "decoder.layers.0.mlp.linear_fc1.weight"
 DENSE_FC1_BIAS_KEY = "decoder.layers.0.mlp.linear_fc1.bias"
 SHARED_FC1_KEY = "decoder.layers.0.mlp.shared_experts.linear_fc1.weight"
 SHARED_FC1_BIAS_KEY = "decoder.layers.0.mlp.shared_experts.linear_fc1.bias"
+
+
+@pytest.mark.parametrize(("bias", "singleton_local_shards"), [(False, False), (True, True)])
+def test_real_mcore_factory_saves_canonical_rows_without_mutating_model(
+    bias, singleton_local_shards, patch_print_rank_0
+):
+    key = MOE_FC1_BIAS_KEY if bias else MOE_FC1_KEY
+    gate = torch.arange(6 if bias else 18).reshape((6,) if bias else (6, 3)).float()
+    up = gate + 100
+    logical = torch.cat((gate, up))
+    physical = torch.cat((gate[:2], up[:2], gate[2:4], up[2:4], gate[4:], up[4:]))
+    original = ShardedTensor.from_rank_offsets(key, physical)
+    factory = apply_swiglu_sharded_factory(original, (), singleton_local_shards=singleton_local_shards)
+
+    saved = _process_state_dict_for_glu_interleaving({key: factory}, 2, interleave=False)[key]
+    assert saved is not factory
+    assert saved.build_fn is factory.build_fn
+    assert saved.merge_fn is factory.merge_fn
+    assert factory.data is physical
+    assert torch.equal(saved.data, logical)
+    built = saved.build()
+    assert torch.equal(built[0].data, gate)
+    assert torch.equal(built[1].data, up)
+    merged = saved.merge_fn([shard.data for shard in built])
+    loaded = _process_state_dict_for_glu_interleaving({key: merged}, 2, interleave=True)[key]
+    assert torch.equal(loaded, physical)
+
+
+def test_checkpoint_sizes_ignore_non_glu_interleave_tuning_value():
+    cfg = SimpleNamespace(
+        model=SimpleNamespace(
+            gated_linear_unit=False,
+            moe_mlp_glu_interleave_size=2,
+            moe_shared_expert_glu_interleave_size=2,
+        )
+    )
+    assert _get_model_glu_interleave_sizes([], cfg) == (None, None)
+
+
+def test_checkpoint_dequantizes_before_reordering_rows(monkeypatch):
+    physical = torch.tensor([0, 1, 100, 101, 2, 3, 102, 103, 4, 5, 104, 105], dtype=torch.bfloat16)
+
+    class QuantizedFC1:
+        dtype = torch.bfloat16
+
+        def dequantize(self, *, dtype):
+            assert dtype == self.dtype
+            return physical
+
+    monkeypatch.setattr(f"{_CKPT_MOD}.HAVE_TE_FP8_TENSOR_CLASS", True)
+    monkeypatch.setattr(f"{_CKPT_MOD}.FP8_TENSOR_CLASS", QuantizedFC1)
+    result = _apply_glu_interleave_to_tensor_data(QuantizedFC1(), 2, interleave=False)
+    assert torch.equal(result, torch.tensor([0, 1, 2, 3, 4, 5, 100, 101, 102, 103, 104, 105], dtype=torch.bfloat16))
 
 
 @pytest.fixture
@@ -111,6 +167,7 @@ class TestCheckpointLoadSaveRoundTrip:
         monkeypatch.delenv("USE_GROUPED_GEMM_FOR_SHARED_EXPERT", raising=False)
         cfg = SimpleNamespace(
             model=SimpleNamespace(
+                gated_linear_unit=True,
                 moe_mlp_glu_interleave_size=8,
                 moe_shared_expert_glu_interleave_size=16,
                 use_grouped_gemm_for_shared_expert=True,

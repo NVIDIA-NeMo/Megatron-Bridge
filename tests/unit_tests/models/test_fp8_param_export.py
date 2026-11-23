@@ -634,6 +634,32 @@ def test_fc1_native_mxfp8_projects_paired_expert_views(monkeypatch):
     torch.testing.assert_close(projected[1].weight_scale, scale[4:])
 
 
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        GatedMLPMapping(
+            "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight",
+            gate="model.layers.0.mlp.experts.0.gate_proj.weight",
+            up="model.layers.0.mlp.experts.0.up_proj.weight",
+        ),
+        FusedGatedExpertMapping(
+            "decoder.layers.0.mlp.experts.linear_fc1.weight0",
+            "model.layers.0.mlp.experts.gate_up_proj",
+        ),
+    ],
+)
+def test_fc1_native_mxfp8_rejects_interleaved_physical_storage(mapping):
+    module = SimpleNamespace(config=SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=2))
+
+    with pytest.raises(ValueError, match="dequantized before its row layout is converted"):
+        mapping.local_mxfp8_params(
+            torch.zeros((8, 64), dtype=torch.float8_e4m3fn),
+            torch.zeros((8, 2), dtype=torch.uint8),
+            global_param_name=mapping.megatron_param,
+            megatron_module=module,
+        )
+
+
 def test_fc2_native_mxfp8_projects_ordinary_expert_with_etp_metadata(monkeypatch):
     mapping = AutoMapping(
         "decoder.layers.0.mlp.experts.local_experts.2.linear_fc2.weight",
@@ -2420,6 +2446,48 @@ class TestFp8ParamExport:
 
         monkeypatch.setattr(f"{_MODEL_MB}.torch.distributed.all_gather_object", _ag1)
         assert bridge._detect_fp8_params([model], model.config, [gname], None, "_rowwise_scale_inv") == {}
+
+    @pytest.mark.parametrize(("fp8_recipe", "remote_pp"), [("blockwise", False), ("mxfp8", True)])
+    def test_raw_fp8_export_rejects_glu_after_pipeline_collective(self, monkeypatch, fp8_recipe, remote_pp):
+        bridge = DummyBridge()
+        name = "decoder.layers.0.mlp.experts.linear_fc1.weight0"
+        parameter = torch.nn.Parameter(torch.zeros(12, 64))
+        metadata = {
+            "fp8_dtype": SimpleNamespace(name="kFloat8E4M3"),
+            "rowwise_data": torch.zeros(12, 64, dtype=torch.uint8),
+        }
+        if fp8_recipe == "mxfp8":
+            metadata.update(rowwise_scale_inv=torch.ones(128, 4, dtype=torch.uint8), with_gemm_swizzled_scales=False)
+        else:
+            metadata.update(
+                rowwise_scale_inv=torch.ones(6, 32), is_2D_scaled=True, quantizer=SimpleNamespace(block_len=2)
+            )
+        parameter.get_metadata = lambda: metadata
+        model = SimpleNamespace(
+            config=SimpleNamespace(
+                fp8_recipe=fp8_recipe,
+                gated_linear_unit=True,
+                moe_mlp_glu_interleave_size=2,
+            ),
+            named_parameters=lambda: [] if remote_pp else [(name, parameter)],
+        )
+        monkeypatch.setattr(f"{_MODEL_MB}.get_module_and_param_from_name", lambda *args: (model, parameter))
+        monkeypatch.setattr(f"{_MODEL_MB}._megatron_local_name_to_global", lambda *args: name)
+        monkeypatch.setattr(f"{_MODEL_MB}.persistent_buffers", lambda model: [])
+        monkeypatch.setattr(f"{_MODEL_MB}.get_pg_size", lambda group: 2)
+        from megatron.bridge.models.conversion.fp8_export import detect_fp8_export_layout
+
+        layout = detect_fp8_export_layout(parameter, fp8_recipe=fp8_recipe, fp8_scale_inv_attr="_rowwise_scale_inv")
+
+        def gather(output, local, **kwargs):
+            assert local == ({} if remote_pp else {name: layout})
+            output[:] = [{name: layout}, {}]
+
+        collective = Mock(side_effect=gather)
+        monkeypatch.setattr(torch.distributed, "all_gather_object", collective)
+        with pytest.raises(ValueError, match="raw FP8 export does not support interleaved GLU"):
+            bridge._detect_fp8_params([model], model.config, [name], None, "_rowwise_scale_inv")
+        collective.assert_called_once()
 
     @pytest.mark.parametrize(
         "metadata_overrides, error_match",

@@ -254,6 +254,27 @@ def test_iter_local_hf_params_reports_fused_expert_etp_metadata(monkeypatch):
     assert gate.shard_dim == up.shard_dim == 0
 
 
+@pytest.mark.parametrize("fused", [False, True])
+def test_iter_local_hf_params_rejects_interleaved_views_before_yielding(fused):
+    name = "decoder.layers.0.mlp.experts.linear_fc1.weight0"
+    mapping = (
+        FusedGatedExpertMapping(name, "hf.experts.gate_up_proj")
+        if fused
+        else GatedMLPMapping(name, gate="hf.gate", up="hf.up")
+    )
+    module = torch.nn.Module()
+    module.config = SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=2)
+    task = WeightConversionTask(
+        param_name=name,
+        global_param_name=name,
+        mapping=mapping,
+        megatron_module=module,
+        param_weight=torch.zeros(12, 4, dtype=torch.bfloat16),
+    )
+    with pytest.raises(ValueError, match="interleaved GLU storage cannot be represented"):
+        next(DummyBridge().iter_local_hf_params([task]))
+
+
 def test_iter_local_hf_params_skips_remote_pp_placeholders():
     remote = WeightConversionTask(
         param_name="decoder.remote.weight",
