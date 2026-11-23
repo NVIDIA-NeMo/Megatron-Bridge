@@ -142,6 +142,17 @@ class TestParseSLURMNodelist:
         """Multiple bracketed groups in the list — must not merge them."""
         assert _parse_slurm_nodelist("nodeA[001-003],nodeB[005-007]") == "nodeA001"
 
+    @pytest.mark.parametrize(
+        ("nodelist", "expected"),
+        [
+            ("rack[0-63]_blade[0-41]", "rack0_blade0"),
+            ("rack[03,05]_node[007-010],other[1-2]", "rack03_node007"),
+            ("unit[1-2]-[4-5]", "unit1-4"),
+        ],
+    )
+    def test_multiple_groups_in_first_hostname(self, nodelist, expected):
+        assert _parse_slurm_nodelist(nodelist) == expected
+
     def test_mixed_plain_and_bracketed_entries(self):
         """Long list of plain hostnames with a bracketed entry buried in the middle."""
         nodelist = (
