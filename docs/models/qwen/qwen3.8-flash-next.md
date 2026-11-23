@@ -10,21 +10,26 @@ The image-SFT recipe is **EARLY, UNOPTIMIZED**. Its current defaults use
 lookup tables are frozen and sharded over EP; the detached QSA indexer is also
 frozen. The remaining language modules, encoder and projector are trainable.
 Natural routing, HybridEP, MoE fusions and manual garbage collection every
-100 steps are enabled. DataComp qualification of these defaults is pending.
-The recorded result below used the earlier 2048-token recipe with trainable
-PLE tables; its exact source revision remains pinned in the card.
+100 steps are enabled. These defaults completed 100 full-checkpoint DataComp
+image-SFT updates on 2026-11-23.
 
-Released NeMo 26.10 verification completed on 2026-11-22. Full-VLM GPU
+Released NeMo 26.10 conversion verification completed on 2026-11-22. Full-VLM GPU
 conversion preserved all 1,627 supported tensors exactly, including 333 vision
 tensors; unsupported MTP tensors are excluded. The auxiliary export-checker
 failure and separate successful asset recheck are recorded in the card.
 
 | Workload | GPUs / sequence / updates | Initial → final loss | Final-ten mean step | TFLOP/s/GPU | Token slots/s/GPU |
 | --- | --- | --- | --- | --- | --- |
-| Full image SFT / Adam | 64 / 2048 / 100 | 0.351589 → 0.167965 | 5.458 s | 5.89 | 93.81 |
+| DataComp image SFT / Adam | 64 / 4096 / 100 | 4.365921 → 1.995173 | 1.514 s | 28.94 | 676.39 |
 
-All ranks completed finite, unskipped updates. These are bounded functional
-observations, not optimized benchmarks. Full-VLM pretraining is unverified.
+All ranks completed finite, unskipped updates; frozen PLE/indexer hashes were
+unchanged and selected language/vision/optimizer weights updated. The run used
+8,192 prepared DataComp image-caption pairs and consumed 1,600 conversations
+with 37,805 supervised tokens. Throughput counts padded 4K slots, so it is not
+supervised-token throughput. Final-ten timing excludes manual GC after step-100
+logging. Dataset, sequence length and trainable parameters differ from the earlier
+2K Nemotron result, preventing a controlled speed comparison. These are bounded
+functional observations, not optimized benchmarks. Full-VLM pretraining is unverified.
 The historical 8,192-sample, 5,349-step image-SFT loss curve remains separate evidence.
 
 See the [VLM verification card](../../../examples/model_verification_cards/qwen3.8-flash-next/card.yaml)
@@ -303,30 +308,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-11-22</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-23</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.35158914</dd>
+            <dd>4.3659215</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.16796531</dd>
+            <dd>1.9951726</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>5,457.587 ms</dd>
+            <dd>1,513.917 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>5.890 TFLOP/s/GPU</dd>
+            <dd>28.944 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>93.814 tokens/s/GPU</dd>
+            <dd>676.391 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -337,12 +342,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe qwen38_flash_next_sft_64gpu_gb200_bf16_config --mode sft --max_steps 100 --pretrained_checkpoint work/cache/qwen3.8-flash-next dataset.path=work/data/nemotron-image-v3-ecd logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/sft/resolved-config.yaml logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/sft/tensorboard</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe qwen38_flash_next_sft_64gpu_gb200_bf16_config --mode sft --step-func qwen3_vl_step --max_steps 100 --pretrained_checkpoint work/cache/qwen3.8-flash-next dataset.path=work/data/datacomp-8192 logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/sft/resolved-config.yaml logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/sft/tensorboard</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>EARLY, UNOPTIMIZED recipe. Completed 100 native Energon-loader updates with the full pinned HF checkpoint and 8,192 complete image conversations prepared by scripts/data/prepare_nemotron_image_v3_subset.py from nvidia/Nemotron-Image-Training-v3 ECD revision 7656391d4d4cb11ec3722b34f10d499435de0460. All language, vision and projector parameters are trainable. Configuration: 64 GB200 GPUs, TP4/SP, EP64/ETP1, PP1/CP1, padded unpacked sequence 2048, MBS1/GBS16, BF16 with FP32 gradient reduction, distributed Adam, constant LR 1e-6, zero weight decay and clip 1. Natural routing, HybridEP and MoE fusions are enabled; CUDA graphs, recomputation, shared-expert overlap, evaluation and checkpoint saving are disabled. Final-ten metrics use updates 91-100. These are short functional observations on a bounded subset, not held-out quality, full convergence or numerical equivalence to another parallel layout. Throughput counts padded slots, not supervised tokens. TFLOPs estimate model matrix work rather than hardware utilization. At sequence 2048 the dense QSA shortcut bypasses the indexer. All 64 ranks completed 100 finite, unskipped updates with zero NaN iterations. Image inputs and encoder execution were observed; selected language/vision parameters and FP32 Adam samples changed. The run consumed 1,600 conversations and 1,156,890 supervised tokens, counted once across dense-DP representatives. Preclip gradient norms ranged from 1.694735 to 28.194944. Native timings include lightweight verification callbacks; no profiler was active.</p>
+        <p>EARLY, UNOPTIMIZED recipe. Completed 100 native Energon image-SFT updates from the full pinned HF checkpoint. The bounded dataset contains the first 8,192 complete image-caption pairs from two retained DataComp shards, in shard/member order, with no skipped samples. Each ChatML conversation uses the prompt &quot;Describe this image.&quot; and supervises the original caption; image bytes are preserved. PLE lookup tables are frozen and EP-sharded; detached QSA indexer weights are frozen. Remaining language modules, vision encoder and projector are trainable. Configuration: 64 GB200 GPUs, TP4/SP, EP64/ETP1, PP1/CP1, fixed padded unpacked sequence 4096, MBS1/GBS16, BF16 with FP32 gradient reduction, distributed Adam, constant LR 1e-6, zero weight decay and clip 1. Natural routing, HybridEP, MoE fusions and manual GC every 100 steps are enabled. CUDA graphs, recomputation, gradient/parameter overlap, shared-expert overlap, evaluation and checkpoint saving are disabled. All 64 ranks completed 100 finite, unskipped updates with zero NaN iterations. Full frozen PLE/indexer hashes were unchanged; selected language/vision parameters and FP32 Adam samples changed. Real image inputs and encoder execution were observed. The run consumed 1,600 conversations and 37,805 supervised tokens, counted once across dense-DP representatives. Preclip gradient norms ranged from 19.290594 to 163.363068. Final-ten metrics use updates 91-100. Native timings include lightweight verification callbacks; no profiler was active. Periodic GC runs after step-100 logging, so this window excludes that endpoint collection. Throughput counts padded slots, not supervised tokens; short captions leave substantial padding. TFLOPs estimate model matrix work, with a dense QSA surrogate and approximate GDN recurrence, rather than hardware utilization. These are bounded functional observations, not held-out quality, convergence or cross-layout numerical equivalence. Dataset, sequence length and trainable parameters differ from the historical 2K Nemotron SFT run, so the two results are not a controlled performance comparison.</p>
       </section>
     </article>
     <article id="qwen3-8-flash-next-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-sft-long-context-gb200" tabindex="-1">

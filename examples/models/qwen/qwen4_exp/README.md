@@ -114,9 +114,14 @@ uses the Qwen VL forward step and native Energon loader. Current defaults use
 fixed 4096-token batches, frozen EP-sharded PLE lookup tables and synchronized
 manual garbage collection every 100 steps. Prepare DataComp image-caption
 conversations with the [maintained DataComp tutorial](../../../../tutorials/data/datacomp/README.md)
-and supply the ChatML Energon directory at `work/data/datacomp/energon`.
-These defaults are awaiting a new full-checkpoint verification; the recorded
-2K results below retain their original recipe and trainable-table settings.
+and supply the ChatML Energon directory at `work/data/datacomp-8192`.
+The verified subset contains the first 8,192 complete image-caption pairs from
+two retained DataComp shards, selected in shard/member order with no skips.
+Each conversation asks “Describe this image.” and supervises the original
+caption; JPEG bytes and raw metadata are preserved. The retained legacy shard
+format required an offline ChatML adapter and does not establish the maintained
+downloader's face-filter provenance. Training uses the standard Energon loader.
+These defaults completed 100 full-checkpoint updates on 2026-11-23.
 
 The historical image-SFT run used the first 8,192 complete supervised
 conversations from the pinned ECD portion of
@@ -141,7 +146,7 @@ existing subset with matching preprocessing and manifest can be reused.
 ./scripts/training/train.sh --nodes 16 --gpus-per-node 4 \
   --recipe qwen38_flash_next_sft_64gpu_gb200_bf16_config --mode sft --step-func qwen3_vl_step \
   --max_steps 100 --pretrained_checkpoint work/cache/qwen3.8-flash-next \
-  dataset.path=work/data/datacomp/energon \
+  dataset.path=work/data/datacomp-8192 \
   logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/sft/resolved-config.yaml \
   logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/sft/tensorboard
 ```
@@ -159,23 +164,27 @@ are still **EARLY, UNOPTIMIZED**.
 
 ## Verification results
 
-Released NeMo 26.10 verification completed on 2026-11-22.
+Released NeMo 26.10 verification covers the text run on 2026-11-22 and DataComp SFT on 2026-11-23.
 
 | Workload | GPUs / sequence / updates | Initial → final loss | Final-ten mean step | Final-ten mean TFLOP/s/GPU | Token slots/s/GPU |
 | --- | --- | --- | --- | --- | --- |
 | Frozen-PLE text / Muon | 32 / 4096 / 30 | 1.927702 → 1.366627 | 3.637 s | 47.46 | 1126.30 |
-| Full image SFT / Adam | 64 / 2048 / 100 | 0.351589 → 0.167965 | 5.458 s | 5.89 | 93.81 |
+| DataComp image SFT / Adam | 64 / 4096 / 100 | 4.365921 → 1.995173 | 1.514 s | 28.94 | 676.39 |
 
 All ranks completed finite, unskipped updates. Frozen text PLE table hashes
-were unchanged; selected language and optimizer samples changed. SFT observed
-image inputs, encoder execution and selected language/vision updates.
+were unchanged; selected language and optimizer samples changed. SFT preserved
+all frozen PLE/indexer hashes and observed image inputs, encoder execution and
+selected language/vision/FP32 Adam updates. Its 1,600 conversations contained
+37,805 supervised tokens; most of the 4K sequence slots are padding.
+Preclip SFT gradient norms ranged from 19.290594 to 163.363068.
 
 The
 [verification card](../../../model_verification_cards/qwen3.8-flash-next/card.yaml)
 records the exact measured source, commands, losses and final-ten metrics.
 Text uses updates 21–30; SFT uses 91–100. Native timing includes lightweight
 verification callbacks; there is no profiler capture, and startup weight hashing
-is outside the final-ten window. TFLOP/s is the arithmetic mean of the
+is outside the final-ten window. SFT manual GC runs after step-100 logging,
+so that endpoint collection is outside the reported window. TFLOP/s is the arithmetic mean of the
 native per-update model-work estimate. Token throughput counts sequence slots,
 including SFT padding, rather than supervised tokens. The 4K QSA FLOP estimate
 uses a dense surrogate and does not accurately count indexer score work;
@@ -185,8 +194,13 @@ estimate. At 2K, QSA takes the
 dense shortcut and does not run the indexer. These are functional observations,
 not hardware-counter utilization or optimized benchmark results.
 
+The earlier 2K Nemotron SFT result (100 updates, loss 0.351589→0.167965,
+5.458 s and 5.89 TFLOP/s/GPU) used trainable PLE tables. Its dataset, sequence
+length and trainable parameters differ from the DataComp run; these are not a
+controlled performance comparison.
+
 The historical 5,349-step image-SFT run remains separate valid evidence: loss
-0.31087→0.01342 on the same bounded 8,192-sample subset. Its
+0.31087→0.01342 on the bounded 8,192-sample Nemotron subset. Its
 [loss curve](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6354#issuecomment-6160448312)
 was captured with the earlier runtime and configuration; it did not capture
 trustworthy TFLOP/s. “Unoptimized” qualifies recipe performance, not that loss
