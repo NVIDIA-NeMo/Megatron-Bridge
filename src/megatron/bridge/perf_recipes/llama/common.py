@@ -277,6 +277,7 @@ def _llama2_benchmark_common(cfg: ConfigContainer) -> None:
     """Apply legacy Llama 2 benchmark defaults shared by the flat recipes."""
     cfg.optimizer.bf16 = True
     cfg.optimizer.clip_grad = 0.3
+    cfg.optimizer.adam_beta2 = 0.98
     cfg.optimizer.fp8_recipe = "delayed"
     cfg.optimizer.lr = 0.0005
     cfg.optimizer.min_lr = 0

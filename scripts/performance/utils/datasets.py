@@ -71,6 +71,7 @@ def create_c4_dataset_config(
     pin_memory=False,
     persistent_workers=True,
     index_mapping_dir=None,
+    random_seed=1234,
 ):
     """Create C4 dataset configuration for Megatron-Bridge.
 
@@ -78,19 +79,31 @@ def create_c4_dataset_config(
       <c4_root>/c4-train.en_<shard>_text_document.{bin,idx}
       <c4_root>/c4-validation-91205-samples.en_text_document.{bin,idx}
 
-    Produces a blend_per_split with (train, val, test) tuples where val and
-    test point to the same validation file (matches NVIDIA's MLPerf DSV3
-    reference layout).
+    Default ``train_shards=(6,)`` matches NVIDIA's MLPerf GPT-OSS 20B,
+    Llama 3.1 8B and DSV3 671B ``get_data()`` blends.
+    Val and test point at the same validation file.
     """
+    from pathlib import Path
+
     from megatron.bridge.training.config import GPTDatasetConfig
 
     val_prefix = f"{c4_root}/c4-validation-91205-samples.en_text_document"
     train_prefixes = [f"{c4_root}/c4-train.en_{i}_text_document" for i in train_shards]
-    train_weights = [50.0] * len(train_prefixes)
+    missing = []
+    for prefix in (*train_prefixes, val_prefix):
+        for suffix in (".bin", ".idx"):
+            path = Path(f"{prefix}{suffix}")
+            if not path.is_file():
+                missing.append(str(path))
+    if missing:
+        raise FileNotFoundError(
+            "C4 mmap files not found: "
+            + ", ".join(missing)
+            + ". Expected the MLPerf layout used by gpt_oss_20b / llama31_8b "
+            + f"under {c4_root}."
+        )
 
-    # GPTDatasetConfig.blend_per_split format: list of 3 (prefixes, weights) tuples
-    # for (train, val, test). Mirrors NVIDIA's MLPerf DSV3 reference setup with
-    # val and test pointing to the same validation file.
+    train_weights = [50] * len(train_prefixes)
     blend_per_split = [
         (train_prefixes, train_weights),
         ([val_prefix], None),
@@ -98,7 +111,7 @@ def create_c4_dataset_config(
     ]
 
     return GPTDatasetConfig(
-        random_seed=1234,
+        random_seed=random_seed,
         reset_attention_mask=False,
         reset_position_ids=False,
         eod_mask_loss=False,
@@ -110,7 +123,112 @@ def create_c4_dataset_config(
         path_to_cache=index_mapping_dir,
         data_sharding=True,
         dataloader_type="single",
+        create_attention_mask=False,
+        fast_cache_load=True,
+        defer_npy_index_mmap=True,
         num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+    )
+
+
+def _gov_report_pack_metadata(seq_length: int) -> list[dict[str, int]]:
+    """Return packing metadata for official GovReport npy (one sequence per pack)."""
+    return [
+        {
+            "dataset_max_seqlen": seq_length,
+            "max_samples_per_bin": 1,
+            "min_packed_seqlen": seq_length,
+        }
+    ]
+
+
+def _ensure_gov_report_pack_metadata(*, dataset_root, seq_length: int):
+    """Write static packing metadata for CUDA-graph-compatible packed npy.
+
+    Official GovReport packs are already a single ``seq_length`` sequence per
+    row (``seq_start_id=[0]``). The metadata file is required when
+    ``pad_cu_seqlens=True``. Prefer ``dataset_root``; fall back to a temp dir
+    when that tree is read-only.
+    """
+    import json
+    import tempfile
+    from pathlib import Path
+
+    serialized = json.dumps(_gov_report_pack_metadata(seq_length))
+    candidates = [
+        Path(dataset_root) / "packed_metadata.json",
+        Path(tempfile.gettempdir()) / f"gov_report_packed_metadata_{seq_length}.json",
+    ]
+    last_error = None
+    for path in candidates:
+        try:
+            path.write_text(serialized)
+            return path
+        except OSError as error:
+            if path.is_file():
+                return path
+            last_error = error
+    raise OSError(
+        f"Unable to write GovReport packing metadata under {dataset_root} or {tempfile.gettempdir()}"
+    ) from last_error
+
+
+def create_gov_report_dataset_config(
+    *,
+    dataset_root: str,
+    seq_length: int,
+    seed: int,
+    max_train_samples: int | None,
+    num_workers: int,
+    pin_memory: bool,
+    persistent_workers: bool,
+):
+    """Create a packed SCROLLS GovReport dataset config for Llama 2 PEFT.
+
+    Expects the packed MLPerf-format artifacts produced by
+    ``scripts/performance/download_gov_report.py``:
+
+      ``<dataset_root>/train.npy``
+      ``<dataset_root>/validation.npy``
+    """
+    from pathlib import Path
+
+    from megatron.bridge.data.builders import GPTSFTDatasetConfig
+    from megatron.bridge.data.packing import PackedSequenceSpecs
+
+    root = Path(dataset_root)
+    train_path = root / "train.npy"
+    val_path = root / "validation.npy"
+    missing = [str(path) for path in (train_path, val_path) if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "GovReport packed files not found: "
+            + ", ".join(missing)
+            + ". Download them with scripts/performance/download_gov_report.py "
+            + f"--data_dir {root}"
+        )
+
+    metadata_path = _ensure_gov_report_pack_metadata(dataset_root=root, seq_length=seq_length)
+    return GPTSFTDatasetConfig(
+        seq_length=seq_length,
+        dataset_root=root,
+        seed=seed,
+        do_validation=True,
+        do_test=False,
+        enable_offline_packing=True,
+        offline_packing_specs=PackedSequenceSpecs(
+            packed_sequence_size=seq_length,
+            packed_train_data_path=train_path,
+            packed_val_data_path=val_path,
+            packed_metadata_path=metadata_path,
+            pad_cu_seqlens=True,
+        ),
+        dataset_kwargs={"return_cu_seqlen": False, "pad_to_max_length": True},
+        dataloader_type="batch",
+        max_train_samples=max_train_samples,
+        num_workers=num_workers,
+        data_sharding=True,
         pin_memory=pin_memory,
         persistent_workers=persistent_workers,
     )

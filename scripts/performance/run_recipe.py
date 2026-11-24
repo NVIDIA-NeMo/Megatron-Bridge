@@ -44,7 +44,13 @@ def _get_diffusion_step(model_family_name: str):
 
 def _apply_training_argparse_overrides(config, args):
     """Apply all training argparse values to ConfigContainer fields."""
-    from utils.datasets import create_mock_dataset_config, create_rp2_dataset_config, create_squad_dataset_config
+    from utils.datasets import (
+        create_c4_dataset_config,
+        create_gov_report_dataset_config,
+        create_mock_dataset_config,
+        create_rp2_dataset_config,
+        create_squad_dataset_config,
+    )
     from utils.utils import apply_argparse_overrides
 
     is_diffusion = args.model_family_name in DIFFUSION_FAMILIES
@@ -105,6 +111,19 @@ def _apply_training_argparse_overrides(config, args):
                 seq_length=args.seq_length or 8192,
                 index_mapping_dir=args.index_mapping_dir,
             )
+        elif args.data == "c4":
+            if not args.c4_root:
+                raise ValueError("--c4_root is required for c4 dataset")
+            config.dataset = create_c4_dataset_config(
+                seq_length=args.seq_length or getattr(config.dataset, "seq_length", 8192),
+                c4_root=args.c4_root,
+                train_shards=tuple(args.c4_train_shards),
+                index_mapping_dir=args.index_mapping_dir,
+                random_seed=getattr(config.dataset, "random_seed", 1234) or 1234,
+                num_workers=getattr(config.dataset, "num_workers", 1),
+                pin_memory=getattr(config.dataset, "pin_memory", False),
+                persistent_workers=getattr(config.dataset, "persistent_workers", True),
+            )
         elif args.data == "squad":
             if not args.dataset_root:
                 raise ValueError("--dataset-root is required for squad dataset")
@@ -122,6 +141,18 @@ def _apply_training_argparse_overrides(config, args):
                 seq_length=args.seq_length or 8192,
                 packed=True,
                 pad_seq_to_mult=pad_seq_to_mult,
+            )
+        elif args.data == "gov_report":
+            if not args.dataset_root:
+                raise ValueError("--dataset-root is required for gov_report dataset")
+            config.dataset = create_gov_report_dataset_config(
+                dataset_root=args.dataset_root,
+                seq_length=args.seq_length or 8192,
+                seed=getattr(config.dataset, "seed", 1234) or 1234,
+                max_train_samples=getattr(config.dataset, "max_train_samples", None),
+                num_workers=getattr(config.dataset, "num_workers", 4),
+                pin_memory=getattr(config.dataset, "pin_memory", True),
+                persistent_workers=getattr(config.dataset, "persistent_workers", True),
             )
         else:
             raise ValueError(f"Unknown dataset type: {args.data}")
