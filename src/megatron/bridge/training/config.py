@@ -1624,6 +1624,8 @@ class ConfigContainer(Container):
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
+        # Match Megatron-LM's ownership before optimizer finalization and GTP validation.
+        _sync_mxfp8_reuse_grad_buf_settings(self)
         if hasattr(self.optimizer, "finalize"):
             self.optimizer.finalize()
         if isinstance(self.ddp, MCoreDistributedDataParallelConfig):
@@ -1790,7 +1792,6 @@ class ConfigContainer(Container):
 
         # Run validations
         _validate_and_sync_distributed_optimizer_settings(self)
-        _sync_mxfp8_reuse_grad_buf_settings(self)
         _validate_mixed_precision_consistency(self)
         _validate_fine_grained_activation_offloading(self)
         validate_cudnn_gdn_stack(self.model)
@@ -2514,22 +2515,26 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
 
 
 def _sync_mxfp8_reuse_grad_buf_settings(config: ConfigContainer) -> None:
-    """Sync reuse_grad_buf_for_mxfp8_param_ag between DDP and optimizer configs and fill optimizer.fp8_recipe."""
+    """Derive DDP reuse from the optimizer and optimizer FP8 recipe from the model, as in Megatron-LM."""
     ddp_reuse = config.ddp.reuse_grad_buf_for_mxfp8_param_ag
     optimizer_reuse = config.optimizer.reuse_grad_buf_for_mxfp8_param_ag
 
-    if ddp_reuse or optimizer_reuse:
-        if ddp_reuse != optimizer_reuse:
-            warn_rank_0(
-                f"reuse_grad_buf_for_mxfp8_param_ag settings were not in sync: "
-                f"ddp.reuse_grad_buf_for_mxfp8_param_ag={ddp_reuse}, "
-                f"optimizer.reuse_grad_buf_for_mxfp8_param_ag={optimizer_reuse}. "
-                f"Automatically enabling reuse_grad_buf_for_mxfp8_param_ag for both settings."
-            )
-        config.ddp.reuse_grad_buf_for_mxfp8_param_ag = True
-        config.optimizer.reuse_grad_buf_for_mxfp8_param_ag = True
-        if config.optimizer.fp8_recipe is None and getattr(config.model, "fp8", None):
-            config.optimizer.fp8_recipe = config.model.fp8_recipe
+    if ddp_reuse != optimizer_reuse:
+        warn_rank_0(
+            f"reuse_grad_buf_for_mxfp8_param_ag settings were not in sync: "
+            f"ddp.reuse_grad_buf_for_mxfp8_param_ag={ddp_reuse}, "
+            f"optimizer.reuse_grad_buf_for_mxfp8_param_ag={optimizer_reuse}. "
+            f"Using the optimizer setting for DDP."
+        )
+    config.ddp.reuse_grad_buf_for_mxfp8_param_ag = optimizer_reuse
+
+    model_recipe = config.model.fp8_recipe
+    if config.optimizer.fp8_recipe is not None and config.optimizer.fp8_recipe != model_recipe:
+        warn_rank_0(
+            f"fp8_recipe settings were not in sync: model.fp8_recipe={model_recipe}, "
+            f"optimizer.fp8_recipe={config.optimizer.fp8_recipe}. Using the model setting for the optimizer."
+        )
+    config.optimizer.fp8_recipe = model_recipe
 
 
 def _validate_mixed_precision_consistency(config: ConfigContainer) -> None:
