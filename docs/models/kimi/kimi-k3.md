@@ -14,10 +14,31 @@ config. The shared builder constructs the model from the Kimi stack spec.
 HF configuration determines the architecture and weight mapping; each HF block
 maps to an attention layer followed by a dense or expert layer.
 
-The library recipe `kimi_k3_pretrain_config` follows [#6429](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6429):
-BF16/Adam with TP4/PP4/EP128, complete-block recomputation, periodic garbage
-collection and expandable allocator segments. It remains an early configuration
-without a full-model performance or convergence result.
+**EARLY UNOPTIMIZED — library recipe.**
+`kimi_k3_pretrain_512gpu_gb300_bf16_config` lives in
+`megatron.bridge.recipes.kimi.gb300.kimi_k3`; `kimi_k3_pretrain_config` remains
+an alias. It follows [#6429](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6429)
+with BF16/Adam, TP4/PP4/EP128, 8K sequences and complete-block recomputation.
+It requires the pinned MCore `dev` stack and has no full-model performance or
+convergence result. A small-model check on eight GB300 GPUs completed five
+updates with TP2/PP2/EP2, 1K sequences and mock data, with finite gradients and
+confirmed weight updates on every rank. This checks execution of the recipe's
+settings, not full-model memory fit, throughput or convergence.
+
+The library recipe carries over compatible settings from the performance
+recipe: fused gradient accumulation and cross entropy, grouped expert GEMMs,
+HybridEP dispatch, chunked Adam-state
+offload, periodic garbage collection, expandable allocator segments and the
+NCCL/Transformer Engine environment settings. Gradient reduction and parameter
+gathers remain synchronous: the first attention-residual branch has unused score
+parameters, and Core requires reduction overlap for parameter-gather overlap.
+HF architecture and real expert routing are preserved.
+
+MXFP8, MoK and FLA attention residuals require further integration with the
+bridge's model components. Native KDA/MLA fusion and selective-recompute flags
+are not consumed by those components. The standalone permutation-fusion flag
+is not consumed by HybridEP dispatch. The library recipe therefore retains
+BF16 and full-block recomputation instead of advertising inactive flags.
 
 The separate performance recipe `kimi_k3_pretrain_64gpu_gb300_fp8mx_proxy_config`
 is unchanged from Ze Yang’s [#7066](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/7066).

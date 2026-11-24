@@ -125,7 +125,15 @@ def test_library_recipe_consumes_canonical_model(kimi_k3_text_config, monkeypatc
         return SimpleNamespace(get_model_config=lambda: KimiK3Bridge().hf_config_to_model_config(hf))
 
     monkeypatch.setenv("KIMI_K3_HF_PATH", hf_path)
-    monkeypatch.setattr("megatron.bridge.recipes.kimi.kimi_k3.AutoBridge.from_hf_pretrained", from_hf)
+    monkeypatch.setattr("megatron.bridge.recipes.kimi.gb300.kimi_k3.AutoBridge.from_hf_pretrained", from_hf)
+    from dataclasses import fields
+
+    from megatron.bridge.training.config import OptimizerConfig
+
+    if "chunked_optimizer_state_offload" not in {field.name for field in fields(OptimizerConfig)}:
+        with pytest.raises(RuntimeError, match="require scripts/switch_mcore.sh dev"):
+            kimi_k3_pretrain_config()
+        return
     regular = kimi_k3_pretrain_config()
     assert regular.model.hybrid_layer_pattern.startswith("K-")
     assert not regular.model.moe_router_force_load_balancing
@@ -139,6 +147,13 @@ def test_library_recipe_consumes_canonical_model(kimi_k3_text_config, monkeypatc
     assert regular.train.manual_gc and regular.train.manual_gc_interval == 10
     assert regular.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
     assert regular.optimizer.optimizer == "adam"
+    assert regular.optimizer.chunked_optimizer_state_offload
+    assert regular.optimizer.optimizer_state_offload_chunk_size_mb == 256
+    assert not regular.ddp.overlap_param_gather and not regular.ddp.overlap_grad_reduce
+    assert not regular.optimizer.overlap_param_gather
+    regular.optimizer.validate_run(ddp_config=regular.ddp, use_torch_fsdp2=False, ckpt_format="torch_dist")
+    assert regular.model.gradient_accumulation_fusion
+    assert regular.model.moe_flex_dispatcher_backend == "hybridep"
     assert regular.ddp.check_for_nan_in_grad
 
 
@@ -223,3 +238,12 @@ def test_actual_hybrid_flops_match_logical_blocks_without_mutation(kimi_k3_text_
     assert num_floating_point_operations(cfg, batch_size=2) == expected
     assert num_floating_point_operations(cfg, batch_size=2) == expected
     assert model.as_dict() == before
+
+
+def test_hardware_recipe_is_public_and_legacy_name_is_alias():
+    from megatron.bridge import recipes
+    from megatron.bridge.recipes.kimi.gb300.kimi_k3 import kimi_k3_pretrain_512gpu_gb300_bf16_config
+
+    assert recipes.kimi_k3_pretrain_512gpu_gb300_bf16_config is kimi_k3_pretrain_512gpu_gb300_bf16_config
+    assert recipes.kimi_k3_pretrain_config is kimi_k3_pretrain_512gpu_gb300_bf16_config
+    assert "EARLY UNOPTIMIZED" in kimi_k3_pretrain_512gpu_gb300_bf16_config.__doc__
