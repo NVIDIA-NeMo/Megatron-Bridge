@@ -28,7 +28,7 @@ run's original analytical estimator, including a dense surrogate for 4K QSA;
 it has not been recomputed with the newer model-local estimator. Training does
 not establish inference, cross-framework trajectory parity or optimizer/RNG resume.
 
-See the [training instructions](../../../examples/models/qwen/qwen4_exp/README.md)
+See the [training instructions](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/qwen/qwen4_exp/README.md)
 for separate checkpoint import and the registered recipe. The shared decoder's
 [PLE sharding implementation and attribution](qwen3.8-flash-next.md#frozen-ple-table-sharding)
 also apply to this mode.
