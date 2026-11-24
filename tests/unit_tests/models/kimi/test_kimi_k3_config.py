@@ -5,6 +5,7 @@
 from copy import deepcopy
 
 import pytest
+import torch
 from transformers import PretrainedConfig
 
 from megatron.bridge.models.kimi.kimi_k3_bridge import KimiK3Bridge
@@ -105,10 +106,10 @@ def test_pipeline_rejects_invalid_boundaries(pattern, stages, counts):
         kimi_k3_pipeline_pattern(pattern, pipeline_size=stages, blocks_per_stage=counts)
 
 
-def test_recipes_consume_canonical_model(kimi_k3_text_config, monkeypatch, tmp_path):
+@pytest.mark.parametrize("local", [False, True])
+def test_library_recipe_consumes_canonical_model(kimi_k3_text_config, monkeypatch, tmp_path, local):
     from types import SimpleNamespace
 
-    from megatron.bridge.perf_recipes.kimi.gb300.kimi_k3 import kimi_k3_pretrain_64gpu_gb300_bf16_proxy_config
     from megatron.bridge.recipes.kimi.kimi_k3 import kimi_k3_pretrain_config
 
     text = deepcopy(kimi_k3_text_config)
@@ -116,27 +117,29 @@ def test_recipes_consume_canonical_model(kimi_k3_text_config, monkeypatch, tmp_p
     text.linear_attn_config["kda_layers"] = [i for i in range(1, 25) if i % 4]
     hf = PretrainedConfig(text_config=PretrainedConfig(**vars(text)))
 
+    hf_path = str(tmp_path) if local else "moonshotai/Kimi-K3"
+
     def from_hf(path, **kwargs):
-        assert path == str(tmp_path)
+        assert path == hf_path
         assert kwargs == {"trust_remote_code": True}
         return SimpleNamespace(get_model_config=lambda: KimiK3Bridge().hf_config_to_model_config(hf))
 
-    monkeypatch.setenv("KIMI_K3_HF_PATH", str(tmp_path))
+    monkeypatch.setenv("KIMI_K3_HF_PATH", hf_path)
     monkeypatch.setattr("megatron.bridge.recipes.kimi.kimi_k3.AutoBridge.from_hf_pretrained", from_hf)
     regular = kimi_k3_pretrain_config()
     assert regular.model.hybrid_layer_pattern.startswith("K-")
     assert not regular.model.moe_router_force_load_balancing
     assert regular.model.pipeline_model_parallel_size == 4
     assert regular.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-    assert regular.tokenizer.tokenizer_model == str(tmp_path)
-    proxy = kimi_k3_pretrain_64gpu_gb300_bf16_proxy_config()
-    assert proxy.model.hybrid_layer_pattern == "KEKEKE+E" * 6
-    assert proxy.model.num_layers == 48
-    assert proxy.model.moe_router_force_load_balancing
-    assert proxy.model.pipeline_model_parallel_size == 1
-    assert proxy.tokenizer.tokenizer_type == "NullTokenizer"
-    assert not proxy.ddp.overlap_grad_reduce
-    assert proxy.model.kimi_linear_num_heads == regular.model.kimi_linear_num_heads
+    assert regular.tokenizer.tokenizer_model == hf_path
+    assert regular.tokenizer.vocab_file == (str(tmp_path / "tiktoken.model") if local else None)
+    assert regular.model.params_dtype == torch.bfloat16
+    assert regular.model.recompute_granularity == "full"
+    assert regular.model.recompute_num_layers == 2
+    assert regular.train.manual_gc and regular.train.manual_gc_interval == 10
+    assert regular.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    assert regular.optimizer.optimizer == "adam"
+    assert regular.ddp.check_for_nan_in_grad
 
 
 @pytest.mark.parametrize("partitioned", [False, True])
@@ -195,3 +198,28 @@ def test_rejects_unsupported_stack_execution(kimi_k3_text_config, field, value):
     setattr(config, field, value)
     with pytest.raises(ValueError, match="Kimi K3"):
         kimi_k3_stack_spec(config)
+
+
+@pytest.mark.parametrize("partitioned", [False, True])
+def test_actual_hybrid_flops_match_logical_blocks_without_mutation(kimi_k3_text_config, partitioned):
+    from types import SimpleNamespace
+
+    from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
+
+    hf = PretrainedConfig(text_config=PretrainedConfig(**vars(kimi_k3_text_config)))
+    model = KimiK3Bridge().hf_config_to_model_config(hf)
+    model.pipeline_model_parallel_size = 2 if partitioned else 1
+    model.finalize()
+    before = deepcopy(model.as_dict())
+    logical = deepcopy(model)
+    pattern = logical.hybrid_layer_pattern.replace("|", "")
+    logical.hybrid_layer_pattern = None
+    logical.is_hybrid_model = False
+    logical.num_layers = len(pattern) // 2
+    logical.moe_layer_freq = [int(layer == "E") for layer in pattern[1::2]]
+    dataset = SimpleNamespace(seq_length=128)
+    expected = num_floating_point_operations(SimpleNamespace(model=logical, dataset=dataset), batch_size=2)
+    cfg = SimpleNamespace(model=model, dataset=dataset)
+    assert num_floating_point_operations(cfg, batch_size=2) == expected
+    assert num_floating_point_operations(cfg, batch_size=2) == expected
+    assert model.as_dict() == before

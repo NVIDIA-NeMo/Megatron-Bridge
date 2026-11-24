@@ -119,10 +119,12 @@ def _pin_input_ranges(chunk: torch.nn.Module) -> None:
         kind = re.search(r"(\w+)\.input_quantizer$|([kv]_bmm)_quantizer$", name)
         if not (isinstance(quantizer, TensorQuantizer) and quantizer.is_enabled and kind):
             continue
-        layer = chunk.get_submodule(re.match(r"^.*?decoder\.layers\.\d+", name).group(0))
-        # Hyper-connection layers wrap the numbered layer.
-        layer = getattr(layer, "layer_number", None) or layer.inner_layer.layer_number
-        layer -= 1
+        layer = chunk.get_submodule(re.match(r"^.*?(?:decoder|hybrid_stack)\.layers\.\d+", name).group(0))
+        # Split Kimi layers share one source block; hyper-connection layers wrap it.
+        if hasattr(layer, "source_index"):
+            layer = layer.source_index
+        else:
+            layer = (getattr(layer, "layer_number", None) or layer.inner_layer.layer_number) - 1
         amax = input_amax(layer, kind.group(1) or kind.group(2))
         # Exporters raise FP8 KV-cache scales (amax / 448) to at least one.
         amax *= 448 if kind.group(2) else 1
@@ -135,21 +137,27 @@ def main(
 ) -> None:
     # Kimi-K3's config class ships with the checkpoint.
     bridge = AutoBridge.from_hf_pretrained(hf_model_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
-    provider = bridge.to_megatron_provider(load_weights=True)
-    # Also sets bridge-specific pipeline layouts, e.g. for DeepSeek-V4's hash-routed MoE layers.
-    provider.apply_overrides_and_finalize(
-        overrides={
-            "tensor_model_parallel_size": tp,
-            "pipeline_model_parallel_size": pp,
-            "expert_model_parallel_size": ep,
-            "expert_tensor_parallel_size": etp,
-            "moe_grouped_gemm": False,
-            "gradient_accumulation_fusion": False,
-            "pipeline_dtype": torch.bfloat16,
-        }
-    )
-    provider.initialize_model_parallel(seed=0)
-    model = provider.provide_distributed_model(wrap_with_ddp=False)
+    overrides = {
+        "tensor_model_parallel_size": tp,
+        "pipeline_model_parallel_size": pp,
+        "expert_model_parallel_size": ep,
+        "expert_tensor_parallel_size": etp,
+        "moe_grouped_gemm": False,
+        "gradient_accumulation_fusion": False,
+        "pipeline_dtype": torch.bfloat16,
+    }
+    if getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False):
+        model_config = bridge.get_model_config()
+        for name, value in overrides.items():
+            if not hasattr(model_config.transformer, name):
+                raise ValueError(f"Model config has no field {name!r}.")
+            setattr(model_config.transformer, name, value)
+        model = bridge.get_model(model_config, wrap_with_ddp=False)
+    else:
+        provider = bridge.to_megatron_provider(load_weights=True)
+        provider.apply_overrides_and_finalize(overrides=overrides)
+        provider.initialize_model_parallel(seed=0)
+        model = provider.provide_distributed_model(wrap_with_ddp=False)
 
     quant_cfg = {"quant_cfg": [*DISABLED, *CONFIGS[config], *UNQUANTIZED], "algorithm": "max"}
     for chunk in model:

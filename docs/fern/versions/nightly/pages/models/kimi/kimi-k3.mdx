@@ -14,6 +14,16 @@ config. The shared builder constructs the model from the Kimi stack spec.
 HF configuration determines the architecture and weight mapping; each HF block
 maps to an attention layer followed by a dense or expert layer.
 
+The library recipe `kimi_k3_pretrain_config` follows [#6429](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6429):
+BF16/Adam with TP4/PP4/EP128, complete-block recomputation, periodic garbage
+collection and expandable allocator segments. It remains an early configuration
+without a full-model performance or convergence result.
+
+The separate performance recipe `kimi_k3_pretrain_64gpu_gb300_fp8mx_proxy_config`
+is unchanged from Ze Yang’s [#7066](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/7066).
+It requires the pinned MCore `dev` stack and uses MXFP8, MoK, FLA attention
+residuals and Muon for a 24-block, random-init mock-data proxy with forced routing.
+
 **Conversion scope:** language-backbone import/export, including MXFP4 expert
 conversion and unchanged multimodal-weight passthrough during export.
 The [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/kimi-k3/card.yaml)

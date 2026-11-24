@@ -17,7 +17,6 @@ import os
 from pathlib import Path
 
 import torch
-from huggingface_hub import hf_hub_download
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
@@ -31,8 +30,11 @@ def kimi_k3_pretrain_config() -> ConfigContainer:
 
     TP4/PP4/EP128 and full recomputation follow the early K3 training setup.
     Complete source blocks are balanced over PP stages (24/23/23/23 for 93 blocks).
-    This recipe has no full-model throughput or convergence claim. Set KIMI_K3_HF_PATH
-    for a local snapshot, provide a tokenized dataset, and select a checkpoint before use.
+    Full recomputation groups both layers of each source block. Periodic garbage
+    collection and expandable allocator segments reduce allocation overhead.
+    This recipe is early and unoptimized, with no full-model throughput or convergence
+    claim. Set KIMI_K3_HF_PATH for a local snapshot, provide a tokenized dataset,
+    and select a checkpoint before use.
     KDA context parallelism and virtual pipeline parallelism remain unsupported.
     """
     return _kimi_k3_pretrain_common()
@@ -58,8 +60,11 @@ def _kimi_k3_pretrain_common() -> ConfigContainer:
     cfg.model.gradient_accumulation_fusion = False
     cfg.model.recompute_granularity = "full"
     cfg.model.recompute_method = "uniform"
-    cfg.model.recompute_num_layers = 1
+    # Checkpoint a complete source block (attention + FFN) per chunk.
+    cfg.model.recompute_num_layers = 2
 
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 10
     cfg.train.train_iters = 10000
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
@@ -84,9 +89,7 @@ def _kimi_k3_pretrain_common() -> ConfigContainer:
 
     cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
     cfg.tokenizer.tokenizer_model = hf_path
-    cfg.tokenizer.vocab_file = (
-        str(Path(hf_path) / "tiktoken.model") if Path(hf_path).is_dir() else hf_hub_download(hf_path, "tiktoken.model")
-    )
+    cfg.tokenizer.vocab_file = str(Path(hf_path) / "tiktoken.model") if Path(hf_path).is_dir() else None
     cfg.tokenizer.trust_remote_code = True
     cfg.tokenizer.use_tokenizer_vocab_size = False
     cfg.tokenizer.vocab_size = cfg.model.vocab_size
@@ -99,5 +102,9 @@ def _kimi_k3_pretrain_common() -> ConfigContainer:
     cfg.checkpoint.hf_trust_remote_code = True
     cfg.logger.log_interval = 1
     cfg.logger.log_memory_interval = 1
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS, "NCCL_PXN_DISABLE": "1"}
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "NCCL_PXN_DISABLE": "1",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    }
     return cfg
