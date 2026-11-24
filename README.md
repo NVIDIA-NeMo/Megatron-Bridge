@@ -113,6 +113,27 @@ For development installation and additional details, please refer to our [Contri
 
 Megatron Bridge pins [Megatron-Core](https://github.com/NVIDIA/Megatron-LM) as a git submodule at `3rdparty/Megatron-LM`. The repository tracks two pinned commits — one from the upstream **main** branch (default) and one from **dev** — managed by `scripts/switch_mcore.sh`.
 
+Before the first `uv sync` (or a manual MCore install/wheel build), run:
+
+```bash
+bash scripts/prepare_mcore.sh
+uv sync --locked
+```
+
+This keeps the existing submodule and excludes only its `megatron/bridge` directory
+with Git sparse checkout, so this repository provides `megatron.bridge`. It does
+not change the upstream commit or tracked files. Preparation removes ignored MCore
+`build/` and `megatron_core.egg-info/` output to prevent stale files entering wheels;
+it stops if local source changes or unexpected files need your attention.
+Run it for each fresh clone and before `docker build` from a local checkout.
+`scripts/switch_mcore.sh`, CI container builds, and installation tests prepare MCore
+automatically. Existing `PYTHONPATH` and editable-install paths stay unchanged.
+
+If this environment already installed an unfiltered MCore wheel, use a fresh
+virtual environment, or uninstall MCore and reinstall both MCore and standalone
+Bridge after preparation. Sparse checkout alone cannot remove already installed
+files. This temporary exclusion can be removed when standalone Bridge retires.
+
 The submodule committed to the repo always points to the **main** commit. Use the **dev** commit when you need a Megatron-Core feature or fix that has not yet landed on main, or to validate forward-compatibility with upcoming MCore changes:
 
 ```bash
