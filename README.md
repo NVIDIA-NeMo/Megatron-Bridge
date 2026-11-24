@@ -12,7 +12,7 @@
 
 ## 📣 News
 
-- [11/23/2026] **Megatron Bridge and Megatron-Core were used to train MemTensor’s MemT-1.0**, a family of models that integrates persistent, evolving memory to reuse historical information without reloading the original context. Megatron Bridge native support coming soon. See the [paper](https://arxiv.org/abs/2610.26825) for details.
+- [11/23/2026] **Megatron Bridge and Megatron-Core were used to train MemTensor’s MemT-1.0**, a family of models that integrates persistent, evolving memory to reuse historical information without reloading the original context. The [Pro model](https://huggingface.co/MemTensor/MemT-1.0-Pro) builds on NVIDIA Nemotron 3 Ultra. Megatron Bridge native support is coming soon. See the [paper](https://arxiv.org/abs/2610.26825) for details.
 
 - [11/19/2026] **Megatron Bridge will be merged into the Megatron-LM repository.** See [Unified Megatron-LM](https://docs.nvidia.com/nemo/megatron-bridge/nightly/unified-megatron.html) for more details.
 
