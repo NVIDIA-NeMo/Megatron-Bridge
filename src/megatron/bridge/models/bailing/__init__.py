@@ -14,8 +14,12 @@
 # limitations under the License.
 
 from megatron.bridge.models.bailing.bailing_moe2_bridge import BailingMoeV2Bridge
+from megatron.bridge.models.bailing.bailing_moe3_bridge import BailingMoeV3Bridge
+from megatron.bridge.models.bailing.bailing_moe3_provider import BailingMoe3HybridProvider
 
 
 __all__ = [
     "BailingMoeV2Bridge",
+    "BailingMoeV3Bridge",
+    "BailingMoe3HybridProvider",
 ]

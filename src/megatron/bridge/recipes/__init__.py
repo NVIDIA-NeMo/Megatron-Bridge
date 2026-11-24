@@ -23,6 +23,8 @@ from transformers import __version__ as _transformers_version
 
 from megatron.bridge.recipes.bagel import *
 from megatron.bridge.recipes.bagel.h100 import *
+from megatron.bridge.recipes.bailing import *
+from megatron.bridge.recipes.bailing.h100 import *
 from megatron.bridge.recipes.beam import *
 from megatron.bridge.recipes.beam.h200 import *
 from megatron.bridge.recipes.deepseek import *
