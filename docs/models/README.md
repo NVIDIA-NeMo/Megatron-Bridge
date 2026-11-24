@@ -4,7 +4,7 @@
 
 Choose a model to open its interactive import/export and training configurations. Every option comes directly from an authoritative YAML verification card; independent fields are never combined into synthetic commands.
 
-Current inventory: **31 model cards** and **451 concrete configurations**.
+Current inventory: **31 model cards** and **443 concrete configurations**.
 
 Each model page lets you select import/export, pretraining, benchmarking, SFT, LoRA, or long-context SFT and immediately see the exact command and expected result for the recorded precision and GPU.
 
@@ -105,7 +105,7 @@ Choose a model to inspect its recorded import/export, training, and precision co
     <div class="verification-provider-models">
       <a class="verification-model-link" href="kimi/kimi-k3.html#verified-kimi-k3">
         <strong title="moonshotai/Kimi-K3">Kimi-K3</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </a>
       <a class="verification-model-link" href="moonlight/moonlight.html#verified-moonlight-16b-a3b">
         <strong title="moonshotai/Moonlight-16B-A3B">Moonlight-16B-A3B</strong>
