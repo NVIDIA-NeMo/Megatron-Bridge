@@ -152,6 +152,13 @@ def main(
             if not hasattr(model_config.transformer, name):
                 raise ValueError(f"Model config has no field {name!r}.")
             setattr(model_config.transformer, name, value)
+        # Rebuild native pipeline segments and hash-MoE layouts after topology overrides.
+        layout_builder = getattr(model_config, "_pipeline_model_parallel_layout_builder", None)
+        if layout_builder is not None:
+            model_config.pipeline_model_parallel_layout = layout_builder(
+                model_config.pipeline_model_parallel_size,
+                model_config.virtual_pipeline_model_parallel_size,
+            )
         model = bridge.get_model(model_config, wrap_with_ddp=False)
     else:
         provider = bridge.to_megatron_provider(load_weights=True)
