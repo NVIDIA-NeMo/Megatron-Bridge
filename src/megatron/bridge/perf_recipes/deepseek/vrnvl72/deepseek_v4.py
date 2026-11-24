@@ -13,7 +13,6 @@
 # limitations under the License.
 """VRNVL72 performance recipes for DeepSeek V4."""
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
 )
@@ -28,7 +27,6 @@ def deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     GLU kernel. Requires a Rubin-capable MoK build.
     """
     cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
-    _enable_ncclep(cfg)
 
     # Communication SM allocation from the DeepSeek V4 Pro Rubin benchmark; GB300 uses 28/28.
     cfg.model.moe_megakernel_backend_config = {
@@ -45,8 +43,6 @@ def deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
-        # NCCL EP dispatcher mode and one GPU per rank.
-        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,

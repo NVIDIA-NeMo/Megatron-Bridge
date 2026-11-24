@@ -56,6 +56,10 @@ def _assert_mok_experts(cfg, backend_config: dict[str, float]) -> None:
     assert cfg.model.moe_shared_expert_glu_interleave_size is None
     assert cfg.model.moe_use_grouped_tensor is True
     assert cfg.model.moe_shared_expert_overlap is False
+    # NCCL EP would make the launchers expose one GPU per rank, which breaks MoK's symmetric memory.
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert "NCCL_EP_HT_EM_PULL_PUSH" not in cfg.env_vars
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
@@ -85,8 +89,6 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.train.global_batch_size == 2048
     assert cfg.train.micro_batch_size == 1
 
-    assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_use_grouped_tensor is True
     assert cfg.model.moe_router_force_load_balancing is True
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
@@ -142,7 +144,6 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
     assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
 
 
@@ -156,7 +157,7 @@ def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
     assert cfg.train.global_batch_size == 2048
     assert cfg.train.micro_batch_size == 2
     assert cfg.model.recompute_modules == ["mla_up_proj"]
-    # GB300 builds on the shared HybridEP base, not on the NCCL EP GB200 recipe.
+    # GB300 builds on the shared HybridEP base.
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
@@ -177,21 +178,15 @@ def test_deepseek_v4_flash_128gpu_vrnvl72_fp8mx_uses_mok_with_rubin_comm_sms() -
     assert vrnvl72_cfg.model.activation_func_clamp_value == gb300_cfg.model.activation_func_clamp_value
     assert vrnvl72_cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert vrnvl72_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
-    # MoK owns dispatch on both; the inert flex backend selection still differs.
-    assert vrnvl72_cfg.model.moe_flex_dispatcher_backend == "ncclep"
-    assert vrnvl72_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert vrnvl72_cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
-    assert gb300_cfg.model.moe_flex_dispatcher_backend == "hybridep"
 
     gb300_cfg.model.moe_megakernel_backend_config = rubin_backend_config
-    gb300_cfg.model.moe_flex_dispatcher_backend = "ncclep"
     assert vars(vrnvl72_cfg.model) == vars(gb300_cfg.model)
-    # The environments differ in dispatcher settings and Rubin's kernel policy.
+    # The environments differ in the HybridEP topology settings and Rubin's kernel policy.
     expected_env = {name: value for name, value in gb300_cfg.env_vars.items() if name not in HYBRID_EP_ENV_NAMES}
     assert gb300_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
     assert vrnvl72_cfg.env_vars == {
         **expected_env,
-        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
     for field in fields(vrnvl72_cfg):

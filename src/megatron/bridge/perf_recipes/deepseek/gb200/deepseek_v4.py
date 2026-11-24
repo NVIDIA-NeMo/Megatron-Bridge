@@ -18,7 +18,7 @@ import torch
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
-from megatron.bridge.perf_recipes._common import _benchmark_common, _enable_ncclep
+from megatron.bridge.perf_recipes._common import _benchmark_common
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config,
@@ -117,11 +117,16 @@ def _build_deepseek_v4_flash_gb200_fp8mx() -> ConfigContainer:
 def _enable_deepseek_v4_flash_mok(cfg: ConfigContainer) -> None:
     """Run the Flash experts through the MoK megakernel instead of native dispatch, grouped MLP and combine.
 
-    MoK overlaps expert-parallel communication with the routed and shared expert GEMMs. The
-    selected flex dispatcher backend is not constructed, so it no longer chooses the transport.
+    MoK overlaps expert-parallel communication with the routed and shared expert GEMMs. No flex
+    dispatcher is constructed, so the backend selection no longer chooses the transport.
     Requires the Mixture-of-Kittens MCore integration build in the container. The backend options
     are the DeepSeek V4 Pro GB300 starting point and are not yet tuned for Flash.
     """
+    # The launchers expose one GPU per rank to NCCL EP recipes. MoK's symmetric memory needs the
+    # ranks of a node to keep distinct device indices, so never leave that backend selected.
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+
     cfg.model.moe_megakernel_backend = "mok"
     cfg.model.moe_megakernel_backend_config = {
         "fwd_num_comm_sms": 28,
@@ -149,7 +154,6 @@ def _enable_deepseek_v4_flash_mok(cfg: ConfigContainer) -> None:
 def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× GB200, MXFP8, full-iteration CUDA graph, MoK experts."""
     cfg = _build_deepseek_v4_flash_gb200_fp8mx()
-    _enable_ncclep(cfg)
     _enable_deepseek_v4_flash_mok(cfg)
     # Each manual collection walks every tracked Python object; host RSS stays flat at this interval.
     cfg.train.manual_gc_interval = 500
@@ -161,7 +165,6 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
