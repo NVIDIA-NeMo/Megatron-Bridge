@@ -20,7 +20,6 @@ import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Dict, List, Tuple
 
-import torch
 import torch.distributed as dist
 from megatron.core.distributed.finalize_model_grads import finalize_model_grads as _finalize_model_grads
 from megatron.core.models.mimo import MimoModel
@@ -299,7 +298,7 @@ def finalize_model_grads_multimodule(
                 if module_name != MIMO_LANGUAGE_MODULE_KEY and num_tokens > 0:
                     module_dp = _get_dp_size_from_grid(grid)
                     ddp_mean_correction = 1.0 if get_model_config(module).calculate_per_token_loss else module_dp
-                    module.scale_gradients(ddp_mean_correction / num_tokens.float())
+                    module.scale_gradients(ddp_mean_correction / num_tokens.float().item())
     else:
         # calculate_per_token_loss=False path.
         #
@@ -323,9 +322,7 @@ def finalize_model_grads_multimodule(
                     ddp_mean_correction = 1.0 if get_model_config(module).calculate_per_token_loss else module_dp
                     module_scale = float(ddp_mean_correction) / float(llm_dp)
                     if module_scale != 1.0:
-                        module.scale_gradients(
-                            torch.tensor(module_scale, dtype=torch.float32, device=next(module.parameters()).device)
-                        )
+                        module.scale_gradients(module_scale)
 
 
 def zero_grad_buffer_for_multimodule(module_to_grid_tuple: List[Tuple]):
