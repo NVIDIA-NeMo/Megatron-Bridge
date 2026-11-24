@@ -38,6 +38,7 @@ import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
 
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -277,12 +278,18 @@ class _PLEShardExport(Mapping[str, torch.Tensor]):
 class _PLEHFShards(Mapping[str, torch.Tensor]):
     """Lazy shard aliases so import can resolve TP/EP ownership at the destination."""
 
-    def __init__(self, names: dict[str, str], source: Mapping[str, torch.Tensor]):
+    def __init__(
+        self, names: dict[str, str], source: Mapping[str, torch.Tensor], *, block_size: tuple[int, int] | None
+    ):
         self._names = names
         self._source = source
+        self._block_size = block_size
 
     def __getitem__(self, name: str) -> torch.Tensor:
-        return self._source[self._names[name]]
+        hf_name = self._names[name]
+        return quantization_utils.dequantize_fp8_scale_inv_weights(
+            hf_name, self._source[hf_name], self._source, block_size=self._block_size
+        )
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._names)
@@ -682,13 +689,21 @@ class Qwen4ExpBridge(MegatronModelBridge):
         return MegatronMappingRegistry(*mappings)
 
     # ------------------------------------------------------------------ rank-local PLE import
-    def maybe_modify_loaded_hf_weight(
+    def _load_hf_weights(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
     ) -> torch.Tensor | Mapping[str, torch.Tensor]:
-        """Defer PLE shard reads until the destination's TP/EP ownership is known."""
+        """Load and dequantize PLE shards only after destination ownership is known.
+
+        The generic loader inspects every mapping value for FP8 tensors. PLE
+        instead applies that preprocessing to each shard when it is requested.
+        """
         if isinstance(hf_param, dict) and hf_param and all(k.startswith("shard_") for k in hf_param):
-            return _PLEHFShards(hf_param, hf_state_dict)
-        return super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+            return _PLEHFShards(
+                hf_param,
+                hf_state_dict,
+                block_size=quantization_utils.fp8_weight_block_size(getattr(self, "hf_config", None)),
+            )
+        return super()._load_hf_weights(hf_param, hf_state_dict)
 
 
 @MegatronModelBridge.register_bridge(

@@ -54,25 +54,49 @@ def _destination(rank, size, rows, group):
 
 
 def _aliases(mapping, source):
-    # Actual bridge hook must not read any tensors before the destination is known.
-    result = bridge.Qwen4ExpBridge.maybe_modify_loaded_hf_weight(None, mapping.hf_param, source)
+    # Exercise import preprocessing, not only the hook: it must remain lazy too.
+    owner = bridge.Qwen4ExpBridge()
+    owner.hf_config = SimpleNamespace(quantization_config={"weight_block_size": [2, 2]})
+    result = owner._load_hf_weights(mapping.hf_param, source)
     assert source.reads == []
     assert list(result) == list(mapping.hf_param)
     return result
 
 
-def test_lazy_ep_import_uses_destination_and_only_overlapping_shards():
-    full = torch.arange(48, dtype=torch.float32).view(24, 2)
-    mapping = _Mapping("decoder.layers.*.ple.weight", "model.layers.*.shard_{}.weight", 8).resolve(("3",))
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float8_e4m3fn])
+def test_lazy_ep_import_uses_destination_and_only_overlapping_shards(dtype):
+    full = (torch.arange(512 * 2, dtype=torch.float32).view(512, 2) % 16).to(dtype)
+    mapping = _Mapping("decoder.layers.*.ple.weight", "model.layers.*.shard_{}.weight", 128).resolve(("3",))
     assert mapping.megatron_param == "decoder.layers.3.ple.weight"
     assert not mapping.is_expert
-    source = _Source({mapping.hf_param[f"shard_{i}"]: full[i * 3 : (i + 1) * 3] for i in range(8)})
+    tensors = {mapping.hf_param[f"shard_{i}"]: full[i * 4 : (i + 1) * 4] for i in range(128)}
+    if dtype == torch.float8_e4m3fn:
+        tensors.update({name + "_scale_inv": torch.tensor([[0.5], [2.0]]) for name in list(tensors)})
+    source = _Source(tensors)
     lazy = _aliases(mapping, source)
-    module = _destination(1, 4, torch.empty(6, 2, dtype=torch.bfloat16), object())
+    module = _destination(1, 32, torch.empty(16, 2, dtype=torch.bfloat16), object())
     actual = mapping.hf_to_megatron(lazy, module)
-    assert actual.dtype == module.weight.dtype
-    torch.testing.assert_close(actual, full[6:12].bfloat16(), rtol=0, atol=0)
-    assert source.reads == [mapping.hf_param[f"shard_{i}"] for i in (0, 7, 2, 3)]
+    expected = full[16:32].float()
+    if dtype == torch.float8_e4m3fn:
+        expected *= torch.tensor([0.5, 0.5, 2.0, 2.0]).repeat(4)[:, None]
+    torch.testing.assert_close(actual, expected.bfloat16(), rtol=0, atol=0)
+    names = [mapping.hf_param[f"shard_{i}"] for i in (0, 127, 4, 5, 6, 7)]
+    expected_reads = (
+        [key for name in names for key in (name, name + "_scale_inv")] if dtype == torch.float8_e4m3fn else names
+    )
+    assert source.reads == expected_reads
+
+
+@pytest.mark.parametrize("mapped", [False, True])
+def test_non_ple_import_keeps_fp8_sidecar_preprocessing(mapped):
+    owner = bridge.Qwen4ExpBridge()
+    owner.hf_config = SimpleNamespace(quantization_config={"weight_block_size": [2, 2]})
+    codes = torch.ones(4, 2, dtype=torch.float8_e4m3fn)
+    source = {"linear.weight": codes, "linear.weight_scale_inv": torch.tensor([[0.5], [2.0]])}
+    result = owner._load_hf_weights({"weight": "linear.weight"} if mapped else "linear.weight", source)
+    torch.testing.assert_close(
+        result["weight"] if mapped else result, torch.tensor([[0.5, 0.5]] * 2 + [[2.0, 2.0]] * 2)
+    )
 
 
 @pytest.mark.parametrize("rank", range(4))

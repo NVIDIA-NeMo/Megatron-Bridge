@@ -16,6 +16,21 @@ from megatron.bridge.models.qwen.modeling_qwen4_exp import qsa
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("backend", ["flex", "dense_masked"])
+def test_nonzero_attention_dropout_is_rejected_before_backend_construction(monkeypatch, backend):
+    monkeypatch.setenv("MCORE_QSA_SPARSE_BACKEND", backend)
+    dense_backend = Mock()
+    with pytest.raises(ValueError, match="attention_dropout=0"):
+        qsa.QSACoreAttention(
+            SimpleNamespace(attention_dropout=0.5, kv_channels=4),
+            layer_number=1,
+            attn_mask_type=AttnMaskType.causal,
+            attention_type="self",
+            dense_core_attention=dense_backend,
+        )
+    dense_backend.assert_not_called()
+
+
 def _owner(*, sequence_parallel=False, force_sparse=False):
     module = qsa.QwenSparseSelfAttention.__new__(qsa.QwenSparseSelfAttention)
     torch.nn.Module.__init__(module)

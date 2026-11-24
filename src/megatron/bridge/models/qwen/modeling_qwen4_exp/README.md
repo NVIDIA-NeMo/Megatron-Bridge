@@ -43,6 +43,8 @@ The local implementation preserves both contracts and bounds reduction memory.
 The builder supports a text decoder with tensor and sequence
 parallelism, PP=CP=1, and no virtual pipeline stages. It rejects cached
 inference, padding masks, activation recomputation, CUDA graphs, FP8, and MTP.
+QSA requires `attention_dropout=0`; nonzero values are rejected at construction
+because the sparse backends do not implement attention dropout.
 Use THD packing for document boundaries. Full VLM conversion includes the vision
 patch embedding, positional embedding, transformer blocks, and patch merger.
 The VLM combines visual embeddings before the hybrid decoder while PLE retains
@@ -80,8 +82,9 @@ The VLM reuses the existing Qwen3-VL vision encoder, attention, multimodal RoPE,
 input-reorganization helpers and Qwen3.5-VL vision mappings.
 
 Loading a Qwen4-Exp HF model requires a Transformers release that includes that
-model. Model parity tests use Transformers 5.16.1 in an isolated environment;
-the project dependency constraints are unchanged by this implementation.
+model. Model parity tests use the existing project/container environment through
+`uv run --no-sync` and log its Transformers and Torch versions. The launcher
+does not install a separate reference environment.
 
 ## Validation
 
@@ -110,9 +113,9 @@ gradients. Exact export checks parameter conversion, not execution equivalence.
 The separate text-only parity test above does compare HF logits/loss and word
 embedding gradients; these two test results must be reported separately.
 
-The H100 and GB200 L2 launch scripts run these GPU cases with at most two ranks. They install Transformers 5.16.1 in a temporary reference
-environment and reuse the container's CUDA packages, leaving the project
-environment unchanged. Each distributed case has a ten-minute timeout. L2
+The H100 and GB200 L2 launch scripts both call `run_qwen4_exp_parity.sh` and
+run these GPU cases with at most two ranks in the existing project/container
+environment. Each distributed case has a ten-minute timeout. L2
 requires the `full-test-suite` label or an explicit L2 workflow dispatch.
 
 ## Sources

@@ -469,6 +469,8 @@ class QSACoreAttention(torch.nn.Module):
         **kwargs: object,
     ) -> None:
         super().__init__()
+        if config.attention_dropout != 0.0:
+            raise ValueError("QSA requires attention_dropout=0; sparse attention dropout is unsupported.")
         self.config = config
         self.layer_number = layer_number
         self.attn_mask_type = attn_mask_type
