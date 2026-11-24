@@ -42,7 +42,7 @@ QWEN35_TARGETS = [*BRIDGE_LORA_TARGET_MODULES, "in_proj", "out_proj"]
 def _recipe(targets=None, **model) -> SimpleNamespace:
     return SimpleNamespace(
         lora_target_modules=list(BRIDGE_LORA_TARGET_MODULES if targets is None else targets),
-        model=SimpleNamespace(**model),
+        model=SimpleNamespace(pipeline_model_parallel_size=1, **model),
     )
 
 
@@ -536,7 +536,7 @@ def test_engine_save_and_load_pass_their_lora(monkeypatch):
     engine._window = AccumulationWindow()
     engine._pending_save = None
     engine._async_checkpoint_state = None
-    engine._runtime = SimpleNamespace(pg_collection=None)
+    engine._runtime = SimpleNamespace(topology=Topology(1, 1, 1, None, 1, 1, None, False), pg_collection=None)
     engine._peft = peft = object()
     seen = []
     monkeypatch.setattr(
@@ -601,6 +601,7 @@ def test_engine_export_adapter_only_needs_lora_and_an_explicit_base_model(monkey
     engine._resident = True
     engine._output_head = "lm"
     engine._recipe = SimpleNamespace(hf_path="hf/base")  # the layout; the adapters' base may differ
+    engine._runtime = SimpleNamespace(topology=Topology(1, 1, 1, None, 1, 1, None, False))
     engine._model = []
     engine._export_state = None
     engine._peft = None

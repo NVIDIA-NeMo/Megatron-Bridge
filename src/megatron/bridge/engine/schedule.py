@@ -26,6 +26,7 @@ from typing import Any
 
 import torch
 from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
@@ -145,6 +146,7 @@ def run_forward_only(
     router_replay: RouterReplayState | None = None,
 ) -> list[torch.Tensor]:
     """Score microbatches with the schedule in forward-only mode; one ``[T_local]`` logprob tensor each.
+    With pipeline parallelism only the last stage has scores; the other stages return an empty list.
 
     Runs in eval mode under ``no_grad`` so dropout, router expert-bias updates and auxiliary-loss
     bookkeeping are untouched; an open accumulation window is preserved. ``router_replay`` (the
@@ -153,22 +155,28 @@ def run_forward_only(
     """
     if not microbatches:
         return []
+    config = get_model_config(model[0])
+    schedule = get_forward_backward_func(
+        pp_size=pg_collection.pp.size(), vp_size=config.virtual_pipeline_model_parallel_size
+    )
     was_training = [chunk.training for chunk in model]
     for chunk in model:
         chunk.eval()
     try:
         with torch.no_grad():
-            store: list[Any] = get_forward_backward_func()(
+            store: list[Any] = schedule(
                 forward_step_func=_make_scoring_step(
                     pg_collection, mtp_target_scope, mrope, output_head, router_replay
                 ),
                 data_iterator=iter(microbatches),
                 model=model,
                 num_microbatches=len(microbatches),
-                seq_length=microbatches[0].input_ids.shape[1],
+                # The pack length before the CP split: the pipelined schedule divides by the CP size itself.
+                seq_length=microbatches[0].input_ids.shape[1] * pg_collection.cp.size(),
                 micro_batch_size=microbatches[0].input_ids.shape[0],
                 forward_only=True,
                 collect_non_loss_data=True,
+                p2p_communicator=P2PCommunicator(pp_group=pg_collection.pp, config=config),
                 pg_collection=pg_collection,
             )
     finally:
@@ -208,6 +216,9 @@ def run_forward_backward(
     if not microbatches:
         raise ValueError("forward_backward needs at least one microbatch on every DP replica.")
     config = get_model_config(model[0])
+    schedule = get_forward_backward_func(
+        pp_size=pg_collection.pp.size(), vp_size=config.virtual_pipeline_model_parallel_size
+    )
     saved = (config.finalize_model_grads_func, config.grad_sync_func, config.no_sync_func)
     config.finalize_model_grads_func = None
     config.grad_sync_func = None
@@ -246,14 +257,16 @@ def run_forward_backward(
             for chunk in model:
                 if hasattr(chunk, "no_sync"):
                     stack.enter_context(chunk.no_sync())
-            get_forward_backward_func()(
+            schedule(
                 forward_step_func=forward_step_func,
                 data_iterator=iter(microbatches),
                 model=model,
                 num_microbatches=len(microbatches),
-                seq_length=microbatches[0].input_ids.shape[1],
+                # The pack length before the CP split: the pipelined schedule divides by the CP size itself.
+                seq_length=microbatches[0].input_ids.shape[1] * pg_collection.cp.size(),
                 micro_batch_size=microbatches[0].input_ids.shape[0],
                 forward_only=False,
+                p2p_communicator=P2PCommunicator(pp_group=pg_collection.pp, config=config),
                 pg_collection=pg_collection,
             )
     finally:

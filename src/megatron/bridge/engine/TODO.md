@@ -24,8 +24,18 @@ sharing one runtime.
 
 ## Compute
 
-- **Pipeline parallelism** (`TODO(pp)`): `forward_only` and `forward_backward` raise for PP > 1, so
-  `broadcast_output` has no effect yet. Needs the output-stage loss and the summary broadcast.
+- **Pipeline parallelism** is supported for `forward_only` only (scores come from the last stage;
+  `broadcast_output` copies them to the other stages). Still rejected with PP > 1:
+  - `forward_backward` and `optim_step` (`TODO(pp-train)`): the loss summary exists on the last stage
+    only; the window totals have to reach every stage at `optim_step`.
+  - `save_state`, `load_state`, `export` (`TODO(pp-state)`) and `cpu()` (`TODO(pp-offload)`): not run
+    with stages yet.
+  - LoRA (`TODO(pp-lora)`) and the value head (`TODO(pp-value-head)`), at construction.
+  - Router replay (`TODO(pp-replay)`, `recipes/base.py`): a stage holds only some MoE layers, so replay
+    needs each router's global layer index.
+  - Packs of different lengths (`TODO(pp-variable-length)`): the recipe must set
+    `pad_to_max_length=True`; content-sized packs need `model.variable_seq_lengths`.
+  - Virtual pipeline stages (`TODO(pp-vpp)`).
 - **Gradient-reduce overlap** (`TODO(overlap)`): `ddp.overlap_grad_reduce=True` is rejected in
   `forward_backward`. Bucket reductions have to be deferred across accumulation calls.
 - **Dense `bshd` layout** (`TODO(bshd)`): `batch_layout="bshd"` raises in packing and CP sharding; only

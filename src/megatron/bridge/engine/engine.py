@@ -42,9 +42,11 @@ from megatron.core.utils import get_model_config
 from megatron.bridge.engine import losses
 from megatron.bridge.engine.accumulation import AccumulationWindow
 from megatron.bridge.engine.batching import (
+    broadcast_from_last_stage,
     check_microbatches,
     default_postprocess,
     default_preprocess,
+    is_last_pipeline_stage,
     local_sample_count,
     sequence_pad_multiple,
 )
@@ -358,6 +360,10 @@ class TrainingEngine:
         if output_head == "value" and is_multimodal(recipe):
             # TODO(multimodal): the value head replaces the language model's output layer inside the wrapper.
             raise NotImplementedError("output_head='value' is not implemented for multimodal models yet.")
+        if recipe.model.pipeline_model_parallel_size > 1 and (lora is not None or output_head == "value"):
+            # TODO(pp-lora), TODO(pp-value-head): neither has been run with the model split across stages
+            # (the value head lives on the last stage only; adapters live on every stage).
+            raise NotImplementedError("lora and output_head='value' are not supported with pipeline parallelism yet.")
         if output_head == "value":
             apply_value_head_model_settings(recipe.model)
         finalize_recipe(recipe)
@@ -481,13 +487,15 @@ class TrainingEngine:
         gather_output: bool = True,
         broadcast_output: bool = True,
         return_entropy: bool = False,
-    ) -> ForwardOutput:
+    ) -> ForwardOutput | None:
         """Score a batch and return per-token target logprobs (or values, on a value-head engine) per sample.
 
         ``data`` is whatever this engine's ``preprocess`` accepts; the default accepts the same global
         ``list[Datum]`` on every rank. ``gather_output=True`` returns every Datum's complete scores on
         every rank in input order; ``False`` returns only what this rank computed (its DP replica's
-        samples, its CP positions) with ``sample_indices`` and ``token_positions``. Gradients and any
+        samples, its CP positions) with ``sample_indices`` and ``token_positions``. With pipeline
+        parallelism only the last stage computes scores: ``broadcast_output=True`` copies its result to
+        the other stages of the same pipeline, ``False`` returns ``None`` there. Gradients and any
         open accumulation window are untouched. Microbatches carrying ``routed_experts`` are scored
         with those expert choices replayed in the MoE routers (recipe ``router_replay``).
         ``disable_adapters=True`` scores a LoRA engine's base model (the adapters are switched off for
@@ -501,10 +509,6 @@ class TrainingEngine:
             raise NotImplementedError("return_entropy needs the full-logits path, which is not implemented yet.")
         if disable_adapters and self._peft is None:
             raise ValueError("disable_adapters=True needs an engine built with lora=...; this engine has no adapters.")
-        if self._runtime.topology.pp > 1:
-            raise NotImplementedError(
-                "forward_only with pipeline parallelism (broadcast_output) is not supported yet."
-            )
         microbatches = self.preprocess(data, training=False)
         self.check_microbatches(microbatches)
         adapters_off = self._peft.disable_adapter(self._model) if disable_adapters else contextlib.nullcontext()
@@ -518,7 +522,16 @@ class TrainingEngine:
                 output_head=self._output_head,
                 router_replay=self._router_replay,
             )
-        return self.postprocess_forward_only(microbatches, scores, gather_output=gather_output)
+        if self._runtime.topology.pp == 1:
+            return self.postprocess_forward_only(microbatches, scores, gather_output=gather_output)
+        # Only the last stage holds scores; its DP and CP groups span last-stage ranks only.
+        pp_group = self._runtime.pg_collection.pp
+        output = None
+        if is_last_pipeline_stage(pp_group):
+            output = self.postprocess_forward_only(microbatches, scores, gather_output=gather_output)
+        if broadcast_output:
+            output = broadcast_from_last_stage(output, pp_group)
+        return output
 
     def forward_backward(
         self,
@@ -547,7 +560,8 @@ class TrainingEngine:
         if loss_kwargs:
             loss_method = functools.partial(loss_method, **loss_kwargs)
         if self._runtime.topology.pp > 1:
-            # TODO(pp): PP output-stage loss, broadcast_output of the summary.
+            # TODO(pp-train): the loss summary exists on the last stage only; the window totals have to
+            # reach every stage at optim_step, and broadcast_output the caller's summary.
             raise NotImplementedError("forward_backward with pipeline parallelism is not supported yet.")
         if getattr(self._recipe.ddp, "overlap_grad_reduce", False):
             # TODO(overlap): defer bucket reductions across calls with DDP.no_sync + explicit start_grad_sync.
@@ -674,6 +688,9 @@ class TrainingEngine:
         and equal microbatch counts across DP replicas. Always runs, for default and custom pipelines."""
         if not microbatches:
             raise ValueError("preprocess returned no microbatches; every DP replica must run at least one.")
+        if self._runtime.topology.pp > 1 and len({tuple(mb.input_ids.shape) for mb in microbatches}) > 1:
+            # TODO(pp-variable-length): stages receive hidden states into buffers of one shape per call.
+            raise ValueError("With pipeline parallelism every microbatch of a call must have the same shape.")
         routed_shape = None
         if getattr(self._recipe, "router_replay", False) and self._router_replay.num_layers:
             routed_shape = (self._router_replay.num_layers, int(self._recipe.model.moe_router_topk))
@@ -856,6 +873,7 @@ class TrainingEngine:
         """
         self._require_open()
         self._require_resident("save_state")
+        self._require_single_stage("save_state")  # TODO(pp-state): not run with stages yet.
         # TODO(save-mid-window): allow saving with an open window. The snapshot would be consistent (weights
         # and optimizer state of the last completed update); only document that the pending gradients are
         # not part of it, so a resumed engine redoes the interrupted update's forward_backward calls.
@@ -889,6 +907,7 @@ class TrainingEngine:
         """
         self._require_open()
         self._require_resident("load_state")
+        self._require_single_stage("load_state")  # TODO(pp-state): not run with stages yet.
         self._require_closed_window("load_state")
         self._wait_pending_save()
         step, user_state = load_engine_state(self._recipe, self._model, self._optimizer, path=path, peft=self._peft)
@@ -939,6 +958,7 @@ class TrainingEngine:
         """
         self._require_open()
         self._require_resident("export")
+        self._require_single_stage("export")  # TODO(pp-state): not run with stages yet.
         if self._output_head == "value":
             # TODO(value-export): the HF causal-LM layout has no slot for value_head; define a critic layout.
             raise NotImplementedError("export of a value-head engine is not supported yet.")
@@ -989,6 +1009,7 @@ class TrainingEngine:
         and gradients intact. Unsupported buffer or optimizer modes raise before anything moves.
         """
         self._require_open()
+        self._require_single_stage("cpu")  # TODO(pp-offload): not run with stages yet.
         if self._resident:
             check_movable(self._recipe, self._optimizer)
             self._wait_pending_save()
@@ -1133,6 +1154,10 @@ class TrainingEngine:
     def _require_resident(self, api: str) -> None:
         if not self._resident:
             raise RuntimeError(f"{api}() needs the engine on the GPU; call cuda() first (it was moved with cpu()).")
+
+    def _require_single_stage(self, api: str) -> None:
+        if self._runtime.topology.pp > 1:
+            raise NotImplementedError(f"{api}() with pipeline parallelism is not supported yet.")
 
     def _activate(self) -> None:
         """Point MCore's process-wide MoE metrics tracker at this engine's own instance."""

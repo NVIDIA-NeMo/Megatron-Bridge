@@ -187,6 +187,18 @@ def check_supported(recipe: TrainingRecipe) -> None:
     # its setup is process-global while the engine builds a policy and a frozen model in one process.
     if is_gtp_remat_active(recipe.model):
         problems.append(GTP_NOT_SUPPORTED)
+    if (getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1) > 1:
+        # TODO(pp-vpp): the interleaved schedule needs one model chunk and one data iterator per virtual
+        # stage, and a microbatch count that fits microbatch_group_size_per_vp_stage.
+        if (getattr(recipe.model, "virtual_pipeline_model_parallel_size", None) or 1) > 1:
+            problems.append("virtual pipeline stages are not supported yet")
+        # TODO(pp-variable-length): packs of different lengths need model.variable_seq_lengths, so each
+        # transfer between stages announces its shape. Until then every pack has the same length.
+        if getattr(recipe, "batch_layout", "thd") == "thd" and not getattr(recipe, "pad_to_max_length", False):
+            problems.append("pipeline parallelism needs pad_to_max_length=True (stages exchange one pack length)")
+        # TODO(pp-replay): a stage holds only some MoE layers, so replay needs each router's global layer index.
+        if getattr(recipe, "router_replay", False):
+            problems.append("router_replay with pipeline parallelism is not supported yet")
     if getattr(recipe.model, "vocab_size", None) is None:
         problems.append("model.vocab_size must be set (the engine does not build a tokenizer)")
     if getattr(recipe.model, "seq_length", None) is None:

@@ -122,6 +122,78 @@ def test_check_supported_rejects_each_violation(mutate, message):
         check_supported(recipe)
 
 
+def _pipeline_recipe_like() -> SimpleNamespace:
+    recipe = _recipe_like()
+    recipe.model.pipeline_model_parallel_size = 2
+    recipe.pad_to_max_length = True
+    return recipe
+
+
+def test_check_supported_accepts_pipeline_parallelism_with_padded_packs():
+    check_supported(_pipeline_recipe_like())
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda r: setattr(r, "pad_to_max_length", False), "pad_to_max_length"),
+        (lambda r: setattr(r.model, "virtual_pipeline_model_parallel_size", 2), "virtual pipeline"),
+        (lambda r: setattr(r, "router_replay", True), "router_replay with pipeline"),
+    ],
+)
+def test_check_supported_rejects_unsupported_pipeline_modes(mutate, message):
+    recipe = _pipeline_recipe_like()
+    recipe.model.num_moe_experts = 256
+    mutate(recipe)
+    with pytest.raises(ValueError, match=message):
+        check_supported(recipe)
+
+
+def _pipeline_engine(monkeypatch, *, last_stage: bool) -> TrainingEngine:
+    engine = _unbuilt_engine()
+    stage = SimpleNamespace(rank=lambda: 1 if last_stage else 0, size=lambda: 2)
+    engine._runtime = SimpleNamespace(
+        topology=Topology(16, 1, 2, None, 4, 8, None, False), pg_collection=SimpleNamespace(pp=stage)
+    )
+    engine._model = []
+    engine._recipe = SimpleNamespace(model=SimpleNamespace(), mtp_target_scope="primary")
+    engine.preprocess = lambda data, training: ["mb"]
+    engine.check_microbatches = lambda microbatches: None
+    engine.postprocess_forward_only = lambda mbs, scores, gather_output: "scores"
+    monkeypatch.setattr("megatron.bridge.engine.engine.run_forward_only", lambda model, mbs, **kwargs: [])
+    # Stand-in for the collective: the last stage's value arrives everywhere.
+    monkeypatch.setattr("megatron.bridge.engine.engine.broadcast_from_last_stage", lambda value, group: "scores")
+    return engine
+
+
+def test_forward_only_with_pipeline_stages_delivers_the_last_stages_scores(monkeypatch):
+    last = _pipeline_engine(monkeypatch, last_stage=True)
+    first = _pipeline_engine(monkeypatch, last_stage=False)
+    # Only the last stage has scores to postprocess; without the broadcast the others return None.
+    assert last.forward_only(_datums(), broadcast_output=False) == "scores"
+    assert first.forward_only(_datums(), broadcast_output=False) is None
+    assert first.forward_only(_datums()) == "scores"
+
+
+def test_pipeline_parallelism_placeholders(monkeypatch):
+    engine = _pipeline_engine(monkeypatch, last_stage=True)
+    engine._recipe.ddp = SimpleNamespace(overlap_grad_reduce=False)
+    engine._window = AccumulationWindow()
+    calls = (
+        lambda: engine.forward_backward(_datums()),
+        lambda: engine.save_state("/x"),
+        lambda: engine.load_state("/x"),
+        lambda: engine.export(path="/x"),
+        lambda: engine.cpu(),
+    )
+    for call in calls:
+        with pytest.raises(NotImplementedError, match="pipeline parallelism"):
+            call()
+    recipe = _pipeline_recipe_like()
+    with pytest.raises(NotImplementedError, match="pipeline parallelism"):
+        TrainingEngine.from_recipe(recipe, output_head="value")
+
+
 def test_data_parallel_size_and_topology(monkeypatch):
     monkeypatch.setenv("WORLD_SIZE", "16")
     recipe = _recipe_like()
