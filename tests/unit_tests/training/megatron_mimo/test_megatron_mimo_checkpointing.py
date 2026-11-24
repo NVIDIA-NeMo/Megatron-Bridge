@@ -16,6 +16,7 @@ from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
+import torch
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +596,8 @@ def test_iteration_time_is_logged_once_by_shared_training_logger():
         ),
         patch("megatron.bridge.training.train_megatron_mimo.training_log", side_effect=log_interval_average),
         patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=False),
+        patch("torch.distributed.all_reduce"),
+        patch("torch.cuda.current_device", return_value="cpu"),
     ):
         train_megatron_mimo(
             forward_step_func=Mock(),
@@ -610,6 +613,67 @@ def test_iteration_time_is_logged_once_by_shared_training_logger():
         )
 
     assert state.tensorboard_logger.add_scalar.call_args_list == [call("iteration-time", 2.0, 2)]
+
+
+def _logged_learning_rate(schedulers: Dict[str, Any], peer_lr: float) -> tuple[Any, list]:
+    """Run one logged MIMO step and return the LR passed to training_log and the all-reduce groups."""
+    from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
+
+    state = _make_global_state(save_dir=None, train_iters=1, step=0)
+    state.cfg.logger.skip_train_metrics_log = False
+    groups = []
+
+    def world_max(tensor, op=None, group=None):
+        groups.append(group)
+        tensor.copy_(torch.maximum(tensor, torch.tensor([peer_lr], dtype=tensor.dtype)))
+
+    with (
+        patch("torch.distributed.get_rank", return_value=0),
+        patch("torch.distributed.all_reduce", side_effect=world_max),
+        patch("torch.cuda.current_device", return_value="cpu"),
+        patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1),
+        patch("megatron.bridge.training.train_megatron_mimo.prepare_forward_step_func", return_value=Mock()),
+        patch("megatron.bridge.training.train_megatron_mimo.get_module_to_grid_tuple", return_value=[]),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.build_pg_collection_for_schedule",
+            return_value=Mock(spec=[]),
+        ),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.train_step_megatron_mimo",
+            return_value=({}, 0, 0.0, 0),
+        ),
+        patch("megatron.bridge.training.train_megatron_mimo.training_log", return_value=False) as mock_log,
+        patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=False),
+    ):
+        train_megatron_mimo(
+            forward_step_func=Mock(),
+            model=Mock(),
+            optimizer=None,
+            schedulers=schedulers,
+            train_data_iterator=iter([object()]),
+            valid_data_iterator=None,
+            global_state=state,
+            megatron_mimo_infra=_make_megatron_mimo_infra(),
+            multimodule_communicator=Mock(),
+            checkpoint_manager=MagicMock(),
+        )
+
+    return mock_log.call_args.kwargs["learning_rate"], groups
+
+
+def test_frozen_module_rank_logs_learning_rate_of_trainable_ranks():
+    """A rank without a scheduler logs the LR reduced across the whole MIMO world."""
+    learning_rate, groups = _logged_learning_rate(schedulers={}, peer_lr=3.5e-5)
+
+    assert learning_rate == pytest.approx(3.5e-5)
+    assert groups == [None]
+
+
+def test_trainable_module_rank_logs_its_own_learning_rate():
+    """A rank with a scheduler keeps its own LR after the world reduction."""
+    learning_rate, _ = _logged_learning_rate(schedulers={"images": _make_scheduler_mock()}, peer_lr=-1.0)
+
+    assert learning_rate == pytest.approx(1e-4)
 
 
 # ---------------------------------------------------------------------------

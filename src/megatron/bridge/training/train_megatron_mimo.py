@@ -47,6 +47,7 @@ from megatron.bridge.training.train import checkpoint_and_decide_exit, maybe_run
 from megatron.bridge.training.utils.train_utils import (
     accumulate_zero_token_step,
     prepare_forward_step_func,
+    reduce_max_stat_across_model_parallel_group,
     training_log,
 )
 
@@ -399,6 +400,9 @@ def train_megatron_mimo(
 
         # Log training metrics
         if not cfg.logger.skip_train_metrics_log:
+            # Ranks of frozen modules have no scheduler; take the LR from the ranks that do.
+            learning_rate = reduce_max_stat_across_model_parallel_group(learning_rate, mp_group=None)
+
             # Get loss scale from MimoOptimizer
             if optimizer is not None and hasattr(optimizer, "get_loss_scale"):
                 loss_scale = optimizer.get_loss_scale()
