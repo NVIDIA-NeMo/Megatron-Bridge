@@ -19,9 +19,10 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers import GenerationConfig
+from transformers import GenerationConfig, Glm4MoeLiteConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.utils import conform_config_to_reference
 from megatron.bridge.models.glm.glm47_flash_bridge import GLM47FlashBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
@@ -209,3 +210,70 @@ class TestGLM47FlashBridge:
 
         assert set(result) == {"model.embed_tokens.weight"}
         assert result["model.embed_tokens.weight"] is source_weight
+
+
+def _native_glm47_flash_config(**overrides) -> Glm4MoeLiteConfig:
+    kwargs = dict(
+        hidden_size=64,
+        intermediate_size=128,
+        moe_intermediate_size=32,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=4,
+        n_routed_experts=8,
+        n_shared_experts=1,
+        num_experts_per_tok=2,
+        q_lora_rank=32,
+        kv_lora_rank=16,
+        qk_nope_head_dim=8,
+        qk_rope_head_dim=8,
+        v_head_dim=8,
+        vocab_size=128,
+        torch_dtype="bfloat16",
+    )
+    kwargs.update(overrides)
+    config = Glm4MoeLiteConfig(**kwargs)
+    config.architectures = ["Glm4MoeLiteForCausalLM"]
+    return config
+
+
+def _pretrained(config):
+    model = Mock(spec=PreTrainedCausalLM)
+    model.config = config
+    model.generation_config = Mock(spec=GenerationConfig)
+    return model
+
+
+class TestGLM47FlashMlpLayerTypes:
+    """Transformers builds GLM-4.7-Flash layers from mlp_layer_types, not first_k_dense_replace."""
+
+    def test_provider_follows_hf_mlp_layer_types(self):
+        config = _native_glm47_flash_config(mlp_layer_types=["dense", "dense", "sparse", "sparse"])
+        assert not hasattr(config, "first_k_dense_replace")
+
+        provider = GLM47FlashBridge().provider_bridge(_pretrained(config))
+
+        assert provider.moe_layer_freq == [0, 0, 1, 1]
+
+    def test_mlp_layer_types_take_precedence_over_first_k_dense_replace(self):
+        # Transformers ignores first_k_dense_replace here and builds one leading dense layer.
+        config = _native_glm47_flash_config(first_k_dense_replace=3)
+        assert config.mlp_layer_types == ["dense", "sparse", "sparse", "sparse"]
+
+        provider = GLM47FlashBridge().provider_bridge(_pretrained(config))
+
+        assert provider.moe_layer_freq == [0, 1, 1, 1]
+
+    def test_export_writes_mlp_layer_types_over_reference_pattern(self):
+        reference = _native_glm47_flash_config(num_hidden_layers=6, first_k_dense_replace=1)
+        provider = GLM47FlashBridge().provider_bridge(
+            _pretrained(_native_glm47_flash_config(mlp_layer_types=["dense", "dense", "sparse", "sparse"]))
+        )
+
+        hf_config = GLM47FlashBridge.megatron_to_hf_config(provider)
+        synthesized = Glm4MoeLiteConfig(**conform_config_to_reference(hf_config, reference.to_dict()))
+
+        assert hf_config["mlp_layer_types"] == ["dense", "dense", "sparse", "sparse"]
+        assert synthesized.num_hidden_layers == 4
+        assert synthesized.mlp_layer_types == ["dense", "dense", "sparse", "sparse"]
+        assert synthesized.first_k_dense_replace == 2

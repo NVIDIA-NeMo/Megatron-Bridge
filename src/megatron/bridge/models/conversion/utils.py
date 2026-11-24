@@ -41,6 +41,44 @@ def mcore_to_hf_window_size(window_size: int | list[int] | tuple[int, int] | Non
     return window_size
 
 
+def hf_mlp_layer_types_to_moe_layer_freq(hf_config: PretrainedConfig, default_first_k_dense_replace: int) -> list[int]:
+    """Return the per-layer MoE pattern of an HF config that may carry ``mlp_layer_types``.
+
+    Transformers builds dense-first MoE models such as Hy V3 and GLM-4.7-Flash from ``mlp_layer_types``
+    (``"dense"`` or ``"sparse"`` per layer) and fills it from its own default when a config omits it, so
+    the list is authoritative when present. Older hub configs only carry ``first_k_dense_replace``; that
+    is used when ``mlp_layer_types`` is absent, and ``default_first_k_dense_replace`` when both are.
+    """
+    num_layers = hf_config.num_hidden_layers
+    mlp_layer_types = getattr(hf_config, "mlp_layer_types", None)
+    if mlp_layer_types is not None:
+        mlp_layer_types = list(mlp_layer_types)
+        unsupported = set(mlp_layer_types) - {"dense", "sparse"}
+        if unsupported:
+            raise ValueError(f"Unsupported mlp_layer_types entries: {sorted(unsupported)}")
+        if len(mlp_layer_types) != num_layers:
+            raise ValueError(
+                f"mlp_layer_types has {len(mlp_layer_types)} entries but num_hidden_layers is {num_layers}"
+            )
+        return [int(layer_type == "sparse") for layer_type in mlp_layer_types]
+    first_k_dense_replace = getattr(hf_config, "first_k_dense_replace", None)
+    if first_k_dense_replace is None:
+        first_k_dense_replace = default_first_k_dense_replace
+    first_k_dense_replace = min(first_k_dense_replace, num_layers)
+    return [0] * first_k_dense_replace + [1] * (num_layers - first_k_dense_replace)
+
+
+def moe_layer_freq_to_hf_mlp_layer_types(moe_layer_freq: int | list[int], num_layers: int) -> list[str]:
+    """Return HF ``mlp_layer_types`` for a Megatron ``moe_layer_freq`` (an int period or a 0/1 list)."""
+    if isinstance(moe_layer_freq, int):
+        pattern = [int(layer_idx % moe_layer_freq == 0) for layer_idx in range(num_layers)]
+    else:
+        pattern = list(moe_layer_freq)
+        if len(pattern) != num_layers:
+            raise ValueError(f"moe_layer_freq has {len(pattern)} entries but num_layers is {num_layers}")
+    return ["sparse" if is_moe else "dense" for is_moe in pattern]
+
+
 def unwrap_model(model, module_instances=None):
     """Unwrap a model (or list of models) to the underlying module.
     Extends ``megatron.core.utils.unwrap_model`` with awareness of ``MegatronFSDP``.

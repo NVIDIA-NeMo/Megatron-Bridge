@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import fields
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -21,6 +22,10 @@ from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from transformers import HYV3Config
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.utils import (
+    conform_config_to_reference,
+    hf_mlp_layer_types_to_moe_layer_freq,
+)
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hy_v3.hy_v3_bridge import HYV3Bridge
@@ -113,3 +118,44 @@ class TestHYV3Bridge:
         assert hf_config["num_shared_experts"] == 1
         assert hf_config["router_scaling_factor"] == 2.5
         assert hf_config["moe_intermediate_size"] == 32
+
+    def test_moe_layer_freq_follows_hf_mlp_layer_types(self):
+        # Transformers builds Hy V3 layers from mlp_layer_types and never reads first_k_dense_replace.
+        config = _hy_v3_config(first_k_dense_replace=2)
+        assert config.mlp_layer_types == ["dense", "sparse", "sparse", "sparse"]
+
+        model_config = HYV3Bridge().hf_config_to_model_config(config)
+
+        assert model_config.moe_layer_freq == [0, 1, 1, 1]
+
+    def test_native_config_without_first_k_dense_replace(self):
+        kwargs = {k: v for k, v in _hy_v3_config().to_dict().items() if k != "first_k_dense_replace"}
+        kwargs["mlp_layer_types"] = ["dense", "dense", "sparse", "sparse"]
+        config = HYV3Config(**kwargs)
+        assert not hasattr(config, "first_k_dense_replace")
+
+        model_config = HYV3Bridge().hf_config_to_model_config(config)
+
+        assert model_config.moe_layer_freq == [0, 0, 1, 1]
+
+    def test_legacy_first_k_dense_replace_without_mlp_layer_types(self):
+        config = SimpleNamespace(**{**_hy_v3_config().to_dict(), "first_k_dense_replace": 2, "mlp_layer_types": None})
+
+        assert hf_mlp_layer_types_to_moe_layer_freq(config, default_first_k_dense_replace=1) == [0, 0, 1, 1]
+
+    def test_export_writes_mlp_layer_types_over_reference_pattern(self):
+        # A 6-layer reference checkpoint and a 4-layer model with two leading dense layers.
+        reference = _hy_v3_config(num_hidden_layers=6)
+        model_config = HYV3Bridge().hf_config_to_model_config(
+            _hy_v3_config(mlp_layer_types=["dense", "dense", "sparse", "sparse"])
+        )
+
+        hf_config = HYV3Bridge.megatron_to_hf_config(model_config)
+        synthesized = HYV3Config(**conform_config_to_reference(hf_config, reference.to_dict()))
+
+        assert hf_config["mlp_layer_types"] == ["dense", "dense", "sparse", "sparse"]
+        assert hf_config["first_k_dense_replace"] == 2
+        assert synthesized.num_hidden_layers == 4
+        assert synthesized.mlp_layer_types == ["dense", "dense", "sparse", "sparse"]
+        roundtrip = HYV3Bridge().hf_config_to_model_config(synthesized)
+        assert roundtrip.moe_layer_freq == model_config.moe_layer_freq

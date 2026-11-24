@@ -13,13 +13,16 @@
 # limitations under the License.
 
 from collections import namedtuple
+from types import SimpleNamespace
 
 import pytest
 
 from megatron.bridge.models.conversion.utils import (
     carry_rope_into_rope_parameters,
     conform_config_to_reference,
+    hf_mlp_layer_types_to_moe_layer_freq,
     mcore_to_hf_window_size,
+    moe_layer_freq_to_hf_mlp_layer_types,
     remove_non_pickleables,
 )
 
@@ -311,3 +314,36 @@ class TestCarryRopeIntoRopeParameters:
 
         assert carry_rope_into_rope_parameters({"rope_theta": 5.0}, nested) is nested
         assert carry_rope_into_rope_parameters({"rope_theta": 5.0}, legacy) is legacy
+
+
+def test_hf_mlp_layer_types_to_moe_layer_freq_prefers_mlp_layer_types():
+    config = SimpleNamespace(
+        num_hidden_layers=4, mlp_layer_types=["dense", "sparse", "dense", "sparse"], first_k_dense_replace=3
+    )
+    assert hf_mlp_layer_types_to_moe_layer_freq(config, default_first_k_dense_replace=1) == [0, 1, 0, 1]
+
+
+@pytest.mark.parametrize(
+    ("first_k_dense_replace", "expected"),
+    [(2, [0, 0, 1]), (None, [0, 1, 1]), (5, [0, 0, 0])],
+)
+def test_hf_mlp_layer_types_to_moe_layer_freq_falls_back_to_first_k_dense_replace(first_k_dense_replace, expected):
+    config = SimpleNamespace(num_hidden_layers=3, first_k_dense_replace=first_k_dense_replace)
+    assert hf_mlp_layer_types_to_moe_layer_freq(config, default_first_k_dense_replace=1) == expected
+
+
+@pytest.mark.parametrize(
+    "mlp_layer_types",
+    [["dense", "moe", "sparse"], ["dense", "sparse"]],
+)
+def test_hf_mlp_layer_types_to_moe_layer_freq_rejects_bad_mlp_layer_types(mlp_layer_types):
+    config = SimpleNamespace(num_hidden_layers=3, mlp_layer_types=mlp_layer_types)
+    with pytest.raises(ValueError, match="mlp_layer_types"):
+        hf_mlp_layer_types_to_moe_layer_freq(config, default_first_k_dense_replace=1)
+
+
+def test_moe_layer_freq_to_hf_mlp_layer_types():
+    assert moe_layer_freq_to_hf_mlp_layer_types([0, 0, 1, 1], 4) == ["dense", "dense", "sparse", "sparse"]
+    assert moe_layer_freq_to_hf_mlp_layer_types(2, 4) == ["sparse", "dense", "sparse", "dense"]
+    with pytest.raises(ValueError, match="moe_layer_freq"):
+        moe_layer_freq_to_hf_mlp_layer_types([0, 1], 4)

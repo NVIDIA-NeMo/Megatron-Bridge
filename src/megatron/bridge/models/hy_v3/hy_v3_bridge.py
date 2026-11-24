@@ -27,6 +27,10 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.conversion.utils import (
+    hf_mlp_layer_types_to_moe_layer_freq,
+    moe_layer_freq_to_hf_mlp_layer_types,
+)
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
@@ -101,9 +105,9 @@ class HYV3Bridge(MegatronModelBridge):
             moe_router_topk_scaling_factor=float(hf_config.router_scaling_factor),
             # Shared experts hidden dim = moe_intermediate_size * num_shared_experts.
             moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size * hf_config.num_shared_experts,
-            # Dense-first layer pattern.
-            moe_layer_freq=[0] * hf_config.first_k_dense_replace
-            + [1] * (hf_config.num_hidden_layers - hf_config.first_k_dense_replace),
+            # Dense-first layer pattern. Transformers builds Hy V3 layers from mlp_layer_types
+            # (one leading dense layer by default) and does not read first_k_dense_replace.
+            moe_layer_freq=hf_mlp_layer_types_to_moe_layer_freq(hf_config, default_first_k_dense_replace=1),
         )
         config_kwargs.setdefault("position_embedding_type", "rope")
         return config_kwargs
@@ -136,16 +140,15 @@ class HYV3Bridge(MegatronModelBridge):
         hf_config["route_norm"] = True
         hf_config["router_scaling_factor"] = provider.moe_router_topk_scaling_factor
 
-        # Reconstruct first_k_dense_replace from moe_layer_freq (count leading dense layers)
+        # Transformers builds the layers from mlp_layer_types, so export it alongside the legacy
+        # first_k_dense_replace; otherwise the reference checkpoint's pattern would be kept.
         moe_layer_freq = getattr(provider, "moe_layer_freq", None)
-        if moe_layer_freq is not None and isinstance(moe_layer_freq, list):
-            first_k_dense_replace = 0
-            for val in moe_layer_freq:
-                if val == 0:
-                    first_k_dense_replace += 1
-                else:
-                    break
-            hf_config["first_k_dense_replace"] = first_k_dense_replace
+        if moe_layer_freq is not None:
+            mlp_layer_types = moe_layer_freq_to_hf_mlp_layer_types(moe_layer_freq, provider.num_layers)
+            hf_config["mlp_layer_types"] = mlp_layer_types
+            hf_config["first_k_dense_replace"] = next(
+                (idx for idx, layer_type in enumerate(mlp_layer_types) if layer_type != "dense"), len(mlp_layer_types)
+            )
 
         # Megatron uses None="not set/disabled", but HF expects integers
         hf_config["num_nextn_predict_layers"] = hf_config.get("num_nextn_predict_layers") or 0

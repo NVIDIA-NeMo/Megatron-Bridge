@@ -33,6 +33,10 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.conversion.utils import (
+    hf_mlp_layer_types_to_moe_layer_freq,
+    moe_layer_freq_to_hf_mlp_layer_types,
+)
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
@@ -103,10 +107,25 @@ class GLM47FlashBridge(MegatronModelBridge):
             hf_config, "n_shared_experts", 1
         )
 
-        first_k = getattr(hf_config, "first_k_dense_replace", 1)
-        provider.moe_layer_freq = [0] * first_k + [1] * (hf_config.num_hidden_layers - first_k)
+        # Transformers builds GLM-4.7-Flash layers from mlp_layer_types (one leading dense layer by
+        # default) and does not read first_k_dense_replace.
+        provider.moe_layer_freq = hf_mlp_layer_types_to_moe_layer_freq(hf_config, default_first_k_dense_replace=1)
 
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider: MLAModelProvider) -> dict:
+        """Export the dense/MoE layer pattern as the mlp_layer_types transformers builds from."""
+        hf_config = super().megatron_to_hf_config(provider)
+        moe_layer_freq = getattr(provider, "moe_layer_freq", None)
+        if moe_layer_freq is not None:
+            mlp_layer_types = moe_layer_freq_to_hf_mlp_layer_types(moe_layer_freq, provider.num_layers)
+            hf_config["mlp_layer_types"] = mlp_layer_types
+            # Hub configs also carry the legacy first_k_dense_replace; keep it consistent.
+            hf_config["first_k_dense_replace"] = next(
+                (idx for idx, layer_type in enumerate(mlp_layer_types) if layer_type != "dense"), len(mlp_layer_types)
+            )
+        return hf_config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         hf_config = getattr(self, "hf_config", None)
