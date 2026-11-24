@@ -270,7 +270,8 @@ def memory_efficient_fp32_optimizer_state_loading(
     with another FP32 copy even though no conversion is needed. This context
     temporarily uses PyTorch's base loader only for compatible standard
     distributed FusedAdam instances, allowing them to adopt the scaffold
-    tensors directly.
+    tensors directly. Core implementations advertising native support own this
+    decision themselves; their inner loader must remain untouched.
 
     Args:
         optimizer: Optimizer participating in checkpoint loading.
@@ -293,6 +294,8 @@ def memory_efficient_fp32_optimizer_state_loading(
 
     try:
         for distributed_optimizer in sub_optimizers:
+            if getattr(distributed_optimizer, "supports_memory_efficient_fp32_state_loading", False) is True:
+                continue
             if getattr(distributed_optimizer, "is_stub_optimizer", False):
                 continue
             if not hasattr(distributed_optimizer, "shard_fp32_from_float16_groups"):
@@ -307,7 +310,11 @@ def memory_efficient_fp32_optimizer_state_loading(
                 continue
 
             inner = getattr(distributed_optimizer, "optimizer", None)
-            if not isinstance(inner, fused_adam_class):
+            if type(inner) is not fused_adam_class:
+                continue
+            if getattr(inner.load_state_dict, "__func__", None) is not fused_adam_class.load_state_dict:
+                continue
+            if inner._optimizer_load_state_dict_pre_hooks or inner._optimizer_load_state_dict_post_hooks:
                 continue
             if getattr(inner, "master_weights", None) is not False:
                 continue

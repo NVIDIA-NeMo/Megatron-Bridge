@@ -15,6 +15,7 @@
 """Tests for setup_optimizer in optim.py."""
 
 import builtins
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -432,6 +433,106 @@ class TestMemoryEfficientPrecisionAwareOptimizerStateCheckpointing:
 
 class TestMemoryEfficientFp32OptimizerStateLoading:
     """Tests for the scoped TE FusedAdam checkpoint-load fast path."""
+
+    @pytest.mark.run_only_on("gpu")
+    @pytest.mark.parametrize("customization", ["none", "instance_loader", "pre_hook", "post_hook"])
+    def test_real_core_loader_controls_state_adoption(self, customization):
+        from megatron.core.optimizer import DistributedOptimizer
+
+        if not getattr(DistributedOptimizer, "supports_memory_efficient_fp32_state_loading", False):
+            pytest.skip("Installed Core predates native FP32 loading")
+        fused_adam = pytest.importorskip("transformer_engine.pytorch.optimizers").FusedAdam
+        param = torch.nn.Parameter(torch.ones(16, device="cuda"))
+        inner = fused_adam([param], lr=0.01)
+        for iteration in range(2):
+            param.grad = torch.full_like(param, 0.1 * (iteration + 1))
+            inner.step()
+        state = deepcopy(inner.state_dict())
+        reference_param = torch.nn.Parameter(param.detach().clone())
+        reference = fused_adam([reference_param], lr=0.01)
+        reference.load_state_dict(deepcopy(state))
+        wrapper = DistributedOptimizer.__new__(DistributedOptimizer)
+        wrapper.optimizer = inner
+        wrapper.config = OptimizerConfig()
+        wrapper.ddp_config = SimpleNamespace(use_megatron_fsdp=False)
+        calls = []
+        if customization == "instance_loader":
+            inner.load_state_dict = MagicMock(wraps=inner.load_state_dict)
+        elif customization == "pre_hook":
+            inner.register_load_state_dict_pre_hook(lambda *_: calls.append("pre"))
+        elif customization == "post_hook":
+            inner.register_load_state_dict_post_hook(lambda *_: calls.append("post"))
+        original = inner.load_state_dict
+        with memory_efficient_fp32_optimizer_state_loading(wrapper) as patched:
+            assert patched == 0
+            assert inner.load_state_dict == original
+            wrapper._load_inner_optimizer_state_dict(state)
+        assert inner.load_state_dict == original
+        if customization == "instance_loader":
+            original.assert_called_once_with(state)
+        elif customization in ("pre_hook", "post_hook"):
+            assert calls == [customization.removesuffix("_hook")]
+        else:
+            for name in ("exp_avg", "exp_avg_sq"):
+                assert inner.state[param][name].data_ptr() == state["state"][0][name].data_ptr()
+        for iteration in range(3):
+            param.grad = torch.full_like(param, -0.03 * (iteration + 1))
+            reference_param.grad = param.grad.clone()
+            inner.step()
+            reference.step()
+            torch.testing.assert_close(param, reference_param, rtol=0, atol=0)
+            for name in ("exp_avg", "exp_avg_sq"):
+                torch.testing.assert_close(
+                    inner.state[param][name], reference.state[reference_param][name], rtol=0, atol=0
+                )
+            assert inner.param_groups[0]["step"] == reference.param_groups[0]["step"]
+
+    @pytest.mark.parametrize("chained", [False, True])
+    def test_native_core_owns_loading(self, chained):
+        native, inner, _ = self._distributed_optimizer()
+        native.supports_memory_efficient_fp32_state_loading = True
+        legacy, legacy_inner, _ = self._distributed_optimizer()
+        optimizer = _ChainedOpt([native, legacy]) if chained else native
+        original = inner.load_state_dict
+        with (
+            patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam),
+            patch("megatron.bridge.training.optim.torch.cuda.empty_cache") as empty_cache,
+            memory_efficient_fp32_optimizer_state_loading(optimizer) as patched,
+        ):
+            assert inner.load_state_dict == original
+            assert "load_state_dict" not in inner.__dict__
+            assert patched == int(chained)
+            if chained:
+                assert "load_state_dict" in legacy_inner.__dict__
+        assert empty_cache.call_count == int(chained)
+        assert "load_state_dict" not in legacy_inner.__dict__
+
+    @pytest.mark.parametrize("customization", ["subclass", "instance_loader", "pre_hook", "post_hook"])
+    def test_legacy_fallback_preserves_custom_loaders(self, customization):
+        distributed, inner, param = self._distributed_optimizer()
+        if customization == "subclass":
+
+            class CustomAdam(_FakeFusedAdam):
+                pass
+
+            inner = CustomAdam(param)
+            distributed.optimizer = inner
+        elif customization == "instance_loader":
+            inner.load_state_dict = MagicMock(wraps=inner.load_state_dict)
+        elif customization == "pre_hook":
+            inner.register_load_state_dict_pre_hook(lambda *args: None)
+        else:
+            inner.register_load_state_dict_post_hook(lambda *args: None)
+        original = inner.load_state_dict
+        state, _ = self._state_dict(inner)
+        with (
+            patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam),
+            memory_efficient_fp32_optimizer_state_loading(distributed) as patched,
+        ):
+            assert patched == 0
+            assert inner.load_state_dict == original
+            inner.load_state_dict(state)
+        assert inner.override_load_calls == 1
 
     @staticmethod
     def _distributed_optimizer(
