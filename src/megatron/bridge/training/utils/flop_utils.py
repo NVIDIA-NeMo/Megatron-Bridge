@@ -13,9 +13,10 @@
 # limitations under the License.
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import torch
@@ -523,10 +524,10 @@ def accumulate_flops_metadata(
 def _get_vision_config(cfg: ConfigContainer):
     """Return a direct or thinker-nested vision config when available."""
     vision_config = getattr(cfg.model, "vision_config", None)
-    if vision_config is not None:
-        return vision_config
-    thinker_config = getattr(cfg.model, "thinker_config", None)
-    return getattr(thinker_config, "vision_config", None)
+    if vision_config is None:
+        thinker_config = getattr(cfg.model, "thinker_config", None)
+        vision_config = getattr(thinker_config, "vision_config", None)
+    return SimpleNamespace(**vision_config) if isinstance(vision_config, Mapping) else vision_config
 
 
 def vit_flops_from_patch_stats(
@@ -537,6 +538,9 @@ def vit_flops_from_patch_stats(
     merged_token_sum: int | torch.Tensor,
 ) -> int | torch.Tensor:
     """Calculate ViT FLOPS from additive per-attention-sequence statistics."""
+    estimator = getattr(cfg.model, "estimate_vision_flops", None)
+    if estimator is not None:
+        return estimator(patch_sum=patch_sum, patch_squared_sum=patch_squared_sum, merged_token_sum=merged_token_sum)
     vision_config = _get_vision_config(cfg)
     if vision_config is None:
         return 0
@@ -717,6 +721,19 @@ def num_floating_point_operations(
     """
     peft = getattr(cfg, "peft", None)
     is_lora = isinstance(peft, LoRA)
+    estimator = getattr(cfg.model, "estimate_flops", None)
+    if estimator is not None and peft is None:
+        language_flops = estimator(
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+        )
+        # Legacy callers only know aggregate patches; retain their equal-image approximation.
+        vision_flops = 0
+        if num_vision_patches > 0:
+            patches_per_image = num_vision_patches / batch_size if batch_size > 0 else num_vision_patches
+            vision_flops = vit_flops(cfg, batch_size, patches_per_image)
+        return language_flops + vision_flops
     runtime_flops_estimator = getattr(cfg.model, "_get_num_floating_point_operations_with_runtime_stats", None)
     if runtime_flops_estimator is not None and not is_lora:
         return runtime_flops_estimator(
@@ -1721,6 +1738,8 @@ def num_floating_point_operations(
         if len(main) % 2 == 0 and all(main[i : i + 2] in ("D-", "DE") for i in range(0, len(main), 2)):
             cfg = copy.copy(cfg)
             cfg.model = copy.copy(cfg.model)
+            if hasattr(cfg.model, "transformer"):
+                cfg.model.transformer = copy.copy(cfg.model.transformer)
             cfg.model.num_layers = len(main) // 2
             cfg.model.moe_layer_freq = [int(main[i] == "E") for i in range(1, len(main), 2)]
             return transformer_flops()

@@ -558,7 +558,7 @@ def test_graph_replay_hooks_cover_captured_parameters(factory, scope, post_norm,
     set_cuda_graph_modules(layer.config, [] if whole_layer else [scope])
     called = []
     layer.setup_manual_hooks(lambda: lambda module: called.append(module))
-    for hook, args in layer.cuda_graph_manual_hooks:
+    for hook, args in layer.te_cuda_graph_manual_hooks:
         hook(*args)
     expected = [module for module in layer.modules() if next(module.parameters(recurse=False), None) is not None]
     assert {id(module) for module in called} == {id(module) for module in expected}
@@ -576,7 +576,7 @@ def test_router_graph_hooks_leave_eager_post_norm_outside_capture(scopes):
     layer.mlp.router = torch.nn.Linear(8, 4, bias=False)
     set_cuda_graph_modules(layer.config, scopes)
     layer.setup_manual_hooks(lambda: lambda module: None)
-    covered = [args[0] for _, args in layer.cuda_graph_manual_hooks]
+    covered = [args[0] for _, args in layer.te_cuda_graph_manual_hooks]
     assert layer.post_mlp_layernorm not in covered
     assert layer.mlp.router in covered
 

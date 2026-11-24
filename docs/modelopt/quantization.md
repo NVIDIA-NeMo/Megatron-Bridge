@@ -134,13 +134,17 @@ The export runs at any tensor, pipeline, expert and expert-tensor parallelism an
 of them: packed quantized weights with their scales, and the `quantization_config` in `config.json` that vLLM, SGLang
 and TensorRT-LLM read. Unquantized linear layers are listed in its `ignore` list, derived from the disabled weight
 quantizers. Fused projections are split the way the bridge's own weight mapping splits them, and each quantized
-weight's scales follow its rows. For unsupported configurations (e.g. KV-cache quantization, or a mapping that transposes
-or slices the columns of a quantized weight), the script falls back to ModelOpt's Megatron exporter, which supports TP=1
-only.
+weight's scales follow its rows. A quantized KV cache adds `k_scale` and `v_scale` to each attention layer (see
+[KV-cache scales](#kv-cache-scales-in-online-export)). For unsupported configurations (e.g. KV-cache quantization of
+attention without a fused QKV mapping, such as MLA, or a mapping that transposes or slices the columns of a quantized
+weight), the script falls back to ModelOpt's Megatron exporter, which supports TP=1 only.
 
 **Key Arguments:**
 - `--export-dir` - Output directory for the quantized HuggingFace checkpoint
 - `--export-extra-modules` - Also export EAGLE / Medusa heads, through ModelOpt's Megatron exporter (TP=1 only)
+
+`scripts/conversion/convert.sh export --device gpu` writes the same quantized checkpoint, without the fallback (see
+[the conversion launcher](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/conversion/README.md)).
 
 From Python, save a quantized model directly:
 
@@ -210,6 +214,35 @@ their ordinary conversion path. Custom QKV mappings that change row layout are r
 Post-mapping key renames of quantized weights are not supported; excluded weights retain their normal renaming
 behavior. This API requires a ModelOpt release that provides the
 functional quantized-weight export interface.
+
+#### KV-cache scales in online export
+
+The streaming API also supports symmetric FP8 and NVFP4 K/V quantizers on standard
+QKV-mapped attention layers. It supports both KV-only models with unquantized weights
+and combined weight/KV quantization. Build the plan after calibration and pass its
+`quantization_config` to the inference engine, as in the examples above.
+GPT-OSS's native MXFP4 format cannot carry KV-cache quantization metadata, so combining
+that format with KV quantization is rejected.
+
+FP8 requires static per-tensor E4M3 quantization. NVFP4 requires block-16 E2M1
+quantization with dynamic E4M3 block scales and a static global scale. Enabled
+query quantizers must use the FP8 layout. Rotation and pre-quant scaling are rejected
+even on disabled quantizers; enabled custom quantization backends are also unsupported.
+The same checks run when a plan is reused.
+
+Each stream emits current `q_scale`, `k_scale`, and `v_scale` tensors under the
+attention's Hugging Face prefix, once per QKV conversion group. An absent, disabled or
+constant-amax query quantizer exports a Q scale of one. Calibrated Q scales use the
+maximum across TP ranks to cover all query heads; K/V scales must agree across TP.
+FP8 scales are not clamped to one in this online
+path. The consumer remains responsible for native cache allocation and for refreshing
+any captured attention coefficients when scales change.
+
+This requires ModelOpt's functional KV-cache export API; constant-amax FP8 recipes
+also require constant-amax export support. Asymmetric K/V formats, partially selected
+attention layers, and attention without a supported QKV mapping are rejected.
+`save_hf_pretrained_modelopt()` writes the same scales as ModelOpt's checkpoint exporters do: FP8 K/V scales are
+raised to at least one, and `q_scale` is written only for an enabled query quantizer.
 
 ### Fake-Quantized Hugging Face Export
 

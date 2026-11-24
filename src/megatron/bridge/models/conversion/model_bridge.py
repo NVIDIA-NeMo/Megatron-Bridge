@@ -55,6 +55,7 @@ from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.common import ModelConfigOverrideMixin
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.fp8_export import (
     FP8ExportLayout,
     detect_fp8_export_layout,
@@ -598,7 +599,7 @@ class MegatronModelBridge(
 
         ``HF_EXPORT_IGNORED_SOURCE_PREFIXES`` names whole modules absent from every target; this hook covers
         omissions that depend on the checkpoint, such as a checkpoint's copies of parameters the Megatron
-        model holds once (ERNIE 5.5's shared MTP body). Strict export treats the returned names as
+        model holds once, for a bridge that does not write them back. Strict export treats the returned names as
         intentionally absent instead of missing, so the shards that hold them are still written with their
         other tensors. Never return a tensor the export does yield: strict saving rejects it as unknown.
 
@@ -1370,6 +1371,25 @@ class MegatronModelBridge(
             hf_weights = {k: hf_state_dict[v] for k, v in hf_param.items()}
         return hf_weights
 
+    def _load_hf_weights(
+        self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
+        """Load one task's HF tensors through :meth:`maybe_modify_loaded_hf_weight`.
+
+        FP8 weights that the hook leaves quantized but that have a ``<name>_scale_inv`` companion
+        (fine-grained FP8 checkpoints, ``quantization_config.quant_method == "fp8"``) are then
+        dequantized with the checkpoint's ``weight_block_size``, so a bridge without its own FP8
+        handling imports the real weights instead of the raw FP8 codes. Bridges that dequantize
+        in their hook return no FP8 tensors, so their results are unchanged.
+        """
+        hf_weights = self.maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+        return quantization_utils.dequantize_fp8_scale_inv_weights(
+            hf_param,
+            hf_weights,
+            hf_state_dict,
+            block_size=quantization_utils.fp8_weight_block_size(getattr(self, "hf_config", None)),
+        )
+
     @staticmethod
     def get_hf_import_param_names(
         hf_param: str | dict[str, str],
@@ -1742,7 +1762,7 @@ class MegatronModelBridge(
             if is_grouped and hf_param_key in _hf_import_cache:
                 hf_weights = _hf_import_cache[hf_param_key]
             else:
-                hf_weights = self.maybe_modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
+                hf_weights = self._load_hf_weights(task.mapping.hf_param, hf_state_dict)
                 if is_grouped:
                     _hf_import_cache[hf_param_key] = hf_weights
 
@@ -1910,7 +1930,7 @@ class MegatronModelBridge(
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue
-            hf_weights = self.maybe_modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
+            hf_weights = self._load_hf_weights(task.mapping.hf_param, hf_state_dict)
             converted_weights = self._convert_loaded_hf_weight(task, hf_weights)
             if converted_weights is not None:
                 converted_weights = _slice_gtp_weight(converted_weights, task.param_weight)
@@ -2114,6 +2134,9 @@ class MegatronModelBridge(
                         adapter_weights,
                         model_config.num_moe_experts,
                     )
+                if cpu and task.export_hook is None:
+                    # Stage expert slices on CPU so the grouped buffer does not hold a full layer on device.
+                    converted_weights_dict = {name: weight.cpu() for name, weight in converted_weights_dict.items()}
                 merged_result = self._accumulate_grouped_export(
                     task,
                     converted_weights_dict,
@@ -2170,15 +2193,20 @@ class MegatronModelBridge(
             )  # dict will be none except for one expert;
             # Finalize the converted tensor for the current export rank
             converted_weights_dict = self._truncate_vocab_padding(task, converted_weights_dict)
-            # Quantizer ranges keep their precision; ``weight_dtype`` applies to the weights only.
-            if not isinstance(task.mapping, AmaxMapping):
-                converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
             tied_output_hf_name = None
             if tied_mapping_registry is not None:
                 tied_output_hf_name = self._get_tied_output_hf_name(task, tied_mapping_registry)
 
             for hf_name, tensor in converted_weights_dict.items():
+                # Lazy mappings may gather multi-gigabyte shards. Cast each tensor
+                # as it is emitted rather than materializing the entire mapping.
+                if (
+                    not isinstance(task.mapping, AmaxMapping)
+                    and task.weight_dtype is not None
+                    and tensor.is_floating_point()
+                ):
+                    tensor = tensor.to(task.weight_dtype)
                 if not merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
                     suffix_pos = hf_name.rfind(".")
                     if suffix_pos == -1:

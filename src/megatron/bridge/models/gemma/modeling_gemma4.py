@@ -201,6 +201,10 @@ class Gemma4MoERouter(nn.Module):
         self.scale = nn.Parameter(torch.ones(hidden_size))
         self.proj = nn.Linear(hidden_size, num_experts, bias=False)
         self.per_expert_scale = nn.Parameter(torch.ones(num_experts))
+        # Replicated on every TP rank and applied to the sequence-parallel shard of the hidden states.
+        _mark_sequence_parallel_parameter(self.scale, config)
+        _mark_sequence_parallel_parameter(self.proj.weight, config)
+        _mark_sequence_parallel_parameter(self.per_expert_scale, config)
 
     def forward(self, hidden_states: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
         h = self.norm(hidden_states)
@@ -230,6 +234,9 @@ class Gemma4MoEExperts(nn.Module):
         self.down_proj = nn.Parameter(torch.empty(num_experts, hidden_size, moe_intermediate_size))
         nn.init.normal_(self.gate_up_proj, std=0.02)
         nn.init.normal_(self.down_proj, std=0.02)
+        # Every TP rank runs all experts on its own sequence-parallel shard of the tokens.
+        _mark_sequence_parallel_parameter(self.gate_up_proj, config)
+        _mark_sequence_parallel_parameter(self.down_proj, config)
 
     def forward(
         self,
@@ -481,11 +488,19 @@ class Gemma4DenseSelfAttention(SelfAttention):
         key_value_states=None,
         output_gate: bool = False,
         split_qkv: bool = True,
+        *,
+        head_wise_gate: bool = False,
     ):
+        if head_wise_gate:
+            raise ValueError("Gemma4 dense attention does not support head-wise gating.")
         if self.is_kv_shared_layer:
             if not split_qkv or output_gate:
-                return super().get_query_key_value_tensors(hidden_states, key_value_states, output_gate, split_qkv)
-            query, _k, _v = super().get_query_key_value_tensors(hidden_states, key_value_states, False, True)
+                return super().get_query_key_value_tensors(
+                    hidden_states, key_value_states, output_gate=output_gate, split_qkv=split_qkv
+                )
+            query, _k, _v = super().get_query_key_value_tensors(
+                hidden_states, key_value_states, output_gate=False, split_qkv=True
+            )
             kv_source = self._kv_source_ref() if self._kv_source_ref is not None else None
             if kv_source is not None and kv_source._stored_kv is not None:
                 key, value = kv_source._stored_kv
@@ -509,7 +524,9 @@ class Gemma4DenseSelfAttention(SelfAttention):
                 key_value_states,
             )
         else:
-            result = super().get_query_key_value_tensors(hidden_states, key_value_states, output_gate, split_qkv)
+            result = super().get_query_key_value_tensors(
+                hidden_states, key_value_states, output_gate=output_gate, split_qkv=split_qkv
+            )
             if not split_qkv:
                 return result
             if output_gate:
@@ -656,6 +673,10 @@ class Gemma4DenseTransformerLayer(TransformerLayer):
         if _ple_dim > 0:
             self.per_layer_input_gate = nn.Linear(config.hidden_size, _ple_dim, bias=False, dtype=params_dtype)
             self.per_layer_projection = nn.Linear(_ple_dim, config.hidden_size, bias=False, dtype=params_dtype)
+            # Each TP rank holds a full copy of both projections, but under sequence parallelism it applies
+            # them only to its own sequence shard, so their gradients must be summed across TP.
+            _mark_sequence_parallel_parameter(self.per_layer_input_gate.weight, config)
+            _mark_sequence_parallel_parameter(self.per_layer_projection.weight, config)
             self.post_per_layer_input_norm = submodules.post_per_layer_input_norm(
                 config=self.config,
                 hidden_size=self.config.hidden_size,

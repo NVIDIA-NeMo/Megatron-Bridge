@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 def create_mock_dataset_config(
-    seq_length, num_workers=8, pin_memory=False, persistent_workers=False, create_attention_mask=True
+    seq_length,
+    num_workers=8,
+    pin_memory=False,
+    persistent_workers=False,
+    create_attention_mask=True,
+    prefetch_factor=None,
 ):
     """Create mock dataset configuration for Megatron-Bridge."""
     from megatron.bridge.training.config import MockGPTDatasetConfig
@@ -33,6 +38,7 @@ def create_mock_dataset_config(
         pin_memory=pin_memory,
         persistent_workers=persistent_workers,
         create_attention_mask=create_attention_mask,
+        prefetch_factor=prefetch_factor,
     )
 
 

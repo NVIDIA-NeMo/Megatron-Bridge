@@ -658,6 +658,9 @@ class TestSyncHybridDeviceOptimizerFp32MasterCopies:
         inner.param_groups = [{"params": [model_param], "step": step}]
         inner.param_update_in_fp32 = True
         inner.sub_optimizers = [adam]
+        # Mirror a CPU-only HybridDeviceOptimizer: Core identifies the GPU owner by identity.
+        inner.cpu_optimizers = [adam]
+        inner.gpu_optimizer = None
         inner.inner_param_to_orig_param = {working: model_param}
         inner.param_to_inner_param = {model_param: working}
         inner.param_to_fp32_param = {model_param: working}

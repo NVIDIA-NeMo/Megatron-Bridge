@@ -247,6 +247,41 @@ class TestGemma4LayerSpec:
         assert captured["ffn_hidden_size"] == 12
 
 
+@pytest.mark.unit
+class TestGemma4DenseLayerSequenceParallel:
+    @pytest.mark.parametrize("enable_moe_block", [False, True])
+    @pytest.mark.parametrize("sequence_parallel", [True, False])
+    def test_replicated_parameters_follow_sequence_parallel(self, monkeypatch, enable_moe_block, sequence_parallel):
+        """MCore sums a replicated parameter's gradient across TP ranks only when it is marked ``sequence_parallel``."""
+
+        def fake_layer_init(self, config, submodules, layer_number=1, **kwargs):
+            del submodules, kwargs
+            torch.nn.Module.__init__(self)
+            self.config = config
+            self.layer_number = layer_number
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer.__init__",
+            fake_layer_init,
+        )
+        config = _config(
+            ffn_hidden_size=6,
+            num_layers=2,
+            per_layer_embed_dim=3,
+            enable_moe_block=enable_moe_block,
+            sequence_parallel=sequence_parallel,
+        )
+
+        layer = Gemma4DenseTransformerLayer(config, get_gemma4_layer_spec().submodules, layer_number=1)
+
+        # With MCore's TransformerLayer.__init__ stubbed out, only the parameters Gemma 4 adds itself remain: the
+        # norms, the per-layer-embedding projections and the local MoE block, all replicated on every TP rank.
+        marks = {name: getattr(param, "sequence_parallel", None) for name, param in layer.named_parameters()}
+        assert {"per_layer_input_gate.weight", "per_layer_projection.weight"} <= marks.keys()
+        assert ("moe_experts.gate_up_proj" in marks) is enable_moe_block
+        assert marks == dict.fromkeys(marks, sequence_parallel)
+
+
 class TestGemma4DenseSelfAttention:
     def test_init_marks_shared_layer_and_source_index(self, monkeypatch):
         init_configs = []
@@ -464,6 +499,33 @@ class TestGemma4DenseSelfAttention:
         torch.testing.assert_close(key, mixed[..., 8:10] + 20.0)
         torch.testing.assert_close(raw_key, mixed[..., 8:10])
         assert realtime_calls == [True]
+
+    @pytest.mark.parametrize("shared", [False, True])
+    def test_unsplit_qkv_keeps_keyword_arguments_on_dev(self, monkeypatch, shared):
+        mixed = torch.randn(2, 1, 1, 8)
+        splits = [4, 2, 2]
+
+        def get_qkv(
+            self, hidden_states, key_value_states=None, output_gate=False, head_wise_gate=False, split_qkv=True
+        ):
+            assert not output_gate
+            assert not head_wise_gate
+            assert not split_qkv
+            return mixed, splits
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.get_query_key_value_tensors", get_qkv
+        )
+        attn = self._make_attention_for_methods()
+        attn.is_kv_shared_layer = shared
+        result = attn.get_query_key_value_tensors(torch.zeros(2, 1, 4), head_wise_gate=False, split_qkv=False)
+        assert result[0] is mixed
+        assert result[1] is splits
+
+    def test_head_wise_gate_is_rejected_for_gemma(self):
+        attn = self._make_attention_for_methods()
+        with pytest.raises(ValueError, match="does not support head-wise gating"):
+            attn.get_query_key_value_tensors(torch.zeros(2, 1, 4), head_wise_gate=True)
 
     def test_shared_layer_reuses_source_kv_when_available(self, monkeypatch):
         query = torch.ones(2, 1, 1, 2)

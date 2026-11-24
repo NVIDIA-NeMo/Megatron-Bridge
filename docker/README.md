@@ -19,6 +19,12 @@ The full NeMo-FW stack is built in order: **fw-base → megatron-bridge → fw-f
 package and all dependencies using [uv](https://github.com/astral-sh/uv).
 Run from the repository root:
 
+Prepare the submodule before building from a local checkout:
+
+```bash
+bash scripts/prepare_mcore.sh
+```
+
 ```bash
 docker build \
   -f docker/Dockerfile.ci \

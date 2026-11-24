@@ -18,8 +18,8 @@ copy and run. These tests check the published argv against the launchers that
 own it: GPU conversion topologies must decompose over the published world size,
 an inference command must not carry a flag that belongs to the conversion
 launcher's namespace, and a checkpoint a command loads (``checkpoint.load=``,
-``dataset.dataloader_load=`` or ``--load_dir``) must be written by a command in the
-same card, and a GB200 HybridEP command that reuses an H100 recipe must set the
+``dataset.dataloader_load=``, ``--load_dir`` or a GB300 ``--pretrained_checkpoint``) must be
+written by a command in the same card, and a GB200 HybridEP command that reuses an H100 recipe must set the
 GB200 NVLink-domain environment.
 
 Uses only pytest, PyYAML and the standard library (no torch / megatron import) so it
@@ -281,6 +281,23 @@ def test_published_load_dirs_come_from_the_same_card() -> None:
     )
 
 
+def test_published_gb300_pretrained_checkpoints_come_from_the_same_card() -> None:
+    """Every GB300 --pretrained_checkpoint reads a path that a command in the same card writes."""
+    produced = _produced_by_card()
+    offenders = []
+    for leaf, tokens in _published_commands():
+        if "/GB300/" not in leaf:
+            continue
+        card = leaf.split("/", 1)[0]
+        for index in range(len(tokens)):
+            name, value = _token_value(tokens, index)
+            if name == "--pretrained_checkpoint" and not _is_produced(value, produced.get(card, set())):
+                offenders.append(f"{leaf}: --pretrained_checkpoint {value}")
+    assert not offenders, "published GB300 commands load a checkpoint no command in their card writes: " + "; ".join(
+        offenders
+    )
+
+
 def _expert_parallel_size(tokens: list[str], overrides: dict[str, str]) -> int | None:
     """Return the EP size a training command sets, or None when it inherits the recipe default."""
     if "model.expert_model_parallel_size" in overrides:
@@ -492,6 +509,31 @@ def test_checkpoint_load_honors_checkpoint_save_override(monkeypatch: pytest.Mon
             ("card/train", "./scripts/training/train.sh --save_dir work/unwritten checkpoint.save=work/actual"),
             ("card/resume", "./scripts/training/train.sh checkpoint.load=work/unwritten"),
         )
+
+
+def _check_gb300_pretrained(monkeypatch: pytest.MonkeyPatch, pretrained: str) -> None:
+    module = sys.modules[__name__]
+    commands = (
+        (
+            "card/items/import/command",
+            "./scripts/conversion/convert.sh import --hf-model m --megatron-path work/mcore",
+        ),
+        ("card/items/sft/GB300/command", f"./scripts/training/train.sh --pretrained_checkpoint {pretrained}"),
+    )
+    monkeypatch.setattr(
+        module, "_published_commands", lambda: iter((leaf, shlex.split(cmd)) for leaf, cmd in commands)
+    )
+    module.test_published_gb300_pretrained_checkpoints_come_from_the_same_card()
+
+
+@pytest.mark.parametrize("pretrained", ["work/mcore", "work/mcore/iter_0000000"])
+def test_gb300_pretrained_checkpoint_accepts_import_output(pretrained: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _check_gb300_pretrained(monkeypatch, pretrained)
+
+
+def test_gb300_pretrained_checkpoint_rejects_unproduced_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(AssertionError, match="--pretrained_checkpoint work/other/iter_0000000"):
+        _check_gb300_pretrained(monkeypatch, "work/other/iter_0000000")
 
 
 HYBRIDEP_ON_H100_RECIPE = (
