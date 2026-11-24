@@ -10,6 +10,22 @@ import torch
 from megatron.bridge.training.megatron_mimo_step import resolve_step_packing
 
 
+def _partition_adapter(*, cp_size: int = 1, tp_size: int = 1, sequence_parallel: bool = False) -> SimpleNamespace:
+    """Stand in for ``MimoModel.partition_adapter`` with this language CP/TP layout."""
+
+    def group(size: int) -> SimpleNamespace | None:
+        return SimpleNamespace(size=lambda: size) if size > 1 else None
+
+    return SimpleNamespace(
+        cfg=SimpleNamespace(
+            use_cp=cp_size > 1,
+            cp_group=group(cp_size),
+            seq_parallel=sequence_parallel,
+            tp_group=group(tp_size),
+        )
+    )
+
+
 class TestLossFunc:
     """Test cases for loss_func()."""
 
@@ -327,6 +343,7 @@ class TestForwardStep:
         mock_role.is_first_stage.return_value = False
         mock_role.is_last_stage.return_value = False
         mock_model.role = mock_role
+        mock_model.partition_adapter = _partition_adapter()
         mock_model.language_model.mtp_process = False
         mock_model.return_value = (torch.tensor([1.0]), None)
         mock_unwrap.return_value = mock_model
@@ -370,6 +387,7 @@ class TestForwardStep:
         mock_role.is_first_stage.return_value = True
         mock_role.is_last_stage.return_value = False
         mock_model.role = mock_role
+        mock_model.partition_adapter = _partition_adapter()
         mock_model.language_model.mtp_process = False
         mock_model.return_value = (torch.tensor([1.0]), None)
         mock_unwrap.return_value = mock_model
@@ -389,6 +407,46 @@ class TestForwardStep:
         inspect.signature(MimoModel.forward).bind(MagicMock(), **call_kwargs)
         assert call_kwargs["input_ids"].tolist() == [[1, 2, 3, 4, 5]]
         assert call_kwargs["max_seqlen"].dtype == torch.int32
+
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_pads_packed_sequences_for_language_cp(self, mock_unwrap, mock_get_batch):
+        """Under language CP 2 each packed sequence spans a multiple of 2 * CP tokens."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True)
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = True
+        mock_model.role = mock_role
+        mock_model.partition_adapter = _partition_adapter(cp_size=2)
+        mock_model.language_model.mtp_process = False
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+
+        mock_get_batch.return_value = {
+            "input_ids": torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]]),
+            "position_ids": torch.tensor([[0, 1, 2, 3], [0, 1, 2, 3]]),
+            "attention_mask": torch.tensor([[1, 1, 1, 0], [1, 1, 0, 0]]),
+            "labels": torch.tensor([[2, 3, 4, 0], [5, 6, 0, 0]]),
+            "loss_mask": torch.ones(2, 4),
+            "modality_inputs": None,
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        call_kwargs = mock_model.call_args.kwargs
+        assert call_kwargs["input_ids"].tolist() == [[1, 2, 3, 0, 4, 5, 0, 0]]
+        assert call_kwargs["labels"].tolist() == [[2, 3, 4, -100, 5, 6, -100, -100]]
+        assert call_kwargs["loss_mask"].tolist() == [[1, 1, 1, 0, 1, 1, 0, 0]]
+        assert call_kwargs["position_ids"].tolist() == [[0, 1, 2, 3, 0, 1, 2, 3]]
+        assert call_kwargs["cu_seqlens"].tolist() == [[0, 3, 5]]
+        assert call_kwargs["cu_seqlens_padded"].tolist() == [[0, 4, 8]]
+        assert call_kwargs["max_seqlen"].tolist() == [4]
 
     @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
     @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
@@ -596,6 +654,38 @@ class TestForwardStep:
 
         with pytest.raises(ValueError, match="width"):
             forward_step(mock_state, iter([]), mock_model)
+
+
+@pytest.mark.unit
+class TestLanguagePackingAlignment:
+    """The packed-sequence length multiple follows the language module's CP and SP groups."""
+
+    @pytest.mark.parametrize(
+        "cp_size, tp_size, sequence_parallel, expected",
+        [
+            (1, 1, False, 1),
+            (2, 1, False, 4),
+            (4, 1, False, 8),
+            (2, 4, False, 4),  # TP without sequence parallelism does not split the sequence
+            (1, 4, True, 4),
+            (2, 2, True, 4),
+            (2, 4, True, 8),
+            (3, 2, True, 6),
+            (2, 3, True, 12),
+        ],
+    )
+    def test_multiple(self, cp_size, tp_size, sequence_parallel, expected):
+        from megatron.bridge.training.megatron_mimo_step import _language_packing_alignment
+
+        model = SimpleNamespace(
+            partition_adapter=_partition_adapter(cp_size=cp_size, tp_size=tp_size, sequence_parallel=sequence_parallel)
+        )
+        assert _language_packing_alignment(model) == expected
+
+    def test_no_partition_adapter(self):
+        from megatron.bridge.training.megatron_mimo_step import _language_packing_alignment
+
+        assert _language_packing_alignment(SimpleNamespace(partition_adapter=None)) == 1
 
 
 @pytest.mark.unit

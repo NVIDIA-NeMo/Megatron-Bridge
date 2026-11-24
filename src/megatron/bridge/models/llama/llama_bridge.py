@@ -56,12 +56,15 @@ class LlamaBridge(MegatronModelBridge):
         "high_freq_factor": 4.0,
         "original_max_position_embeddings": 8192,
     }
+    # Hugging Face RoPE types this bridge converts; the shared mapping handles "yarn".
+    _SUPPORTED_ROPE_TYPES = ("default", "linear", "llama3", "yarn")
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Convert a Hugging Face Llama config to builder config kwargs.
 
         Raises:
-            ValueError: If llama3 RoPE scaling uses values that Megatron Core cannot apply.
+            ValueError: If the RoPE type is not one this bridge converts, or if llama3 RoPE scaling uses
+                values that Megatron Core cannot apply.
         """
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         config_kwargs.update(
@@ -80,8 +83,17 @@ class LlamaBridge(MegatronModelBridge):
         # The shared mapping already selects "yarn" and its Hugging Face defaults for YaRN-scaled checkpoints.
         config_kwargs.setdefault("position_embedding_type", "rope")
 
-        rope_scaling = getattr(hf_config, "rope_scaling", None) or {}
+        rope_scaling = getattr(hf_config, "rope_scaling", None)
+        if not isinstance(rope_scaling, Mapping):
+            # As in the shared mapping, only a dict describes RoPE scaling.
+            rope_scaling = {}
         rope_type = rope_scaling.get("type") or rope_scaling.get("rope_type")
+        if rope_type is not None and rope_type not in self._SUPPORTED_ROPE_TYPES:
+            raise ValueError(
+                f"Unsupported RoPE type {rope_type!r}. LlamaBridge converts the RoPE types "
+                f"{list(self._SUPPORTED_ROPE_TYPES)}; converting this checkpoint with plain RoPE would change "
+                "its rotary frequencies."
+            )
         if rope_type == "llama3":
             unsupported = {
                 key: rope_scaling[key]

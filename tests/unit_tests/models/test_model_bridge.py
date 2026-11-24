@@ -453,14 +453,14 @@ def test_stream_weights_hf_to_megatron_dequantizes_fp8_weights_the_bridge_hook_l
 
 
 def test_load_hf_weights_leaves_bridges_that_dequantize_in_their_hook_unchanged():
-    from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge
+    from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
 
     torch.manual_seed(0)
     state = {
         "q.weight": (torch.randn(200, 160) * 50).to(torch.float8_e4m3fn),
         "q.weight_scale_inv": torch.rand(2, 2) + 0.5,
     }
-    bridge = DeepSeekV3Bridge()
+    bridge = GLM5Bridge()
     bridge.hf_config = SimpleNamespace(quantization_config={"quant_method": "fp8", "weight_block_size": [128, 128]})
 
     expected = bridge.maybe_modify_loaded_hf_weight("q.weight", state)
