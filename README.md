@@ -12,6 +12,8 @@
 
 ## 📣 News
 
+- [11/23/2026] **Megatron Bridge and Megatron-Core were used to train MemTensor’s MemT-1.0**, a family of models that integrates persistent, evolving memory to reuse historical information without reloading the original context. The [Pro model](https://huggingface.co/MemTensor/MemT-1.0-Pro) builds on NVIDIA Nemotron 3 Ultra. Megatron Bridge native support is coming soon. See the [paper](https://arxiv.org/abs/2610.26825) for details.
+
 - [11/19/2026] **Megatron Bridge will be merged into the Megatron-LM repository.** See [Unified Megatron-LM](https://docs.nvidia.com/nemo/megatron-bridge/nightly/unified-megatron.html) for more details.
 
 - [11/13/2026] [**Inkling 2 Small**](https://huggingface.co/thinkingmachines/Inkling-2-Small) from Thinking Machines is now supported! Megatron Bridge provides HF↔Megatron checkpoint conversion, including the release's quantized experts, image-and-text inference, and GB200 recipes for pretraining, full SFT, 32K long-context SFT with context parallelism, LoRA, and image-text SFT and LoRA. See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/inkling/README.md) and [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/inkling-2-small/card.yaml) for verified configurations and current limitations.
