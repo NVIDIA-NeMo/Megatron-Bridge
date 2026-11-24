@@ -86,6 +86,26 @@ model. Model parity tests use the existing project/container environment through
 `uv run --no-sync` and log its Transformers and Torch versions. The launcher
 does not install a separate reference environment.
 
+## FLOPs accounting
+
+`Qwen4ExpHybridModel.estimate_flops` and `Qwen4ExpVLModel.estimate_flops`
+implement Core's pure classmethod interface: a config plus
+`total_real_tokens_in_batch` and `seqlen_squared_sum_in_batch`, returning
+forward FLOPs without allocating weights. The VLM also accepts additive
+`patch_sum`, `patch_squared_sum` and `merged_token_sum` statistics.
+
+The model-config `estimate_flops` and `estimate_vision_flops` methods expose
+these estimates to Bridge's training logger. Trainable matrix work uses a
+three-times-forward training estimate; the detached QSA indexer is counted
+forward-only. Standard attention, GDN and MoE reuse Core's block estimators;
+gated residual and PLE projections have local hooks. Counts describe global
+logical work, independent of TP/EP replication.
+
+QSA currently uses a dense-attention surrogate and omits indexer score work;
+GDN recurrence is approximate. Norms, lookup tables, PLE convolution,
+communication and optimizer work are excluded. Historical verification-card
+measurements retain the estimator used by the recorded run.
+
 ## Validation
 
 Run the focused numerical, mapping, and GPU conversion tests:

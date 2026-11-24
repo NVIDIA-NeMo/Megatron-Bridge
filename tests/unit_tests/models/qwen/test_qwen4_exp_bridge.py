@@ -21,6 +21,7 @@ import pytest
 import torch
 from transformers import PretrainedConfig
 
+from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.modeling_qwen4_exp.model import Qwen4ExpGatedDeltaNet
@@ -194,8 +195,19 @@ class TestQwen4ExpModelConfig:
         config = Qwen4ExpTextBridge().hf_config_to_model_config(_namespace(_text_config_dict()))
         config.qsa_indexer_budget = 1024
         config.rotary_base = 500_000
+        config.mrope_section = [11, 11, 10]
         serialized = config.as_dict()
+        assert "mrope_section" not in serialized
+        assert "hetereogenous_dist_checkpoint" not in serialized
+        assert "share_embeddings_and_output_weights" not in serialized["transformer"]
         restored = Qwen4ExpModelConfig.from_dict(serialized)
+        assert restored.mrope_section == [11, 11, 10]
+        assert restored.hetereogenous_dist_checkpoint is True
+        # Legacy outer values took precedence over the stale nested copies.
+        legacy = dict(serialized, mrope_section=[10, 11, 11], hetereogenous_dist_checkpoint=False)
+        migrated = ModelConfig.from_dict(legacy)
+        assert migrated.transformer.mrope_section == [10, 11, 11]
+        assert migrated.transformer.hetereogenous_dist_checkpoint is False
         assert serialized["transformer"]["activation_func"] == "silu"
         assert restored.transformer.activation_func is torch.nn.functional.silu
         assert restored.transformer.qsa_indexer_budget == 1024

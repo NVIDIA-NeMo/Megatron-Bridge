@@ -250,7 +250,7 @@ def test_public_auto_bridge_selects_and_serializes_model_config(full_hf_config, 
     if not text_only:
         assert config.vision_config["depth"] == 2
         assert restored.vision_config == config.vision_config
-        assert config.mrope_section == [11, 11, 10]
+        assert config.mrope_section == restored.transformer.mrope_section == [11, 11, 10]
         assert config.qwen4_mrope and not config.apply_rope_fusion
         assert not config.scatter_embedding_sequence_parallel
     keys = set(bridge.hf_pretrained.state.source.get_all_keys())

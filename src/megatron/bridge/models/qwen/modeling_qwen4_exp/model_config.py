@@ -14,10 +14,10 @@
 
 """Declarative configuration for the Bridge-local Qwen4-Exp HybridModel."""
 
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from typing import Any, ClassVar
 
-from megatron.bridge.models.common.base import ModelConfig, ModelConfigOverrideMixin
+from megatron.bridge.models.common.base import ModelConfig, ModelConfigOverrideMixin, _TransformerOwnedField
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
@@ -27,8 +27,7 @@ from megatron.bridge.utils.activation_map import callable_to_str, str_to_callabl
 class Qwen4ExpTransformerConfig(TransformerConfig):
     """Transformer settings for QSA, gated residuals and lexical embeddings."""
 
-    # Derived from the outer config for conversion helpers that inspect model.config.
-    share_embeddings_and_output_weights: bool = False
+    hetereogenous_dist_checkpoint: bool = True
     qwen4_mrope: bool = False
     apply_rotary_pos_emb_in_fp32: bool = False
     linear_attention_output_gate_activation: str | None = None
@@ -67,11 +66,20 @@ class Qwen4ExpModelConfig(ModelConfigOverrideMixin, HybridModelConfig, ModelConf
     hybrid_attention_layers_include_mlp: ClassVar[bool] = True
     position_embedding_type: str = "rope"
     scatter_embedding_sequence_parallel: bool = True
-    mrope_section: list[int] | None = None
     hf_model_text_only: bool = False
     bos_token_id: int | None = None
     eos_token_id: int | None = None
-    hetereogenous_dist_checkpoint: bool = True
+    # Constructor aliases retain old checkpoint compatibility; only transformer
+    # owns and serializes these values, including flat recipe overrides.
+    mrope_section: InitVar[list[int] | None] = _TransformerOwnedField()
+    hetereogenous_dist_checkpoint: InitVar[bool | None] = _TransformerOwnedField()
+
+    def __post_init__(self, mrope_section: list[int] | None, hetereogenous_dist_checkpoint: bool | None) -> None:
+        # Earlier serialized outer values took precedence over stale nested copies.
+        if mrope_section is not None:
+            self.transformer.mrope_section = mrope_section
+        if hetereogenous_dist_checkpoint is not None:
+            self.transformer.hetereogenous_dist_checkpoint = hetereogenous_dist_checkpoint
 
     def _validate_qwen4_exp(self) -> None:
         if self.ple_embedding_sharding not in ("tp", "ep"):
@@ -141,7 +149,6 @@ class Qwen4ExpModelConfig(ModelConfigOverrideMixin, HybridModelConfig, ModelConf
     def finalize(self) -> None:
         """Resolve transformer settings and validate the supported hybrid architecture."""
         super().finalize()
-        self.transformer.share_embeddings_and_output_weights = self.share_embeddings_and_output_weights
         self._validate_qwen4_exp()
         if self.position_embedding_type != "rope":
             raise ValueError("Qwen4-Exp requires rotary position embeddings.")
