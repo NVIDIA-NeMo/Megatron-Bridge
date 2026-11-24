@@ -213,12 +213,6 @@ def test_training_with_pipeline_stages_counts_on_the_last_stage_and_shares_total
     assert scales == [1.0 / 12] and result["num_loss_tokens"] == 12.0 and result["loss_sum"] == 6.0
 
 
-def test_pipeline_parallelism_placeholders(monkeypatch):
-    engine = _pipeline_engine(monkeypatch, last_stage=True)
-    with pytest.raises(NotImplementedError, match="pipeline parallelism"):
-        engine.cpu()
-
-
 def test_data_parallel_size_and_topology(monkeypatch):
     monkeypatch.setenv("WORLD_SIZE", "16")
     recipe = _recipe_like()

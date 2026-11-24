@@ -1019,7 +1019,6 @@ class TrainingEngine:
         and gradients intact. Unsupported buffer or optimizer modes raise before anything moves.
         """
         self._require_open()
-        self._require_single_stage("cpu")  # TODO(pp-offload): not run with stages yet.
         if self._resident:
             check_movable(self._recipe, self._optimizer)
             self._wait_pending_save()
@@ -1164,10 +1163,6 @@ class TrainingEngine:
     def _require_resident(self, api: str) -> None:
         if not self._resident:
             raise RuntimeError(f"{api}() needs the engine on the GPU; call cuda() first (it was moved with cpu()).")
-
-    def _require_single_stage(self, api: str) -> None:
-        if self._runtime.topology.pp > 1:
-            raise NotImplementedError(f"{api}() with pipeline parallelism is not supported yet.")
 
     def _activate(self) -> None:
         """Point MCore's process-wide MoE metrics tracker at this engine's own instance."""
