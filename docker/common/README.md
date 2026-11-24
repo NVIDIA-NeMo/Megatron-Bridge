@@ -5,7 +5,6 @@
 - Megatron-Bridge (`/opt/Megatron-Bridge/`)
 - Megatron-LM (`/opt/Megatron-Bridge/3rdparty/Megatron-LM/`)
 - Evaluator (`/opt/Evaluator/`)
-- Export-Deploy (`/opt/Export-Deploy/`)
 - NeMo (`/opt/NeMo/`)
 - Run (`/opt/Run/`)
 
@@ -92,7 +91,7 @@ Examples of Megatron-Bridge managed packages are TransformerEngine, nvidia-resil
 
 It is unsafe to install packages that are not part of Megatron-Bridge from within this directory. For changing those dependencies, please visit the next section.  
 
-**NeMo toolkit, Export-Deploy, Run, or Evaluator**:
+**NeMo toolkit, Run, or Evaluator**:
 
 ```bash
 cd /opt/NeMo-FW

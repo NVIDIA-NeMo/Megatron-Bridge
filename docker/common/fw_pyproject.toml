@@ -28,7 +28,6 @@ license = { text = "Apache 2.0" }
 
 # Define the core libraries
 dependencies = [
-    "nemo-export-deploy",
     "nemo-evaluator",
     "nemo-run",
     "nvidia-lm-eval",
@@ -40,7 +39,6 @@ dependencies = [
 test = ["coverage>=7.8.1"]
 
 [tool.uv.sources]
-"nemo-export-deploy" = { path = "/opt/Export-Deploy", editable = true }
 "nemo-evaluator" = { path = "/opt/Evaluator/packages/nemo-evaluator", editable = true }
 "nemo-run" = { path = "/opt/Run", editable = true }
 "lightning" = { path = "stubs/lightning" }
@@ -56,7 +54,6 @@ constraint-dependencies = [
 override-dependencies = [
     # Force core libraries to be installed from the local paths
     "megatron-core[dev,mlm]; sys_platform == 'never'", # Installed by MBridge
-    "nemo-export-deploy @ /opt/Export-Deploy",
     "megatron-bridge; sys_platform == 'never'",        # Installed by MBridge
     "nemo-run @ /opt/Run",
     "transformer-engine; sys_platform == 'never'",     # Installed by MBridge
@@ -69,7 +66,7 @@ override-dependencies = [
     "pyzmq==25.1.2",                            # @URL: https://github.com/NVIDIA/NeMo/issues/13625
     "tiktoken>=0.9.0",                          # let megatron-hub win over nemo-toolkit
     "datasets==4.8.5",
-    # datasets 4.8.5 needs >=21, overriding export-deploy's <21 cap.
+    # datasets 4.8.5 needs >=21.
     # PyArrow 26 requires NumPy 2; preserve MBridge's NumPy 1 runtime.
     "pyarrow>=21.0.0,<26",
     "fsspec[http]>=2026.6.0",                  # GHSA-27vj-qcqg-25rc

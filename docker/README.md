@@ -7,7 +7,7 @@ container and the NeMo Framework (NeMo-FW) image stack.
 |---|---|---|
 | megatron-bridge | `Dockerfile.ci` | Megatron-Bridge development and CI container |
 | fw-base | `Dockerfile.fw_base` | CUDA / TRT-LLM / vLLM / DeepEP base layer |
-| fw-final | `Dockerfile.fw_final` | NeMo, Export-Deploy, Evaluator, NeMo-Run on top of megatron-bridge |
+| fw-final | `Dockerfile.fw_final` | NeMo, Evaluator, NeMo-Run on top of megatron-bridge |
 
 The full NeMo-FW stack is built in order: **fw-base → megatron-bridge → fw-final**.
 
@@ -184,7 +184,7 @@ docker build \
 
 ### Step 3 — fw-final (`Dockerfile.fw_final`)
 
-Installs NeMo, Export-Deploy, Evaluator, and NeMo-Run on top of the megatron-bridge image.
+Installs NeMo, Evaluator, and NeMo-Run on top of the megatron-bridge image.
 
 ```bash
 docker build \
@@ -192,7 +192,6 @@ docker build \
   --target nemo_fw_final \
   --build-arg NEMO_FW_FINAL_BASE_IMAGE=megatron-bridge:latest \
   --build-arg NEMO_COMMIT=<commit-sha> \
-  --build-arg NEMO_EXPORT_DEPLOY_COMMIT=<commit-sha> \
   --build-arg NEMO_EVALUATOR_COMMIT=<commit-sha> \
   --build-arg NEMO_RUN_COMMIT=<commit-sha> \
   -t fw-final:latest \
@@ -253,7 +252,6 @@ docker build \
 |---|---|
 | `NEMO_FW_FINAL_BASE_IMAGE` | Base image; must be a megatron-bridge image |
 | `NEMO_COMMIT` | NeMo git commit SHA |
-| `NEMO_EXPORT_DEPLOY_COMMIT` | NeMo Export-Deploy git commit SHA |
 | `NEMO_EVALUATOR_COMMIT` | NeMo Evaluator git commit SHA |
 | `NEMO_RUN_COMMIT` | NeMo Run git commit SHA |
 
