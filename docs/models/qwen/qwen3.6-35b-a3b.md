@@ -482,7 +482,7 @@ GPU export completed on four GB300 GPUs at TP1/PP1/EP4/ETP1. All 1,811 keys and 
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.
+        <p>Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights. Build its Energon input first with uv run python tutorials/data/energon/prepare_medpix_data.py --output-dir work/data/medpix/energon-pinned --revision 69eb219d477ab8699296da1fd6b89beb768042d3 --train-rows all, which packages every training row of mmoukouba/MedPix-VQA at that revision; checkpoint_resume reuses it.
 
 Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: ad196b9a6d14ef62979fc8532af62a7d6ea0fe66. Verified on 2026-11-04.
 Executed Qwen3.5 command(s):
