@@ -727,6 +727,24 @@ def num_floating_point_operations(
             cross_seqlen_product_sum=cross_seqlen_product_sum,
         )
 
+    if (
+        not is_lora
+        and getattr(cfg.model, "experimental_attention_variant", None) == "kda"
+        and getattr(cfg.model, "hybrid_layer_pattern", None)
+        and hasattr(cfg.model, "transformer")
+    ):
+        # Core's native Hybrid counter includes KDA, MLA, AttnRes and MTP.
+        # The generic Bridge Hybrid counter below only counts the older symbols.
+        from megatron.training.training import num_floating_point_operations as native_hybrid_flops
+
+        return native_hybrid_flops(
+            cfg.model,
+            batch_size,
+            sequence_length=cfg.dataset.seq_length,
+            total_real_tokens_in_batch=seqlen_sum,
+            seqlen_squared_sum_in_batch=seqlen_squared_sum,
+        )
+
     # Compute effective sequence length from actual values or fall back to config.
     if seqlen_sum is not None and batch_size > 0:
         effective_seq_length = seqlen_sum / batch_size
