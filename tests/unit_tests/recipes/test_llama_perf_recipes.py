@@ -289,22 +289,24 @@ def test_llama3_vrnvl72_fp8mx_perf_settings(
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("vrnvl72_factory", "gb300_factory"),
+    ("vrnvl72_factory", "gb300_factory", "fp4_param"),
     (
-        (llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config, llama3_8b_pretrain_8gpu_gb300_nvfp4_config),
-        (llama3_70b_pretrain_64gpu_vrnvl72_nvfp4_config, llama3_70b_pretrain_64gpu_gb300_nvfp4_config),
+        (llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config, llama3_8b_pretrain_8gpu_gb300_nvfp4_config, True),
+        (llama3_70b_pretrain_64gpu_vrnvl72_nvfp4_config, llama3_70b_pretrain_64gpu_gb300_nvfp4_config, False),
     ),
-    ids=lambda value: value.__name__,
+    ids=lambda value: getattr(value, "__name__", f"fp4_param={value}"),
 )
 def test_llama3_vrnvl72_nvfp4_perf_settings(
     monkeypatch: pytest.MonkeyPatch,
     vrnvl72_factory: Callable[[], ConfigContainer],
     gb300_factory: Callable[[], ConfigContainer],
+    fp4_param: bool,
 ) -> None:
     """The VRNVL72 NVFP4 recipes add MXFP8 attention, fused QKV+RoPE, TE SwiGLU and no attention mask to GB300.
 
-    ``NVTE_DPA_FP8_RECIPE`` selects block-scaled MXFP8 for that attention path. Apart from the FP8 attention
-    flag, the mixed-precision settings and the parallel layout match GB300.
+    ``NVTE_DPA_FP8_RECIPE`` selects block-scaled MXFP8 for that attention path. The 70B recipe also keeps
+    parameters in BF16, while GB300 inherits FP4 parameters from the NVFP4 precision preset. Apart from those
+    flags, the mixed-precision settings and the parallel layout match GB300.
     """
     patch_recipe_construction_dependencies(monkeypatch)
 
@@ -319,7 +321,12 @@ def test_llama3_vrnvl72_nvfp4_perf_settings(
     assert vrnvl72_cfg.mixed_precision.fp8_dot_product_attention is True
     assert gb300_cfg.mixed_precision.fp8_dot_product_attention is False
     assert vrnvl72_cfg.env_vars["NVTE_DPA_FP8_RECIPE"] == "MXFP8BlockScaling"
+    assert vrnvl72_cfg.mixed_precision.fp4_param is fp4_param
+    assert vrnvl72_cfg.mixed_precision.fp4_param_gather is fp4_param
+    assert gb300_cfg.mixed_precision.fp4_param is True
     vrnvl72_cfg.mixed_precision.fp8_dot_product_attention = False
+    # Setting fp4_param_gather also sets fp4_param (MixedPrecisionConfig keeps them in sync).
+    vrnvl72_cfg.mixed_precision.fp4_param_gather = gb300_cfg.mixed_precision.fp4_param_gather
     assert vrnvl72_cfg.mixed_precision == gb300_cfg.mixed_precision
     for name in (
         "tensor_model_parallel_size",
