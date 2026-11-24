@@ -24,12 +24,11 @@ sharing one runtime.
 
 ## Compute
 
-- **Pipeline parallelism** is supported for `forward_only` only (scores come from the last stage;
-  `broadcast_output` copies them to the other stages). Still rejected with PP > 1:
-  - `forward_backward` and `optim_step` (`TODO(pp-train)`): the loss summary exists on the last stage
-    only; the window totals have to reach every stage at `optim_step`.
-  - `save_state`, `load_state`, `export` (`TODO(pp-state)`) and `cpu()` (`TODO(pp-offload)`): not run
-    with stages yet.
+- **Pipeline parallelism** is supported for `forward_only`, `forward_backward`, `optim_step`,
+  `save_state`, `load_state` and `export` (scores and the loss summary come from the last stage;
+  `broadcast_output` copies them to the other stages, and `optim_step` shares the window totals). Still
+  rejected with PP > 1:
+  - `cpu()` (`TODO(pp-offload)`): not run with stages yet.
   - LoRA (`TODO(pp-lora)`) and the value head (`TODO(pp-value-head)`), at construction.
   - Router replay (`TODO(pp-replay)`, `recipes/base.py`): a stage holds only some MoE layers, so replay
     needs each router's global layer index.
@@ -67,6 +66,14 @@ sharing one runtime.
   tokens, print the values at the worst token, compare the routing decisions of the two orders, and
   repeat in fp32 or on a small model. Until then, use `pad_to_max_length=False` for scoring that must
   not depend on batch composition.
+
+- **A job using the `ncclep` MoE dispatcher does not exit.** Scoring through the engine with
+  `model.moe_flex_dispatcher_backend="ncclep"` gives the same logprobs as `hybridep`, with and without
+  pipeline parallelism, but after `engine.close()` and `torch.distributed.destroy_process_group()` every
+  rank prints `NCCL WARN Error: corrupted comm object detected` / `NCCL error 4 at nccl_ep.cc` and the
+  process hangs with idle GPUs. Not settled: what still holds the NCCL expert-parallel handle after
+  `close()`, and whether the engine should release it or the caller must change its shutdown order.
+  `ncclep` training, checkpoints and export have not been run. `hybridep` jobs exit normally.
 
 ## Multimodal models
 

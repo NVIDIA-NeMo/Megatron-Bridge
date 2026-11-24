@@ -22,6 +22,11 @@ Run it twice on the same packed parquet data, with the recipe changed through ``
 Each run checks that every rank received the same gathered result, and that with
 ``broadcast_output=False`` the last stage has that result while the other stages get ``None``. The
 second run then compares per-token logprobs and the mean NLL with the saved reference.
+
+With ``--update`` the runs instead apply one optimizer update on a trainable engine, export the
+weights, and save or compare a fixed sample of every tensor together with the loss sum and the
+gradient norm. Use deterministic kernels: two runs of one layout then give identical weights, and
+the pipelined layout differs from the reference in a few last-bit roundings only.
 """
 
 from __future__ import annotations
@@ -35,7 +40,7 @@ import torch
 from score_packed_parquet import _check_gathered, _mean_nll, packs_to_datums
 
 import megatron.bridge.engine.recipes as recipes
-from megatron.bridge.engine import ForwardOutput, TrainingEngine
+from megatron.bridge.engine import AdamParams, ForwardOutput, TrainingEngine
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
@@ -54,6 +59,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--compare", help="Compare the gathered logprobs with this file (rank 0)")
     parser.add_argument("--token-tolerance", type=float, default=1e-3)
     parser.add_argument("--nll-tolerance", type=float, default=1e-4)
+    parser.add_argument("--update", action="store_true", help="Compare one optimizer update instead of scoring")
+    parser.add_argument("--learning-rate", type=float, default=2e-5)
+    parser.add_argument("--sample-size", type=int, default=65536, help="Elements kept per exported tensor")
+    parser.add_argument("--update-tolerance", type=float, default=1e-5, help="Largest fraction of changed elements")
     return parser.parse_args()
 
 
@@ -79,6 +88,50 @@ def _compare(reference: list[torch.Tensor], logprobs: list[torch.Tensor], token_
     assert above == 0, f"{above} of {total} token logprobs differ from the reference by {token_tolerance} or more"
 
 
+def _check_update(args: argparse.Namespace, recipe, datums: list) -> None:
+    """Apply one optimizer update and save, or compare, a fixed sample of every exported weight tensor."""
+    engine = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=True)
+    print_rank_0(f"[engine] built; parallel_info={engine.parallel_info}")
+    summary = engine.forward_backward(datums)
+    result = engine.optim_step(AdamParams(learning_rate=args.learning_rate, weight_decay=0.1))
+    grad_norm = result["grad_norm"]
+    print_rank_0(
+        f"[update] loss_sum {summary.loss_sum:.4f} tokens {summary.num_loss_tokens} grad_norm {grad_norm:.6f}"
+    )
+    samples: dict[str, torch.Tensor] = {}
+    for name, tensor in engine.export(streaming=True):  # every rank drains the stream; rank 0 keeps the sample
+        if get_rank_safe() == 0:
+            flat = tensor.flatten()
+            samples[name] = flat[:: max(1, flat.numel() // args.sample_size)].float().cpu()
+    if get_rank_safe() == 0:
+        state = {"loss_sum": summary.loss_sum, "tokens": summary.num_loss_tokens, "grad_norm": grad_norm}
+        if args.save:
+            torch.save({**state, "samples": samples}, args.save)
+            print_rank_0(f"[save] wrote {args.save} ({len(samples)} tensors)")
+        if args.compare:
+            reference = torch.load(args.compare)
+            assert reference["tokens"] == state["tokens"], "token counts differ from the reference"
+            norm_diff = abs(state["grad_norm"] - reference["grad_norm"]) / reference["grad_norm"]
+            print_rank_0(
+                f"[compare] loss_sum {state['loss_sum']:.4f} vs {reference['loss_sum']:.4f}; "
+                f"grad_norm relative difference {norm_diff:.2e}"
+            )
+            assert samples.keys() == reference["samples"].keys(), "exported tensor names differ from the reference"
+            changed = {name: (values != reference["samples"][name]) for name, values in samples.items()}
+            total = sum(mask.numel() for mask in changed.values())
+            count = sum(int(mask.sum()) for mask in changed.values())
+            worst = sorted(changed, key=lambda name: float(changed[name].float().mean()), reverse=True)[:8]
+            print_rank_0(f"[compare] {count} of {total} sampled weights differ ({count / total:.2e})")
+            for name in worst:
+                gap = (samples[name] - reference["samples"][name]).abs().max().item()
+                print_rank_0(
+                    f"[compare]   {name}: {float(changed[name].float().mean()):.2e} differ, max |diff| {gap:.2e}"
+                )
+            assert norm_diff < 1e-5, f"gradient norm differs from the reference by {norm_diff:.2e} (relative)"
+            assert count / total <= args.update_tolerance, "the update differs from the reference"
+    engine.close()
+
+
 def main() -> None:
     """Run the pipeline-parallel scoring checks on every rank."""
     logging.basicConfig(level=logging.INFO)
@@ -87,6 +140,12 @@ def main() -> None:
     recipes.apply_recipe_overrides(recipe, json.loads(args.overrides))
     datums = packs_to_datums(args.parquet, args.num_packs)
     print_rank_0(f"[data] {len(datums)} datums, {sum(d.num_tokens for d in datums):,} tokens")
+    if args.update:
+        _check_update(args, recipe, datums)
+        torch.distributed.barrier()
+        print_rank_0("PIPELINE PARALLEL GATE PASSED")
+        torch.distributed.destroy_process_group()
+        return
 
     engine = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint, trainable=False)
     info = engine.parallel_info

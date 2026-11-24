@@ -243,6 +243,9 @@ def finalize_recipe(recipe: TrainingRecipe) -> None:
         recipe.comm_overlap.setup(model, recipe.optimizer, recipe.ddp)
 
     model.calculate_per_token_loss = True
+    if hasattr(model, "max_seq_length_per_sample") and model.max_seq_length_per_sample is None:
+        # As Megatron's launcher sets it from --seq-length: the NCCL EP dispatcher sizes its buffers from it.
+        model.max_seq_length_per_sample = model.seq_length
     recipe.ddp.average_in_collective = False
     if recipe.router_replay:
         model.moe_enable_routing_replay = True

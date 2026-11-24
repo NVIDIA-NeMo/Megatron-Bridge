@@ -104,6 +104,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--recipe", required=True)
     parser.add_argument("--recipe-kwargs", default="{}")
+    parser.add_argument("--overrides", default="{}", help="Recipe fields by dotted path, as JSON")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--parquet", required=True, help="Offline-packed training parquet")
     parser.add_argument("--iters", type=int, default=50)
@@ -592,6 +593,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     args = _parse_args()
     recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
+    recipes.apply_recipe_overrides(recipe, json.loads(args.overrides))
     if args.check_accumulation:
         check_accumulation(args, recipe)
     elif args.check_disable_adapters:

@@ -540,12 +540,14 @@ class TrainingEngine:
         loss_fn: str | None = None,
         loss_kwargs: dict[str, Any] | None = None,
         broadcast_output: bool = True,
-    ) -> ForwardBackwardOutput:
+    ) -> ForwardBackwardOutput | None:
         """Run forward/backward with the named loss and accumulate FP32 gradients.
 
         Gradients are summed, unnormalized, into the DDP buffers across calls; ``optim_step`` normalizes
         and applies them. Returns this call's detached loss sum, active-token count and any additive
-        metrics the loss returned, all reduced over DP x CP. ``loss_fn`` defaults to ``cross_entropy``
+        metrics the loss returned, all reduced over DP x CP. With pipeline parallelism the loss runs on
+        the last stage: ``broadcast_output=True`` copies the summary to the other stages of the same
+        pipeline, ``False`` returns ``None`` there. ``loss_fn`` defaults to ``cross_entropy``
         on a language-model engine and ``value_loss`` on a value-head engine; ``loss_kwargs`` are bound
         to the loss method as keyword arguments (for example ``ppo_clip``'s clip bounds). Microbatches
         carrying ``routed_experts`` train with those expert choices replayed (recipe ``router_replay``).
@@ -559,10 +561,6 @@ class TrainingEngine:
         loss_method = self.resolve_loss_method(loss_fn)
         if loss_kwargs:
             loss_method = functools.partial(loss_method, **loss_kwargs)
-        if self._runtime.topology.pp > 1:
-            # TODO(pp-train): the loss summary exists on the last stage only; the window totals have to
-            # reach every stage at optim_step, and broadcast_output the caller's summary.
-            raise NotImplementedError("forward_backward with pipeline parallelism is not supported yet.")
         if getattr(self._recipe.ddp, "overlap_grad_reduce", False):
             # TODO(overlap): defer bucket reductions across calls with DDP.no_sync + explicit start_grad_sync.
             raise NotImplementedError("forward_backward with ddp.overlap_grad_reduce=True is not supported yet.")
@@ -578,8 +576,21 @@ class TrainingEngine:
             output_head=self._output_head,
             router_replay=self._router_replay,
         )
-        fwd_bwd_output = self.postprocess_forward_backward(microbatches, loss_sum, num_loss_tokens, metrics)
-        self._add_to_window(fwd_bwd_output)
+        if self._runtime.topology.pp == 1:
+            fwd_bwd_output = self.postprocess_forward_backward(microbatches, loss_sum, num_loss_tokens, metrics)
+            self._add_to_window(fwd_bwd_output)
+            return fwd_bwd_output
+        # Only the last stage ran the loss, so only it has a summary and the window's totals. The other
+        # stages just open their window; optim_step gives them the totals.
+        pp_group = self._runtime.pg_collection.pp
+        fwd_bwd_output = None
+        if is_last_pipeline_stage(pp_group):
+            fwd_bwd_output = self.postprocess_forward_backward(microbatches, loss_sum, num_loss_tokens, metrics)
+            self._add_to_window(fwd_bwd_output)
+        else:
+            self._window.add(num_loss_tokens=0, num_samples=0, loss_sum=0.0)
+        if broadcast_output:
+            fwd_bwd_output = broadcast_from_last_stage(fwd_bwd_output, pp_group)
         return fwd_bwd_output
 
     def _add_to_window(self, fwd_bwd_output: ForwardBackwardOutput) -> None:
@@ -725,6 +736,12 @@ class TrainingEngine:
         self._activate()
         if not self._window.is_open:
             raise RuntimeError("optim_step called without a preceding forward_backward.")
+        if self._runtime.topology.pp > 1:
+            # Only the last stage counted the window; every stage must divide by the same totals.
+            window = self._window
+            window.num_loss_tokens, window.num_samples, window.loss_sum = broadcast_from_last_stage(
+                (window.num_loss_tokens, window.num_samples, window.loss_sum), self._runtime.pg_collection.pp
+            )
         scale: float | None = None
         if normalize_gradients:
             denominator = self._window.denominator(self.normalization)
@@ -873,7 +890,6 @@ class TrainingEngine:
         """
         self._require_open()
         self._require_resident("save_state")
-        self._require_single_stage("save_state")  # TODO(pp-state): not run with stages yet.
         # TODO(save-mid-window): allow saving with an open window. The snapshot would be consistent (weights
         # and optimizer state of the last completed update); only document that the pending gradients are
         # not part of it, so a resumed engine redoes the interrupted update's forward_backward calls.
@@ -907,7 +923,6 @@ class TrainingEngine:
         """
         self._require_open()
         self._require_resident("load_state")
-        self._require_single_stage("load_state")  # TODO(pp-state): not run with stages yet.
         self._require_closed_window("load_state")
         self._wait_pending_save()
         step, user_state = load_engine_state(self._recipe, self._model, self._optimizer, path=path, peft=self._peft)
@@ -958,7 +973,6 @@ class TrainingEngine:
         """
         self._require_open()
         self._require_resident("export")
-        self._require_single_stage("export")  # TODO(pp-state): not run with stages yet.
         if self._output_head == "value":
             # TODO(value-export): the HF causal-LM layout has no slot for value_head; define a critic layout.
             raise NotImplementedError("export of a value-head engine is not supported yet.")

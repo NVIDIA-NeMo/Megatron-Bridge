@@ -175,20 +175,48 @@ def test_forward_only_with_pipeline_stages_delivers_the_last_stages_scores(monke
     assert first.forward_only(_datums()) == "scores"
 
 
+def test_training_with_pipeline_stages_counts_on_the_last_stage_and_shares_totals_at_optim_step(monkeypatch):
+    summary = ForwardBackwardOutput(loss_sum=6.0, num_loss_tokens=12, num_samples=3)
+    engines = {}
+    for last_stage in (True, False):
+        engine = engines[last_stage] = _pipeline_engine(monkeypatch, last_stage=last_stage)
+        engine._recipe.ddp = SimpleNamespace(overlap_grad_reduce=False)
+        engine._window = AccumulationWindow()
+        engine.postprocess_forward_backward = lambda mbs, loss_sum, tokens, metrics: summary
+    monkeypatch.setattr(
+        "megatron.bridge.engine.engine.run_forward_backward",
+        lambda model, mbs, loss_method, **kwargs: (torch.tensor(6.0), torch.tensor(12), {}),
+    )
+    # Stand-in for the collective: the last stage's value arrives everywhere.
+    monkeypatch.setattr("megatron.bridge.engine.engine.broadcast_from_last_stage", lambda value, group: summary)
+    last, first = engines[True], engines[False]
+    assert last.forward_backward(_datums(), broadcast_output=False) is summary
+    assert first.forward_backward(_datums(), broadcast_output=False) is None
+    assert first.forward_backward(_datums()) is summary
+    # The first stage's window is open but holds no counts until optim_step delivers the totals.
+    assert (last._window.num_loss_tokens, last._window.num_samples) == (12, 3)
+    assert first._window.is_open and first._window.num_loss_tokens == 0
+
+    first._model, first._optimizer, first._step, first._warned_unscaled_aux = [], None, 0, False
+    first._finalize_model_grads_func = None
+    first._recipe.model = SimpleNamespace()
+    scales = []
+    monkeypatch.setattr("megatron.bridge.engine.engine.broadcast_from_last_stage", lambda value, group: (12, 3, 6.0))
+    monkeypatch.setattr(
+        "megatron.bridge.engine.engine.finalize_and_step",
+        lambda model, optimizer, *, finalize_model_grads_func, scale, adam_params: (
+            scales.append(scale) or (True, 1.0, 0)
+        ),
+    )
+    monkeypatch.setattr("megatron.bridge.engine.engine.zero_gradients", lambda model, optimizer: None)
+    result = first.optim_step(AdamParams(1e-5))
+    assert scales == [1.0 / 12] and result["num_loss_tokens"] == 12.0 and result["loss_sum"] == 6.0
+
+
 def test_pipeline_parallelism_placeholders(monkeypatch):
     engine = _pipeline_engine(monkeypatch, last_stage=True)
-    engine._recipe.ddp = SimpleNamespace(overlap_grad_reduce=False)
-    engine._window = AccumulationWindow()
-    calls = (
-        lambda: engine.forward_backward(_datums()),
-        lambda: engine.save_state("/x"),
-        lambda: engine.load_state("/x"),
-        lambda: engine.export(path="/x"),
-        lambda: engine.cpu(),
-    )
-    for call in calls:
-        with pytest.raises(NotImplementedError, match="pipeline parallelism"):
-            call()
+    with pytest.raises(NotImplementedError, match="pipeline parallelism"):
+        engine.cpu()
     recipe = _pipeline_recipe_like()
     with pytest.raises(NotImplementedError, match="pipeline parallelism"):
         TrainingEngine.from_recipe(recipe, output_head="value")
