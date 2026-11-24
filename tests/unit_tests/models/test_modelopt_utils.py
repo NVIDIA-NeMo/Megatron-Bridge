@@ -1860,10 +1860,14 @@ def test_shard_writer_accepts_tensors_the_source_lacks(tmp_path, max_shard_size)
     from safetensors.torch import load_file
 
     (tmp_path / "model.safetensors").write_bytes(b"stale")
+    fused, scale = torch.arange(8, dtype=torch.uint8), torch.tensor(0.5)
     tensors = {
-        "model.weight": torch.arange(4, dtype=torch.uint8),
-        "model.weight_scale": torch.ones(2, dtype=torch.float8_e4m3fn),
-        "model.input_scale": torch.tensor(0.5),
+        # Views of one tensor, as CPU exports of fused projections give.
+        "model.q_proj.weight": fused[:4],
+        "model.k_proj.weight": fused[4:],
+        "model.q_proj.weight_scale": torch.ones(2, dtype=torch.float8_e4m3fn),
+        "model.q_proj.input_scale": scale,
+        "model.k_proj.input_scale": scale,
     }
 
     saved = modelopt_utils.save_safetensors_shards(iter(tensors.items()), tmp_path, max_shard_size=max_shard_size)
@@ -1879,7 +1883,7 @@ def test_shard_writer_accepts_tensors_the_source_lacks(tmp_path, max_shard_size)
         assert set(index["weight_map"]) == tensors.keys() and set(index["weight_map"].values()) == saved - {
             "model.safetensors.index.json"
         }
-        assert len(saved) == 4
+        assert len(saved) == len(tensors) + 1
     else:
         assert saved == {"model.safetensors"}
     assert not list(tmp_path.glob(".*.tmp"))
@@ -1930,13 +1934,15 @@ def test_export_rejects_enabled_quantizers_it_would_drop():
     model.attention.k_bmm_quantizer.disable()
     modelopt_utils.check_exportable_quantizers([model])
 
+    # KV-cache quantizers are exported as k_scale / v_scale.
     model.attention.k_bmm_quantizer.enable()
+    modelopt_utils.check_exportable_quantizers([model])
+
     model.projection.output_quantizer.enable()
-    with pytest.raises(RuntimeError, match=r"attention\.k_bmm_quantizer.*projection\.output_quantizer"):
+    with pytest.raises(RuntimeError, match=r"\['projection\.output_quantizer'\]"):
         modelopt_utils.check_exportable_quantizers([model])
 
     # An activation-only layer would be exported unquantized.
-    model.attention.k_bmm_quantizer.disable()
     model.projection.output_quantizer.disable()
     model.projection.weight_quantizer.disable()
     with pytest.raises(RuntimeError, match=r"\['projection\.input_quantizer'\]"):
@@ -1979,7 +1985,7 @@ def _save_failure_worker(rank, world_size, init_file, out_dir, case):
             _StreamingBridge(case).save_hf_pretrained_modelopt(
                 [torch.nn.Linear(2, 2)],
                 out_dir,
-                export_plan=SimpleNamespace(quantization_config={"quant_method": "modelopt"}),
+                export_plan=modelopt_utils.ModelOptExportPlan([], {"quant_method": "modelopt"}, frozenset(), {}),
                 show_progress=False,
             )
 
