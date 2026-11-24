@@ -21,11 +21,11 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.kimi.kimi_k3_hybrid_config import kimi_k3_hybrid_stack_spec, kimi_k3_pipeline_pattern
-from megatron.bridge.models.mla_provider import MLAModelProvider
+from megatron.bridge.models.kimi.kimi_k3_provider import KimiK3ModelProvider
 
 
 @dataclass
-class KimiK3HybridModelProvider(HybridModelProvider, MLAModelProvider):
+class KimiK3HybridModelProvider(HybridModelProvider, KimiK3ModelProvider):
     """Build native Kimi K3 with the same stack specification as the model config."""
 
     hybrid_stack_spec: ModuleSpec | Callable = field(default_factory=lambda: kimi_k3_hybrid_stack_spec)

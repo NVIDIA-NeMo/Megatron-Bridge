@@ -51,19 +51,17 @@ def test_native_config_roundtrip(kimi_k3_text_config, frequency):
         "moe_shared_expert_intermediate_size",
         "num_moe_experts",
         "moe_router_topk",
-        "attn_res_block_layers",
+        "kimi_attn_res_block_size",
         "linear_num_key_heads",
         "linear_key_head_dim",
-        "kda_lower_bound",
+        "kimi_kda_gate_lower_bound",
     ):
         assert getattr(original, field) == getattr(restored, field), field
     assert original.num_layers == 2 * text.num_hidden_layers
-    assert original.attn_res_block_layers == 2 * text.attn_res_block_size
-    assert original.kda_split_qkv_projections
-    assert original.kda_beta_proj_column_parallel
-    assert original.kda_conv_in_fp32
-    assert original.attn_res_query_as_matrix
-    assert original.attn_res_query_init == "linear"
+    assert original.kimi_attn_res_block_size == text.attn_res_block_size
+    assert original.kimi_linear_num_heads == text.linear_attn_config["num_heads"]
+    assert original.kimi_linear_head_dim == text.linear_attn_config["head_dim"]
+    assert not getattr(original, "enable_attention_residuals", False)
     assert not original.moe_router_force_load_balancing
 
 
@@ -152,4 +150,59 @@ def test_recipes_consume_canonical_model(kimi_k3_text_config, monkeypatch, tmp_p
     assert proxy.model.pipeline_model_parallel_size == 1
     assert proxy.tokenizer.tokenizer_type == "NullTokenizer"
     assert not proxy.ddp.overlap_grad_reduce
-    assert proxy.model.kda_split_qkv_projections == regular.model.kda_split_qkv_projections
+    assert proxy.model.kimi_linear_num_heads == regular.model.kimi_linear_num_heads
+
+
+@pytest.mark.parametrize("partitioned", [False, True])
+def test_saved_config_roundtrip(kimi_k3_text_config, partitioned):
+    from megatron.bridge.models.kimi.kimi_k3_config import KimiK3TransformerConfig
+    from megatron.bridge.models.kimi.kimi_k3_hybrid_config import KimiK3HybridModelConfig, kimi_k3_hybrid_stack_spec
+
+    hf = PretrainedConfig(text_config=PretrainedConfig(**vars(kimi_k3_text_config)))
+    config = KimiK3HybridBridge().hf_config_to_model_config(hf)
+    config.pipeline_model_parallel_size = 2
+    if partitioned:
+        config.finalize()
+    restored = KimiK3HybridModelConfig.from_dict(config.as_dict())
+    assert isinstance(restored.transformer, KimiK3TransformerConfig)
+    assert restored.hybrid_stack_spec is kimi_k3_hybrid_stack_spec
+    assert restored.as_dict() == config.as_dict()
+    restored.finalize()
+    assert restored.hybrid_layer_pattern.count("|") == 1
+
+
+@pytest.mark.parametrize(
+    "field,value", [("linear_num_key_heads", 123), ("linear_key_head_dim", 123), ("linear_conv_kernel_dim", 123)]
+)
+def test_rejects_inconsistent_geometry(kimi_k3_text_config, field, value):
+    from megatron.bridge.models.kimi.kimi_k3_hybrid_config import kimi_k3_hybrid_stack_spec
+
+    hf = PretrainedConfig(text_config=PretrainedConfig(**vars(kimi_k3_text_config)))
+    config = KimiK3HybridBridge().hf_config_to_model_config(hf)
+    assert hasattr(config, field)
+    setattr(config, field, value)
+    with pytest.raises(ValueError, match="must agree"):
+        kimi_k3_hybrid_stack_spec(config)
+    with pytest.raises(ValueError, match="must agree"):
+        KimiK3HybridBridge.megatron_to_hf_config(config)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("cuda_graph_impl", "local"),
+        ("fine_grained_activation_offloading", True),
+        ("overlap_moe_expert_parallel_comm", True),
+        ("moe_shared_expert_overlap", True),
+        ("enable_mhc_connections", True),
+    ],
+)
+def test_rejects_unsupported_stack_execution(kimi_k3_text_config, field, value):
+    from megatron.bridge.models.kimi.kimi_k3_hybrid_config import kimi_k3_hybrid_stack_spec
+
+    hf = PretrainedConfig(text_config=PretrainedConfig(**vars(kimi_k3_text_config)))
+    config = KimiK3HybridBridge().hf_config_to_model_config(hf)
+    assert hasattr(config, field)
+    setattr(config, field, value)
+    with pytest.raises(ValueError, match="Kimi K3 Hybrid"):
+        kimi_k3_hybrid_stack_spec(config)

@@ -15,14 +15,11 @@
 """Architecture translation for the native Kimi K3 Hybrid model."""
 
 from collections.abc import Sequence
-from copy import deepcopy
-from dataclasses import dataclass, fields
-from functools import partial
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, ClassVar
 
 from megatron.bridge.models.hybrid import BridgeHybridMLAModelConfig
-from megatron.bridge.models.transformer_config import MLATransformerConfig
-from megatron.bridge.utils.activation_map import str_to_callable
+from megatron.bridge.models.kimi.kimi_k3_config import KimiK3TransformerConfig
 
 
 def kimi_k3_hybrid_pattern(*, num_layers: int, kda_layers: Sequence[int], moe_layers: Sequence[int]) -> str:
@@ -75,127 +72,92 @@ def kimi_k3_pipeline_pattern(
 
 
 def native_kimi_k3_kwargs(source: dict[str, Any]) -> dict[str, Any]:
-    """Translate the existing HF architecture mapping to native Core field names.
-
-    Router policy, precision, vocabulary, and execution settings are inherited
-    from the source mapping. This does not select a benchmark architecture.
-    """
-    required = {
-        "enable_attention_residuals",
-        "kda_f_lora_rank",
-        "moe_use_norm_before_up_proj",
-        "kda_beta_proj_column_parallel",
-        "kda_split_qkv_projections",
-        "kda_conv_in_fp32",
-        "kda_fused_norm_gate",
-        "kda_qk_norm_in_kernel",
-        "kda_transpose_state_layout",
-        "scale_attention_output_init",
-        "attn_res_query_init",
-        "attn_res_query_as_matrix",
-        "attn_res_fp32_params",
-        "attn_res_single_source_param_grad",
-        "mla_output_gate_sigmoid_fp32",
-    }
-    if not required.issubset({field.name for field in fields(MLATransformerConfig)}):
-        raise RuntimeError(
-            "Native Kimi K3 requires Core dev with KDA separate-projection, precision, and "
-            "AttnRes parameter-layout controls; the unmodified pinned dev revision is insufficient."
-        )
+    """Expand HF blocks into Hybrid entries while retaining Bridge's Kimi math."""
     result = dict(source)
     layers = result["num_layers"]
     pattern = kimi_k3_hybrid_pattern(
-        num_layers=layers, kda_layers=result.pop("kimi_kda_layers"), moe_layers=result.pop("moe_layer_freq")
+        num_layers=layers, kda_layers=result["kimi_kda_layers"], moe_layers=result.pop("moe_layer_freq")
     )
-    block_size = result.pop("kimi_attn_res_block_size")
-    if block_size < 1:
+    if result["kimi_attn_res_block_size"] < 1:
         raise ValueError("Kimi K3 AttnRes block size must be positive.")
-    heads = result.pop("kimi_linear_num_heads")
-    head_dim = result.pop("kimi_linear_head_dim")
     result.pop("transformer_layer_spec")
-    # The GPT-only RoPE scaling control has no role in K3's no-RoPE model.
     result.pop("rope_scaling_factor")
     result.update(
         num_layers=2 * layers,
         hybrid_layer_pattern=pattern,
         is_hybrid_model=True,
-        experimental_attention_variant="kda",
-        linear_conv_kernel_dim=result.pop("kimi_linear_conv_kernel_size"),
-        linear_key_head_dim=head_dim,
-        linear_value_head_dim=head_dim,
-        linear_num_key_heads=heads,
-        linear_num_value_heads=heads,
-        kda_f_lora_rank=head_dim,
-        kda_gate_lora_rank=None,
-        kda_safe_gate=True,
-        kda_beta_proj_column_parallel=True,
-        kda_split_qkv_projections=True,
-        kda_conv_in_fp32=True,
-        kda_fused_norm_gate=True,
-        kda_qk_norm_in_kernel=True,
-        kda_transpose_state_layout=True,
-        scale_attention_output_init=False,
-        kda_lower_bound=result.pop("kimi_kda_gate_lower_bound"),
-        enable_attention_residuals=True,
-        attn_res_block_layers=2 * block_size,
-        attn_res_impl="torch",
-        attn_res_norm_fusion=False,
-        attn_res_fp32_params=False,
-        attn_res_single_source_param_grad=False,
-        attn_res_query_as_matrix=True,
-        attn_res_query_init="linear",
-        no_rope_freq=1,
-        attention_latent_norm_epsilon=result["layernorm_epsilon"],
-        attention_output_gate=True,
-        gated_attention_proj_granularity="elementwise",
-        attention_output_gate_fusion=False,
-        mla_output_gate_sigmoid_fp32=False,
-        mla_down_proj_fusion=False,
-        moe_use_norm_before_up_proj=True,
-        moe_latent_up_projection_rmsnorm=False,
-        activation_func=str_to_callable("situlu"),
-        use_te_activation_func=False,
-        gdn_pre_gated_delta_rule_fusion=False,
+        linear_conv_kernel_dim=result["kimi_linear_conv_kernel_size"],
+        linear_key_head_dim=result["kimi_linear_head_dim"],
+        linear_value_head_dim=result["kimi_linear_head_dim"],
+        linear_num_key_heads=result["kimi_linear_num_heads"],
+        linear_num_value_heads=result["kimi_linear_num_heads"],
     )
     return result
 
 
 def kimi_k3_hybrid_stack_spec(config):
-    """Select native Kimi modules with the checkpoint's latent-norm cast boundary."""
-    from megatron.core.models.gpt.moe_module_specs import get_moe_module_spec
-    from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec
-    from megatron.core.ops.norm.torch_norm import TorchRMSNorm
+    """Compose the existing Bridge Kimi components through HybridModel's stack API."""
+    from megatron.core.transformer.spec_utils import ModuleSpec
+
+    from megatron.bridge.models.kimi.modeling_kimi_k3.hybrid_stack import KimiK3HybridStack
 
     if config.virtual_pipeline_model_parallel_size is not None:
         raise ValueError("Kimi K3 does not support virtual pipeline parallelism yet.")
-    if (config.context_parallel_size > 1 or config.dynamic_context_parallel) and "K" in config.hybrid_layer_pattern:
-        raise ValueError("Kimi K3 KDA context parallelism is not supported yet.")
+    if config.context_parallel_size > 1 or config.dynamic_context_parallel:
+        raise ValueError("Kimi K3 context parallelism is not supported yet.")
     if config.hidden_dropout != 0:
         raise ValueError("Kimi K3 requires hidden_dropout=0.")
-    spec = deepcopy(hybrid_stack_spec)
-    norm = partial(TorchRMSNorm, cast_before_affine=True)
-    attention = spec.submodules.mla_layer.submodules.self_attention.submodules
-    attention.q_layernorm = norm
-    attention.kv_layernorm = norm
-    moe = get_moe_module_spec(
-        use_te=True,
-        num_experts=config.num_moe_experts,
-        moe_grouped_gemm=config.moe_grouped_gemm,
+    if config.cuda_graph_impl != "none":
+        raise ValueError("Kimi K3 Hybrid CUDA graphs are not supported yet.")
+    unsupported = (
+        "fp8",
+        "fp4",
+        "quant_recipe",
+        "mtp_num_layers",
+        "wide_residual",
+        "enable_mhc_connections",
+        "enable_attention_residuals",
+        "cpu_offloading",
+        "fine_grained_activation_offloading",
+        "overlap_moe_expert_parallel_comm",
+        "moe_shared_expert_overlap",
+        "moe_shortcut_connection",
+        "pipeline_model_parallel_layout",
+        "num_layers_in_first_pipeline_stage",
+        "num_layers_in_last_pipeline_stage",
     )
-    moe.keywords["submodules"].fc2_norm = norm
-    spec.submodules.moe_layer.submodules.mlp = moe
-    return spec
+    for name in unsupported:
+        if getattr(config, name, None):
+            raise ValueError(
+                f"Kimi K3 Hybrid does not support {name}; use the documented unquantized training configuration."
+            )
+    validate_kimi_k3_hybrid_geometry(config)
+    return ModuleSpec(module=KimiK3HybridStack, params={"pattern": config.hybrid_layer_pattern})
+
+
+def validate_kimi_k3_hybrid_geometry(config) -> None:
+    """Reject conflicting Kimi and Hybrid geometry before construction or export."""
+    for kimi, native in (
+        ("kimi_linear_num_heads", "linear_num_key_heads"),
+        ("kimi_linear_num_heads", "linear_num_value_heads"),
+        ("kimi_linear_head_dim", "linear_key_head_dim"),
+        ("kimi_linear_head_dim", "linear_value_head_dim"),
+        ("kimi_linear_conv_kernel_size", "linear_conv_kernel_dim"),
+    ):
+        if getattr(config, kimi) != getattr(config, native):
+            raise ValueError(f"Kimi K3 {kimi} and {native} must agree.")
 
 
 @dataclass(kw_only=True)
 class KimiK3HybridModelConfig(BridgeHybridMLAModelConfig):
-    """Native KDA/MLA and dense/MoE entries with Kimi attention residuals."""
+    """HF-derived Hybrid entries with Bridge-owned Kimi computation and depth state."""
 
+    transformer_config_class: ClassVar[type] = KimiK3TransformerConfig
     hybrid_stack_spec: Any = kimi_k3_hybrid_stack_spec
     pipeline_block_counts: tuple[int, ...] | None = None
 
     def finalize(self) -> None:
-        """Partition complete source blocks before finalizing the native stack."""
+        """Partition complete source blocks before finalizing the Hybrid stack."""
         self.hybrid_layer_pattern = kimi_k3_pipeline_pattern(
             self.hybrid_layer_pattern,
             pipeline_size=self.pipeline_model_parallel_size,

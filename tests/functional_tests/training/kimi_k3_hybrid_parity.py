@@ -115,7 +115,16 @@ def _logical(bridge, model, hf_config):
     return result
 
 
-def _build(bridge, hf_config, *, dtype, sequence_length, recompute):
+def _build(
+    bridge,
+    hf_config,
+    *,
+    dtype,
+    sequence_length,
+    recompute,
+    recompute_method="uniform",
+    distribute_saved_activations=False,
+):
     model_parallel_cuda_manual_seed(7391)
     torch.manual_seed(7391)
     config = bridge.hf_config_to_model_config(hf_config)
@@ -133,7 +142,8 @@ def _build(bridge, hf_config, *, dtype, sequence_length, recompute):
     if recompute != "none":
         config.recompute_granularity = recompute
         if recompute == "full":
-            config.recompute_method = "uniform"
+            config.recompute_method = recompute_method
+            config.distribute_saved_activations = distribute_saved_activations
             config.recompute_num_layers = 3
         else:
             config.recompute_modules = ["core_attn", "moe"]
@@ -145,7 +155,8 @@ def _run(model, ids, packed):
     embeddings = []
 
     def capture_embedding(_module, _inputs, output):
-        output.retain_grad()
+        if output.requires_grad:
+            output.retain_grad()
         embeddings.append(output)
 
     handle = model.embedding.register_forward_hook(capture_embedding)
@@ -157,7 +168,12 @@ def _run(model, ids, packed):
     return {
         "logits": logits.detach().cpu(),
         "loss": loss.detach().cpu(),
-        "embedding_gradient": embeddings[0].grad.detach().cpu(),
+        "embedding_gradient": (
+            embeddings[0].grad if embeddings[0].grad is not None else torch.zeros_like(embeddings[0])
+        )
+        .detach()
+        .cpu(),
+        "embedding_gradient_present": torch.tensor(embeddings[0].grad is not None),
     }
 
 
@@ -184,7 +200,11 @@ def main() -> None:
     parser.add_argument("--dtype", choices=("fp32", "bf16"), default="bf16")
     parser.add_argument("--packed", action="store_true")
     parser.add_argument("--recompute", choices=("none", "full", "selective"), default="none")
+    parser.add_argument("--reference-recompute", choices=("none", "full", "selective"))
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--freeze-embeddings", action="store_true")
+    parser.add_argument("--distribute-saved-activations", action="store_true")
+    parser.add_argument("--recompute-method", choices=("uniform", "block"), default="uniform")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
@@ -197,7 +217,17 @@ def main() -> None:
     sequence_length = 257 if args.packed else 128
     hf_config = _hf_config()
     old_bridge, new_bridge = KimiK3GPTBridge(), KimiK3Bridge()
-    old = _build(old_bridge, hf_config, dtype=dtype, sequence_length=sequence_length, recompute=args.recompute)
+    old = _build(
+        old_bridge,
+        hf_config,
+        dtype=dtype,
+        sequence_length=sequence_length,
+        recompute=args.reference_recompute or args.recompute,
+        recompute_method=args.recompute_method,
+        distribute_saved_activations=args.distribute_saved_activations,
+    )
+    if args.freeze_embeddings:
+        old.embedding.requires_grad_(False)
     generator = torch.Generator(device="cuda").manual_seed(7392)
     with torch.no_grad():
         for name, parameter in old.named_parameters():
@@ -209,7 +239,20 @@ def main() -> None:
             else:
                 parameter.copy_(noise * 0.02)
     initial = _logical(old_bridge, old, hf_config)
-    native = _build(new_bridge, hf_config, dtype=dtype, sequence_length=sequence_length, recompute=args.recompute)
+    native = _build(
+        new_bridge,
+        hf_config,
+        dtype=dtype,
+        sequence_length=sequence_length,
+        recompute=args.recompute,
+        recompute_method=args.recompute_method,
+        distribute_saved_activations=args.distribute_saved_activations,
+    )
+    from megatron.core.models.hybrid.hybrid_model import HybridModel
+
+    assert type(native) is HybridModel
+    if args.freeze_embeddings:
+        native.embedding.requires_grad_(False)
     source = SimpleNamespace(
         config=hf_config, model_name_or_path="synthetic-kimi-k3", state=StateDict(DictStateSource(initial["state"]))
     )
@@ -233,10 +276,14 @@ def main() -> None:
     report = {}
     for field in old_logical:
         assert old_logical[field].keys() == new_logical[field].keys(), field
-        report[field] = {
-            name: _compare(value, new_logical[field][name], dtype=dtype, exact=field != "gradients")
-            for name, value in old_logical[field].items()
-        }
+        report[field] = {}
+        for name, value in old_logical[field].items():
+            try:
+                report[field][name] = _compare(
+                    value, new_logical[field][name], dtype=dtype, exact=field != "gradients"
+                )
+            except AssertionError as error:
+                raise AssertionError(f"{field}: {name}: {error}") from error
     report["outputs"] = {
         name: _compare(value, after[name], dtype=dtype, exact=False) for name, value in before.items()
     }
