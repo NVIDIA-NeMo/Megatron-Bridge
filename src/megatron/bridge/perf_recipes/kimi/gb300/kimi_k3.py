@@ -23,17 +23,17 @@ def kimi_k3_pretrain_64gpu_gb300_bf16_proxy_config() -> ConfigContainer:
     """Build a random-init, mock-data 24-block proxy with explicitly forced routing.
 
     Retain the first 24 attention blocks from the HF architecture and replace
-    their feed-forward entries with experts. For a source with three KDA blocks
+    their feed-forward layers with experts. For a source with three KDA blocks
     then MLA, this produces the ``KEKEKE+E`` repeated six times used by #7066.
     Other HF architectures retain their own attention ordering. This is a BF16
     Adam setup; it does not reproduce #7066's MXFP8/MoK/Muon measurements or
     establish full-model throughput, memory fit, or convergence.
     """
     cfg = kimi_k3_pretrain_config()
-    entries = cfg.model.hybrid_layer_pattern.replace("|", "")
-    if len(entries) < 48:
+    layers = cfg.model.hybrid_layer_pattern.replace("|", "")
+    if len(layers) < 48:
         raise ValueError("The 24-block Kimi K3 proxy requires an HF model with at least 24 blocks.")
-    cfg.model.hybrid_layer_pattern = "".join(entries[i] + "E" for i in range(0, 48, 2))
+    cfg.model.hybrid_layer_pattern = "".join(layers[i] + "E" for i in range(0, 48, 2))
     cfg.model.num_layers = 48
     cfg.model.pipeline_block_counts = None
     cfg.model.tensor_model_parallel_size = 1

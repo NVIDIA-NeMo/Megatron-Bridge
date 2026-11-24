@@ -42,12 +42,10 @@ from megatron.core.tensor_parallel.mappings import (
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.moe_layer import MoELayer
-from megatron.core.transformer.transformer_layer import TransformerLayer, get_transformer_layer_offset
 from megatron.core.transformer.utils import ensure_metadata_has_dp_cp_group, make_sharded_tensors_for_checkpoint
 from torch import nn
 
-from megatron.bridge.models.kimi.kimi_k3_ops import KimiRMSNorm, attn_res_aggregate, kda
-from megatron.bridge.models.kimi.kimi_k3_pipeline import bank_num_rows, pack_stage_boundary, unpack_stage_boundary
+from megatron.bridge.models.kimi.kimi_k3_ops import KimiRMSNorm, kda
 
 
 def _mark_tp_replicated(module: nn.Module, *, reduction: str = "average") -> None:
@@ -443,134 +441,3 @@ class KimiK3MoELayer(MoELayer):
         elif self._latent_shared_expert_output is not None:
             raise ValueError("Kimi K3 does not support latent shared-expert overlap")
         return output
-
-
-class KimiK3TransformerLayer(TransformerLayer):
-    """Transformer layer implementing Kimi K3's AttnRes residual bank."""
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        if self.config.hidden_dropout != 0.0:
-            raise ValueError("Kimi K3 requires hidden_dropout=0")
-
-        hidden_size = self.config.hidden_size
-        eps = self.config.layernorm_epsilon
-        device = torch.cuda.current_device()
-        dtype = self.config.params_dtype
-        self.attn_res_block_size = self.config.kimi_attn_res_block_size
-        self.self_attention_res_norm = KimiRMSNorm(hidden_size, eps, device=device, dtype=dtype)
-        self.self_attention_res_proj = nn.Linear(hidden_size, 1, bias=False, device=device, dtype=dtype)
-        self.mlp_res_norm = KimiRMSNorm(hidden_size, eps, device=device, dtype=dtype)
-        self.mlp_res_proj = nn.Linear(hidden_size, 1, bias=False, device=device, dtype=dtype)
-        _mark_tp_replicated(self.self_attention_res_norm, reduction="sum")
-        _mark_tp_replicated(self.self_attention_res_proj, reduction="sum")
-        _mark_tp_replicated(self.mlp_res_norm, reduction="sum")
-        _mark_tp_replicated(self.mlp_res_proj, reduction="sum")
-
-        if self.layer_number == self.config.num_layers:
-            self.output_attn_res_norm = KimiRMSNorm(hidden_size, eps, device=device, dtype=dtype)
-            self.output_attn_res_proj = nn.Linear(hidden_size, 1, bias=False, device=device, dtype=dtype)
-            _mark_tp_replicated(self.output_attn_res_norm, reduction="sum")
-            _mark_tp_replicated(self.output_attn_res_proj, reduction="sum")
-
-        pp_size = self.config.pipeline_model_parallel_size
-        stage_starts = {get_transformer_layer_offset(self.config, None, rank) for rank in range(pp_size)}
-        layer_idx = self.layer_number - 1
-        self.is_stage_entry = layer_idx in stage_starts and layer_idx > 0
-        self.is_stage_exit = (layer_idx + 1) in stage_starts and layer_idx + 1 < self.config.num_layers
-
-    @staticmethod
-    def _add_bias(output_with_bias: tuple[torch.Tensor, torch.Tensor | None]) -> torch.Tensor:
-        output, bias = output_with_bias
-        return output if bias is None else output + bias
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor | None = None,
-        context: torch.Tensor | None = None,
-        context_mask: torch.Tensor | None = None,
-        rotary_pos_emb: torch.Tensor | None = None,
-        rotary_pos_cos: torch.Tensor | None = None,
-        rotary_pos_sin: torch.Tensor | None = None,
-        rotary_pos_cos_sin: torch.Tensor | None = None,
-        attention_bias: torch.Tensor | None = None,
-        inference_context: BaseInferenceContext | None = None,
-        packed_seq_params: PackedSeqParams | None = None,
-        sequence_len_offset: torch.Tensor | None = None,
-        padding_mask: torch.Tensor | None = None,
-        input_ids: torch.Tensor | None = None,
-        **kwargs,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Apply attention, MLP/MoE, and AttnRes state updates."""
-        del context_mask, input_ids, kwargs
-        layer_idx = self.layer_number - 1
-
-        if context is not None:
-            prefix_sum = hidden_states
-            block_residual = context
-        elif layer_idx == 0:
-            prefix_sum = hidden_states
-            block_residual = hidden_states.new_empty(*hidden_states.shape[:-1], 0, hidden_states.shape[-1])
-        else:
-            if not self.is_stage_entry:
-                raise ValueError("Attention-residual snapshot bank is missing")
-            prefix_sum, block_residual = unpack_stage_boundary(
-                hidden_states,
-                self.config.hidden_size,
-                bank_num_rows(layer_idx, self.attn_res_block_size),
-            )
-
-        if block_residual.shape[-2] > 0:
-            attention_input = attn_res_aggregate(
-                prefix_sum,
-                block_residual,
-                self.self_attention_res_proj,
-                self.self_attention_res_norm,
-                self.input_layernorm,
-            )
-        else:
-            attention_input = self.input_layernorm(prefix_sum)
-
-        is_block_write_layer = layer_idx % self.attn_res_block_size == 0
-        if is_block_write_layer:
-            block_residual = torch.cat((block_residual, prefix_sum.unsqueeze(-2)), dim=-2)
-
-        attention_output = self._add_bias(
-            self.self_attention(
-                attention_input,
-                attention_mask=attention_mask,
-                inference_context=inference_context,
-                rotary_pos_emb=rotary_pos_emb,
-                rotary_pos_cos=rotary_pos_cos,
-                rotary_pos_sin=rotary_pos_sin,
-                rotary_pos_cos_sin=rotary_pos_cos_sin,
-                attention_bias=attention_bias,
-                packed_seq_params=packed_seq_params,
-                sequence_len_offset=sequence_len_offset,
-            )
-        )
-        prefix_sum = attention_output if is_block_write_layer else prefix_sum + attention_output
-
-        mlp_input = attn_res_aggregate(
-            prefix_sum,
-            block_residual,
-            self.mlp_res_proj,
-            self.mlp_res_norm,
-            self.pre_mlp_layernorm,
-        )
-        mlp_output = self._add_bias(self.mlp(mlp_input, padding_mask=padding_mask))
-        prefix_sum = prefix_sum + mlp_output
-
-        if self.layer_number == self.config.num_layers:
-            prefix_sum = attn_res_aggregate(
-                prefix_sum,
-                block_residual,
-                self.output_attn_res_proj,
-                self.output_attn_res_norm,
-                nn.Identity(),
-            )
-
-        if self.is_stage_exit:
-            return pack_stage_boundary(prefix_sum, block_residual), block_residual
-        return prefix_sum, block_residual

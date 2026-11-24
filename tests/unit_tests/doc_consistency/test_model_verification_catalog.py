@@ -364,7 +364,8 @@ def test_generated_outputs_and_navigation_are_current(generator: ModuleType, cat
         model_doc = generator._find_model_doc(REPO_ROOT, model)
         page = (REPO_ROOT / "docs" / model_doc).read_text(encoding="utf-8")
         assert f'id="verified-{model["slug"]}"' in page
-        assert page.count(generator.MODEL_SECTION_START) == 1
+        manual = generator.MANUAL_MODEL_GUIDE_MARKER in page
+        assert page.count(generator.MODEL_SECTION_START) == (0 if manual else 1)
         assert model["summary"] not in page
         assert f"model-verification/models/{model['slug']}.mdx" not in nav
     deepseek_page = (REPO_ROOT / "docs/models/deepseek/deepseek-v3.md").read_text(encoding="utf-8")
@@ -455,6 +456,9 @@ def test_all_fern_model_outputs_use_mdx_markers(generator: ModuleType, catalog: 
     for path, page in fern_pages.items():
         if path.name == "README.mdx":
             assert page.startswith(generator.FERN_GENERATED_NOTICE)
+        elif generator.FERN_MANUAL_MODEL_GUIDE_MARKER in page:
+            assert generator.FERN_MODEL_SECTION_START not in page
+            assert generator.FERN_MODEL_SECTION_END not in page
         else:
             assert page.count(generator.FERN_MODEL_SECTION_START) == 1
             assert page.count(generator.FERN_MODEL_SECTION_END) == 1
@@ -509,3 +513,15 @@ def test_non_benchmark_card_commands_do_not_launch_benchmark_recipes() -> None:
                         offenders.append(f"{card_path.parent.name}/{item_name}: {recipe_name}")
 
     assert offenders == []
+
+
+def test_manual_model_guides_preserve_authored_content(generator: ModuleType, catalog: dict[str, object]) -> None:
+    outputs = generator.expected_outputs(REPO_ROOT, catalog)
+    paths = (
+        REPO_ROOT / "docs/models/kimi/kimi-k3.md",
+        REPO_ROOT / "docs/fern/versions/nightly/pages/models/kimi/kimi-k3.mdx",
+    )
+    for path in paths:
+        assert outputs[path] == path.read_text(encoding="utf-8")
+        assert "## Implementations" in outputs[path]
+        assert "## Verified configurations" not in outputs[path]

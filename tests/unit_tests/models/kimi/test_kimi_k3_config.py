@@ -1,14 +1,14 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 
-"""HF architecture and native entry correspondence for Kimi K3."""
+"""HF architecture and layer correspondence for Kimi K3."""
 
 from copy import deepcopy
 
 import pytest
 from transformers import PretrainedConfig
 
-from megatron.bridge.models.kimi.kimi_k3_hybrid_bridge import KimiK3HybridBridge
-from megatron.bridge.models.kimi.kimi_k3_hybrid_config import kimi_k3_hybrid_pattern, kimi_k3_pipeline_pattern
+from megatron.bridge.models.kimi.kimi_k3_bridge import KimiK3Bridge
+from megatron.bridge.models.kimi.kimi_k3_config import kimi_k3_layer_pattern, kimi_k3_pipeline_pattern
 from tests.unit_tests.models.kimi.test_kimi_k3_bridge import kimi_k3_text_config as kimi_k3_text_config
 
 
@@ -17,13 +17,13 @@ from tests.unit_tests.models.kimi.test_kimi_k3_bridge import kimi_k3_text_config
     [([1, 2, 4, 5], [0, 1, 1, 1, 1, 1], "K-KE+EKEKE+E"), ([], [0, 0], "+-+-"), ([1, 2], [1, 1], "KEKE")],
 )
 def test_pattern_from_hf_blocks(kda, moe, expected):
-    assert kimi_k3_hybrid_pattern(num_layers=len(moe), kda_layers=kda, moe_layers=moe) == expected
+    assert kimi_k3_layer_pattern(num_layers=len(moe), kda_layers=kda, moe_layers=moe) == expected
 
 
 @pytest.mark.parametrize("kda", [[0], [3], [1, 1]])
 def test_pattern_rejects_invalid_kda_indices(kda):
     with pytest.raises(ValueError, match="unique one-based"):
-        kimi_k3_hybrid_pattern(num_layers=2, kda_layers=kda, moe_layers=[0, 1])
+        kimi_k3_layer_pattern(num_layers=2, kda_layers=kda, moe_layers=[0, 1])
 
 
 @pytest.mark.parametrize("frequency", [1, 2])
@@ -31,7 +31,7 @@ def test_native_config_roundtrip(kimi_k3_text_config, frequency):
     text = deepcopy(kimi_k3_text_config)
     text.moe_layer_freq = frequency
     hf = PretrainedConfig(text_config=PretrainedConfig(**vars(text)))
-    bridge = KimiK3HybridBridge()
+    bridge = KimiK3Bridge()
     original = bridge.hf_config_to_model_config(hf)
     exported = bridge.megatron_to_hf_config(original)
     exported["text_config"] = PretrainedConfig(**exported["text_config"])
@@ -65,28 +65,14 @@ def test_native_config_roundtrip(kimi_k3_text_config, frequency):
     assert not original.moe_router_force_load_balancing
 
 
-def test_provider_uses_native_stack(kimi_k3_text_config):
-    from megatron.bridge.models.kimi.kimi_k3_hybrid_config import kimi_k3_hybrid_stack_spec
-    from megatron.bridge.models.kimi.kimi_k3_hybrid_provider import KimiK3HybridModelProvider
-
-    bridge = KimiK3HybridBridge()
-    hf = PretrainedConfig(text_config=PretrainedConfig(**vars(kimi_k3_text_config)))
-    provider = KimiK3HybridModelProvider(**bridge.hf_config_to_provider_kwargs(hf))
-    config = bridge.hf_config_to_model_config(hf)
-    assert provider.hybrid_stack_spec is kimi_k3_hybrid_stack_spec
-    assert provider.hybrid_layer_pattern == config.hybrid_layer_pattern
-    assert provider.num_layers == config.num_layers
-    assert provider.position_embedding_type == "none"
-
-
 def test_default_bridge_dispatches_to_hybrid():
     from megatron.bridge.models.conversion.model_bridge import get_model_bridge
     from megatron.bridge.models.kimi.kimi_k3_bridge import KimiK3Bridge
-    from megatron.bridge.models.kimi.kimi_k3_hybrid_config import KimiK3HybridModelConfig
+    from megatron.bridge.models.kimi.kimi_k3_config import KimiK3ModelConfig
 
     bridge = get_model_bridge("KimiK3ForConditionalGeneration")
     assert type(bridge) is KimiK3Bridge
-    assert bridge.MODEL_CONFIG_CLASS is KimiK3HybridModelConfig
+    assert bridge.MODEL_CONFIG_CLASS is KimiK3ModelConfig
 
 
 @pytest.mark.parametrize(
@@ -133,7 +119,7 @@ def test_recipes_consume_canonical_model(kimi_k3_text_config, monkeypatch, tmp_p
     def from_hf(path, **kwargs):
         assert path == str(tmp_path)
         assert kwargs == {"trust_remote_code": True}
-        return SimpleNamespace(get_model_config=lambda: KimiK3HybridBridge().hf_config_to_model_config(hf))
+        return SimpleNamespace(get_model_config=lambda: KimiK3Bridge().hf_config_to_model_config(hf))
 
     monkeypatch.setenv("KIMI_K3_HF_PATH", str(tmp_path))
     monkeypatch.setattr("megatron.bridge.recipes.kimi.kimi_k3.AutoBridge.from_hf_pretrained", from_hf)
@@ -155,17 +141,20 @@ def test_recipes_consume_canonical_model(kimi_k3_text_config, monkeypatch, tmp_p
 
 @pytest.mark.parametrize("partitioned", [False, True])
 def test_saved_config_roundtrip(kimi_k3_text_config, partitioned):
-    from megatron.bridge.models.kimi.kimi_k3_config import KimiK3TransformerConfig
-    from megatron.bridge.models.kimi.kimi_k3_hybrid_config import KimiK3HybridModelConfig, kimi_k3_hybrid_stack_spec
+    from megatron.bridge.models.kimi.kimi_k3_config import (
+        KimiK3ModelConfig,
+        KimiK3TransformerConfig,
+        kimi_k3_stack_spec,
+    )
 
     hf = PretrainedConfig(text_config=PretrainedConfig(**vars(kimi_k3_text_config)))
-    config = KimiK3HybridBridge().hf_config_to_model_config(hf)
+    config = KimiK3Bridge().hf_config_to_model_config(hf)
     config.pipeline_model_parallel_size = 2
     if partitioned:
         config.finalize()
-    restored = KimiK3HybridModelConfig.from_dict(config.as_dict())
+    restored = KimiK3ModelConfig.from_dict(config.as_dict())
     assert isinstance(restored.transformer, KimiK3TransformerConfig)
-    assert restored.hybrid_stack_spec is kimi_k3_hybrid_stack_spec
+    assert restored.hybrid_stack_spec is kimi_k3_stack_spec
     assert restored.as_dict() == config.as_dict()
     restored.finalize()
     assert restored.hybrid_layer_pattern.count("|") == 1
@@ -175,16 +164,16 @@ def test_saved_config_roundtrip(kimi_k3_text_config, partitioned):
     "field,value", [("linear_num_key_heads", 123), ("linear_key_head_dim", 123), ("linear_conv_kernel_dim", 123)]
 )
 def test_rejects_inconsistent_geometry(kimi_k3_text_config, field, value):
-    from megatron.bridge.models.kimi.kimi_k3_hybrid_config import kimi_k3_hybrid_stack_spec
+    from megatron.bridge.models.kimi.kimi_k3_config import kimi_k3_stack_spec
 
     hf = PretrainedConfig(text_config=PretrainedConfig(**vars(kimi_k3_text_config)))
-    config = KimiK3HybridBridge().hf_config_to_model_config(hf)
+    config = KimiK3Bridge().hf_config_to_model_config(hf)
     assert hasattr(config, field)
     setattr(config, field, value)
     with pytest.raises(ValueError, match="must agree"):
-        kimi_k3_hybrid_stack_spec(config)
+        kimi_k3_stack_spec(config)
     with pytest.raises(ValueError, match="must agree"):
-        KimiK3HybridBridge.megatron_to_hf_config(config)
+        KimiK3Bridge.megatron_to_hf_config(config)
 
 
 @pytest.mark.parametrize(
@@ -198,11 +187,11 @@ def test_rejects_inconsistent_geometry(kimi_k3_text_config, field, value):
     ],
 )
 def test_rejects_unsupported_stack_execution(kimi_k3_text_config, field, value):
-    from megatron.bridge.models.kimi.kimi_k3_hybrid_config import kimi_k3_hybrid_stack_spec
+    from megatron.bridge.models.kimi.kimi_k3_config import kimi_k3_stack_spec
 
     hf = PretrainedConfig(text_config=PretrainedConfig(**vars(kimi_k3_text_config)))
-    config = KimiK3HybridBridge().hf_config_to_model_config(hf)
+    config = KimiK3Bridge().hf_config_to_model_config(hf)
     assert hasattr(config, field)
     setattr(config, field, value)
-    with pytest.raises(ValueError, match="Kimi K3 Hybrid"):
-        kimi_k3_hybrid_stack_spec(config)
+    with pytest.raises(ValueError, match="Kimi K3"):
+        kimi_k3_stack_spec(config)

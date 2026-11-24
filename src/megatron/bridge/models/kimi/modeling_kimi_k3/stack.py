@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Split Kimi blocks into Hybrid entries without changing Core implementations."""
+"""Split Kimi blocks into Hybrid layers without changing Core implementations."""
 
 from copy import copy, deepcopy
 from functools import partial
@@ -44,8 +44,8 @@ def _residual_parameters(module: nn.Module, config: Any, branch: str) -> None:
     module.add_module(f"{branch}_res_proj", projection)
 
 
-class KimiK3HybridEntry(MegatronModule):
-    """One attention or FFN entry, sharing the existing Kimi component implementations."""
+class KimiK3Layer(MegatronModule):
+    """One attention or FFN layer, sharing the existing Kimi component implementations."""
 
     def __init__(self, config: Any, submodules: Any, *, layer_number: int, attention: bool, pg_collection: Any):
         super().__init__(config)
@@ -112,7 +112,7 @@ class KimiK3HybridEntry(MegatronModule):
         return prefix, bank
 
 
-class KimiK3HybridStack(HybridStack):
+class KimiK3Stack(HybridStack):
     """Bridge-owned depth-state composition using Core's Hybrid stack/checkpoint interface.
 
     Core owns embeddings, output/loss, pipeline allocation and sharded-state
@@ -135,7 +135,7 @@ class KimiK3HybridStack(HybridStack):
         **kwargs: Any,
     ):
         # The generic constructor creates stock Core KDA/AttnRes modules. Build
-        # the Kimi entries directly, retaining the inherited sharded-state method.
+        # the Kimi layers directly, retaining the inherited sharded-state method.
         MegatronModule.__init__(self, config)
         self.pre_process = pre_process
         self.post_process = post_process
@@ -148,11 +148,11 @@ class KimiK3HybridStack(HybridStack):
         self.num_layers_per_pipeline_rank = len(layer_config_list)
         if pp_layer_offset % 2 or self.num_layers_per_pipeline_rank % 2:
             raise ValueError("Kimi K3 pipeline stages must contain complete source blocks.")
-        entries = pattern.replace("|", "")
+        layers = pattern.replace("|", "")
         source = copy(config)
-        source.num_layers = len(entries) // 2
-        source.kimi_kda_layers = tuple(i + 1 for i, entry in enumerate(entries[::2]) if entry == "K")
-        source.moe_layer_freq = [int(entry == "E") for entry in entries[1::2]]
+        source.num_layers = len(layers) // 2
+        source.kimi_kda_layers = tuple(i + 1 for i, layer in enumerate(layers[::2]) if layer == "K")
+        source.moe_layer_freq = [int(layer == "E") for layer in layers[1::2]]
         source.pipeline_model_parallel_size = 1
         source.num_layers_in_first_pipeline_stage = None
         source.num_layers_in_last_pipeline_stage = None
@@ -170,7 +170,7 @@ class KimiK3HybridStack(HybridStack):
                 spec.submodules.mlp.keywords["submodules"].linear_fc1 = TEColumnParallelLinear
         self.layers = nn.ModuleList(
             [
-                KimiK3HybridEntry(
+                KimiK3Layer(
                     source,
                     specs[index // 2].submodules,
                     layer_number=index + 1,
@@ -188,7 +188,7 @@ class KimiK3HybridStack(HybridStack):
         """Receive the packed partial/snapshot payload from the preceding stage."""
         self.input_tensor = input_tensor
 
-    def _run_entries(
+    def _run_layers(
         self, start: int, end: int, prefix: torch.Tensor, bank: torch.Tensor, **kwargs: Any
     ) -> tuple[torch.Tensor, torch.Tensor]:
         for layer in self.layers[start:end]:
@@ -206,10 +206,10 @@ class KimiK3HybridStack(HybridStack):
         padding_mask: Any = None,
         **kwargs: Any,
     ) -> torch.Tensor:
-        """Run entries and pass all differentiable depth state through recomputation."""
+        """Run layers and pass all differentiable depth state through recomputation."""
         if inference_context is not None:
             raise NotImplementedError(
-                "Kimi K3 Hybrid KV-cache inference is not implemented; use the retained GPT path."
+                "Kimi K3 Hybrid KV-cache inference is not implemented; cached generation is not supported."
             )
         if not self.pre_process:
             hidden_states = self.input_tensor
@@ -241,7 +241,7 @@ class KimiK3HybridStack(HybridStack):
                 if full
                 else len(self.layers)
             )
-            run = partial(self._run_entries, start, end, **layer_kwargs)
+            run = partial(self._run_layers, start, end, **layer_kwargs)
             recompute = full and (self.config.recompute_method == "uniform" or start < chunk)
             if recompute and (prefix.requires_grad or bank.requires_grad):
                 # Distributed saved activations resize their first tensor. Keep

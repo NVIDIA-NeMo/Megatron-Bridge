@@ -146,7 +146,6 @@ if _Version(_transformers_version) >= _Version("5.23"):
 from megatron.bridge.models.kimi import (
     KimiK2Bridge,
     KimiK3Bridge,
-    KimiK3ModelProvider,
 )
 from megatron.bridge.models.kimi_vl import (
     KimiK25VLBridge,
@@ -318,7 +317,6 @@ __all__ = [
     "HybridModelProvider",
     "KimiK2Bridge",
     "KimiK3Bridge",
-    "KimiK3ModelProvider",
     "KimiK25VLModel",
     "KimiK25VLBridge",
     "KimiK25VLModelConfig",
