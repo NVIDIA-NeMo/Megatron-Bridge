@@ -99,6 +99,7 @@ class Ministral3Bridge(MegatronModelBridge):
         # language model and its exported lm_head.
         hf_config.tie_word_embeddings = tie_word_embeddings
         params_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
+        rope_parameters = text_config.rope_parameters
         provider = Ministral3ModelProvider(
             hidden_size=text_config.hidden_size,
             ffn_hidden_size=text_config.intermediate_size,
@@ -108,7 +109,10 @@ class Ministral3Bridge(MegatronModelBridge):
             kv_channels=text_config.head_dim,
             seq_length=text_config.max_position_embeddings,
             share_embeddings_and_output_weights=tie_word_embeddings,
-            rotary_base=text_config.rope_parameters["rope_theta"],
+            rotary_base=rope_parameters["rope_theta"],
+            # Hugging Face YaRN rounds the correction range to integers unless the
+            # checkpoint sets truncate=False; published Ministral 3 configs omit it.
+            yarn_correction_range_round_to_int=rope_parameters.get("truncate", True),
             vocab_size=text_config.vocab_size,
             params_dtype=params_dtype,
             fp16=params_dtype == torch.float16,

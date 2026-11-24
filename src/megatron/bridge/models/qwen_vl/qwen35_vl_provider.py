@@ -268,7 +268,10 @@ class Qwen35VLModelProvider(GPTModelProvider):
         builder = Qwen35VLModelBuilder(config)
         builder.model_class = getattr(self, "MODEL_CLASS", None)
         pg = self._pg_collection or ProcessGroupCollection.use_mpu_process_groups()
-        return builder.build_model(pg, pre_process, post_process, vp_stage)
+        model = builder.build_model(pg, pre_process, post_process, vp_stage)
+        # save_megatron_model saves the provider itself, keeping its HF source and subclass fields.
+        model.model_config = self
+        return model
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> HybridModel:
         """Provide just the language model component without vision."""
@@ -513,7 +516,10 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         builder = Qwen35VLModelBuilder(config)
         builder.model_class = getattr(self, "MODEL_CLASS", None)
         pg = self._pg_collection or ProcessGroupCollection.use_mpu_process_groups()
-        return builder.build_model(pg, pre_process, post_process, vp_stage)
+        model = builder.build_model(pg, pre_process, post_process, vp_stage)
+        # save_megatron_model saves the provider itself, keeping its HF source and subclass fields.
+        model.model_config = self
+        return model
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> HybridModel:
         """Provide just the language model component without vision."""
@@ -569,6 +575,8 @@ def _qwen35_provider_model_config(provider: GPTModelProvider) -> Qwen35VLModelCo
     transformer_class = Qwen35VLModelConfig.transformer_config_class
     transformer_fields = {item.name for item in fields(transformer_class) if item.init}
     kwargs = {name: getattr(provider, name) for name in outer_fields | transformer_fields if hasattr(provider, name)}
+    # Preserve unset CP inputs instead of treating resolved defaults as explicit choices.
+    kwargs.update(provider._inferred_cp_inputs())
     kwargs.pop("transformer_layer_spec", None)
     configure_qwen35_hybrid(
         kwargs,

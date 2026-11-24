@@ -18,6 +18,9 @@ Megatron Bridge Recipe Configurations
 This module exposes all recipe configurations from all model families.
 """
 
+from packaging.version import Version as _Version
+from transformers import __version__ as _transformers_version
+
 from megatron.bridge.recipes.bagel import *
 from megatron.bridge.recipes.bagel.h100 import *
 from megatron.bridge.recipes.beam import *
@@ -26,6 +29,7 @@ from megatron.bridge.recipes.deepseek import *
 from megatron.bridge.recipes.deepseek.h100 import *
 from megatron.bridge.recipes.diffusion_gemma import *
 from megatron.bridge.recipes.ernie import *
+from megatron.bridge.recipes.ernie.h100 import *
 from megatron.bridge.recipes.exaone import *
 from megatron.bridge.recipes.exaone.h100 import *
 from megatron.bridge.recipes.flux import *
@@ -44,6 +48,10 @@ from megatron.bridge.recipes.gpt import *
 from megatron.bridge.recipes.gpt.h100 import *
 from megatron.bridge.recipes.gpt_oss import *
 from megatron.bridge.recipes.gpt_oss.h100 import *
+
+
+if _Version(_transformers_version) >= _Version("5.23"):
+    from megatron.bridge.recipes.inkling import *
 from megatron.bridge.recipes.kimi import *
 from megatron.bridge.recipes.kimi.h100 import *
 from megatron.bridge.recipes.kimi_vl import *

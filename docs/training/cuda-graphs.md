@@ -31,6 +31,18 @@ Scope names follow real module types. `mamba` applies to Mamba layers; it is not
 a generic label for linear attention. Qwen3.5 Gated DeltaNet (GDN) lives under
 `self_attention`, so its applicable TE scope is `attn`, not `mamba`.
 
+Hybrid models such as Qwen3.5 run each decoder block as two positions, the mixer
+(attention or GDN) and its MoE or MLP, so TE-scoped graphs launch separate graphs
+for the two positions of every block. Megatron Core's
+`cuda_graph_pair_hybrid_layers` option captures each mixer and the feed-forward
+position after it as one graph instead, which halves the graph launches of the
+decoder blocks. The same option also captures the layers of a Hybrid model's MTP
+block, such as Qwen3.5's MTP layer, which per-position graphs leave eager. They
+stay eager with `keep_mtp_in_bf16` in FP8 or FP4 training, and with
+`mtp_use_repeated_layer` over more than one MTP depth. Losses and gradients do
+not change. The Qwen3.5-VL GB300 and VRNVL72 recipes that capture attention
+graphs turn it on whenever the pinned Megatron Core provides it.
+
 ## What Problem It Solves
 
 CUDA graphs mainly solve launch-bound training steps where GPU compute is fast

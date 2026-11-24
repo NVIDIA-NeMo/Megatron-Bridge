@@ -312,12 +312,15 @@ class TestHybridModelProvider:
         assert resolved_core_attention is DotProductAttention
         assert default_core_attention is TEDotProductAttention
 
-    def test_non_local_attention_keeps_transformer_engine_stack_spec(self):
+    # A quantized checkpoint restores into the TE spec it was quantized in.
+    @pytest.mark.parametrize("restore_modelopt_state", [False, True])
+    def test_non_local_attention_keeps_transformer_engine_stack_spec(self, restore_modelopt_state):
         provider = HybridModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=1,
             attention_backend=AttnBackend.flash,
+            restore_modelopt_state=restore_modelopt_state,
         )
 
         resolved_spec = provider._resolve_hybrid_stack_spec()

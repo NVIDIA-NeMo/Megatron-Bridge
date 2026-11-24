@@ -552,15 +552,21 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_deterministic_mode_rejects_moe_aux_loss_fusion(self, isolated_determinism_state):
-        """Deterministic mode rejects the MoE aux-loss fusion but keeps fused TopK routing."""
+        """Deterministic mode rejects MoE aux-loss fusion unless TE has a deterministic fused kernel."""
         gpt_model_cfg = create_test_gpt_config(deterministic_mode=True, cross_entropy_loss_fusion=False)
         gpt_model_cfg.moe_router_fusion = True
         gpt_model_cfg.moe_router_aux_loss_fusion = True
 
         container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
+        te_support = "megatron.core.extensions.transformer_engine.te_supports_deterministic_moe_aux_loss"
         try:
-            with pytest.raises(AssertionError, match="moe_router_aux_loss_fusion=False"):
+            with patch(te_support, return_value=False):
+                with pytest.raises(AssertionError, match="moe_router_aux_loss_fusion=False"):
+                    container._validate_and_apply_deterministic_mode()
+
+            # Transformer Engine builds with a deterministic fused aux-loss kernel keep the fusion.
+            with patch(te_support, return_value=True):
                 container._validate_and_apply_deterministic_mode()
 
             gpt_model_cfg.moe_router_aux_loss_fusion = False
@@ -5263,6 +5269,56 @@ class TestEpochBasedTraining:
         assert cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag is optimizer_reuse
 
 
+class TestDDPFinalization:
+    def test_recipe_edits_are_resolved_only_at_finalization(self):
+        ddp = DistributedDataParallelConfig(num_buckets=0)
+        assert ddp.expert_data_parallel_sharding_strategy is None
+
+        ddp.num_buckets = 2
+        ddp.data_parallel_sharding_strategy = "optim_grads_params"
+        ddp.outer_dp_sharding_strategy = "optim"
+        ddp.megatron_fsdp_max_pool_double_buffer = True
+        ddp.finalize()
+
+        assert ddp.expert_data_parallel_sharding_strategy == "optim_grads_params"
+        assert ddp.expert_outer_dp_sharding_strategy == "optim"
+        assert ddp.fsdp_double_buffer is True
+
+        ddp.num_buckets = 0
+        with pytest.raises(AssertionError, match="num_buckets must be greater than 0"):
+            ddp.finalize()
+
+    def test_repeated_finalization_preserves_resolved_buckets(self):
+        ddp = DistributedDataParallelConfig(num_buckets=2, overlap_grad_reduce=True)
+        ddp.finalize()
+        ddp.resolve_bucket_size(num_parameters=128, data_parallel_size=2)
+        ddp.finalize()
+        ddp.finalize()
+
+        assert ddp.bucket_size == 64
+        assert ddp.num_buckets == 2
+
+    @pytest.mark.parametrize("ddp_cls", [DistributedDataParallelConfig, MCoreDistributedDataParallelConfig])
+    def test_mimo_applies_precision_policy_before_ddp_finalization(self, ddp_cls):
+        cfg = MagicMock()
+        cfg.env_vars = {}
+        cfg.train.num_epochs = None
+        cfg.profiling = None
+        cfg.ddp = ddp_cls(
+            use_megatron_fsdp=True,
+            grad_reduce_in_fp32=True,
+            megatron_fsdp_main_grads_dtype=torch.bfloat16,
+            megatron_fsdp_grad_comm_dtype=torch.bfloat16,
+        )
+        cfg.optimizer = OptimizerConfig()
+
+        megatron_mimo_runtime_config_update(cfg)
+
+        assert cfg.ddp.grad_reduce_in_fp32 is False
+        assert cfg.ddp.megatron_fsdp_main_grads_dtype == torch.bfloat16
+        assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.bfloat16
+
+
 class TestMegatronFSDPGradDtypePolicy:
     """Megatron-FSDP gradient precision follows its explicit dtype fields."""
 
@@ -5313,7 +5369,7 @@ class TestMegatronFSDPGradDtypePolicy:
         assert ddp.grad_reduce_in_fp32 is True
 
     def test_validate_applies_policy_to_mcore_ddp_config(self):
-        """Recipes may construct Megatron Core's DDP config, whose post-init validate() re-runs."""
+        """Recipes may construct Megatron Core's DDP config and finalize it through Bridge."""
         ddp = MCoreDistributedDataParallelConfig(grad_reduce_in_fp32=True, use_distributed_optimizer=True)
         ddp.use_megatron_fsdp = True
         ddp.data_parallel_sharding_strategy = "optim_grads_params"

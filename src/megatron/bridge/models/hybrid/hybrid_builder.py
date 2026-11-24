@@ -103,8 +103,8 @@ def get_default_hybrid_stack_spec(config: "HybridModelConfig") -> ModuleSpec:
     transformer = getattr(config, "transformer", config)
     if transformer.transformer_impl == "inference_optimized":
         return default_hybrid_inference_stack_spec
-    if config.restore_modelopt_state:
-        return modelopt_hybrid_stack_spec(config)
+    # Quantized checkpoints restore into the TE spec they were quantized in: the ModelOpt spec's
+    # SequentialMLP does not match the expert quantizer keys of a TEGroupedMLP checkpoint.
     return transformer_engine_hybrid_stack_spec()
 
 
@@ -150,8 +150,7 @@ class BridgeHybridModelBuilder(HybridModelBuilder):
 
     The configured stack spec may be a ``ModuleSpec`` or a factory that takes no
     arguments or the model config. When it is unset, Bridge's default selection
-    applies, which also remaps fused Transformer Engine layer norms for ModelOpt
-    checkpoints. The local attention backend and a non-default Mamba chunk size
+    applies. The local attention backend and a non-default Mamba chunk size
     are applied to a copy of the resolved spec.
     """
 

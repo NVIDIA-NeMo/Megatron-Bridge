@@ -357,6 +357,7 @@ class TestExportMegatronToHf:
         )
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", fake_from_hf_pretrained)
         monkeypatch.setattr(cli.AutoBridge, "from_auto_config", fake_from_auto_config)
+        monkeypatch.setattr(cli, "_has_enabled_weight_quantizers", lambda model: False)
 
         checkpoint_path = tmp_path / "iter_0000000"
         checkpoint_path.mkdir()
@@ -446,6 +447,7 @@ class TestExportMegatronToHf:
         monkeypatch.setattr(cli, "_prepare_distributed_output", lambda *args, **kwargs: None)
         monkeypatch.setattr(cli, "resolve_hf_model_revision", lambda model, revision, **kwargs: model)
         monkeypatch.setattr(cli, "_maybe_restore_pipeline_layout", fake_restore)
+        monkeypatch.setattr(cli, "_has_enabled_weight_quantizers", lambda model: False)
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", lambda *args, **kwargs: FakeBridge())
         monkeypatch.setattr(
             cli.AutoBridge,
@@ -477,6 +479,147 @@ class TestExportMegatronToHf:
         overrides = next(call for call in calls if call[0] == "load_megatron_model")[2]["mp_overrides"]
         assert overrides["pipeline_model_parallel_layout"] == layout
         assert overrides.get("hybrid_layer_pattern") == expected_pattern
+
+    @pytest.mark.parametrize(("vocab_size", "padded"), [(127, True), (128, False)])
+    def test_export_pads_a_vocabulary_that_tp_does_not_divide(self, cli, monkeypatch, tmp_path, vocab_size, padded):
+        calls = []
+        provider = _FakeProvider(calls)
+        provider.vocab_size = vocab_size
+        provider.should_pad_vocab = False
+
+        class FakeBridge:
+            _model_bridge = object()
+            hf_pretrained = _FakeHfPretrained()
+
+            def to_megatron_provider(self, *args, **kwargs):
+                return provider
+
+            def load_megatron_model(self, *args, **kwargs):
+                calls.append(("load_megatron_model", args, kwargs))
+                return ["megatron-model"]
+
+            def save_hf_pretrained(self, *args, **kwargs):
+                calls.append(("save_hf_pretrained", args, kwargs))
+
+        monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes: None)
+        monkeypatch.setattr(cli, "_prepare_distributed_output", lambda *args, **kwargs: None)
+        monkeypatch.setattr(cli, "resolve_hf_model_revision", lambda model, revision, **kwargs: model)
+        monkeypatch.setattr(cli, "_maybe_restore_pipeline_layout", lambda *args, **kwargs: None)
+        monkeypatch.setattr(cli, "_has_enabled_weight_quantizers", lambda model: False)
+        monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", lambda *args, **kwargs: FakeBridge())
+        monkeypatch.setattr(
+            cli.AutoBridge,
+            "from_auto_config",
+            lambda *args, **kwargs: types.SimpleNamespace(hf_pretrained=_FakeHfPretrained.config),
+        )
+
+        cli.export_checkpoint.__wrapped__(
+            hf_model="hf",
+            hf_revision=None,
+            megatron_path=str(tmp_path),
+            hf_path=str(tmp_path / "hf-export"),
+            tp=2,
+            pp=1,
+            ep=1,
+            etp=1,
+            torch_dtype="bfloat16",
+            trust_remote_code=False,
+            strict=True,
+            show_progress=False,
+            distributed_save=False,
+            save_every_n_ranks=1,
+            distributed_timeout_minutes=None,
+            export_weight_dtype=None,
+            overwrite=False,
+        )
+
+        # The model is rebuilt from the checkpoint's run config, which may come from an unpadded TP=1 import.
+        overrides = next(call for call in calls if call[0] == "load_megatron_model")[2]["mp_overrides"]
+        assert overrides.get("should_pad_vocab", False) is padded
+
+    @pytest.mark.parametrize(
+        ("quantized_export", "has_weight_quantizers", "export_weight_dtype", "expected"),
+        [
+            (None, True, None, "save_hf_pretrained_modelopt"),
+            (None, False, None, "save_hf_pretrained"),
+            (False, True, "float16", "save_hf_pretrained"),
+            (True, False, None, ValueError),
+            (None, True, "float16", ValueError),
+        ],
+    )
+    def test_export_saves_quantized_checkpoints_in_their_deployment_format(
+        self, cli, monkeypatch, tmp_path, quantized_export, has_weight_quantizers, export_weight_dtype, expected
+    ):
+        calls = []
+
+        class FakeBridge:
+            _model_bridge = object()
+            hf_pretrained = _FakeHfPretrained()
+
+            def to_megatron_provider(self, *args, **kwargs):
+                return _FakeProvider([])
+
+            def load_megatron_model(self, *args, **kwargs):
+                return ["megatron-model"]
+
+            def save_hf_pretrained(self, *args, **kwargs):
+                calls.append("save_hf_pretrained")
+
+            def save_hf_pretrained_modelopt(self, *args, **kwargs):
+                calls.append("save_hf_pretrained_modelopt")
+
+        monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes: None)
+        monkeypatch.setattr(cli, "_prepare_distributed_output", lambda *args, **kwargs: None)
+        monkeypatch.setattr(cli, "resolve_hf_model_revision", lambda model, revision, **kwargs: model)
+        monkeypatch.setattr(cli, "_maybe_restore_pipeline_layout", lambda *args, **kwargs: None)
+        monkeypatch.setattr(cli, "_has_enabled_weight_quantizers", lambda model: has_weight_quantizers)
+        monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", lambda *args, **kwargs: FakeBridge())
+        monkeypatch.setattr(
+            cli.AutoBridge,
+            "from_auto_config",
+            lambda *args, **kwargs: types.SimpleNamespace(hf_pretrained=_FakeHfPretrained.config),
+        )
+        export = functools.partial(
+            cli.export_checkpoint.__wrapped__,
+            hf_model="hf",
+            hf_revision=None,
+            megatron_path=str(tmp_path),
+            hf_path=str(tmp_path / "hf-export"),
+            tp=1,
+            pp=1,
+            ep=1,
+            etp=1,
+            torch_dtype="bfloat16",
+            trust_remote_code=False,
+            strict=True,
+            show_progress=False,
+            distributed_save=True,
+            save_every_n_ranks=1,
+            distributed_timeout_minutes=None,
+            export_weight_dtype=export_weight_dtype,
+            overwrite=False,
+            quantized_export=quantized_export,
+        )
+
+        if expected is ValueError:
+            with pytest.raises(ValueError):
+                export()
+            assert calls == []
+        else:
+            export()
+            assert calls == [expected]
+
+    @pytest.mark.parametrize("fold", [False, True])
+    def test_weight_quantizers_count_until_folded(self, cli, monkeypatch, fold):
+        mtq = pytest.importorskip("modelopt.torch.quantization")
+        model = torch.nn.Sequential(torch.nn.Linear(16, 16))
+        mtq.quantize(model, {"quant_cfg": [{"quantizer_name": "*weight_quantizer", "cfg": {"num_bits": (4, 3)}}]})
+        if fold:
+            mtq.fold_weight(model)
+        monkeypatch.setattr(cli.torch.distributed, "get_backend", lambda: "gloo")
+        monkeypatch.setattr(cli.torch.distributed, "all_reduce", lambda tensor, op: None)
+
+        assert cli._has_enabled_weight_quantizers([model]) is not fold
 
 
 class TestPipelineLayout:

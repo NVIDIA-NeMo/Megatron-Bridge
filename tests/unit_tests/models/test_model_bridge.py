@@ -429,6 +429,47 @@ def test_stream_weights_hf_to_megatron_uses_external_state_and_bridge_preprocess
     assert converted[0].weight is mapping.hf_to_megatron.return_value
 
 
+def test_stream_weights_hf_to_megatron_dequantizes_fp8_weights_the_bridge_hook_leaves_quantized():
+    bridge = DummyBridge()
+    bridge.hf_config = SimpleNamespace(quantization_config={"quant_method": "fp8", "weight_block_size": [2, 2]})
+    mapping = Mock()
+    mapping.hf_param = "hf.weight"
+    mapping.hf_to_megatron.side_effect = lambda weight, module: weight
+    task = WeightConversionTask(
+        param_name="weight",
+        global_param_name="weight",
+        mapping=mapping,
+        megatron_module=torch.nn.Module(),
+    )
+    codes = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [-1.0, -2.0, -3.0]], dtype=torch.float8_e4m3fn)
+    state = {"hf.weight": codes, "hf.weight_scale_inv": torch.tensor([[0.5, 2.0], [4.0, 0.25]])}
+
+    [converted] = bridge.stream_weights_hf_to_megatron(
+        SimpleNamespace(state=state), [torch.nn.Module()], [task], hf_state_dict=state
+    )
+
+    expected = torch.tensor([[0.5, 1.0, 6.0], [2.0, 2.5, 12.0], [-4.0, -8.0, -0.75]])
+    torch.testing.assert_close(converted.weight, expected, rtol=0, atol=0)
+
+
+def test_load_hf_weights_leaves_bridges_that_dequantize_in_their_hook_unchanged():
+    from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
+
+    torch.manual_seed(0)
+    state = {
+        "q.weight": (torch.randn(200, 160) * 50).to(torch.float8_e4m3fn),
+        "q.weight_scale_inv": torch.rand(2, 2) + 0.5,
+    }
+    bridge = GLM5Bridge()
+    bridge.hf_config = SimpleNamespace(quantization_config={"quant_method": "fp8", "weight_block_size": [128, 128]})
+
+    expected = bridge.maybe_modify_loaded_hf_weight("q.weight", state)
+    result = bridge._load_hf_weights("q.weight", state)
+
+    assert result.dtype == expected.dtype == torch.bfloat16
+    assert torch.equal(result, expected)
+
+
 @pytest.mark.parametrize(
     ("available_names", "expected_names"),
     [
@@ -1699,6 +1740,100 @@ def test_stream_weights_megatron_to_hf_transforms_grouped_tensor_once_after_accu
     ]
 
 
+class _DeviceResidentTensor:
+    def __init__(self, tensor):
+        self.tensor = tensor
+
+    def cpu(self):
+        return self.tensor
+
+
+def _stream_grouped_export_recording_accumulation(monkeypatch, *, cpu, export_hook=None):
+    bridge = DummyBridge()
+
+    class GroupedMapping:
+        is_grouped_export = True
+        group_key = "hf.grouped"
+        ep_size = 1
+
+        def megatron_to_hf(self, weight, module):
+            return {self.group_key: _DeviceResidentTensor(weight)}
+
+    tasks = [
+        WeightConversionTask(
+            param_name=f"decoder.layers.0.mlp.experts.linear_fc2.weight{expert}",
+            global_param_name=f"decoder.layers.0.mlp.experts.linear_fc2.weight{expert}",
+            mapping=GroupedMapping(),
+            pp_rank=0,
+            vp_stage=0,
+            megatron_module=None,
+            param_weight=torch.full((1, 1), float(expert + 1)),
+        )
+        for expert in range(2)
+    ]
+    if export_hook is not None:
+        tasks = [_with_export_hook(task, export_hook) for task in tasks]
+
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch, num_moe_experts=2)
+    original_accumulate = DummyBridge._accumulate_grouped_export
+    accumulated_types = []
+
+    def recording_accumulate(self, task, converted_weights_dict, *args, **kwargs):
+        accumulated_types.extend(type(weight) for weight in converted_weights_dict.values())
+        unwrapped = {
+            name: weight.tensor if isinstance(weight, _DeviceResidentTensor) else weight
+            for name, weight in converted_weights_dict.items()
+        }
+        return original_accumulate(self, task, unwrapped, *args, **kwargs)
+
+    monkeypatch.setattr(DummyBridge, "_accumulate_grouped_export", recording_accumulate)
+
+    weights = list(
+        bridge.stream_weights_megatron_to_hf(
+            [Mock()],
+            SimpleNamespace(),
+            cpu=cpu,
+            show_progress=False,
+            conversion_tasks=tasks,
+            merge_adapter_weights=False,
+        )
+    )
+    return accumulated_types, weights
+
+
+def test_grouped_export_stages_expert_slices_on_cpu_before_accumulation(monkeypatch):
+    """With cpu=True and no export hook, expert slices are moved to CPU before buffering."""
+    accumulated_types, weights = _stream_grouped_export_recording_accumulation(monkeypatch, cpu=True)
+
+    assert accumulated_types == [torch.Tensor, torch.Tensor]
+    assert [weight.param_name for weight in weights] == ["hf.grouped"]
+    torch.testing.assert_close(weights[0].weight, torch.tensor([[[1.0]], [[2.0]]]))
+
+
+def test_grouped_export_keeps_expert_slices_on_device_without_cpu(monkeypatch):
+    """With cpu=False, expert slices are buffered without a CPU move."""
+    accumulated_types, weights = _stream_grouped_export_recording_accumulation(monkeypatch, cpu=False)
+
+    assert accumulated_types == [_DeviceResidentTensor, _DeviceResidentTensor]
+    assert [weight.param_name for weight in weights] == ["hf.grouped"]
+    torch.testing.assert_close(weights[0].weight, torch.tensor([[[1.0]], [[2.0]]]))
+
+
+def test_grouped_export_keeps_expert_slices_on_device_with_export_hook(monkeypatch):
+    """With an export hook, expert slices stay on device until after the hook runs."""
+
+    def identity(name, tensor):
+        yield name, tensor
+
+    accumulated_types, weights = _stream_grouped_export_recording_accumulation(
+        monkeypatch, cpu=True, export_hook=identity
+    )
+
+    assert accumulated_types == [_DeviceResidentTensor, _DeviceResidentTensor]
+    assert [weight.param_name for weight in weights] == ["hf.grouped"]
+    torch.testing.assert_close(weights[0].weight, torch.tensor([[[1.0]], [[2.0]]]))
+
+
 def test_grouped_export_uses_mapping_local_ep_size(monkeypatch):
     monkeypatch.setattr(
         "megatron.bridge.models.conversion.model_bridge.parallel_state.get_expert_model_parallel_world_size",
@@ -2440,3 +2575,16 @@ def test_mapping_reads_partial_rotary_factor_from_hf_config():
     kwargs = DummyBridge().hf_config_to_provider_kwargs(config)
 
     assert kwargs["rotary_percent"] == 0.5
+
+
+def test_plain_export_casts_every_float_weight_by_default():
+    assert MegatronModelBridge.PLAIN_EXPORT_IGNORED_SOURCE_KEY_SUFFIXES == ("_scale_inv",)
+    weights = {"router": torch.randn(4), "proj": torch.randn(4).half(), "ids": torch.arange(4)}
+
+    cast = MegatronModelBridge._cast_export_weight_dtype(weights, torch.bfloat16)
+
+    assert {name: tensor.dtype for name, tensor in cast.items()} == {
+        "router": torch.bfloat16,
+        "proj": torch.bfloat16,
+        "ids": torch.int64,
+    }

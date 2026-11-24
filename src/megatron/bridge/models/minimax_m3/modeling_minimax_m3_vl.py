@@ -22,6 +22,7 @@ preserving its legacy parameter namespace exactly.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Callable
 
 import torch
@@ -184,7 +185,7 @@ def _apply_vision_rope(
 
 
 class MiniMaxM3VisionAttention(nn.Module):
-    """CLIP-style self-attention with MiniMax-M3 3D RoPE."""
+    """CLIP-style self-attention with MiniMax-M3 3D RoPE, kept within each image or video segment."""
 
     def __init__(self, config: Any) -> None:
         super().__init__()
@@ -203,8 +204,17 @@ class MiniMaxM3VisionAttention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        *,
+        segment_lengths: Sequence[int],
     ) -> torch.Tensor:
-        """Apply non-causal vision self-attention."""
+        """Apply non-causal vision self-attention within each image or video segment.
+
+        Args:
+            hidden_states: Packed patch features of shape ``[batch, sequence, hidden]``.
+            position_embeddings: Cosine and sine tables for the packed patches.
+            segment_lengths: Patch count of each image or video segment, in packing order. A patch attends
+                only to patches of its own segment, as in Transformers' MiniMax-M3-VL vision attention.
+        """
         batch_size, sequence_length, _ = hidden_states.shape
         target_shape = (batch_size, sequence_length, self.num_heads, self.head_dim)
         query = self.q_proj(hidden_states).reshape(target_shape)
@@ -213,13 +223,22 @@ class MiniMaxM3VisionAttention(nn.Module):
         query, key = _apply_vision_rope(query, key, *position_embeddings)
         query = query.transpose(1, 2)
         key = key.transpose(1, 2)
-        output = F.scaled_dot_product_attention(
-            query,
-            key,
-            value,
-            dropout_p=self.dropout if self.training else 0.0,
-            scale=self.head_dim**-0.5,
-        )
+        dropout = self.dropout if self.training else 0.0
+        outputs = [
+            F.scaled_dot_product_attention(
+                segment_query,
+                segment_key,
+                segment_value,
+                dropout_p=dropout,
+                scale=self.head_dim**-0.5,
+            )
+            for segment_query, segment_key, segment_value in zip(
+                query.split(segment_lengths, dim=2),
+                key.split(segment_lengths, dim=2),
+                value.split(segment_lengths, dim=2),
+            )
+        ]
+        output = outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=2)
         output = output.transpose(1, 2).reshape(batch_size, sequence_length, self.hidden_size)
         return self.out_proj(output)
 
@@ -255,9 +274,13 @@ class MiniMaxM3VisionEncoderLayer(nn.Module):
         self,
         hidden_states: torch.Tensor,
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        *,
+        segment_lengths: Sequence[int],
     ) -> torch.Tensor:
         """Apply attention and MLP residual blocks."""
-        hidden_states = hidden_states + self.self_attn(self.layer_norm1(hidden_states), position_embeddings)
+        hidden_states = hidden_states + self.self_attn(
+            self.layer_norm1(hidden_states), position_embeddings, segment_lengths=segment_lengths
+        )
         return hidden_states + self.mlp(self.layer_norm2(hidden_states))
 
 
@@ -273,10 +296,12 @@ class MiniMaxM3VisionEncoder(nn.Module):
         self,
         hidden_states: torch.Tensor,
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        *,
+        segment_lengths: Sequence[int],
     ) -> torch.Tensor:
         """Run all vision transformer layers."""
         for layer in self.layers:
-            hidden_states = layer(hidden_states, position_embeddings)
+            hidden_states = layer(hidden_states, position_embeddings, segment_lengths=segment_lengths)
         return hidden_states
 
 
@@ -307,15 +332,25 @@ class MiniMaxM3VisionModel(nn.Module):
         )
 
     def forward(self, pixel_values: torch.Tensor, image_grid_thw: torch.Tensor) -> torch.Tensor:
-        """Return unprojected patch features with shape ``[1, patches, hidden]``."""
+        """Return unprojected patch features with shape ``[1, patches, hidden]``.
+
+        Each ``image_grid_thw`` row (an image or a video segment) is its own attention segment, so packed
+        images and videos never attend to one another.
+        """
         hidden_states = self.embeddings(pixel_values).to(dtype=self.pre_layrnorm.weight.dtype)
+        segment_lengths = image_grid_thw.prod(dim=-1).tolist()
+        if sum(segment_lengths) != hidden_states.shape[0]:
+            raise ValueError(
+                f"MiniMax-M3 vision grids describe {sum(segment_lengths)} patches, "
+                f"but pixel_values holds {hidden_states.shape[0]}."
+            )
         position_embeddings = self.rotary_embedding(
             image_grid_thw,
             device=hidden_states.device,
             dtype=hidden_states.dtype,
         )
         hidden_states = self.pre_layrnorm(hidden_states).unsqueeze(0)
-        return self.encoder(hidden_states, position_embeddings)
+        return self.encoder(hidden_states, position_embeddings, segment_lengths=segment_lengths)
 
 
 class MiniMaxM3VisionTower(nn.Module):

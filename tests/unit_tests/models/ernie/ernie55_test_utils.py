@@ -33,6 +33,15 @@ _CONVERSION_MODULES = (
     "megatron.bridge.models.hf_pretrained.state",
 )
 
+# The released FP8 checkpoints' quantization_config.
+FP8_QUANTIZATION = {
+    "activation_scheme": "dynamic",
+    "fmt": "e4m3",
+    "quant_method": "fp8",
+    "scale_fmt": "ue8m0",
+    "weight_block_size": [128, 128],
+}
+
 
 def allow_conversion_imports_without_te() -> None:
     """Import Bridge's checkpoint-conversion modules on a machine without Transformer Engine.
@@ -70,6 +79,42 @@ def allow_conversion_imports_without_te() -> None:
     finally:
         if placeholder is not None and sys.modules.get(_LORA_LAYERS_MODULE) is placeholder:
             del sys.modules[_LORA_LAYERS_MODULE]
+
+
+def fp8_quantize(tensors: dict[str, torch.Tensor], names: list[str], block_size: int) -> dict[str, torch.Tensor]:
+    """``tensors`` with ``names`` stored as the released FP8 checkpoints store their linear weights.
+
+    Each tensor becomes e4m3 with one power-of-two inverse scale per ``block_size`` x ``block_size`` block,
+    stored in F32 under ``<name>_scale_inv`` (the ``ue8m0`` scale format); partial blocks at the edges are
+    allowed, as in :func:`fp8_reference`.
+    """
+    quantized = dict(tensors)
+    for name in names:
+        weight = tensors[name].float()
+        blocks = tuple(-(-size // block_size) for size in weight.shape)
+        scale_inv = torch.empty(blocks, dtype=torch.float32)
+        scaled = torch.empty_like(weight)
+        for row in range(blocks[0]):
+            for col in range(blocks[1]):
+                rows, cols = (
+                    slice(row * block_size, (row + 1) * block_size),
+                    slice(col * block_size, (col + 1) * block_size),
+                )
+                amax = weight[rows, cols].abs().amax().clamp(min=2.0**-120)
+                scale_inv[row, col] = torch.exp2(torch.ceil(torch.log2(amax / 448.0)))
+                scaled[rows, cols] = weight[rows, cols] / scale_inv[row, col]
+        quantized[name] = scaled.to(torch.float8_e4m3fn)
+        quantized[f"{name}_scale_inv"] = scale_inv
+    return quantized
+
+
+def fp8_reference(
+    weight: torch.Tensor, scale_inv: torch.Tensor, block_size: int, *, dtype: torch.dtype = torch.bfloat16
+) -> torch.Tensor:
+    """What an FP8 checkpoint tensor stands for: each block times its inverse scale, in ``dtype``."""
+    rows, cols = weight.shape
+    scales = scale_inv.repeat_interleave(block_size, 0)[:rows].repeat_interleave(block_size, 1)[:, :cols]
+    return (weight.float() * scales).to(dtype)
 
 
 # Callers that must see the real device: torch itself and the Triton runtime it drives.
