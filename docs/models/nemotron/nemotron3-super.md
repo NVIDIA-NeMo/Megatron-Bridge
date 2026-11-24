@@ -82,10 +82,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-super-120b-a12b-pretrain-gb200" aria-controls="nemotron-3-super-120b-a12b-pretrain-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-super-120b-a12b-pretrain-gb200" aria-controls="nemotron-3-super-120b-a12b-pretrain-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Pretrain · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -96,10 +96,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-super-120b-a12b-sft-gb200" aria-controls="nemotron-3-super-120b-a12b-sft-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-super-120b-a12b-sft-gb200" aria-controls="nemotron-3-super-120b-a12b-sft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -312,35 +312,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-super-120b-a12b-pretrain-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-pretrain-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Pretrain · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-18</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>10.54598</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>3.886796</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>29,118.950 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>236.800 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>2,813.288 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -351,12 +351,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 2 --recipe nemotron_3_super_pretrain_16gpu_h100_bf16_config --mode pretrain --dataset megatron-indexed --max_steps 100 --seq_length 4096 model.cuda_graph_impl=none --lr 4.5e-4 --min_lr 4.5e-6 --warmup_iters 10 &#x27;dataset.blend=[[&quot;work/data/rp2/head_01_text_document&quot;],null]&#x27; dataset.path_to_cache=work/cache/nemotron-3-super-120b-a12b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2-tokenizer/tokenizer.model rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 optimizer.optimizer_cpu_offload=true optimizer.optimizer_offload_fraction=0.4 optimizer.overlap_cpu_optimizer_d2h_h2d=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 checkpoint.ckpt_format=torch_dist checkpoint.async_save=false checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-pretrain-reference --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4 --recipe nemotron_3_super_pretrain_config --mode pretrain --dataset megatron-indexed --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 100 &#x27;dataset.blend=[[&quot;work/data/rp2/head_01_text_document&quot;],null]&#x27; dataset.path_to_cache=work/cache/nemotron-3-super-120b-a12b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2-tokenizer/tokenizer.model rng.seed=1234 dataset.random_seed=1234 validation.eval_iters=0 validation.eval_interval=0 env_vars.NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=32 env_vars.NVLINK_DOMAIN_SIZE=72 env_vars.USE_MNNVL=1 checkpoint.ckpt_format=torch_dist checkpoint.async_save=false checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-pretrain-reference --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 16 GB200s, the BF16 support run must complete exactly 100 bounded RP2 optimizer steps at TP8/PP1/CP1/EP16/ETP1 and the recipe&#x27;s cohort GBS/MBS 1024/1. Full activation recompute, 40% optimizer CPU offload, and eager execution keep the model and optimizer checkpoint within memory. Loss must stay finite with no skipped or NaN iteration, and complete iter_0000050 and iter_0000100 checkpoints must save. The recipe moved from GBS 16 to the cohort GBS 1024, so the earlier metrics no longer describe this command and it needs a rerun.
+        <p>On 64 GB200s in one NVL72 domain at this item&#x27;s Bridge commit, the BF16 support run warm-started from the immutable imported Megatron checkpoint with checkpoint.load null (the resolved configuration names the imported iter_0000000 as the pretrained checkpoint) and completed exactly 100 bounded RP2 optimizer steps with the same convergence recipe and layout as the H100 item: TP1/PP2/CP1/EP32/ETP1, sequence length 4096, GBS/MBS 1280/1, natural routing, and HybridEP flex dispatch with 1.10x fixed expert capacity, here with the NVL72 HybridEP environment (32 ranks per NVLink domain, domain size 72, MNNVL). Loss stayed finite from 10.54598 to 3.886796 with zero skipped or NaN iterations, and complete iter_0000050 and iter_0000100 checkpoints saved. Metrics average steps 91-100; token throughput uses 4096 times GBS1280 per step.
 </p>
       </section>
     </article>
@@ -414,35 +414,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-super-120b-a12b-sft-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-sft-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>SFT · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-18</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>1.173371</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>0.7121329</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>36,521.260 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>37.640 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>448.615 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -458,7 +458,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision Tulu3 run must complete exactly 100 full-SFT steps on 16 GB200s at sequence length 8192, TP8/EP16, the recipe&#x27;s cohort GBS/MBS 32/1, and pad-8 offline packing. Loss must stay finite with no skipped or NaN iteration, and the step-100 checkpoint must save completely. The recipe moved from GBS 16 to the cohort GBS 32, so the earlier metrics no longer describe this command and it needs a rerun.
+        <p>On 16 GB200s at this item&#x27;s Bridge commit, the immutable-revision Tulu3 run completed exactly 100 full-SFT steps at sequence length 8192, TP8/EP16, the recipe&#x27;s cohort GBS/MBS 32/1, and pad-8 offline packing, with finite loss and zero skipped or NaN iterations, and the step-100 checkpoint saved completely. Metrics average steps 91-100; token-slot throughput uses 8192 times GBS32 per step.
 </p>
       </section>
     </article>
@@ -521,26 +521,26 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-24</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>7.022207</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>6.406034</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>21,544.740 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>15.930 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
@@ -555,7 +555,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4 --recipe nemotron_3_super_sft_16gpu_h100_bf16_32k_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 10 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}&#x27; checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-long-sft --save_interval 10 logger.log_interval=1 logger.log_throughput=true</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4 --recipe nemotron_3_super_sft_16gpu_h100_bf16_32k_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 10 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;2d59de1cbd51c0adf384eb906b766d1aee0e0517&quot;&#x27; dataset.hf_output_root=work/data/tulu3/nemotron-3-super-120b-a12b-long dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}&#x27; model.attention_backend=auto model.cross_entropy_loss_fusion=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 optimizer.optimizer_cpu_offload=true optimizer.optimizer_offload_fraction=1.0 optimizer.overlap_cpu_optimizer_d2h_h2d=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.ckpt_format=torch_dist checkpoint.async_save=false checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-long-sft --save_interval 10 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
