@@ -645,3 +645,91 @@ class TestGLM5BridgeModelConfig:
         assert restored.dsa_indexer_topk_freq == 4
         restored.finalize()
         assert restored.hybrid_layer_pattern == model_config.hybrid_layer_pattern
+
+
+def test_model_config_follows_hf_mlp_layer_types() -> None:
+    """Transformers builds each layer from ``mlp_layer_types``; it wins over ``first_k_dense_replace``."""
+    hf_config = _glm5_hf_config(
+        num_hidden_layers=4, first_k_dense_replace=3, mlp_layer_types=["dense", "sparse", "dense", "sparse"]
+    )
+
+    model_config = GLM5Bridge().hf_config_to_model_config(hf_config)
+
+    assert model_config.hybrid_layer_pattern == "D-DED-DE"
+    assert model_config.moe_layer_freq == [0, 0, 0, 1, 0, 0, 0, 1]
+
+
+@pytest.mark.parametrize(
+    ("mlp_layer_types", "message"),
+    [
+        (["dense", "sparse", "sparse"], "3 entries but num_hidden_layers is 4"),
+        (["dense", "sparse", "moe", "sparse"], "Unsupported GLM-5 mlp_layer_types"),
+    ],
+)
+def test_model_config_rejects_invalid_hf_mlp_layer_types(mlp_layer_types: list[str], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        _model_config_from_hf_config(num_hidden_layers=4, mlp_layer_types=mlp_layer_types)
+
+
+def _export_against_reference(model_hf_config: GlmMoeDsaConfig, reference: GlmMoeDsaConfig) -> GlmMoeDsaConfig:
+    from megatron.bridge.models.conversion.utils import conform_config_to_reference
+
+    model_config = GLM5Bridge().hf_config_to_model_config(model_hf_config)
+    mapped_config = GLM5Bridge.megatron_to_hf_config(model_config)
+    return GlmMoeDsaConfig(**conform_config_to_reference(mapped_config, reference.to_dict()))
+
+
+@pytest.mark.parametrize(
+    "model_overrides",
+    [
+        dict(num_hidden_layers=4, first_k_dense_replace=1),
+        dict(num_hidden_layers=6, mlp_layer_types=["dense", "sparse", "dense", "sparse", "sparse", "sparse"]),
+        dict(num_hidden_layers=5, first_k_dense_replace=2, index_topk_freq=2, index_skip_topk_offset=1),
+    ],
+)
+def test_megatron_config_export_writes_per_layer_types_for_a_smaller_model(model_overrides: dict) -> None:
+    """The per-layer lists describe the exported model, not the deeper GLM-5.2 reference checkpoint."""
+    model_hf_config = _glm5_hf_config(**model_overrides)
+
+    exported = _export_against_reference(model_hf_config, _glm5_hf_config())
+
+    assert exported.num_hidden_layers == model_hf_config.num_hidden_layers
+    assert exported.mlp_layer_types == model_hf_config.mlp_layer_types
+    assert exported.indexer_types == model_hf_config.indexer_types
+    assert exported.layer_types == model_hf_config.layer_types
+    round_trip = GLM5Bridge().hf_config_to_model_config(exported)
+    assert (
+        round_trip.hybrid_layer_pattern == GLM5Bridge().hf_config_to_model_config(model_hf_config).hybrid_layer_pattern
+    )
+
+
+def test_megatron_config_export_of_the_glm52_eight_layer_proxy_loads() -> None:
+    """The GLM-5.2 proxy recipe keeps GLM-5.2's widths with 8 of its 78 layers, split over two pipeline stages."""
+    from megatron.bridge.models.conversion.utils import conform_config_to_reference
+    from megatron.bridge.models.glm_moe_dsa.glm5_provider import glm_hybrid_pattern, split_glm_pattern
+
+    reference = _glm5_hf_config()
+    model_config = GLM5Bridge().hf_config_to_model_config(reference)
+    model_config.hybrid_layer_pattern = split_glm_pattern(
+        glm_hybrid_pattern(num_layers=8, first_k_dense_replace=3), [6, 2]
+    )
+
+    mapped_config = GLM5Bridge.megatron_to_hf_config(model_config)
+    exported = GlmMoeDsaConfig(**conform_config_to_reference(mapped_config, reference.to_dict()))
+
+    assert exported.num_hidden_layers == 8
+    assert exported.mlp_layer_types == ["dense"] * 3 + ["sparse"] * 5
+    assert exported.indexer_types == reference.indexer_types[:8]
+    assert exported.layer_types == ["indexed_attention"] * 8
+
+
+@pytest.mark.parametrize("overrides", [{}, _GLM51_OVERRIDES], ids=["glm-5.2", "glm-5.1"])
+def test_megatron_config_export_keeps_released_per_layer_types(overrides: dict) -> None:
+    reference = _glm5_hf_config(**overrides)
+
+    exported = _export_against_reference(reference, reference)
+
+    assert exported.first_k_dense_replace == 3
+    assert exported.mlp_layer_types == reference.mlp_layer_types
+    assert exported.indexer_types == reference.indexer_types
+    assert exported.layer_types == reference.layer_types
