@@ -31,6 +31,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.engine.batching import is_last_pipeline_stage
 from megatron.bridge.engine.datum import ModelOutput, PreparedMicrobatch
 from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.training.gpt_step import _prepare_packed_padding_mask
@@ -92,7 +93,9 @@ def call_model(
         return model(labels=microbatch.target_ids, loss_mask=model_loss_mask(microbatch, mtp_target_scope), **common)
     if output_head == "value":
         # No labels: the replaced output layer returns the per-token values as "logits" [B, T, 1].
-        return model(labels=None, **common)[..., 0]
+        # Only the last pipeline stage has that layer; earlier stages return hidden states for the next.
+        output = model(labels=None, **common)
+        return output[..., 0] if is_last_pipeline_stage(pg_collection.pp) else output
     raise ValueError(f"Unknown output_head {output_head!r}.")
 
 

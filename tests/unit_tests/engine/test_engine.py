@@ -217,9 +217,6 @@ def test_pipeline_parallelism_placeholders(monkeypatch):
     engine = _pipeline_engine(monkeypatch, last_stage=True)
     with pytest.raises(NotImplementedError, match="pipeline parallelism"):
         engine.cpu()
-    recipe = _pipeline_recipe_like()
-    with pytest.raises(NotImplementedError, match="pipeline parallelism"):
-        TrainingEngine.from_recipe(recipe, output_head="value")
 
 
 def test_data_parallel_size_and_topology(monkeypatch):

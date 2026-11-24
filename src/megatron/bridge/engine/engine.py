@@ -360,10 +360,6 @@ class TrainingEngine:
         if output_head == "value" and is_multimodal(recipe):
             # TODO(multimodal): the value head replaces the language model's output layer inside the wrapper.
             raise NotImplementedError("output_head='value' is not implemented for multimodal models yet.")
-        if recipe.model.pipeline_model_parallel_size > 1 and (lora is not None or output_head == "value"):
-            # TODO(pp-lora), TODO(pp-value-head): neither has been run with the model split across stages
-            # (the value head lives on the last stage only; adapters live on every stage).
-            raise NotImplementedError("lora and output_head='value' are not supported with pipeline parallelism yet.")
         if output_head == "value":
             apply_value_head_model_settings(recipe.model)
         finalize_recipe(recipe)

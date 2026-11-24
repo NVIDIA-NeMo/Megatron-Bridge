@@ -25,11 +25,11 @@ sharing one runtime.
 ## Compute
 
 - **Pipeline parallelism** is supported for `forward_only`, `forward_backward`, `optim_step`,
-  `save_state`, `load_state` and `export` (scores and the loss summary come from the last stage;
-  `broadcast_output` copies them to the other stages, and `optim_step` shares the window totals). Still
-  rejected with PP > 1:
+  `save_state`, `load_state` and `export`, with the value head and with LoRA (scores and the loss
+  summary come from the last stage; `broadcast_output` copies them to the other stages, and
+  `optim_step` shares the window totals). A value head is initialized differently than without PP,
+  because Megatron seeds each pipeline stage separately. Still rejected with PP > 1:
   - `cpu()` (`TODO(pp-offload)`): not run with stages yet.
-  - LoRA (`TODO(pp-lora)`) and the value head (`TODO(pp-value-head)`), at construction.
   - Router replay (`TODO(pp-replay)`, `recipes/base.py`): a stage holds only some MoE layers, so replay
     needs each router's global layer index.
   - Packs of different lengths (`TODO(pp-variable-length)`): the recipe must set

@@ -389,6 +389,22 @@ def test_call_model_hands_mrope_models_three_position_rows(mrope, shape):
     assert (position_ids == torch.arange(4)).all()
 
 
+class _ThreeDimModel(_RecordingModel):
+    def __call__(self, **kwargs):
+        return torch.zeros(1, 4, 8)
+
+
+@pytest.mark.parametrize("stage, shape", [(1, (1, 4)), (0, (1, 4, 8))])
+def test_call_model_takes_the_value_on_the_last_pipeline_stage_only(stage, shape):
+    # Earlier stages return hidden states for the next stage; slicing them would corrupt the transfer.
+    model = _ThreeDimModel()
+    pg_collection = SimpleNamespace(pp=SimpleNamespace(rank=lambda: stage, size=lambda: 2))
+    output = call_model(
+        model, _rl_batch(), pg_collection, mtp_target_scope="primary", mrope=False, output_head="value"
+    )
+    assert output.shape == shape
+
+
 @pytest.mark.parametrize(
     "model_config, expected",
     [
