@@ -11029,6 +11029,560 @@
       "title": "qwen3_8_27b"
     },
     {
+      "architecture": "Qwen4ExpForConditionalGeneration",
+      "base_container": "nvcr.io/nvidia/nemo:26.10",
+      "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+      "entries": [
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-hf-to-megatron-cpu",
+          "expected_result": "CPU import and persisted-checkpoint reload have not been verified.",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.hf_to_megatron_cpu",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "hf_to_megatron_cpu"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [
+            {
+              "expert_parallel": "8",
+              "expert_tensor_parallel": "1",
+              "gpus_per_node": "4",
+              "nodes": "2",
+              "pipeline_parallel": "1",
+              "tensor_parallel": "4",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --tp 4 --pp 1 --ep 8 --etp 1 --hf-model Qwen/Qwen3.8-Flash-Next --hf-revision de4b8e4d43b917e7706784d8bb445c9af86a3540 --torch-dtype bfloat16 --megatron-path work/checkpoints/qwen3.8-flash-next-vl"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-hf-to-megatron-gpu",
+          "expected_result": "Full language/vision import persisted a native checkpoint that reloaded in a fresh export process. The supported full-VL roundtrip retained exact tensor keys, shapes, dtypes and bytes. MTP is unsupported and excluded.",
+          "hardware": null,
+          "last_verified": "2026-11-22",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.hf_to_megatron_gpu",
+          "status": "verified",
+          "variant": null,
+          "workflow": "hf_to_megatron_gpu"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-megatron-to-hf-cpu",
+          "expected_result": "CPU export, reload, and weight equality have not been verified.",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.megatron_to_hf_cpu",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "megatron_to_hf_cpu"
+        },
+        {
+          "bridge_commit": "195182b68ef07ccf4b6569da1f51e75dc8c712d8",
+          "command_topologies": [
+            {
+              "expert_parallel": "8",
+              "expert_tensor_parallel": "1",
+              "gpus_per_node": "4",
+              "nodes": "2",
+              "pipeline_parallel": "1",
+              "tensor_parallel": "4",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --tp 4 --pp 1 --ep 8 --etp 1 --hf-model Qwen/Qwen3.8-Flash-Next --hf-revision de4b8e4d43b917e7706784d8bb445c9af86a3540 --torch-dtype bfloat16 --export-weight-dtype bfloat16 --distributed-save --megatron-path work/checkpoints/qwen3.8-flash-next-vl --hf-path work/exports/exported-hf"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-megatron-to-hf-gpu",
+          "expected_result": "Fresh native reload and export completed. All 1,627 supported tensors match the pinned HF checkpoint exactly by key, shape, dtype and bytes: 333 vision tensors, 1,624 BF16 tensors and three I64 PLE buffers. The 31 unsupported MTP tensors are excluded. Reloaded config fields match except provenance metadata and unsupported MTP configuration; tokenizer and image-processor configuration and a processed image batch agree. An auxiliary asset checker failed on integer-key diagnostic formatting after successful export and weight comparison, causing the original wrapper to exit unsuccessfully. The repaired checker passed separately on the same preserved export in the released container. This does not verify inference or training-trajectory equivalence.",
+          "hardware": null,
+          "last_verified": "2026-11-22",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.megatron_to_hf_gpu",
+          "status": "verified",
+          "variant": null,
+          "workflow": "megatron_to_hf_gpu"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-manual-forward-pass",
+          "expected_result": "The public model-comparison command has not been qualified on this revision. Historical component-level numerical investigations and metadata/kernel checks do not establish complete HF/Bridge forward or training-trajectory parity.",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.manual_forward_pass",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "manual_forward_pass"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-inference",
+          "expected_result": "Standalone deterministic generation has not been verified. Cached generation is unsupported by the current model implementation.",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.inference",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "inference"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-pretrain-gb200",
+          "expected_result": "Full-VLM pretraining with image inputs has not been verified. The fixed-4096-token frozen-PLE Muon run belongs to the separate text-only card.",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.pretrain.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "pretrain"
+        },
+        {
+          "bridge_commit": "def1f75cbfac2b7376fb84fe89bd4a3da14d53af",
+          "command_topologies": [
+            {
+              "gpus_per_node": "4",
+              "nodes": "16",
+              "recipe": "qwen38_flash_next_sft_64gpu_gb200_bf16_config",
+              "total_gpus": 64
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe qwen38_flash_next_sft_64gpu_gb200_bf16_config --mode sft --step-func qwen3_vl_step --max_steps 100 --pretrained_checkpoint work/cache/qwen3.8-flash-next dataset.path=work/data/datacomp-8192 logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/sft/resolved-config.yaml logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/sft/tensorboard"
+          ],
+          "dimensions": {},
+          "enabled_features": {
+            "moe_dispatcher": "hybridep"
+          },
+          "entry_id": "qwen3-8-flash-next-sft-gb200",
+          "expected_result": "EARLY, UNOPTIMIZED recipe. Completed 100 native Energon image-SFT updates from the full pinned HF checkpoint. The bounded dataset contains the first 8,192 complete image-caption pairs from two retained DataComp shards, in shard/member order, with no skipped samples. Each ChatML conversation uses the prompt \"Describe this image.\" and supervises the original caption; image bytes are preserved. PLE lookup tables are frozen and EP-sharded; detached QSA indexer weights are frozen. Remaining language modules, vision encoder and projector are trainable. Configuration: 64 GB200 GPUs, TP4/SP, EP64/ETP1, PP1/CP1, fixed padded unpacked sequence 4096, MBS1/GBS16, BF16 with FP32 gradient reduction, distributed Adam, constant LR 1e-6, zero weight decay and clip 1. Natural routing, HybridEP, MoE fusions and manual GC every 100 steps are enabled. CUDA graphs, recomputation, gradient/parameter overlap, shared-expert overlap, evaluation and checkpoint saving are disabled. All 64 ranks completed 100 finite, unskipped updates with zero NaN iterations. Full frozen PLE/indexer hashes were unchanged; selected language/vision parameters and FP32 Adam samples changed. Real image inputs and encoder execution were observed. The run consumed 1,600 conversations and 37,805 supervised tokens, counted once across dense-DP representatives. Preclip gradient norms ranged from 19.290594 to 163.363068. Final-ten metrics use updates 91-100. Native timings include lightweight verification callbacks; no profiler was active. Periodic GC runs after step-100 logging, so this window excludes that endpoint collection. Throughput counts padded slots, not supervised tokens; short captions leave substantial padding. TFLOPs estimate model matrix work, with a dense QSA surrogate and approximate GDN recurrence, rather than hardware utilization. These are bounded functional observations, not held-out quality, convergence or cross-layout numerical equivalence. Dataset, sequence length and trainable parameters differ from the historical 2K Nemotron SFT run, so the two results are not a controlled performance comparison.",
+          "hardware": "GB200",
+          "last_verified": "2026-11-23",
+          "metrics": {
+            "final_loss": 1.9951726198196411,
+            "initial_loss": 4.365921497344971,
+            "last_10_steps_model_tflops_per_gpu_avg": 28.944172859191895,
+            "last_10_steps_step_time_ms_avg": 1513.917350769043,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 676.390953231249
+          },
+          "precision": "bf16",
+          "source_pointer": "items.sft.GB200",
+          "status": "verified",
+          "variant": null,
+          "workflow": "sft"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-sft-export-inference-gb200",
+          "expected_result": "SFT checkpoint export, reload, and deterministic HF generation remain unverified.",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.sft_export_inference.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "sft_export_inference"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-sft-long-context-gb200",
+          "expected_result": "Long-context SFT with packing and context parallelism has not been verified.",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.sft_long_context.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "sft_long_context"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-peft-gb200",
+          "expected_result": "Parameter-efficient finetuning has not been verified.",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.peft.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "peft"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-checkpoint-resume-gb200",
+          "expected_result": "Full optimizer/RNG checkpoint resume and loss sentinels have not been verified.",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.checkpoint_resume.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "checkpoint_resume"
+        }
+      ],
+      "hf_id": "Qwen/Qwen3.8-Flash-Next",
+      "hf_revision": "de4b8e4d43b917e7706784d8bb445c9af86a3540",
+      "min_transformers_version": "5.16.1",
+      "slug": "qwen3.8-flash-next",
+      "source_card": "examples/model_verification_cards/qwen3.8-flash-next/card.yaml",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. This VLM card covers text_only=False: full language, vision encoder and projector import/export, plus image SFT. All 1,627 supported tensors passed exact GPU roundtrip comparison, and 100 image-SFT updates are verified. The recipe is EARLY, UNOPTIMIZED. Text-only frozen-PLE pretraining is recorded separately in the qwen3.8-flash-next-text-only card.",
+      "title": "qwen3_8_flash_next_vlm"
+    },
+    {
+      "architecture": "Qwen4ExpForCausalLM",
+      "base_container": "nvcr.io/nvidia/nemo:26.10",
+      "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+      "entries": [
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-text-only-hf-to-megatron-cpu",
+          "expected_result": "CPU import and persisted-checkpoint reload have not been verified.",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.hf_to_megatron_cpu",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "hf_to_megatron_cpu"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [
+            {
+              "expert_parallel": "8",
+              "expert_tensor_parallel": "1",
+              "gpus_per_node": "4",
+              "nodes": "2",
+              "pipeline_parallel": "1",
+              "tensor_parallel": "4",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --tp 4 --pp 1 --ep 8 --etp 1 --hf-model Qwen/Qwen3.8-Flash-Next --hf-revision de4b8e4d43b917e7706784d8bb445c9af86a3540 --torch-dtype bfloat16 --text-only --megatron-path work/checkpoints/qwen3.8-flash-next-text"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-text-only-hf-to-megatron-gpu",
+          "expected_result": "The text_only=True GPU import completed and its persisted standalone language checkpoint reloaded for the verified pretraining run, including TP-to-EP PLE resharding. Vision encoder and projector weights are excluded. Exact standalone-text keys, shapes, dtypes and values have not been independently checked; the full-VLM roundtrip is not text-only conversion evidence. MTP is unsupported and excluded.",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.hf_to_megatron_gpu",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "hf_to_megatron_gpu"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-text-only-megatron-to-hf-cpu",
+          "expected_result": "CPU export, reload, and weight equality have not been verified.",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.megatron_to_hf_cpu",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "megatron_to_hf_cpu"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-text-only-megatron-to-hf-gpu",
+          "expected_result": "Standalone text-only export, HF reload and exact weight equality have not been verified. The full-VLM roundtrip on the companion card does not qualify this namespace.",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.megatron_to_hf_gpu",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "megatron_to_hf_gpu"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-text-only-manual-forward-pass",
+          "expected_result": "The public model-comparison command has not been qualified on this revision. Historical component-level numerical investigations and metadata/kernel checks do not establish complete HF/Bridge forward or training-trajectory parity.",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.manual_forward_pass",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "manual_forward_pass"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-text-only-inference",
+          "expected_result": "Standalone deterministic generation has not been verified. Cached generation is unsupported by the current model implementation.",
+          "hardware": null,
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.inference",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "inference"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [
+            {
+              "gpus_per_node": "4",
+              "nodes": "8",
+              "recipe": "qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config",
+              "total_gpus": 32
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 8 --gpus-per-node 4 --recipe qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config --mode pretrain --max_steps 30 --pretrained_checkpoint work/checkpoints/qwen3.8-flash-next-text 'dataset.data_path=[work/data/wikitext2_qwen38_train_text_document]' logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/pretrain/resolved-config.yaml logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/pretrain/tensorboard"
+          ],
+          "dimensions": {},
+          "enabled_features": {
+            "moe_dispatcher": "hybridep"
+          },
+          "entry_id": "qwen3-8-flash-next-text-only-pretrain-gb200",
+          "expected_result": "EARLY, UNOPTIMIZED recipe. Completed 30 natural-routing updates from a separately imported text-only native checkpoint. Full 48-layer language model, sequence 4096, 32 GB200 GPUs, TP2/SP, EP32/ETP1, PP1/CP1, MBS1/GBS32, BF16 with FP32 gradient reduction. Only EP-sharded hashed n-gram tables are frozen; PLE projections, normalization and convolution stay trainable. Fresh layer-wise distributed Muon optimizer, constant LR 1e-4, five-step warmup, zero weight decay and clip 1. The data is bounded Salesforce/wikitext train, wikitext-2-raw-v1 revision b08601e04326c79dfdd32d625aee71d232d685c3: one million tokens from 9,460 nonblank rows in source order, EOS 248046 appended per document and the final document trimmed to that token bound. HybridEP and MoE fusions are enabled; CUDA graphs, recomputation, evaluation and checkpoint saving are disabled. Final-ten metrics use updates 21-30. This is short functional qualification, not full convergence or a cross-model comparison. TFLOPs estimate matrix work, including forward-only indexer projections. At 4K, QSA attention uses a dense surrogate and indexer score work is not accurately counted; optimizer work, norms, lookups, PLE depthwise convolution and communication are excluded. Throughput counts fixed sequence token slots. All 32 ranks completed 30 finite, unskipped updates with zero NaN iterations. Full frozen-table hashes were unchanged; tables stayed outside DDP and optimizer groups. Selected language parameters and FP32 Muon/Adam samples changed. The run consumed 960 sequences (3,932,160 token slots); preclip gradient norms ranged from 1.039667 to 12.357839. Native timings include lightweight verification callbacks; no profiler was active.",
+          "hardware": "GB200",
+          "last_verified": "2026-11-22",
+          "metrics": {
+            "final_loss": 1.3666266202926636,
+            "initial_loss": 1.927701711654663,
+            "last_10_steps_model_tflops_per_gpu_avg": 47.45907783508301,
+            "last_10_steps_step_time_ms_avg": 3636.6934776306152,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 1126.2978376359156
+          },
+          "precision": "bf16",
+          "source_pointer": "items.pretrain.GB200",
+          "status": "verified",
+          "variant": null,
+          "workflow": "pretrain"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-text-only-sft-gb200",
+          "expected_result": "Text-only SFT has not been verified. The image-SFT run uses the full VLM and is recorded on its companion card.",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.sft.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "sft"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-text-only-sft-export-inference-gb200",
+          "expected_result": "SFT checkpoint export, reload, and deterministic HF generation remain unverified.",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.sft_export_inference.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "sft_export_inference"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-text-only-sft-long-context-gb200",
+          "expected_result": "Long-context SFT with packing and context parallelism has not been verified.",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.sft_long_context.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "sft_long_context"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-text-only-peft-gb200",
+          "expected_result": "Parameter-efficient finetuning has not been verified.",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.peft.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "peft"
+        },
+        {
+          "bridge_commit": "1359a94264fadc590826edd29638b60bda554f5d",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-flash-next-text-only-checkpoint-resume-gb200",
+          "expected_result": "Full optimizer/RNG checkpoint resume and loss sentinels have not been verified.",
+          "hardware": "GB200",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.checkpoint_resume.GB200",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "checkpoint_resume"
+        }
+      ],
+      "hf_id": "Qwen/Qwen3.8-Flash-Next",
+      "hf_revision": "de4b8e4d43b917e7706784d8bb445c9af86a3540",
+      "min_transformers_version": "5.16.1",
+      "slug": "qwen3.8-flash-next-text-only",
+      "source_card": "examples/model_verification_cards/qwen3.8-flash-next-text-only/card.yaml",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. This text-only card covers text_only=True: the standalone language model extracted from the same VLM checkpoint, excluding vision encoder and projector weights. The EARLY, UNOPTIMIZED recipe completed 30 fixed-4096-token pretraining updates with frozen EP-sharded PLE tables and Muon. GPU import and native reload were exercised by that run; exact standalone-text conversion equality remains unverified. Full-VLM conversion and image SFT are recorded separately in the qwen3.8-flash-next card.",
+      "title": "qwen3_8_flash_next_text_only"
+    },
+    {
       "architecture": "BeamForCausalLM",
       "base_container": "nvcr.io/nvidia/pytorch:26.08-py3",
       "bridge_commit": "21af081ccee873e882aa77d5d7b0b234dec7ab9e",

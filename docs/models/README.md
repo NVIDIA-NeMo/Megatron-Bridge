@@ -4,7 +4,7 @@
 
 Choose a model to open its interactive import/export and training configurations. Every option comes directly from an authoritative YAML verification card; independent fields are never combined into synthetic commands.
 
-Current inventory: **31 model cards** and **443 concrete configurations**.
+Current inventory: **33 model cards** and **467 concrete configurations**.
 
 Each model page lets you select import/export, pretraining, benchmarking, SFT, LoRA, or long-context SFT and immediately see the exact command and expected result for the recorded precision and GPU.
 
@@ -172,7 +172,7 @@ Choose a model to inspect its recorded import/export, training, and precision co
   <section class="verification-provider-card">
     <header class="verification-provider-heading">
       <strong>Qwen</strong>
-      <span>5 models</span>
+      <span>7 models</span>
     </header>
     <div class="verification-provider-models">
       <a class="verification-model-link" href="qwen/qwen3-235b-a22b.html#verified-qwen3-235b-a22b">
@@ -194,6 +194,14 @@ Choose a model to inspect its recorded import/export, training, and precision co
       <a class="verification-model-link" href="qwen/qwen3.8-27b.html#verified-qwen3.8-27b">
         <strong title="Qwen/Qwen3.8-27B">Qwen3.8-27B</strong>
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </a>
+      <a class="verification-model-link" href="qwen/qwen3.8-flash-next.html#verified-qwen3.8-flash-next">
+        <strong title="Qwen/Qwen3.8-Flash-Next">Qwen3.8-Flash-Next</strong>
+        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
+      </a>
+      <a class="verification-model-link" href="qwen/qwen3.8-flash-next-text-only.html#verified-qwen3.8-flash-next-text-only">
+        <strong title="Qwen/Qwen3.8-Flash-Next">Qwen3.8-Flash-Next</strong>
+        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
       </a>
     </div>
   </section>

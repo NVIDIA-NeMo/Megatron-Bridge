@@ -12,6 +12,8 @@
 
 ## 📣 News
 
+- [11/23/2026] **Megatron Bridge and Megatron-Core were used to train MemTensor’s MemT-1.0**, a family of models that integrates persistent, evolving memory to reuse historical information without reloading the original context. The [Pro model](https://huggingface.co/MemTensor/MemT-1.0-Pro) builds on NVIDIA Nemotron 3 Ultra. Megatron Bridge native support is coming soon. See the [paper](https://arxiv.org/abs/2610.26825) for details.
+
 - [11/19/2026] **Megatron Bridge will be merged into the Megatron-LM repository.** See [Unified Megatron-LM](https://docs.nvidia.com/nemo/megatron-bridge/nightly/unified-megatron.html) for more details.
 
 - [11/13/2026] [**Inkling 2 Small**](https://huggingface.co/thinkingmachines/Inkling-2-Small) from Thinking Machines is now supported! Megatron Bridge provides HF↔Megatron checkpoint conversion, including the release's quantized experts, image-and-text inference, and GB200 recipes for pretraining, full SFT, 32K long-context SFT with context parallelism, LoRA, and image-text SFT and LoRA. See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/inkling/README.md) and [verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/inkling-2-small/card.yaml) for verified configurations and current limitations.
@@ -110,6 +112,27 @@ For development installation and additional details, please refer to our [Contri
 ### Megatron-Core Submodule (main & dev)
 
 Megatron Bridge pins [Megatron-Core](https://github.com/NVIDIA/Megatron-LM) as a git submodule at `3rdparty/Megatron-LM`. The repository tracks two pinned commits — one from the upstream **main** branch (default) and one from **dev** — managed by `scripts/switch_mcore.sh`.
+
+Before the first `uv sync` (or a manual MCore install/wheel build), run:
+
+```bash
+bash scripts/prepare_mcore.sh
+uv sync --locked
+```
+
+This keeps the existing submodule and excludes only its `megatron/bridge` directory
+with Git sparse checkout, so this repository provides `megatron.bridge`. It does
+not change the upstream commit or tracked files. Preparation removes ignored MCore
+`build/` and `megatron_core.egg-info/` output to prevent stale files entering wheels;
+it stops if local source changes or unexpected files need your attention.
+Run it for each fresh clone and before `docker build` from a local checkout.
+`scripts/switch_mcore.sh`, CI container builds, and installation tests prepare MCore
+automatically. Existing `PYTHONPATH` and editable-install paths stay unchanged.
+
+If this environment already installed an unfiltered MCore wheel, use a fresh
+virtual environment, or uninstall MCore and reinstall both MCore and standalone
+Bridge after preparation. Sparse checkout alone cannot remove already installed
+files. This temporary exclusion can be removed when standalone Bridge retires.
 
 The submodule committed to the repo always points to the **main** commit. Use the **dev** commit when you need a Megatron-Core feature or fix that has not yet landed on main, or to validate forward-compatibility with upcoming MCore changes:
 
@@ -260,7 +283,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**Muse Spark Open**](docs/models/muse_spark_open/muse-spark-open.md) | Muse-Spark-Open-816B-A42B |
 | [**Nemotron**](docs/models/nemotron/index.md) | Nemotron-3 Nano, Nemotron-3 Super, Nemotron-3 Ultra, Nemotron-3 Nano Omni |
 | [**OLMoE**](docs/models/olmoe/index.md) | OLMoE |
-| [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen3.5 (dense/MoE), Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
+| [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen3.5 (dense/MoE), Qwen3.8-Flash-Next (VLM / text-only), Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
 | [**Sarvam**](docs/models/sarvam/index.md) | Sarvam |
 | [**StepFun**](docs/models/stepfun/index.md) | Step-3.5-Flash, Step-3.7-Flash |
 

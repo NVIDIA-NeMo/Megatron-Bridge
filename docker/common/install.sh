@@ -65,6 +65,8 @@ main() {
     apt-get update
     apt-get install -y wget curl git cmake
 
+    bash "$(dirname "${BASH_SOURCE[0]}")/../../scripts/prepare_mcore.sh"
+
     # Install CUDA
     if [[ "$BASE_IMAGE" == "ubuntu" ]]; then
         rm /etc/apt/sources.list.d/cuda*.list || true

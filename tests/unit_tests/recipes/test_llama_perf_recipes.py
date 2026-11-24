@@ -29,6 +29,7 @@ from megatron.bridge.perf_recipes.llama.gb300.llama3 import (
     llama3_8b_pretrain_8gpu_gb300_fp8mx_config,
     llama3_8b_pretrain_8gpu_gb300_nvfp4_config,
     llama3_70b_pretrain_64gpu_gb300_fp8mx_config,
+    llama3_70b_pretrain_64gpu_gb300_nvfp4_config,
 )
 from megatron.bridge.perf_recipes.llama.h100.llama3 import (
     llama3_70b_pretrain_64gpu_h100_fp8cs_config,
@@ -37,6 +38,7 @@ from megatron.bridge.perf_recipes.llama.vrnvl72.llama3 import (
     llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config,
     llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config,
     llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config,
+    llama3_70b_pretrain_64gpu_vrnvl72_nvfp4_config,
 )
 from megatron.bridge.recipes.llama.llama3 import llama3_70b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
@@ -139,8 +141,20 @@ class _OfflineLlama3_70BBridge(_OfflineAutoBridge):
 
 
 @pytest.mark.unit
-def test_llama3_70b_vrnvl72_fp8mx_sets_explicit_pipeline_layout(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The 64-GPU VRNVL72 MXFP8 recipe moves layers off the stage that holds the output layer and loss.
+@pytest.mark.parametrize(
+    ("vrnvl72_factory", "gb300_factory"),
+    (
+        (llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config, llama3_70b_pretrain_64gpu_gb300_fp8mx_config),
+        (llama3_70b_pretrain_64gpu_vrnvl72_nvfp4_config, llama3_70b_pretrain_64gpu_gb300_nvfp4_config),
+    ),
+    ids=lambda value: value.__name__,
+)
+def test_llama3_70b_vrnvl72_sets_explicit_pipeline_layout(
+    monkeypatch: pytest.MonkeyPatch,
+    vrnvl72_factory: Callable[[], ConfigContainer],
+    gb300_factory: Callable[[], ConfigContainer],
+) -> None:
+    """The 64-GPU VRNVL72 MXFP8 and NVFP4 recipes move layers off the stage that holds the output layer and loss.
 
     The last PP rank keeps 18 transformer layers and the two middle ranks take one more each
     (20/21/21/18); its last virtual stage holds 2 layers plus the output layer and loss. The
@@ -149,8 +163,8 @@ def test_llama3_70b_vrnvl72_fp8mx_sets_explicit_pipeline_layout(monkeypatch: pyt
     patch_recipe_construction_dependencies(monkeypatch)
     patch_recipe_module_global(monkeypatch, llama3_70b_pretrain_config, "AutoBridge", _OfflineLlama3_70BBridge)
 
-    cfg = llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config()
-    gb300_cfg = llama3_70b_pretrain_64gpu_gb300_fp8mx_config()
+    cfg = vrnvl72_factory()
+    gb300_cfg = gb300_factory()
 
     assert cfg.model.pipeline_model_parallel_layout == "Et*4|t*5|t*5|t*4|(t*4|)*15,ttL"
 
@@ -274,16 +288,28 @@ def test_llama3_vrnvl72_fp8mx_perf_settings(
 
 
 @pytest.mark.unit
-def test_llama3_vrnvl72_nvfp4_perf_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The VRNVL72 NVFP4 recipe adds MXFP8 attention, fused QKV+RoPE, TE SwiGLU and no attention mask to GB300.
+@pytest.mark.parametrize(
+    ("vrnvl72_factory", "gb300_factory"),
+    (
+        (llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config, llama3_8b_pretrain_8gpu_gb300_nvfp4_config),
+        (llama3_70b_pretrain_64gpu_vrnvl72_nvfp4_config, llama3_70b_pretrain_64gpu_gb300_nvfp4_config),
+    ),
+    ids=lambda value: value.__name__,
+)
+def test_llama3_vrnvl72_nvfp4_perf_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    vrnvl72_factory: Callable[[], ConfigContainer],
+    gb300_factory: Callable[[], ConfigContainer],
+) -> None:
+    """The VRNVL72 NVFP4 recipes add MXFP8 attention, fused QKV+RoPE, TE SwiGLU and no attention mask to GB300.
 
     ``NVTE_DPA_FP8_RECIPE`` selects block-scaled MXFP8 for that attention path. Apart from the FP8 attention
     flag, the mixed-precision settings and the parallel layout match GB300.
     """
     patch_recipe_construction_dependencies(monkeypatch)
 
-    vrnvl72_cfg = llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config()
-    gb300_cfg = llama3_8b_pretrain_8gpu_gb300_nvfp4_config()
+    vrnvl72_cfg = vrnvl72_factory()
+    gb300_cfg = gb300_factory()
 
     assert vrnvl72_cfg.model.fused_single_qkv_rope is True
     assert vrnvl72_cfg.model.use_te_activation_func is True

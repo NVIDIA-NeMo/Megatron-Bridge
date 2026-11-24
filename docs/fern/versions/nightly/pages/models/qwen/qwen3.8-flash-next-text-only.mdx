@@ -1,0 +1,399 @@
+# Qwen3.8-Flash-Next Text-only
+
+`AutoBridge.from_hf_pretrained("Qwen/Qwen3.8-Flash-Next", text_only=True)`
+selects the standalone `Qwen4ExpForCausalLM` architecture and excludes vision
+encoder/projector weights. Conversion uses `convert.sh import --text-only`.
+The [VLM guide](qwen3.8-flash-next.md) records full-model conversion and image SFT.
+
+The text recipe is **EARLY, UNOPTIMIZED**: the full 48-layer language model,
+fixed sequence length 4096, 32 GB200 GPUs, TP2/SP, EP32/ETP1, PP1/CP1 and Muon.
+Only EP-sharded PLE n-gram lookup tables are frozen; projections, normalization
+and convolution remain trainable. Natural routing and HybridEP are enabled.
+The input is a bounded one-million-token WikiText dataset, reused across 30 updates.
+
+| Workload | GPUs / sequence / updates | Initial → final loss | Final-ten mean step | TFLOP/s/GPU | Token slots/s/GPU |
+| --- | --- | --- | --- | --- | --- |
+| Frozen-PLE text / Muon | 32 / 4096 / 30 | 1.927702 → 1.366627 | 3.637 s | 47.46 | 1126.30 |
+
+Released NeMo 26.10 verification completed on 2026-11-22. All 32 ranks completed
+finite, unskipped updates and frozen table hashes remained unchanged. Text-only
+GPU import and native reload were exercised; an independent exact standalone-text
+weight comparison and text-only export remain unverified. Full-VLM roundtrip
+results do not qualify this distinct checkpoint namespace.
+
+The [text-only verification card](../../../examples/model_verification_cards/qwen3.8-flash-next-text-only/card.yaml)
+retains the original source revision, commands, dataset and metric definitions.
+These are functional observations, not optimized benchmarks. TFLOP/s uses the
+run's original analytical estimator, including a dense surrogate for 4K QSA;
+it has not been recomputed with the newer model-local estimator. Training does
+not establish inference, cross-framework trajectory parity or optimizer/RNG resume.
+
+See the [training instructions](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/qwen/qwen4_exp/README.md)
+for separate checkpoint import and the registered recipe. The shared decoder's
+[PLE sharding implementation and attribution](qwen3.8-flash-next.md#frozen-ple-table-sharding)
+also apply to this mode.
+
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
+
+## Verified configurations
+
+Choose an exact recorded configuration to see its command and expected result. These selectors are generated from the authoritative verification cards and never synthesize combinations.
+
+<a id="verified-qwen3.8-flash-next-text-only"></a>
+### Run a configuration
+
+Choose a workflow, precision, and exact recorded combination. The command and expected result update below.
+
+<div class="verification-model-explorer" data-model-explorer>
+  <div class="verification-model-controls" hidden>
+    <div class="verification-capability-tabs" role="tablist" aria-label="Workflow">
+      <button type="button" role="tab" aria-selected="true" data-capability-tab="import-export">Import & Export</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="pretrain">Pretrain</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="benchmark" disabled>Benchmark</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="sft">SFT</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="lora">LoRA</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="long-context">Long Context</button>
+    </div>
+    <div class="verification-filter-row">
+      <div class="verification-precision-controls" aria-label="Precision filter">
+        <span>Precision</span>
+        <button type="button" class="is-active" data-precision="">All</button>
+        <button type="button" data-precision="bf16">BF16</button>
+        <button type="button" data-precision="fp8_mx">FP8 MX</button>
+        <button type="button" data-precision="nvfp4">NVFP4</button>
+      </div>
+      <div class="verification-hardware-controls" aria-label="GPU filter">
+        <span>GPU</span>
+        <button type="button" class="is-active" data-hardware="">All</button>
+        <button type="button" data-hardware="GB200">GB200</button>
+      </div>
+      <span class="verification-combination-count" aria-live="polite"></span>
+    </div>
+  </div>
+  <div class="verification-combination-list" hidden>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="qwen3-8-flash-next-text-only-hf-to-megatron-cpu" aria-controls="qwen3-8-flash-next-text-only-hf-to-megatron-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · CPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="qwen3-8-flash-next-text-only-hf-to-megatron-gpu" aria-controls="qwen3-8-flash-next-text-only-hf-to-megatron-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · GPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="qwen3-8-flash-next-text-only-megatron-to-hf-cpu" aria-controls="qwen3-8-flash-next-text-only-megatron-to-hf-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · CPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="qwen3-8-flash-next-text-only-megatron-to-hf-gpu" aria-controls="qwen3-8-flash-next-text-only-megatron-to-hf-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · GPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="qwen3-8-flash-next-text-only-pretrain-gb200" aria-controls="qwen3-8-flash-next-text-only-pretrain-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · GB200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="qwen3-8-flash-next-text-only-sft-gb200" aria-controls="qwen3-8-flash-next-text-only-sft-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>SFT · GB200</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="qwen3-8-flash-next-text-only-sft-long-context-gb200" aria-controls="qwen3-8-flash-next-text-only-sft-long-context-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Long Context · GB200</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="qwen3-8-flash-next-text-only-peft-gb200" aria-controls="qwen3-8-flash-next-text-only-peft-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>LoRA · GB200</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+  </div>
+  <div class="verification-model-details">
+    <article id="qwen3-8-flash-next-text-only-hf-to-megatron-cpu" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-text-only-hf-to-megatron-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · CPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>CPU import and persisted-checkpoint reload have not been verified.</p>
+      </section>
+    </article>
+    <article id="qwen3-8-flash-next-text-only-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-text-only-hf-to-megatron-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · GPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --tp 4 --pp 1 --ep 8 --etp 1 --hf-model Qwen/Qwen3.8-Flash-Next --hf-revision de4b8e4d43b917e7706784d8bb445c9af86a3540 --torch-dtype bfloat16 --text-only --megatron-path work/checkpoints/qwen3.8-flash-next-text</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The text_only=True GPU import completed and its persisted standalone language checkpoint reloaded for the verified pretraining run, including TP-to-EP PLE resharding. Vision encoder and projector weights are excluded. Exact standalone-text keys, shapes, dtypes and values have not been independently checked; the full-VLM roundtrip is not text-only conversion evidence. MTP is unsupported and excluded.</p>
+      </section>
+    </article>
+    <article id="qwen3-8-flash-next-text-only-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-text-only-megatron-to-hf-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · CPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>CPU export, reload, and weight equality have not been verified.</p>
+      </section>
+    </article>
+    <article id="qwen3-8-flash-next-text-only-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-text-only-megatron-to-hf-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · GPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Standalone text-only export, HF reload and exact weight equality have not been verified. The full-VLM roundtrip on the companion card does not qualify this namespace.</p>
+      </section>
+    </article>
+    <article id="qwen3-8-flash-next-text-only-pretrain-gb200" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-text-only-pretrain-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · GB200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-22</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>1.9277017</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>1.3666266</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>3,636.693 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>47.459 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>1,126.298 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 8 --gpus-per-node 4 --recipe qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config --mode pretrain --max_steps 30 --pretrained_checkpoint work/checkpoints/qwen3.8-flash-next-text &#x27;dataset.data_path=[work/data/wikitext2_qwen38_train_text_document]&#x27; logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/pretrain/resolved-config.yaml logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/pretrain/tensorboard</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>EARLY, UNOPTIMIZED recipe. Completed 30 natural-routing updates from a separately imported text-only native checkpoint. Full 48-layer language model, sequence 4096, 32 GB200 GPUs, TP2/SP, EP32/ETP1, PP1/CP1, MBS1/GBS32, BF16 with FP32 gradient reduction. Only EP-sharded hashed n-gram tables are frozen; PLE projections, normalization and convolution stay trainable. Fresh layer-wise distributed Muon optimizer, constant LR 1e-4, five-step warmup, zero weight decay and clip 1. The data is bounded Salesforce/wikitext train, wikitext-2-raw-v1 revision b08601e04326c79dfdd32d625aee71d232d685c3: one million tokens from 9,460 nonblank rows in source order, EOS 248046 appended per document and the final document trimmed to that token bound. HybridEP and MoE fusions are enabled; CUDA graphs, recomputation, evaluation and checkpoint saving are disabled. Final-ten metrics use updates 21-30. This is short functional qualification, not full convergence or a cross-model comparison. TFLOPs estimate matrix work, including forward-only indexer projections. At 4K, QSA attention uses a dense surrogate and indexer score work is not accurately counted; optimizer work, norms, lookups, PLE depthwise convolution and communication are excluded. Throughput counts fixed sequence token slots. All 32 ranks completed 30 finite, unskipped updates with zero NaN iterations. Full frozen-table hashes were unchanged; tables stayed outside DDP and optimizer groups. Selected language parameters and FP32 Muon/Adam samples changed. The run consumed 960 sequences (3,932,160 token slots); preclip gradient norms ranged from 1.039667 to 12.357839. Native timings include lightweight verification callbacks; no profiler was active.</p>
+      </section>
+    </article>
+    <article id="qwen3-8-flash-next-text-only-sft-gb200" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-text-only-sft-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · GB200</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Text-only SFT has not been verified. The image-SFT run uses the full VLM and is recorded on its companion card.</p>
+      </section>
+    </article>
+    <article id="qwen3-8-flash-next-text-only-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-text-only-sft-long-context-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Long Context · GB200</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Long-context SFT with packing and context parallelism has not been verified.</p>
+      </section>
+    </article>
+    <article id="qwen3-8-flash-next-text-only-peft-gb200" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-text-only-peft-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>LoRA · GB200</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Parameter-efficient finetuning has not been verified.</p>
+      </section>
+    </article>
+  </div>
+</div>
+
+{/* END GENERATED VERIFIED CONFIGURATIONS */}

@@ -2193,15 +2193,20 @@ class MegatronModelBridge(
             )  # dict will be none except for one expert;
             # Finalize the converted tensor for the current export rank
             converted_weights_dict = self._truncate_vocab_padding(task, converted_weights_dict)
-            # Quantizer ranges keep their precision; ``weight_dtype`` applies to the weights only.
-            if not isinstance(task.mapping, AmaxMapping):
-                converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
             tied_output_hf_name = None
             if tied_mapping_registry is not None:
                 tied_output_hf_name = self._get_tied_output_hf_name(task, tied_mapping_registry)
 
             for hf_name, tensor in converted_weights_dict.items():
+                # Lazy mappings may gather multi-gigabyte shards. Cast each tensor
+                # as it is emitted rather than materializing the entire mapping.
+                if (
+                    not isinstance(task.mapping, AmaxMapping)
+                    and task.weight_dtype is not None
+                    and tensor.is_floating_point()
+                ):
+                    tensor = tensor.to(task.weight_dtype)
                 if not merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
                     suffix_pos = hf_name.rfind(".")
                     if suffix_pos == -1:
