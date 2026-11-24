@@ -28,7 +28,8 @@ The D layer reuses AbsorbedMLA's forward unchanged (projections, K absorption, R
 * runs context parallelism (CP > 1) in the zigzag partition inside a contiguous stack: the
   forward converts its input rows to zigzag with Megatron-Core dev's module-local converter, runs
   AbsorbedMLA's forward unchanged and converts the output back (see :meth:`forward` and
-  :mod:`~megatron.bridge.models.ernie.modeling_ernie55.context_parallel`), and
+  :mod:`~megatron.bridge.models.ernie.modeling_ernie55.context_parallel`); in a zigzag stack (a D-only stack, or
+  H layers with Megatron-Core's ``dsv4_cp_zigzag``) it converts nothing, and
 * runs eagerly unless its CUDA graphs are switched on (``ernie_graph_d_layers``, ``ernie_graph_mtp_layers``): then
   its graph wrapper captures it with the host plan of one fixed composition
   (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.cuda_graph`); any other capture makes the forward raise.
@@ -361,7 +362,8 @@ class Ernie55LatentMQASelfAttention(AbsorbedMLASelfAttention):
            partition again.
 
         The conversions are differentiable all-to-alls; their backward runs the reverse exchange.
-        A zigzag stack (``cp_partition_mode="zigzag"``, a D-only ``"dsa"`` stack) needs no conversion.
+        A zigzag stack (``cp_partition_mode="zigzag"``: a D-only ``"dsa"`` stack, or a DSv4 hybrid stack whose H layers
+        run Megatron-Core's opt-in ``dsv4_cp_zigzag``) needs no conversion: the converter returns its input.
 
         With CUDA graphs configured (``cuda_graph_impl`` other than ``"none"``), the forward first checks whether
         the current stream is capturing a graph, and raises unless the capture is the D layer's graph wrapper's

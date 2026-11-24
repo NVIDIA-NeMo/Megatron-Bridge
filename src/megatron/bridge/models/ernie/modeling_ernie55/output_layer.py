@@ -52,6 +52,7 @@ Contract:
 
 from __future__ import annotations
 
+from types import MethodType
 from typing import Any
 
 import torch
@@ -265,3 +266,7 @@ def install_ernie55_multimax(output_layer: torch.nn.Module, config: object) -> N
     # the output layer class differs between Megatron-Core versions.
     base = type(output_layer)
     output_layer.__class__ = type(base.__name__, (_Ernie55MultimaxOutputLayer, base), {})
+    if getattr(config, "ernie_chunked_head_rows", 0):
+        from .chunked_head import chunked_training_loss
+
+        output_layer.chunked_training_loss = MethodType(chunked_training_loss, output_layer)

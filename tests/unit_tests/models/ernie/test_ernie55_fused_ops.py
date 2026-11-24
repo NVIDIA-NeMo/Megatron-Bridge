@@ -23,6 +23,8 @@ them. Here, on CPU:
   SiTU-GLU scales they run the kernel for;
 * the dispatch conditions of every kernel: CPU tensors run the eager code bitwise, and so does every input the
   kernel does not take; inputs it takes reach it (the kernel replaced by a recorder, the device check forced);
+* the THD-CP RoPE's explicit per-row positions (the H layers' zigzag partition, ``dsv4_cp_zigzag``) reach the kernel
+  and Megatron-Core's function, and the kernel reads the same angles from them as from ``global_start``;
 * the multimax head reads the flag when it is installed.
 
 The model-level wiring (a built model's MLPs and output layer reach the kernels) is tested with the model
@@ -306,6 +308,85 @@ def test_thd_cp_local_rope_dispatch_conditions(dispatch, monkeypatch):
         assert args[0] is rows and args[1] is angles and args[2:4] == (nope_dim, pos_dim)
     assert len(kernel.calls) == 4 and len(unfused.calls) == 11
     assert dispatch.FUSED_OP_CALLS == {"thd_cp_local_rope@forward": 3, "thd_cp_local_rope@inverse": 1}
+
+
+def test_thd_cp_local_rope_dispatch_passes_explicit_positions(dispatch, monkeypatch):
+    """The H layers' zigzag partition (``dsv4_cp_zigzag``) rotates by per-row positions instead of ``global_start``.
+
+    Megatron-Core passes them as the ``position_ids`` keyword with ``global_start=None``; the dispatcher hands them to
+    the kernel and, where the kernel does not apply, to Megatron-Core's function, as the same keyword. The contiguous
+    partition's calls carry no keyword (``test_thd_cp_local_rope_dispatch_conditions``).
+    """
+    cp_utils = _cp_utils()
+    unfused = CallRecorder(lambda x, *args, **kwargs: x + 1)
+    monkeypatch.setattr(cp_utils, "apply_thd_cp_local_rope_unfused", unfused)
+    install_ernie55_fused_ops(SimpleNamespace(ernie_fused_ops=True))
+    rope = cp_utils.apply_thd_cp_local_rope_unfused
+    x, table, cu_seqlens = torch.zeros(10, 2, 12), torch.zeros(32, 1, 1, 4), torch.tensor([0, 32])
+    # Two zigzag chunks of five rows: positions 0-4 and 25-29 of the one document.
+    positions = torch.cat((torch.arange(5), torch.arange(25, 30)))
+    ernie = SimpleNamespace(ernie_fused_ops=True, rotary_interleaved=False)
+
+    # CPU tensors: Megatron-Core's function, with the positions as its keyword.
+    for inverse in (False, True):
+        assert torch.equal(rope(x, table, 8, 4, cu_seqlens, None, ernie, inverse, position_ids=positions), x + 1)
+        args, kwargs = unfused.calls[-1]
+        assert args[0] is x and args[5:] == (None, ernie, inverse) and kwargs.keys() == {"position_ids"}
+        assert kwargs["position_ids"] is positions
+
+    kernel = CallRecorder(lambda x, *args, **kwargs: x - 1)
+    monkeypatch.setattr(fused_ops, "fused_thd_cp_local_rope", kernel)
+    _force_kernel_support(monkeypatch, dispatch)
+    for inverse in (False, True):
+        assert torch.equal(
+            rope(x, table, 8, 4, cu_seqlens, None, ernie, inverse=inverse, position_ids=positions), x - 1
+        )
+        args, kwargs = kernel.calls[-1]
+        assert args[0] is x and args[5:] == (None, inverse) and kwargs.keys() == {"position_ids"}
+        assert kwargs["position_ids"] is positions
+    assert dispatch.FUSED_OP_CALLS == {"thd_cp_local_rope@forward": 1, "thd_cp_local_rope@inverse": 1}
+    # Other models' configs keep Megatron-Core's function, positions included.
+    assert torch.equal(rope(x, table, 8, 4, cu_seqlens, None, SimpleNamespace(), position_ids=positions), x + 1)
+    assert unfused.calls[-1][1]["position_ids"] is positions and len(kernel.calls) == 2
+
+
+def test_fused_thd_cp_local_rope_positions(monkeypatch):
+    """The kernel's angles come from exactly one of ``global_start`` and ``position_ids``, and agree on one interval.
+
+    The Triton launch is replaced by a recorder of the angles it would read, so this runs on CPU.
+    """
+    from megatron.core.transformer.experimental_attention_variant.csa_utils import cp_utils
+
+    angles = []
+
+    def record(x, cos, sin, nope_dim, inverse):
+        angles.append((cos, sin))
+        return x.clone()
+
+    monkeypatch.setattr(fused_ops._FusedMlaRope, "apply", record)
+    x = torch.randn(6, 2, 12)
+    table = torch.randn(32, 1, 1, 4)
+    cu_seqlens = torch.tensor([0, 20, 32], dtype=torch.int32)
+    # Rows 17-22 cross the first document's end: positions 17, 18, 19, 0, 1, 2.
+    fused_ops.fused_thd_cp_local_rope(x, table, 8, 4, cu_seqlens, 17)
+    positions = cp_utils._thd_cp_position_ids(cu_seqlens, 17, 6)
+    assert positions.tolist() == [17, 18, 19, 0, 1, 2]
+    fused_ops.fused_thd_cp_local_rope(x, table, 8, 4, cu_seqlens, None, position_ids=positions)
+    assert all(torch.equal(a, b) for a, b in zip(angles[0], angles[1]))
+    # Arbitrary per-row positions read the table at exactly those rows.
+    zigzag = torch.tensor([0, 1, 2, 29, 30, 31])
+    fused_ops.fused_thd_cp_local_rope(x, table, 8, 4, cu_seqlens, None, inverse=True, position_ids=zigzag)
+    expected = table.index_select(0, zigzag).reshape(6, 4)
+    assert torch.equal(angles[2][0], torch.cos(expected).to(x.dtype))
+    assert torch.equal(angles[2][1], torch.sin(expected).to(x.dtype))
+
+    with pytest.raises(ValueError, match="exactly one of global_start"):
+        fused_ops.fused_thd_cp_local_rope(x, table, 8, 4, cu_seqlens, 17, position_ids=positions)
+    with pytest.raises(ValueError, match="exactly one of global_start"):
+        fused_ops.fused_thd_cp_local_rope(x, table, 8, 4, cu_seqlens, None)
+    with pytest.raises(ValueError, match=r"position_ids must have shape \(6,\)"):
+        fused_ops.fused_thd_cp_local_rope(x, table, 8, 4, cu_seqlens, None, position_ids=positions[:5])
+    assert len(angles) == 3
 
 
 def test_thd_cp_rope_layout_fits(dispatch):

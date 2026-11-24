@@ -69,6 +69,7 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 __all__ = [
     "ERNIE55_FULL_SIZE_HF_CONFIG",
     "ERNIE55_HF_PATH_ENV",
+    "ernie55_pretrain_256k_64gpu_gb300_bf16_config",
     "ernie55_sft_64gpu_gb300_bf16_config",
 ]
 
@@ -374,4 +375,66 @@ def ernie55_sft_64gpu_gb300_bf16_config(*, hf_path: str | None = None) -> Config
     hf_config, path = _ernie55_hf_config(hf_path)
     cfg = _ernie55_production_config(hf_config)
     cfg.checkpoint.pretrained_checkpoint = path
+    return cfg
+
+
+def ernie55_pretrain_256k_64gpu_gb300_bf16_config(*, hf_path: str | None = None) -> ConfigContainer:
+    """Benchmark one 256K-token THD row per replica with eager BF16 MoK + MoonEP on 64 GB300 GPUs.
+
+    The input file contains one tokenized document per JSONL line. The default packing limit
+    accommodates twelve documents per row, each padded to a multiple of 32 tokens. Set
+    ``checkpoint.pretrained_checkpoint`` to the distributed checkpoint converted from the same
+    release as ``ERNIE55_HF_PATH``. Invoke in pretraining mode with ``ernie55_step``.
+    """
+    hf_config, _ = _ernie55_hf_config(hf_path)
+    cfg = _ernie55_production_config(hf_config)
+    model = cfg.model
+    model.context_parallel_size = 16
+    model.cp_partition_mode = "zigzag"
+    model.dsv4_cp_zigzag = True
+    model.max_seqlen_per_dp_cp_rank = 16_384
+    model.thd_max_packed_sequences = 12
+    model.moe_token_dispatcher_type = "flex"
+    model.moe_flex_dispatcher_backend = "hybridep"
+    model.moe_megakernel_backend = "mok"
+    model.moe_megakernel_backend_config = {"macrobatch_size": 16_384, "schedule_capacity_multiplier": 0.5}
+    model.moe_virtual_expert_load_balance = True
+    model.moe_use_grouped_tensor = False
+    model.moe_router_force_load_balancing = False
+    model.ernie_router_force_balance = False
+    model.ernie_fused_mhc = True
+    model.ernie_vha_batched_mix = True
+    model.ernie_muon_ns_batch_size = 32
+    model.gradient_accumulation_fusion = True
+    model.use_te_rng_tracker = True
+    model.cuda_graph_impl = "none"
+    model.fine_grained_activation_offloading = False
+    model.offload_modules = []
+    model.recompute_granularity = "full"
+    model.recompute_method = "uniform"
+    model.recompute_num_layers = 2
+    model.recompute_modules = []
+    model.ernie_chunked_head_rows = 4096
+    model.ernie_chunked_head_backend = "cuda"
+    model.ernie_head_save_projection = True
+    cfg.rng.te_rng_tracker = True
+    cfg.train.global_batch_size = 32
+    cfg.train.train_iters = 12
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 50
+    cfg.dataset.pack = True
+    cfg.dataset.pad_to_multiple_of = 32
+    cfg.dataset.num_workers = 2
+    cfg.dataset.persistent_workers = True
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.bucket_size = 1_000_000_000
+    cfg.optimizer.lr = cfg.optimizer.min_lr = 1e-5
+    cfg.scheduler.lr_warmup_iters = 5
+    cfg.scheduler.lr_decay_iters = 12
+    cfg.scheduler.lr_decay_style = "constant"
+    cfg.profiling.use_nsys_profiler = False
+    cfg.profiling.nvtx_ranges = False
+    cfg.checkpoint.load = cfg.checkpoint.save = None
+    cfg.logger.log_throughput = True
+    cfg.logger.log_device_memory_used = True
     return cfg

@@ -26,7 +26,11 @@ Select it with ``--step_func ernie55_step`` (``scripts/training/run_recipe.py``)
    to a multiple of ``2 * CP`` (pad tokens with label ``-100``; a pack too short for the H layers' CP boundary
    exchange gets more pads on its last document), puts one ``cu_seqlens`` tensor in all four
    packed fields, prebuilds the context-parallel partition routes and slices this rank's rows of the model's
-   ``cp_partition_mode``.
+   ``cp_partition_mode``. When the H layers run in the zigzag partition (``cp_partition_mode="zigzag"`` with
+   Megatron-Core's ``dsv4_cp_zigzag``), a single-document micro-batch uses ``2 * CP`` chunks of whole
+   compression blocks of at least the H layers' window. A multi-document micro-batch uses per-document ``2 * CP``
+   alignment; the packed H attention path assembles partial compression blocks and halos across CP ranks
+   (:func:`~megatron.bridge.models.ernie.ernie55_context_parallel.ernie55_cp_zigzag_chunk_rows`).
 3. The model gets the labels with ``-100`` replaced by a valid id and the loss mask ``labels != -100`` (Megatron-Core
    masks the LM and MTP losses with ``loss_mask``).
 4. The loss function follows the model config (:func:`ernie55_loss_function`): ``ernie_per_row_loss`` selects the
@@ -51,7 +55,9 @@ from megatron.bridge.models.ernie.ernie55_context_parallel import (
     Ernie55ThdBatch,
     build_ernie55_thd_cp_batch,
     ernie55_cp_min_local_rows,
+    ernie55_cp_zigzag_chunk_rows,
     ernie55_per_row_lm_loss,
+    uses_h_layer_zigzag,
 )
 from megatron.bridge.models.ernie.modeling_ernie55.expert_load import note_microbatch
 from megatron.bridge.training.losses import masked_next_token_loss
@@ -173,9 +179,10 @@ def get_batch(
 
     Args:
         data_iterator: Yields batches in the contract of :func:`ernie55_documents_from_batch`, optionally with an
-            int ``pad_token_id`` (needed only when a document must be padded to a multiple of ``2 * CP``).
+            int ``pad_token_id`` (needed only when a document must be padded to a multiple of ``2 * CP``, or to the
+            zigzag chunks of the H layers).
         config: Model (transformer) config (``cp_partition_mode``, ``csa_compress_ratios`` with
-            ``csa_window_size`` for the fewest rows a CP rank may hold, and
+            ``csa_window_size`` for the fewest rows a CP rank, or a zigzag chunk of the H layers, may hold, and
             ``ernie_cp_key_gather_inverse_grad``, with which the batch prebuilds the inverse key permutation).
         cp_group: Context-parallel group, or ``None``.
         device: Device of the returned tensors.
@@ -184,19 +191,35 @@ def get_batch(
         This rank's rows with the metadata of the whole pack.
 
     Raises:
-        ValueError: If a document needs padding and the batch has no ``pad_token_id``.
+        ValueError: If a document or the pack needs padding and the batch has no ``pad_token_id``.
     """
     batch = next(data_iterator)
     documents = ernie55_documents_from_batch(batch)
     cp_size = get_pg_size(cp_group)
     multiple = 2 * cp_size if cp_size > 1 else 1
     pad_token_id = batch.get("pad_token_id")
+    # The one-document H fast path reads whole blocks and halo windows from neighbouring chunks.
+    # Packed H attention builds its own document-local communication plan for shorter chunks.
+    single_h_zigzag = len(documents) == 1 and uses_h_layer_zigzag(config, cp_size=cp_size)
+    chunk_multiple, min_chunk_rows = ernie55_cp_zigzag_chunk_rows(config) if single_h_zigzag else (1, 1)
     if pad_token_id is None:
-        unaligned = [len(tokens) for tokens, _ in documents if len(tokens) % multiple]
+        if single_h_zigzag:
+            needed = 2 * cp_size * chunk_multiple
+            unaligned = [
+                len(tokens)
+                for tokens, _ in documents
+                if len(tokens) % needed or len(tokens) < 2 * cp_size * min_chunk_rows
+            ]
+            requirement = (
+                f"2 * context_parallel_size chunks of whole {chunk_multiple}-row blocks of at least {min_chunk_rows} "
+                f"rows each (a multiple of {needed} rows) for the H layers' zigzag partition"
+            )
+        else:
+            unaligned = [len(tokens) for tokens, _ in documents if len(tokens) % multiple]
+            requirement = f"a multiple of 2 * context_parallel_size = {multiple}"
         if unaligned:
             raise ValueError(
-                f"Documents of {unaligned} tokens need padding to a multiple of 2 * context_parallel_size = {multiple}, "
-                "but the batch has no pad_token_id."
+                f"Documents of {unaligned} tokens need padding to {requirement}, but the batch has no pad_token_id."
             )
         # No document is padded: the id is never used.
         pad_token_id = IGNORE_LABEL
@@ -215,6 +238,8 @@ def get_batch(
         cp_group=cp_group if cp_size > 1 else None,
         cp_partition_mode=cp_partition_mode,
         min_local_rows=min_local_rows,
+        zigzag_chunk_multiple=chunk_multiple,
+        zigzag_min_chunk_rows=min_chunk_rows,
         device=device,
         with_key_reorder_inverse=bool(getattr(config, "ernie_cp_key_gather_inverse_grad", False)),
     )

@@ -309,19 +309,24 @@ def fused_thd_cp_local_rope(
     nope_dim: int,
     pos_dim: int,
     cu_seqlens_padded: Tensor,
-    global_start: int,
+    global_start: int | None,
     inverse: bool = False,
+    position_ids: Tensor | None = None,
 ) -> Tensor:
     """Count, log and run the Triton THD-CP local RoPE (:func:`fused_ops.fused_thd_cp_local_rope`).
 
-    Arguments are those of ``cp_utils.apply_thd_cp_local_rope_unfused`` without the config.
+    Arguments are those of ``cp_utils.apply_thd_cp_local_rope_unfused`` without the config: exactly one of
+    ``global_start`` (the contiguous partition) and ``position_ids`` (explicit per-row positions, the zigzag
+    partition of ``dsv4_cp_zigzag``).
 
     Returns:
         A new tensor with the shape and dtype of ``x``.
     """
     _record("thd_cp_local_rope", "inverse" if inverse else "forward", x)
+    # The contiguous partition's call is unchanged; only the zigzag partition adds the per-row positions.
+    row_kwargs = {} if position_ids is None else {"position_ids": position_ids}
     return fused_ops.fused_thd_cp_local_rope(
-        x, rotary_pos_emb, nope_dim, pos_dim, cu_seqlens_padded, global_start, inverse
+        x, rotary_pos_emb, nope_dim, pos_dim, cu_seqlens_padded, global_start, inverse, **row_kwargs
     )
 
 
@@ -420,7 +425,12 @@ def _situ_glu_dispatcher(eager: Callable[..., Tensor], site: str) -> Callable[..
 
 
 def _thd_cp_local_rope_dispatcher(unfused: Callable[..., Tensor]) -> Callable[..., Tensor]:
-    """Wrap ``cp_utils.apply_thd_cp_local_rope_unfused``: the Triton kernel for ERNIE configs, else ``unfused``."""
+    """Wrap ``cp_utils.apply_thd_cp_local_rope_unfused``: the Triton kernel for ERNIE configs, else ``unfused``.
+
+    The wrapper keeps Megatron-Core's signature, including the ``position_ids`` keyword (explicit per-row positions
+    instead of ``global_start``) that the zigzag partition of the H layers (``dsv4_cp_zigzag``) passes; it reaches
+    ``unfused`` only when given, so a Megatron-Core build without it keeps its own call.
+    """
 
     def apply_thd_cp_local_rope_unfused(
         x: Tensor,
@@ -428,9 +438,10 @@ def _thd_cp_local_rope_dispatcher(unfused: Callable[..., Tensor]) -> Callable[..
         nope_dim: int,
         pos_dim: int,
         cu_seqlens_padded: Tensor,
-        global_start: int,
+        global_start: int | None,
         config: object,
         inverse: bool = False,
+        position_ids: Tensor | None = None,
     ) -> Tensor:
         if (
             ernie55_fused_ops_enabled(config)
@@ -439,9 +450,12 @@ def _thd_cp_local_rope_dispatcher(unfused: Callable[..., Tensor]) -> Callable[..
             and fused_kernels_support(x)
         ):
             return fused_thd_cp_local_rope(
-                x, rotary_pos_emb, nope_dim, pos_dim, cu_seqlens_padded, global_start, inverse
+                x, rotary_pos_emb, nope_dim, pos_dim, cu_seqlens_padded, global_start, inverse, position_ids
             )
-        return unfused(x, rotary_pos_emb, nope_dim, pos_dim, cu_seqlens_padded, global_start, config, inverse)
+        row_kwargs = {} if position_ids is None else {"position_ids": position_ids}
+        return unfused(
+            x, rotary_pos_emb, nope_dim, pos_dim, cu_seqlens_padded, global_start, config, inverse, **row_kwargs
+        )
 
     apply_thd_cp_local_rope_unfused.__doc__ = (
         "ERNIE 5.5 dispatcher around Megatron-Core's apply_thd_cp_local_rope_unfused (see fused_dispatch)."

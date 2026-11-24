@@ -196,6 +196,57 @@ def test_fused_thd_cp_local_rope_matches_unfused(inverse, shape, dtype):
     torch.testing.assert_close(gx, gx_ref, rtol=0, atol=0)
 
 
+@pytest.mark.parametrize("inverse", [False, True])
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
+def test_fused_thd_cp_local_rope_with_zigzag_positions_matches_unfused(inverse, dtype):
+    """The H layers' zigzag partition (``dsv4_cp_zigzag``) rotates two chunks by explicit positions, bit-exact."""
+    import inspect
+
+    from megatron.core.models.common.embeddings import RotaryEmbedding
+    from megatron.core.transformer.experimental_attention_variant.csa_utils import cp_utils
+
+    from megatron.bridge.models.ernie.modeling_ernie55.fused_ops import fused_thd_cp_local_rope
+
+    unfused = _unfused_rope()
+    if "position_ids" not in inspect.signature(unfused).parameters:
+        pytest.skip("Megatron-Core without dsv4_cp_zigzag (explicit THD CP RoPE positions)")
+    torch.manual_seed(1)
+    heads, dim, pos_dim, total, cp_size, cp_rank = 64, 512, 64, 8192, 4, 1
+    chunk = total // (2 * cp_size)
+    second = 2 * cp_size - 1 - cp_rank
+    rows = torch.cat(
+        (
+            torch.arange(cp_rank * chunk, (cp_rank + 1) * chunk, device="cuda"),
+            torch.arange(second * chunk, (second + 1) * chunk, device="cuda"),
+        )
+    ).int()
+    cu_seqlens = torch.tensor([0, total], device="cuda", dtype=torch.int32)
+    positions = cp_utils.thd_global_rows_position_ids(cu_seqlens, rows)
+    freqs = RotaryEmbedding(pos_dim, rotary_percent=1.0, rotary_base=10000)(total, packed_seq=True)
+    x = (torch.randn(rows.numel(), heads, dim, device="cuda") * 3).to(dtype)
+    grad = torch.randn(x.shape, device="cuda").to(dtype)
+    config = SimpleNamespace(rotary_interleaved=False)
+
+    def run(fn):
+        xi = x.clone().requires_grad_(True)
+        out = fn(xi)
+        out.backward(grad)
+        return out, xi.grad
+
+    out_ref, gx_ref = run(
+        lambda t: unfused(
+            t, freqs, dim - pos_dim, pos_dim, cu_seqlens, None, config, inverse=inverse, position_ids=positions
+        )
+    )
+    out, gx = run(
+        lambda t: fused_thd_cp_local_rope(
+            t, freqs, dim - pos_dim, pos_dim, cu_seqlens, None, inverse=inverse, position_ids=positions
+        )
+    )
+    torch.testing.assert_close(out, out_ref, rtol=0, atol=0)
+    torch.testing.assert_close(gx, gx_ref, rtol=0, atol=0)
+
+
 def test_thd_cp_local_rope_dispatch(monkeypatch):
     """Bridge's RoPE dispatcher: ERNIE configs with the flag take the kernel, every other config Megatron-Core's."""
     from megatron.core.transformer.experimental_attention_variant.csa_utils import cp_utils

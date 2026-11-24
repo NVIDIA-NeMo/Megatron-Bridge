@@ -14,11 +14,15 @@
 
 """ERNIE recipe exports."""
 
-from megatron.bridge.recipes.ernie.ernie55 import ernie55_sft_64gpu_gb300_bf16_config
+from megatron.bridge.recipes.ernie.ernie55 import (
+    ernie55_pretrain_256k_64gpu_gb300_bf16_config,
+    ernie55_sft_64gpu_gb300_bf16_config,
+)
 from megatron.bridge.recipes.ernie.gb200.ernie55 import ernie55_sft_64gpu_gb200_bf16_config
 
 
 __all__ = [
+    "ernie55_pretrain_256k_64gpu_gb300_bf16_config",
     "ernie55_sft_64gpu_gb200_bf16_config",
     "ernie55_sft_64gpu_gb300_bf16_config",
 ]

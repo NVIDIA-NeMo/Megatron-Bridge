@@ -22,8 +22,8 @@
   ``ernie_fused_situ_prob`` (off by default), the routed experts run SiTU-GLU and the routing-probability
   multiply as one Triton kernel per direction (``fused_situ_prob``). Behind ``ernie_router_force_balance`` (off by
   default, benchmark only), the routers select uniformly random experts (``moe``).
-* Context parallelism: D layers run zigzag inside the contiguous DSv4 stack
-  (``context_parallel``).
+* Context parallelism: D layers run zigzag inside the contiguous DSv4 stack, or, with Megatron-Core's opt-in
+  ``dsv4_cp_zigzag``, the whole stack runs zigzag and the D layers convert nothing (``context_parallel``).
 * Hyper-connections with fp32 decoder streams: the eager fp32 mapping and mixing
   (``hyper_connection``), downcasting pre-norms (``norm``) and the fp32 decoder stack
   (``hybrid_stack``). ``norm`` also holds the reference implementation's RMSNorm arithmetic,

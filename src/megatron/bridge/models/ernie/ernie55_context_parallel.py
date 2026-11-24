@@ -28,7 +28,9 @@ training step can wire them in:
 * :func:`build_ernie55_thd_cp_batch` packs samples into one THD micro-batch: every sample is padded to
   a multiple of ``2 * CP`` rows (pad tokens with label ``-100`` and continuing positions), the
   documents' boundaries become one ``cu_seqlens`` tensor shared by queries and keys, the CP
-  partition routes are prebuilt, and the rows of this CP rank are sliced out.
+  partition routes are prebuilt, and the rows of this CP rank are sliced out. When the H layers run in the
+  zigzag partition (Megatron-Core's ``dsv4_cp_zigzag``), every chunk is also padded to whole compression blocks
+  and to the H layers' window (:func:`ernie55_cp_zigzag_chunk_rows`).
 
 The MTP depths get the same per-row normalization inside the model
 (:mod:`~megatron.bridge.models.ernie.modeling_ernie55.mtp_loss`); the training step only selects the LM loss.
@@ -59,7 +61,9 @@ __all__ = [
     "Ernie55ThdBatch",
     "build_ernie55_thd_cp_batch",
     "ernie55_cp_min_local_rows",
+    "ernie55_cp_zigzag_chunk_rows",
     "ernie55_per_row_lm_loss",
+    "uses_h_layer_zigzag",
 ]
 
 IGNORE_LABEL = -100
@@ -165,11 +169,65 @@ def ernie55_cp_min_local_rows(config: object) -> int:
     Returns:
         The minimum local row count, ``1`` when there is none.
     """
-    ratios = [int(ratio) for ratio in (getattr(config, "csa_compress_ratios", None) or []) if int(ratio) > 1]
+    ratios = _compress_ratios(config)
     if not ratios:
         return 1
     d_comp = max(8 if ratio == 4 else ratio for ratio in ratios)
     return max(int(getattr(config, "csa_window_size", 0) or 0), d_comp)
+
+
+def _compress_ratios(config: object) -> list[int]:
+    """The compression ratios of the H layers (``csa_compress_ratios`` entries above 1)."""
+    return [int(ratio) for ratio in (getattr(config, "csa_compress_ratios", None) or []) if int(ratio) > 1]
+
+
+def uses_h_layer_zigzag(config: object, *, cp_size: int | None = None) -> bool:
+    """Whether the H layers of an ERNIE 5.5 stack run context parallelism in the zigzag partition.
+
+    That is the case at a context-parallel size above 1 with ``cp_partition_mode="zigzag"`` and H layers in the stack
+    (a ``csa_compress_ratios`` entry above 1). The model config accepts it only with Megatron-Core's
+    ``dsv4_cp_zigzag`` (:class:`~megatron.bridge.models.ernie.ernie55_config.Ernie55ModelConfig`); a D-only stack in the
+    zigzag partition has no H layer and is not affected.
+
+    Args:
+        config: Model (transformer) config.
+        cp_size: Context-parallel size; defaults to ``config.context_parallel_size``.
+
+    Returns:
+        ``True`` for the H layers' zigzag partition.
+    """
+    if cp_size is None:
+        cp_size = getattr(config, "context_parallel_size", 1) or 1
+    return cp_size > 1 and getattr(config, "cp_partition_mode", None) == "zigzag" and bool(_compress_ratios(config))
+
+
+def ernie55_cp_zigzag_chunk_rows(config: object) -> tuple[int, int]:
+    """Row multiple and minimum of a zigzag chunk for the single-document H fast path.
+
+    In the zigzag partition every document is cut into ``2 * CP`` chunks, and rank ``r`` holds chunks ``r`` and
+    ``2 * CP - 1 - r``. Megatron-Core's zigzag H layers (``dsv4_cp_zigzag``) need every chunk to be whole compression
+    blocks (a multiple of each H ratio) and at least ``D_window = max(csa_window_size, d_comp)`` rows, so that each of
+    the rank's two boundary halos comes from one neighbour (:func:`ernie55_cp_min_local_rows` has the same
+    ``D_window``). A stack without H layers has neither requirement.
+
+    Args:
+        config: Model (transformer) config with ``csa_compress_ratios`` and ``csa_window_size``.
+
+    Returns:
+        ``(chunk_multiple, min_chunk_rows)``: the least common multiple of the H ratios, and ``D_window``;
+        ``(1, 1)`` without H layers.
+    """
+    ratios = _compress_ratios(config)
+    if not ratios:
+        return 1, 1
+    return math.lcm(*ratios), ernie55_cp_min_local_rows(config)
+
+
+def _zigzag_padded_length(length: int, *, cp_size: int, chunk_multiple: int, min_chunk_rows: int) -> int:
+    """Smallest zigzag-partitionable length of at least ``length``: ``2 * CP`` chunks of a multiple of
+    ``chunk_multiple`` rows, each at least ``min_chunk_rows``."""
+    chunk = max(int(math.ceil(length / (2 * cp_size))), min_chunk_rows)
+    return 2 * cp_size * _padded_length(chunk, chunk_multiple)
 
 
 def build_ernie55_thd_cp_batch(
@@ -180,6 +238,8 @@ def build_ernie55_thd_cp_batch(
     cp_partition_mode: str = "contiguous",
     max_seqlen: int | None = None,
     min_local_rows: int = 1,
+    zigzag_chunk_multiple: int = 1,
+    zigzag_min_chunk_rows: int = 1,
     device: torch.device | str | None = None,
     with_key_reorder_inverse: bool = False,
 ) -> Ernie55ThdBatch:
@@ -200,7 +260,13 @@ def build_ernie55_thd_cp_batch(
     ``cp_partition_mode``:
 
     * ``"contiguous"`` (the DSv4 hybrid stack): rows ``[r * T / CP, (r + 1) * T / CP)``;
-    * ``"zigzag"`` (a D-only stack): chunks ``r`` and ``2 * CP - 1 - r`` of every sample.
+    * ``"zigzag"`` (a D-only stack, or a DSv4 hybrid stack whose H layers run Megatron-Core's ``dsv4_cp_zigzag``):
+      chunks ``r`` and ``2 * CP - 1 - r`` of every sample.
+
+    Under the zigzag partition a one-document batch is padded further, to ``2 * CP`` chunks of a multiple of
+    ``zigzag_chunk_multiple`` rows and of at least ``zigzag_min_chunk_rows`` rows each (the H layers' requirements,
+    :func:`ernie55_cp_zigzag_chunk_rows`; both ``1``, the default, leave the ``2 * CP`` padding alone). When a batch has several documents, MCore
+    handles partial compression blocks and multi-rank halos. Each document needs only ``2 * CP`` alignment.
 
     Under the contiguous partition a pack shorter than ``CP * min_local_rows`` rows (short SFT samples, for
     example) gets more padding on its last sample, up to the next multiple of ``2 * CP`` of at least that size,
@@ -222,6 +288,8 @@ def build_ernie55_thd_cp_batch(
             compile keys stable. Defaults to the longest padded sample.
         min_local_rows: Fewest rows each CP rank must hold under the contiguous partition (see
             :func:`ernie55_cp_min_local_rows`); ignored at CP = 1 and for ``"zigzag"``.
+        zigzag_chunk_multiple: Row multiple of the single-document zigzag chunks.
+        zigzag_min_chunk_rows: Fewest rows per chunk for single-document zigzag.
         device: Device of the returned tensors; defaults to the samples' device.
         with_key_reorder_inverse: At CP > 1, also prebuild the zigzag geometry's inverse key permutation, which
             the D layers' key-gather backward reads with ``ernie_cp_key_gather_inverse_grad``; ignored at
@@ -233,7 +301,8 @@ def build_ernie55_thd_cp_batch(
     Raises:
         RuntimeError: At CP > 1 without Megatron-Core's CP partition converter (Megatron-Core main).
         ValueError: For an empty batch, malformed samples, a ``max_seqlen`` below the longest padded
-            sample, a ``min_local_rows`` below 1 or an unknown ``cp_partition_mode``.
+            sample, a ``min_local_rows``, ``zigzag_chunk_multiple`` or ``zigzag_min_chunk_rows`` below 1 or an
+            unknown ``cp_partition_mode``.
     """
     if not samples:
         raise ValueError("build_ernie55_thd_cp_batch needs at least one sample.")
@@ -242,8 +311,14 @@ def build_ernie55_thd_cp_batch(
     multiple = 2 * cp_size if cp_size > 1 else 1
     if device is None:
         device = samples[0][0].device
-    if not isinstance(min_local_rows, int) or min_local_rows < 1:
-        raise ValueError(f"min_local_rows must be a positive int, got {min_local_rows!r}.")
+    for name, value in (
+        ("min_local_rows", min_local_rows),
+        ("zigzag_chunk_multiple", zigzag_chunk_multiple),
+        ("zigzag_min_chunk_rows", zigzag_min_chunk_rows),
+    ):
+        if not isinstance(value, int) or value < 1:
+            raise ValueError(f"{name} must be a positive int, got {value!r}.")
+    single_zigzag = cp_size > 1 and cp_partition_mode == "zigzag" and len(samples) == 1
 
     tokens, labels, positions, lengths = [], [], [], []
     for index, (input_ids, sample_labels) in enumerate(samples):
@@ -253,7 +328,12 @@ def build_ernie55_thd_cp_batch(
                 f"{tuple(input_ids.shape)} and {tuple(sample_labels.shape)}."
             )
         length = input_ids.numel()
-        padded = _padded_length(length, multiple)
+        if single_zigzag:
+            padded = _zigzag_padded_length(
+                length, cp_size=cp_size, chunk_multiple=zigzag_chunk_multiple, min_chunk_rows=zigzag_min_chunk_rows
+            )
+        else:
+            padded = _padded_length(length, multiple)
         pad = padded - length
         tokens.append(torch.cat([input_ids.to(device), input_ids.new_full((pad,), pad_token_id, device=device)]))
         labels.append(

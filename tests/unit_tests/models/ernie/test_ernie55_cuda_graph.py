@@ -171,6 +171,11 @@ class TestEnvelope:
             ({"thd_max_packed_sequences": None}, "thd_max_packed_sequences"),
             ({"thd_max_packed_sequences": True}, "thd_max_packed_sequences"),
             ({"context_parallel_size": 2, "cp_partition_mode": "zigzag"}, "cp_partition_mode='contiguous'"),
+            # The H layers' opt-in zigzag partition is not validated with graphs yet.
+            (
+                {"context_parallel_size": 2, "cp_partition_mode": "zigzag", "dsv4_cp_zigzag": True},
+                r"are not validated with the H layers' zigzag partition \(dsv4_cp_zigzag=True\)",
+            ),
         ],
         ids=lambda value: str(value) if isinstance(value, dict) else None,
     )

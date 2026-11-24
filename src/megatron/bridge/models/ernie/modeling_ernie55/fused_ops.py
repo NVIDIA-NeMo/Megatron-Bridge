@@ -398,11 +398,16 @@ def fused_thd_cp_local_rope(
     nope_dim: int,
     pos_dim: int,
     cu_seqlens_padded: torch.Tensor,
-    global_start: int,
+    global_start: int | None,
     inverse: bool = False,
+    position_ids: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """``cp_utils.apply_thd_cp_local_rope_unfused`` (non-interleaved table, MLA-interleaved rotary part) in one
     kernel per direction; bit-exact against it in forward and backward.
+
+    The rows' positions come from exactly one of ``global_start`` (one consecutive interval of global rows, the
+    contiguous context-parallel partition) and ``position_ids`` (one position per row, e.g. the two chunks of the
+    zigzag partition), as in Megatron-Core.
 
     Args:
         x: CUDA rows ``[t, heads, dim]``, ``[t, 1, heads, dim]`` or ``[t, dim]``; the last ``pos_dim`` channels rotate.
@@ -410,15 +415,31 @@ def fused_thd_cp_local_rope(
         nope_dim: Leading channels that pass through.
         pos_dim: Rotary channels.
         cu_seqlens_padded: Packed document boundaries of the whole (global) THD row.
-        global_start: Global packed row of ``x[0]`` (contiguous context-parallel partition).
+        global_start: Global packed row of ``x[0]`` (contiguous context-parallel partition), or ``None`` with
+            ``position_ids``.
         inverse: Rotate by the negative angles.
+        position_ids: ``[t]`` position of every row inside its document, or ``None`` with ``global_start``.
 
     Returns:
         A new tensor with the shape and dtype of ``x``.
+
+    Raises:
+        ValueError: Unless exactly one of ``global_start`` and ``position_ids`` is given, or if ``position_ids`` does
+            not hold one position per row.
     """
     from megatron.core.transformer.experimental_attention_variant.csa_utils import cp_utils
 
-    position_ids = cp_utils._thd_cp_position_ids(cu_seqlens_padded, global_start, x.shape[0])
+    if (global_start is None) == (position_ids is None):
+        raise ValueError(
+            "THD CP local RoPE takes exactly one of global_start (a consecutive row interval) and position_ids "
+            "(explicit per-row positions)."
+        )
+    if position_ids is None:
+        position_ids = cp_utils._thd_cp_position_ids(cu_seqlens_padded, global_start, x.shape[0])
+    elif position_ids.shape != (x.shape[0],):
+        raise ValueError(
+            f"THD CP local RoPE position_ids must have shape ({x.shape[0]},), got {tuple(position_ids.shape)}."
+        )
     freqs = torch.index_select(rotary_pos_emb, 0, position_ids.long()).reshape(x.shape[0], pos_dim)
     cos, sin = torch.cos(freqs).to(x.dtype), torch.sin(freqs).to(x.dtype)
     squeezed_batch = x.ndim == 4 and x.shape[1] == 1

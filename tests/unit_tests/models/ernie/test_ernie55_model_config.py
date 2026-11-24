@@ -17,6 +17,7 @@
 import pytest
 import torch
 from megatron.core.transformer.experimental_attention_variant import deepseek_v4_hybrid_attention as dsv4
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from tests.unit_tests.models.ernie.ernie55_test_utils import allow_conversion_imports_without_te
 
@@ -41,6 +42,9 @@ from tests.unit_tests.models.ernie.test_ernie55_mhc_mtp import needs_hook
 
 
 pytestmark = pytest.mark.unit
+
+# Megatron-Core's opt-in zigzag partition of the DSv4 hybrid (H) layers.
+_HAS_H_ZIGZAG = hasattr(TransformerConfig, "dsv4_cp_zigzag")
 
 
 def _config(**overrides) -> Ernie55ModelConfig:
@@ -213,6 +217,52 @@ class TestFinalize:
         config.finalize()
         assert config.cp_partition_mode == "contiguous"
         assert config.mtp_num_layers == 1
+
+    @pytest.mark.skipif(context_parallel.load_cp_layout_api() is None, reason="no CP partition converter (MCore main)")
+    @pytest.mark.skipif(not _HAS_H_ZIGZAG, reason="Megatron-Core without dsv4_cp_zigzag (H-layer zigzag CP)")
+    def test_context_parallel_stack_is_zigzag_with_dsv4_cp_zigzag(self):
+        """Megatron-Core's opt-in dsv4_cp_zigzag runs the whole stack, H layers included, in the zigzag partition."""
+        per_row = dict(cp_comm_type="all_gather", ernie_per_row_loss=True, calculate_per_token_loss=False)
+        config = _config(context_parallel_size=2, cp_partition_mode="zigzag", dsv4_cp_zigzag=True, **per_row)
+        config.finalize()
+        transformer = config.transformer
+        assert (transformer.cp_partition_mode, transformer.attention_cp_layout, transformer.linear_cp_layout) == (
+            "zigzag",
+            "zigzag",
+            "zigzag",
+        )
+        assert transformer.dsv4_cp_zigzag is True and config.mtp_num_layers == 1
+        # The zigzag partition needs the opt-in, and the opt-in needs the zigzag partition (Megatron-Core's check).
+        with pytest.raises(ValueError, match="dsv4_cp_zigzag=True"):
+            _config(context_parallel_size=2, cp_partition_mode="zigzag", **per_row).finalize()
+        with pytest.raises(ValueError, match="dsv4_cp_zigzag requires cp_partition_mode"):
+            _config(context_parallel_size=2, cp_partition_mode="contiguous", dsv4_cp_zigzag=True, **per_row).finalize()
+
+    @pytest.mark.skipif(context_parallel.load_cp_layout_api() is None, reason="no CP partition converter (MCore main)")
+    @pytest.mark.skipif(not _HAS_H_ZIGZAG, reason="Megatron-Core without dsv4_cp_zigzag (H-layer zigzag CP)")
+    @pytest.mark.parametrize(
+        "overrides, message",
+        [
+            # Not validated with the zigzag partition yet: the fused compressor and CUDA graphs.
+            (dict(ernie_hca_fused_compressor=True), "ernie_hca_fused_compressor is not validated"),
+            (dict(cuda_graph_impl="transformer_engine"), "CUDA graphs"),
+            # Megatron-Core's envelope: one sequence per pack, no delayed weight gradients.
+            (dict(thd_max_packed_sequences=2), "thd_max_packed_sequences=2"),
+            (dict(delay_wgrad_compute=True), "delay_wgrad_compute"),
+        ],
+        ids=["fused-compressor", "cuda-graphs", "packed-sequences", "delay-wgrad"],
+    )
+    def test_zigzag_stack_fails_closed(self, overrides, message):
+        values = dict(
+            context_parallel_size=2,
+            cp_partition_mode="zigzag",
+            dsv4_cp_zigzag=True,
+            cp_comm_type="all_gather",
+            ernie_per_row_loss=True,
+            calculate_per_token_loss=False,
+        )
+        with pytest.raises(ValueError, match=message):
+            _config(**values, **overrides).finalize()
 
     @pytest.mark.skipif(context_parallel.load_cp_layout_api() is None, reason="no CP partition converter (MCore main)")
     def test_per_row_mtp_at_cp_needs_the_grouped_mtp_roll(self, monkeypatch):

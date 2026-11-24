@@ -259,7 +259,8 @@ def validate_ernie55_cuda_graph_config(config: Any, *, layer: str) -> None:
       layers build their own packed static inputs;
     * ``max_seqlen_per_dp_cp_rank`` and ``thd_max_packed_sequences`` positive ints: the rows of every CP rank and the
       documents of every packed row, which fix the graphs' static inputs;
-    * at ``context_parallel_size > 1``, ``cp_partition_mode="contiguous"``, the DSv4 layout.
+    * at ``context_parallel_size > 1``, ``cp_partition_mode="contiguous"``, the DSv4 layout: the H layers' opt-in zigzag
+      partition (Megatron-Core's ``dsv4_cp_zigzag``) is not validated with CUDA graphs yet.
 
     With ``ernie_graph_d_layers`` or ``ernie_graph_mtp_layers`` (the D-layer graphs; see the module docstring), also:
 
@@ -370,6 +371,12 @@ def validate_ernie55_cuda_graph_config(config: Any, *, layer: str) -> None:
         require(_is_positive_int(value), f"need {name}, {meaning}, as a positive int; got {value!r}.")
     if getattr(config, "context_parallel_size", 1) > 1:
         mode = getattr(config, "cp_partition_mode", None)
+        require(
+            not getattr(config, "dsv4_cp_zigzag", False),
+            "are not validated with the H layers' zigzag partition (dsv4_cp_zigzag=True) yet: their static inputs, "
+            "replay checks and host plans assume the contiguous partition. Set cuda_graph_impl='none' with "
+            "dsv4_cp_zigzag, or cp_partition_mode='contiguous' with dsv4_cp_zigzag=False.",
+        )
         require(
             mode == "contiguous",
             f"need cp_partition_mode='contiguous' at context_parallel_size > 1 (the DSv4 layout), got {mode!r}.",

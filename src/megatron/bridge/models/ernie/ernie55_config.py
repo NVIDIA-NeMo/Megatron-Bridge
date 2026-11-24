@@ -255,6 +255,15 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     (:mod:`~megatron.bridge.models.ernie.ernie55_step` does, and rejects inconsistent loss settings).
     There is no Hugging Face key."""
 
+    ernie_chunked_head_rows: int = 0
+    """Number of local token rows per native multimax+CE block. Zero selects the regular logits path."""
+
+    ernie_chunked_head_backend: str = "triton"
+    """Forward implementation for the chunked training head: Triton or prebuilt native CUDA."""
+
+    ernie_head_save_projection: bool = True
+    """Retain pre-multimax BF16 logits for backward when running the chunked training head."""
+
     ernie_fused_ops: bool = True
     """Run the reference implementation's Triton kernels (adapted in
     :mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_ops`) wherever their inputs fit: SiTU-GLU in the
@@ -349,6 +358,26 @@ class Ernie55TransformerConfig(MLATransformerConfig):
                 :func:`~megatron.bridge.models.ernie.modeling_ernie55.validate_ernie55_context_parallel_config`).
         """
         super().finalize()
+        if type(self.ernie_chunked_head_rows) is not int or self.ernie_chunked_head_rows < 0:
+            raise ValueError("ernie_chunked_head_rows must be a nonnegative integer")
+        if self.ernie_chunked_head_backend not in ("triton", "cuda"):
+            raise ValueError("ernie_chunked_head_backend must be 'triton' or 'cuda'")
+        if self.ernie_chunked_head_backend == "cuda" and not self.ernie_chunked_head_rows:
+            raise ValueError("The CUDA head requires positive ernie_chunked_head_rows")
+        if not isinstance(self.ernie_head_save_projection, bool):
+            raise ValueError("ernie_head_save_projection must be a bool")
+        if self.ernie_chunked_head_rows and not (
+            self.bf16
+            and self.gradient_accumulation_fusion
+            and self.ernie_fused_ops
+            and not self.cross_entropy_loss_fusion
+            and not self.defer_embedding_wgrad_compute
+            and (not self.mtp_num_layers or self.ernie_per_row_loss)
+        ):
+            raise ValueError(
+                "Chunked ERNIE heads require BF16, native CE, GAF, immediate wgrad, fused multimax, and per-row MTP"
+            )
+
         if not isinstance(self.ernie_fused_ops, bool):
             raise ValueError(f"ernie_fused_ops must be a bool, got {self.ernie_fused_ops!r}.")
         if not isinstance(self.ernie_fused_situ_prob, bool):
@@ -587,7 +616,11 @@ class Ernie55ModelConfig(BridgeHybridModelConfig):
       attention owns its RoPE) and an untied output layer;
     * with H layers, Megatron-Core's ``DSv4HybridAttention._post_o_group_proj`` hook exists (Megatron-Core
       dev f78809f6d or later), and at context_parallel_size > 1 the stack is contiguous
-      (``cp_partition_mode="contiguous"``), the DSv4 layout;
+      (``cp_partition_mode="contiguous"``), the DSv4 layout, or, opt-in, zigzag (``cp_partition_mode="zigzag"`` with
+      Megatron-Core's ``dsv4_cp_zigzag=True``: the H layers run the per-sequence zigzag partition, which balances
+      their causal work over the CP ranks, and the D and MTP layers convert nothing. Single-document batches use
+      the chunk alignment of :func:`~megatron.bridge.models.ernie.ernie55_context_parallel.ernie55_cp_zigzag_chunk_rows`;
+      packed documents use ``2 * CP`` alignment);
     * with pipeline parallelism and no ``|`` in the pattern, the pattern is split at ERNIE-layer boundaries
       (:func:`ernie55_pipeline_layer_pattern`); with pipeline parallelism ``variable_seq_lengths`` is turned on,
       because the ERNIE 5.5 SFT data path emits one packed THD row per micro-batch whose length is data-dependent
@@ -716,10 +749,17 @@ class Ernie55ModelConfig(BridgeHybridModelConfig):
             if (transformer.context_parallel_size or 1) > 1:
                 # Megatron-Core main has no CP partition modes (no cp_partition_mode field): say so first.
                 require_cp_layout_api("ERNIE 5.5 stacks at context_parallel_size > 1")
-                if transformer.cp_partition_mode != "contiguous":
+                # The zigzag partition of the H layers is Megatron-Core's opt-in dsv4_cp_zigzag (absent in older
+                # builds); Megatron-Core validates its envelope when the transformer config is finalized.
+                h_zigzag = transformer.cp_partition_mode == "zigzag" and bool(
+                    getattr(transformer, "dsv4_cp_zigzag", False)
+                )
+                if transformer.cp_partition_mode != "contiguous" and not h_zigzag:
                     raise ValueError(
                         "ERNIE 5.5 stacks with H layers run context parallelism in the contiguous partition "
-                        "(Megatron-Core DSv4's layout); set cp_partition_mode='contiguous', got "
-                        f"{transformer.cp_partition_mode!r}."
+                        "(Megatron-Core DSv4's layout), or in the zigzag partition with Megatron-Core's opt-in "
+                        "dsv4_cp_zigzag; set cp_partition_mode='contiguous', or cp_partition_mode='zigzag' with "
+                        f"dsv4_cp_zigzag=True, got cp_partition_mode={transformer.cp_partition_mode!r} with "
+                        f"dsv4_cp_zigzag={getattr(transformer, 'dsv4_cp_zigzag', None)!r}."
                     )
         super().finalize()

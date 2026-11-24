@@ -19,6 +19,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 package-dir = {"" = "src"}
 
+[tool.setuptools.package-data]
+"megatron.bridge.models.ernie.modeling_ernie55" = ["chunked_multimax_cuda.cu"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["megatron.bridge", "megatron.bridge.*"]

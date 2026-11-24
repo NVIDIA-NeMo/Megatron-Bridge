@@ -20,14 +20,19 @@ Two CP partitions of a packed THD micro-batch of ``T`` rows exist in Megatron-Co
 * zigzag: every document is cut into ``2 * CP`` equal chunks and rank ``r`` holds chunks ``r``
   and ``2 * CP - 1 - r`` of every document, in document order.
 
-The H layers (Megatron-Core's DSv4 hybrid attention) accept only the contiguous partition, and
-Megatron-Core forces it on the whole ``dsv4_hybrid`` stack. Everything Megatron-Core provides for
+The H layers (Megatron-Core's DSv4 hybrid attention) accept the contiguous partition, and
+Megatron-Core forces it on the whole ``dsv4_hybrid`` stack by default. Everything Megatron-Core provides for
 the D layer accepts only zigzag: AbsorbedMLA's packed RoPE, the DSA indexer's RoPE and the fused
 CP>1 indexer scorer. A D layer therefore converts its input to zigzag with Megatron-Core dev's
 module-local converter (#6387) and converts its output back
 (:class:`~megatron.bridge.models.ernie.modeling_ernie55.latent_mqa_attention.Ernie55LatentMQASelfAttention`),
 and its core attends from its local zigzag rows to the gathered keys of the whole pack
 (:class:`~megatron.bridge.models.ernie.modeling_ernie55.latent_mqa_core.Ernie55LatentMQACoreAttention`).
+
+Opt-in, the whole stack runs zigzag: with Megatron-Core's ``dsv4_cp_zigzag`` and ``cp_partition_mode="zigzag"`` the
+H layers run the per-document zigzag partition themselves, which balances causal work over the CP ranks. Single
+documents use whole compression blocks and neighbour windows; packed documents can span partial blocks. D and MTP find
+their input already in zigzag and convert nothing (the converter returns its input when the partitions match).
 
 This module holds what both need:
 
@@ -216,7 +221,8 @@ def validate_ernie55_context_parallel_config(config: Any, *, layer: str) -> None
     * multi-token prediction with ``ernie_per_row_loss`` needs Megatron-Core dev's grouped MTP roll
       (:data:`~megatron.bridge.models.ernie.modeling_ernie55.mtp_loss.PER_ROW_MTP_LOSS_SUPPORTED`);
     * ``cp_partition_mode`` must be ``"contiguous"`` (the ``dsv4_hybrid`` stack, converted to zigzag
-      inside each D layer) or ``"zigzag"`` (a D-only ``"dsa"`` stack).
+      inside each D layer) or ``"zigzag"`` (a D-only ``"dsa"`` stack, or a ``dsv4_hybrid`` stack whose H layers run
+      Megatron-Core's opt-in ``dsv4_cp_zigzag``, which Megatron-Core and the model config check).
 
     Multi-token prediction is supported: with ``ernie_per_row_loss`` the model normalizes every MTP
     depth by the row's supervised tokens counted over the CP group

@@ -165,17 +165,35 @@ def ernie55_process_mtp_loss(
             sequence_fields=["labels", "loss_mask"],
             roll_depth=depth,
         )[:2]
-        logits, _ = output_layer(chunks[depth + 1], weight=output_weight, runtime_gather_output=False)
-        token_losses = compute_language_model_loss(mtp_labels, logits) * loss_mask
+        acceptance_counts = getattr(mcore_mtp, "_compute_mtp_acceptance_counts", None)
+        need_predictions = (
+            is_training and acceptance_counts is not None and MTPLossLoggingHelper.should_collect_acceptance()
+        )
+        head_loss = getattr(output_layer, "chunked_training_loss", None)
+        result = (
+            head_loss(chunks[depth + 1], mtp_labels, output_weight, return_argmax=need_predictions, head_kind="mtp")
+            if head_loss is not None
+            else None
+        )
+        preds = None
+        if result is None:
+            logits, _ = output_layer(chunks[depth + 1], weight=output_weight, runtime_gather_output=False)
+            token_losses = compute_language_model_loss(mtp_labels, logits)
+        else:
+            token_losses, preds = result
+            logits = None
+        token_losses = token_losses * loss_mask
         row_tokens = loss_mask.sum().detach().float()
         if cp_size > 1:
             torch.distributed.all_reduce(row_tokens, group=cp_group)
         row_scale = cp_size / row_tokens.clamp(min=1.0)
         if is_training:
             correct = total = None
-            acceptance_counts = getattr(mcore_mtp, "_compute_mtp_acceptance_counts", None)
-            if acceptance_counts is not None and MTPLossLoggingHelper.should_collect_acceptance():
-                correct, total = acceptance_counts(logits, mtp_labels, loss_mask, tp_group=tp_group)
+            if need_predictions:
+                if preds is None:
+                    correct, total = acceptance_counts(logits, mtp_labels, loss_mask, tp_group=tp_group)
+                else:
+                    correct, total = acceptance_counts(logits, mtp_labels, loss_mask, tp_group=tp_group, preds=preds)
             # One token per micro-batch: the tracker keeps CP * S / N as is and averages it over DP x CP.
             MTPLossLoggingHelper.save_loss_to_tracker(
                 token_losses.detach().sum() * row_scale,

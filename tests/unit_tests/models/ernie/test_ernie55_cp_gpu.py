@@ -69,6 +69,12 @@ deterministic backward) is gated at 3 times its noise instead.
   config, as building an ``Ernie55HybridModel`` does, so the q, kv and inverse-output RoPE at CP = 4
   must run the ERNIE 5.5 Triton kernel (at least two forward launches and one inverse launch); the
   CP = 1 reference never calls the context-parallel RoPE. Needs Triton.
+* ``test_h_layer_cp4_zigzag_matches_contiguous_and_cp1``: the same H layer in Megatron-Core's opt-in zigzag
+  partition (``cp_partition_mode="zigzag"``, ``dsv4_cp_zigzag=True``: rank ``r`` holds chunks ``r`` and ``7 - r`` of
+  one 8K document, two boundary halos) against CP = 1 within the same gates, and against the contiguous partition of
+  the same weights and document: the outputs gathered to global order within relative L2 5e-3 (the fraction of
+  bitwise-equal rows is logged; only the kv projection's row count differs). ``[fused]`` must hand the explicit
+  zigzag positions to the ERNIE 5.5 Triton RoPE. Needs Megatron-Core's ``dsv4_cp_zigzag``.
 """
 
 from __future__ import annotations
@@ -160,6 +166,9 @@ _D_LAYOUTS = {
 # Rank boundaries 2048 and 6144 cut compression blocks (document offsets 1048 and 48, not multiples of 128);
 # 4096 is a document start.
 _H_LAYOUT = [1000, 3096, 2000, 2096]
+# The H layers' zigzag partition (dsv4_cp_zigzag) takes one document per pack: 8 chunks of 1024 rows (8 blocks).
+_H_ZIGZAG_DOCUMENT = 8192
+_ZIGZAG_FORWARD_MAX_REL_ERR = 5e-3
 
 _FORWARD_MIN_COSINE = 0.9999
 _FORWARD_MAX_REL_ERR = 1e-2
@@ -355,7 +364,7 @@ def _broadcast_parameters_(module, groups: _Groups) -> None:
             dist.broadcast(param.data, src=source, group=groups.cp.cp)
 
 
-def _twins(slot: str, groups: _Groups, *, seed: int, **build_kwargs):
+def _twins(slot: str, groups: _Groups, *, seed: int, config_overrides: dict | None = None, **build_kwargs):
     """The same attention (``dsa_layer`` = D, ``csa_qk_layernorm_layer`` = H) on the CP = 4 and the CP = 1 groups."""
     from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
     from megatron.core.transformer.spec_utils import build_module
@@ -363,7 +372,7 @@ def _twins(slot: str, groups: _Groups, *, seed: int, **build_kwargs):
     from megatron.bridge.models.ernie.modeling_ernie55 import ernie55_hybrid_stack_spec
 
     spec = getattr(ernie55_hybrid_stack_spec().submodules, slot).submodules.self_attention
-    config = _config()
+    config = _config(**(config_overrides or {}))
     modules = []
     for pg_collection in (groups.cp, groups.cp1):
         torch.manual_seed(seed)
@@ -384,7 +393,7 @@ def _twins(slot: str, groups: _Groups, *, seed: int, **build_kwargs):
     return cp_module, cp1_module
 
 
-def _packed_seq_params(doc_lens, *, padded_lens=None, prebuild_group=None):
+def _packed_seq_params(doc_lens, *, padded_lens=None, prebuild_group=None, mode="contiguous"):
     """Packed metadata: one tensor in all four fields, or unpadded and padded boundaries for ``padded_lens``."""
     from megatron.core.packed_seq_params import PackedSeqParams
 
@@ -404,7 +413,7 @@ def _packed_seq_params(doc_lens, *, padded_lens=None, prebuild_group=None):
         cu_seqlens_kv_padded=cu_seqlens_padded,
         max_seqlen_q=max(padded),
         max_seqlen_kv=max(padded),
-        cp_partition_mode="contiguous",
+        cp_partition_mode=mode,
     )
     if prebuild_group is not None:
         context_parallel.require_cp_layout_api("tests").prebuild_thd_cp_partition_routes(params, prebuild_group)
@@ -506,6 +515,18 @@ def _run(
 def _rank_rows(total: int, rank: int) -> torch.Tensor:
     local = total // CP
     return torch.arange(rank * local, (rank + 1) * local, device=_device())
+
+
+def _zigzag_rank_rows(total: int, rank: int) -> torch.Tensor:
+    """Rows of ``rank`` in the zigzag partition of one ``total``-row document: chunks ``r`` and ``2 * CP - 1 - r``."""
+    chunk = total // (2 * CP)
+    second = 2 * CP - 1 - rank
+    return torch.cat(
+        (
+            torch.arange(rank * chunk, (rank + 1) * chunk, device=_device()),
+            torch.arange(second * chunk, (second + 1) * chunk, device=_device()),
+        )
+    )
 
 
 def _cosine(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -1093,3 +1114,79 @@ def test_h_layer_cp4_matches_cp1(cp4, monkeypatch, rope):
         failures.append(f"Triton kernels launched without ernie_fused_ops installed: {launches}")
     _report(f"H 8K ({rope} RoPE)", triton_launches=str(launches))
     _assert_all_ranks(failures, f"H layer CP4 vs CP1 ({rope} RoPE)")
+
+
+@pytest.mark.parametrize("rope", ["eager", "fused"])
+def test_h_layer_cp4_zigzag_matches_contiguous_and_cp1(cp4, monkeypatch, rope):
+    import torch.distributed as dist
+    from megatron.core.transformer.transformer_config import TransformerConfig
+
+    from megatron.bridge.models.ernie.modeling_ernie55 import install_ernie55_fused_ops
+    from megatron.bridge.models.ernie.modeling_ernie55.fused_dispatch import triton_available
+    from tests.unit_tests.models.ernie.ernie55_test_utils import isolate_fused_dispatch
+
+    if not hasattr(TransformerConfig, "dsv4_cp_zigzag"):
+        _skip("Megatron-Core without dsv4_cp_zigzag (the H layers' zigzag CP partition)")
+    dispatch = isolate_fused_dispatch(monkeypatch)
+    if rope == "fused" and not triton_available():
+        _skip("the ERNIE 5.5 Triton RoPE needs Triton")
+    total = _H_ZIGZAG_DOCUMENT
+    zigzag = dict(cp_partition_mode="zigzag", dsv4_cp_zigzag=True)
+    zigzag_module, cp1_module = _twins(
+        "csa_qk_layernorm_layer", cp4, seed=4322, compress_ratio=128, config_overrides=zigzag
+    )
+    contiguous_module, _ = _twins("csa_qk_layernorm_layer", cp4, seed=4322, compress_ratio=128)
+    contiguous_module.load_state_dict(zigzag_module.state_dict())
+    failures = []
+    hidden, grad_output = _inputs(zigzag_module.config.hidden_size, total, seed=12)
+    cp1_params = _packed_seq_params([total])
+    cp1_run = _run(cp1_module, hidden, grad_output, cp1_params)
+    noise = _cp1_noise(cp1_run, _run(cp1_module, hidden, grad_output, cp1_params))
+    if rope == "fused":
+        install_ernie55_fused_ops(zigzag_module.config)
+
+    zigzag_rows = _zigzag_rank_rows(total, cp4.rank)
+    zigzag_params = _packed_seq_params([total], prebuild_group=cp4.cp.cp, mode="zigzag")
+    zigzag_run = _run(zigzag_module, hidden[zigzag_rows], grad_output[zigzag_rows], zigzag_params, scale=float(CP))
+    if zigzag_params.cp_partition_mode != "zigzag":
+        failures.append(f"cp_partition_mode left at {zigzag_params.cp_partition_mode!r}")
+    failures += _compare(zigzag_run, cp1_run, zigzag_rows, cp4, f"H zigzag 8K ({rope} RoPE)", noise)
+    launches = dict(dispatch.FUSED_OP_CALLS)
+    contiguous_rows = _rank_rows(total, cp4.rank)
+    contiguous_params = _packed_seq_params([total], prebuild_group=cp4.cp.cp)
+    contiguous_run = _run(
+        contiguous_module, hidden[contiguous_rows], grad_output[contiguous_rows], contiguous_params, scale=float(CP)
+    )
+    failures += _compare(contiguous_run, cp1_run, contiguous_rows, cp4, f"H contiguous 8K ({rope} RoPE)", noise)
+
+    # Zigzag against contiguous, in global row order on every rank.
+    def global_rows(output, rows):
+        gathered_output = torch.empty((CP,) + tuple(output.shape), dtype=output.dtype, device=output.device)
+        gathered_rows = torch.empty((CP,) + tuple(rows.shape), dtype=rows.dtype, device=rows.device)
+        dist.all_gather_into_tensor(gathered_output, output.contiguous(), group=cp4.cp.cp)
+        dist.all_gather_into_tensor(gathered_rows, rows.contiguous(), group=cp4.cp.cp)
+        result = torch.empty((total,) + tuple(output.shape[1:]), dtype=output.dtype, device=output.device)
+        result[gathered_rows.flatten()] = gathered_output.flatten(0, 1)
+        return result
+
+    zigzag_global = global_rows(zigzag_run.output, zigzag_rows)
+    contiguous_global = global_rows(contiguous_run.output, contiguous_rows)
+    rel_err = _rel_err(zigzag_global, contiguous_global)
+    bitwise_rows = (zigzag_global == contiguous_global).flatten(1).all(dim=1).float().mean().item()
+    if rel_err > _ZIGZAG_FORWARD_MAX_REL_ERR or _cosine(zigzag_global, contiguous_global) < _FORWARD_MIN_COSINE:
+        failures.append(f"zigzag vs contiguous output relative L2 {rel_err:.3e}")
+    if rope == "fused":
+        forward, inverse = launches.get("thd_cp_local_rope@forward", 0), launches.get("thd_cp_local_rope@inverse", 0)
+        if forward < 2 or inverse < 1:
+            failures.append(
+                f"Triton RoPE launches {launches} in the zigzag run, expected >= 2 forward and >= 1 inverse"
+            )
+    elif launches:
+        failures.append(f"Triton kernels launched without ernie_fused_ops installed: {launches}")
+    _report(
+        f"H zigzag vs contiguous 8K ({rope} RoPE)",
+        output_rel_err=rel_err,
+        bitwise_equal_row_fraction=bitwise_rows,
+        triton_launches=str(launches),
+    )
+    _assert_all_ranks(failures, f"H layer CP4 zigzag vs contiguous and CP1 ({rope} RoPE)")

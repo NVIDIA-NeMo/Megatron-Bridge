@@ -70,7 +70,9 @@ reference implementation:
 At context_parallel_size > 1 the rows' RoPE (q, kv and the inverse on the output) goes through
 Megatron-Core's ``cp_utils.apply_thd_cp_local_rope_unfused``; with ``ernie_fused_ops`` it runs the
 reference implementation's Triton kernel on CUDA
-(:mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_dispatch`).
+(:mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_dispatch`). In the contiguous partition a rank's rows
+are one interval of global positions; in Megatron-Core's opt-in zigzag partition (``dsv4_cp_zigzag``) they are two
+chunks, and Megatron-Core passes their positions explicitly (``position_ids``), which both paths honour.
 
 Expected numerical differences from the reference implementation (rounding only):
 
@@ -158,13 +160,16 @@ def validate_ernie55_hca_config(config: TransformerConfig) -> None:
 
     Context parallelism (CP > 1) is Megatron-Core's: DSv4 runs it in the contiguous partition on
     packed THD input (it exchanges the CP-boundary rows the window and the compressor need and
-    gathers the compressed keys). The ERNIE additions are per row (VHA, gate) or per layer (plain
+    gathers the compressed keys), or, with Megatron-Core's opt-in ``dsv4_cp_zigzag`` and
+    ``cp_partition_mode="zigzag"``, in the per-sequence zigzag partition (two chunks per rank, two boundary halos).
+    The ERNIE additions are per row (VHA, gate) or per layer (plain
     RoPE or YaRN, see :meth:`Ernie55HCASelfAttention._use_plain_rope`). The CP envelope is shared with the D
     layer
     (:func:`~megatron.bridge.models.ernie.modeling_ernie55.context_parallel.validate_ernie55_context_parallel_config`):
     a Megatron-Core build with the CP partition converter (dev; main is not validated and raises)
     and static CP. Megatron-Core's DSv4 CP path builds its compressor layout with CuTe DSL
-    kernels, so H layers at CP > 1 run on GPUs only.
+    kernels, so H layers at CP > 1 run on GPUs only. The zigzag partition keeps the eager compressor:
+    ``ernie_hca_fused_compressor`` is not validated with it and is rejected.
 
     Args:
         config: Stack-level or per-layer transformer config.
@@ -192,6 +197,16 @@ def validate_ernie55_hca_config(config: TransformerConfig) -> None:
         "quant_recipe and Kitchen quantization are not supported.",
     )
     validate_ernie55_cuda_graph_config(config, layer="H")
+    require(
+        not (
+            config.context_parallel_size > 1
+            and getattr(config, "dsv4_cp_zigzag", False)
+            and getattr(config, "ernie_hca_fused_compressor", False)
+        ),
+        "ernie_hca_fused_compressor is not validated with the zigzag context-parallel partition (dsv4_cp_zigzag=True) "
+        "yet (its kernels have not been checked on the rank's two-chunk compressor layout). Keep the eager compressor "
+        "(ernie_hca_fused_compressor=False) or use cp_partition_mode='contiguous'.",
+    )
     require(not config.delay_wgrad_compute, "delay_wgrad_compute is not supported.")
     require(not config.add_bias_linear, "add_bias_linear must be False.")
     require(config.normalization == "RMSNorm", "normalization must be 'RMSNorm'.")
@@ -438,9 +453,9 @@ class Ernie55HCASelfAttention(DSv4HybridSelfAttention):
         embedding is rebound to one ``RotaryEmbedding(qk_pos_emb_head_dim,
         rotary_base=csa_compress_rotary_base, cp_group=<the layer's CP group>)``, so the forward,
         the compressor and the core's inverse RoPE all read the same plain table. The context-parallel
-        path reads the same holders: it applies the table at the rows' global contiguous positions
-        (``cp_utils.apply_thd_cp_local_rope_*``), the compressor rotates its blocks with its own
-        ``rotary_pos_emb`` and the core's inverse RoPE (``_OutputInverseRope``) reads the core's.
+        path reads the same holders: it applies the table at the rows' positions, one contiguous interval or, under
+        ``dsv4_cp_zigzag``, the two zigzag chunks (``cp_utils.apply_thd_cp_local_rope_*``), the compressor rotates its
+        blocks with its own ``rotary_pos_emb`` and the core's inverse RoPE (``_OutputInverseRope``) reads the core's.
 
         Afterwards no rotary embedding other than the plain one may be reachable from the layer, as a
         registered submodule or as a plain attribute (also inside a list, tuple, dict or partial), so a

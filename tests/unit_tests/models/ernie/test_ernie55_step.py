@@ -15,6 +15,8 @@
 """CPU tests of the ERNIE 5.5 training step, its SFT data and its metric logging.
 
 * The batch contract: documents from ``cu_seqlens``, labels masked by ``loss_mask``, padding rows dropped.
+* The batch of the H layers' zigzag partition (Megatron-Core's ``dsv4_cp_zigzag``): whole compression blocks for
+  one-document batches, per-document ``2 * CP`` alignment for packed batches and the rows of each zigzag segment.
 * The loss pairing: ``ernie_per_row_loss`` selects the per-row loss and requires
   ``calculate_per_token_loss=False``; at CP > 1 anything else must be per-token.
 * The SFT data: Hugging Face labels shifted per sample (after splitting long samples), right truncation,
@@ -152,6 +154,14 @@ class TestBatchContract:
         # ernie_cp_key_gather_inverse_grad: the D layers' key-gather backward reads the prebuilt inverse.
         assert (geometry.key_reorder_inverse is not None) is switch
 
+    def test_cp1_batch_ignores_the_h_layer_zigzag_rules(self):
+        """At CP = 1 there is no partition: several documents, no block padding."""
+        collated = collate_ernie55_rows(
+            [[([5, 6, 7], [6, 7, IGNORE_LABEL]), ([8, 9], [9, IGNORE_LABEL])]], pad_token_id=0
+        )
+        batch = get_batch(iter([collated]), _H_ZIGZAG_CONFIG, cp_group=None, device="cpu")
+        assert batch.packed_seq_params.cu_seqlens_q.tolist() == [0, 3, 5]
+
     def test_cp1_batch(self):
         collated = collate_ernie55_rows(
             [[([5, 6, 7], [6, 7, IGNORE_LABEL]), ([8, 9], [9, IGNORE_LABEL])]], pad_token_id=0
@@ -162,6 +172,175 @@ class TestBatchContract:
         assert batch.loss_mask.tolist() == [[1, 1, 0, 1, 0]]
         assert batch.packed_seq_params.cu_seqlens_q.tolist() == [0, 3, 5]
         assert batch.packed_seq_params.cu_seqlens_kv is batch.packed_seq_params.cu_seqlens_q_padded
+
+
+# A stack with an H layer whose H layers run Megatron-Core's opt-in zigzag partition (dsv4_cp_zigzag).
+_H_ZIGZAG_CONFIG = SimpleNamespace(
+    cp_partition_mode="zigzag", dsv4_cp_zigzag=True, csa_compress_ratios=[128, 0, 0, 0], csa_window_size=5
+)
+
+
+def _zigzag_rows(total: int, cp_size: int, cp_rank: int) -> list[int]:
+    """Rows of rank ``cp_rank``: chunks ``r`` and ``2 * CP - 1 - r`` of one ``total``-row document."""
+    chunk = total // (2 * cp_size)
+    second = 2 * cp_size - 1 - cp_rank
+    return [*range(cp_rank * chunk, (cp_rank + 1) * chunk), *range(second * chunk, (second + 1) * chunk)]
+
+
+class TestHLayerZigzagBatch:
+    """Verify the single-document and packed input geometry of the H layers' zigzag partition."""
+
+    def test_chunk_rules(self):
+        from megatron.bridge.models.ernie.ernie55_context_parallel import (
+            ernie55_cp_zigzag_chunk_rows,
+            uses_h_layer_zigzag,
+        )
+
+        # Whole compression blocks of at least D_window = max(csa_window_size, ratio) rows.
+        assert ernie55_cp_zigzag_chunk_rows(_H_ZIGZAG_CONFIG) == (128, 128)
+        assert ernie55_cp_zigzag_chunk_rows(SimpleNamespace(csa_compress_ratios=[128, 0], csa_window_size=300)) == (
+            128,
+            300,
+        )
+        assert ernie55_cp_zigzag_chunk_rows(SimpleNamespace(csa_compress_ratios=[0, 0], csa_window_size=128)) == (1, 1)
+        assert uses_h_layer_zigzag(_H_ZIGZAG_CONFIG, cp_size=2)
+        assert not uses_h_layer_zigzag(_H_ZIGZAG_CONFIG, cp_size=1)
+        assert not uses_h_layer_zigzag(
+            SimpleNamespace(**{**vars(_H_ZIGZAG_CONFIG), "csa_compress_ratios": [0]}), cp_size=2
+        )
+        assert not uses_h_layer_zigzag(
+            SimpleNamespace(**{**vars(_H_ZIGZAG_CONFIG), "cp_partition_mode": "contiguous"})
+        )
+        assert uses_h_layer_zigzag(SimpleNamespace(**vars(_H_ZIGZAG_CONFIG), context_parallel_size=4))
+
+    @pytest.mark.parametrize(
+        "cp_size, length, padded",
+        [
+            (2, 300, 512),  # 75-row chunks grow to one 128-row block
+            (2, 700, 1024),  # 175-row chunks grow to two blocks
+            (2, 2, 512),  # a tiny document still gets chunks of the 128-row window
+            (2, 512, 512),  # already whole blocks: no padding
+            (4, 987, 1024),  # 124-row chunks grow to one block
+        ],
+    )
+    def test_one_document_is_padded_to_whole_blocks_per_chunk(self, pg_collection, cp_size, length, padded):
+        from megatron.bridge.models.ernie.modeling_ernie55 import context_parallel
+
+        if context_parallel.load_cp_layout_api() is None:
+            pytest.skip("Megatron-Core main has no zigzag CP helpers")
+        tokens = torch.arange(1, length + 1)
+        labels = torch.where(torch.arange(length) < 3, IGNORE_LABEL, tokens + 1000)
+        full_tokens = torch.cat([tokens, tokens.new_full((padded - length,), 0)])
+        full_labels = torch.cat([labels, labels.new_full((padded - length,), IGNORE_LABEL)])
+        seen = []
+        for rank in range(cp_size):
+            batch_dict = dict(tokens=tokens.unsqueeze(0), labels=labels.unsqueeze(0), pad_token_id=0)
+            batch = get_batch(iter([batch_dict]), _H_ZIGZAG_CONFIG, cp_group=_FakeGroup(cp_size, rank), device="cpu")
+            params = batch.packed_seq_params
+            assert params.cp_partition_mode == "zigzag"
+            assert params.cu_seqlens_q.tolist() == [0, padded] and params.cu_seqlens_kv is params.cu_seqlens_q_padded
+            assert [int(n) for n in params.thd_cp_host_cu_seqlens_q] == [0, padded]
+            assert params.max_seqlen_q == params.max_seqlen_kv == padded
+            rows = _zigzag_rows(padded, cp_size, rank)
+            assert batch.tokens[0].tolist() == full_tokens[rows].tolist()
+            assert batch.labels[0].tolist() == full_labels[rows].tolist()
+            assert batch.position_ids[0].tolist() == rows
+            assert batch.loss_mask[0].tolist() == (full_labels[rows] != IGNORE_LABEL).float().tolist()
+            seen += rows
+        # Every row of the padded document lives on exactly one rank.
+        assert sorted(seen) == list(range(padded))
+
+    def test_rows_are_megatron_cores_zigzag_segments(self, pg_collection):
+        """The batch's rows are the two segments Megatron-Core's zigzag H layers expect."""
+        cp_utils = pytest.importorskip("megatron.core.transformer.experimental_attention_variant.csa_utils.cp_utils")
+        if not hasattr(cp_utils, "thd_cp_zigzag_segments"):
+            pytest.skip("Megatron-Core without dsv4_cp_zigzag (H-layer zigzag CP)")
+        cp_size, length = 4, 2048
+        tokens = torch.arange(length)
+        for rank in range(cp_size):
+            batch = get_batch(
+                iter([dict(tokens=tokens.unsqueeze(0), labels=tokens.unsqueeze(0))]),
+                _H_ZIGZAG_CONFIG,
+                cp_group=_FakeGroup(cp_size, rank),
+                device="cpu",
+            )
+            segment_rows, starts = cp_utils.thd_cp_zigzag_segments(batch.tokens.size(1), rank, cp_size)
+            expected = [row for start in starts for row in range(start, start + segment_rows)]
+            assert batch.position_ids[0].tolist() == expected
+
+    @pytest.mark.parametrize("cp_size", [2, 16])
+    def test_packed_documents_use_only_cp_alignment(self, pg_collection, cp_size):
+        from megatron.bridge.models.ernie.modeling_ernie55 import context_parallel
+
+        if context_parallel.load_cp_layout_api() is None:
+            pytest.skip("Megatron-Core main has no zigzag CP helpers")
+        lengths = [117, 2 * cp_size * 129, 1]
+        multiple = 2 * cp_size
+        padded = [(n + multiple - 1) // multiple * multiple for n in lengths]
+        bounds = [0, *torch.tensor(padded).cumsum(0).tolist()]
+        samples = [(list(range(i * 10000, i * 10000 + n)), list(range(n))) for i, n in enumerate(lengths)]
+        collated = collate_ernie55_rows([samples], pad_token_id=99999)
+        seen = []
+        for rank in range(cp_size):
+            batch = get_batch(iter([collated]), _H_ZIGZAG_CONFIG, cp_group=_FakeGroup(cp_size, rank), device="cpu")
+            params = batch.packed_seq_params
+            assert params.cp_partition_mode == "zigzag" and params.cu_seqlens_q.tolist() == bounds
+            assert list(params.thd_cp_host_cu_seqlens_q) == bounds
+            expected_tokens, expected_labels, positions = [], [], []
+            for document, (n, width) in enumerate(zip(lengths, padded)):
+                rows = _zigzag_rows(width, cp_size, rank)
+                positions.extend(rows)
+                seen.extend(bounds[document] + row for row in rows)
+                expected_tokens.extend(document * 10000 + row if row < n else 99999 for row in rows)
+                expected_labels.extend(row if row < n else IGNORE_LABEL for row in rows)
+            assert batch.tokens[0].tolist() == expected_tokens
+            assert batch.labels[0].tolist() == expected_labels
+            assert batch.position_ids[0].tolist() == positions
+            assert batch.loss_mask[0].tolist() == [label != IGNORE_LABEL for label in expected_labels]
+        assert sorted(seen) == list(range(bounds[-1]))
+
+    def test_packed_document_needing_cp_padding_requires_pad_token(self, fake_group_sizes):
+        collated = collate_ernie55_rows([[([5] * 7, [6] * 7), ([7] * 8, [8] * 8)]], pad_token_id=0)
+        del collated["pad_token_id"]
+        with pytest.raises(ValueError, match=r"multiple of 2 \* context_parallel_size = 4.*no pad_token_id"):
+            get_batch(iter([collated]), _H_ZIGZAG_CONFIG, cp_group=_FakeGroup(2), device="cpu")
+
+    @pytest.mark.parametrize("length", [300, 8, 640])
+    def test_document_off_the_chunk_rules_needs_a_pad_token(self, fake_group_sizes, length):
+        # 640 rows are whole 128-row blocks, but not 2 * CP = 4 chunks of whole blocks (a multiple of 512).
+        batch = dict(tokens=torch.zeros(1, length, dtype=torch.long), labels=torch.zeros(1, length, dtype=torch.long))
+        with pytest.raises(ValueError, match="whole 128-row blocks of at least 128 rows.*no pad_token_id"):
+            get_batch(iter([batch]), _H_ZIGZAG_CONFIG, cp_group=_FakeGroup(2), device="cpu")
+
+    def test_document_on_the_chunk_rules_needs_no_pad_token(self, pg_collection):
+        from megatron.bridge.models.ernie.modeling_ernie55 import context_parallel
+
+        if context_parallel.load_cp_layout_api() is None:
+            pytest.skip("Megatron-Core main has no zigzag CP helpers")
+        tokens = torch.arange(1, 1025).unsqueeze(0)
+        batch = get_batch(
+            iter([dict(tokens=tokens, labels=tokens + 1)]), _H_ZIGZAG_CONFIG, cp_group=_FakeGroup(2, 1), device="cpu"
+        )
+        assert batch.tokens.size(1) == 512 and batch.packed_seq_params.cu_seqlens_q.tolist() == [0, 1024]
+
+    def test_d_only_zigzag_stack_keeps_its_rules(self, pg_collection):
+        """Without H layers the zigzag partition keeps the 2 * CP padding and several documents per micro-batch."""
+        from megatron.bridge.models.ernie.modeling_ernie55 import context_parallel
+
+        if context_parallel.load_cp_layout_api() is None:
+            pytest.skip("Megatron-Core main has no zigzag CP helpers")
+        config = SimpleNamespace(cp_partition_mode="zigzag", csa_compress_ratios=[0, 0], csa_window_size=128)
+        collated = collate_ernie55_rows([[([5] * 7, [6] * 7), ([7] * 5, [8] * 5)]], pad_token_id=0)
+        batch = get_batch(iter([collated]), config, cp_group=_FakeGroup(2, 0), device="cpu")
+        assert batch.packed_seq_params.cu_seqlens_q.tolist() == [0, 8, 16]
+
+    def test_builder_checks_the_chunk_rules(self):
+        from megatron.bridge.models.ernie.ernie55_context_parallel import build_ernie55_thd_cp_batch
+
+        sample = (torch.arange(4), torch.arange(4))
+        for name in ("zigzag_chunk_multiple", "zigzag_min_chunk_rows"):
+            with pytest.raises(ValueError, match=f"{name} must be a positive int"):
+                build_ernie55_thd_cp_batch([sample], pad_token_id=0, cp_group=None, **{name: 0})
 
 
 class TestLossPairing:
