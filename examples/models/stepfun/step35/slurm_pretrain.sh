@@ -97,6 +97,12 @@ export NVLINK_DOMAIN_SIZE=72
 
 # Translate Slurm env -> torch.distributed env (each srun task is one rank).
 export MASTER_PORT=${MASTER_PORT:-29500}
+MASTER_ADDR=$(scontrol show hostnames "${SLURM_JOB_NODELIST}" | head -n1)
+if [ -z "${MASTER_ADDR}" ]; then
+    echo "ERROR: could not resolve MASTER_ADDR from SLURM_JOB_NODELIST."
+    exit 1
+fi
+export MASTER_ADDR
 
 # ==============================================================================
 # Job Execution
@@ -167,7 +173,6 @@ CLI_OVERRIDES="\
 # Inline script run on every srun task. Each task is one rank.
 read -r -d '' INNER_SCRIPT <<'EOF' || true
 set -euo pipefail
-export MASTER_ADDR=$(scontrol show hostnames "${SLURM_JOB_NODELIST}" | head -n1)
 export RANK=${SLURM_PROCID}
 export WORLD_SIZE=${SLURM_NTASKS}
 export LOCAL_RANK=${SLURM_LOCALID}
@@ -195,7 +200,7 @@ ${SRUN_CMD} \
     --wait=60 \
     --kill-on-bad-exit=1 \
     --no-container-mount-home \
-    bash -c "export CLI_OVERRIDES=\"${CLI_OVERRIDES}\"; export MEGATRON_BRIDGE_PATH=\"${MEGATRON_BRIDGE_PATH}\"; export MASTER_PORT=\"${MASTER_PORT}\"; ${INNER_SCRIPT}"
+    bash -c "export CLI_OVERRIDES=\"${CLI_OVERRIDES}\"; export MEGATRON_BRIDGE_PATH=\"${MEGATRON_BRIDGE_PATH}\"; export MASTER_ADDR=\"${MASTER_ADDR}\"; export MASTER_PORT=\"${MASTER_PORT}\"; ${INNER_SCRIPT}"
 
 echo "======================================"
 echo "Job completed"
