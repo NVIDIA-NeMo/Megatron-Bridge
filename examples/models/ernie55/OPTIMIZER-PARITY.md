@@ -23,20 +23,25 @@ export PYTHONPATH="$MOK:$MCORE:$BRIDGE/src${PYTHONPATH:+:$PYTHONPATH}"
 export MCORE_DSA_STABLE_INDEXER_TOPK=1 MCORE_DSA_PRESERVE_SELECTED_SLOT_ORDER=1
 export MCORE_DSV4_GROUP_PROJ_BMM=1 NCCL_MAX_P2P_NCHANNELS=8 NCCL_GRAPH_REGISTER=0
 export PYTORCH_ALLOC_CONF=expandable_segments:True
-torchrun --nnodes=16 --nproc-per-node=4 --node-rank="$NODE_RANK" \
-  --master-addr="$MASTER_ADDR" --master-port="$MASTER_PORT" \
-  "$EX/optimizer_parity_256k.py" bridge "$OPT/bridge-capture" -- \
-  "dataset.path=$DATA/uniform.jsonl" "checkpoint.pretrained_checkpoint=$CKPT" \
-  train.train_iters=2 train.micro_batch_size=1 train.global_batch_size=32 \
-  optimizer.lr=1e-5 optimizer.min_lr=1e-5 scheduler.lr_warmup_iters=5 \
-  scheduler.lr_decay_style=constant scheduler.lr_decay_iters=6 \
-  model.thd_max_packed_sequences=8 model.moe_virtual_expert_load_balance=true \
-  model.recompute_num_layers=1 model.ernie_reference_rmsnorm=true \
-  model.ernie_fused_mhc=false model.ernie_vha_batched_mix=false \
-  model.ernie_dsa_preserve_cp_key_slots=true \
-  '+model.moe_megakernel_backend_config.reference_pre_fc2_gate=true' \
-  "logger.tensorboard_dir=$OPT/bridge-tb" "logger.wandb_project=$WANDB_PROJECT" \
-  logger.wandb_exp_name=ernie55-uniform-public-optimizer
+capture_optimizer_bridge() {
+  local capture=$1 layers=$2 experiment=$3
+  shift 3
+  torchrun --nnodes=16 --nproc-per-node=4 --node-rank="$NODE_RANK" \
+    --master-addr="$MASTER_ADDR" --master-port="$MASTER_PORT" \
+    "$EX/optimizer_parity_256k.py" bridge "$capture" -- \
+    "dataset.path=$DATA/uniform.jsonl" "checkpoint.pretrained_checkpoint=$CKPT" \
+    train.train_iters=2 train.micro_batch_size=1 train.global_batch_size=32 \
+    optimizer.lr=1e-5 optimizer.min_lr=1e-5 scheduler.lr_warmup_iters=5 \
+    scheduler.lr_decay_style=constant scheduler.lr_decay_iters=6 \
+    model.thd_max_packed_sequences=8 model.moe_virtual_expert_load_balance=true \
+    "model.recompute_num_layers=$layers" model.ernie_reference_rmsnorm=true \
+    model.ernie_fused_mhc=false model.ernie_vha_batched_mix=false \
+    model.ernie_dsa_preserve_cp_key_slots=true \
+    '+model.moe_megakernel_backend_config.reference_pre_fc2_gate=true' \
+    "logger.tensorboard_dir=$OPT/bridge-tb" "logger.wandb_project=$WANDB_PROJECT" \
+    "logger.wandb_exp_name=$experiment" "$@"
+}
+capture_optimizer_bridge "$OPT/bridge-capture" 1 ernie55-uniform-public-optimizer
 ```
 
 ### Run original Swift
@@ -120,3 +125,35 @@ The original Swift trainer and the public strict G1 Bridge recipe each finished 
 | Last shared-expert FC2 | 1.5226% | 1.4401% | 6.4816% | 27.2769% |
 
 All three parameter updates exceeded at least one fixed gate. Comparing the Bridge capture with itself returned zero for every gradient and update error. A separate CPU reduction over the two native traces reproduced every number in the table. The comparison covers these sampled coordinates, this repeated packing and this first nonzero update.
+
+### Combined G2 optimizer comparison
+
+This second Bridge run groups two recomputed symbols and enables the original contiguous CP owners for BF16 router-bias accounting, contiguous query/key owners for D attention backward, and the strict MTP head backward. It retains the same eight-document row, weights, optimizer and schedule. Reuse the Swift capture from above. On each Bridge node, keep the training environment and shell function from **Run Bridge**, then select the following source revisions and output path.
+
+```bash
+git -C "$BRIDGE" fetch origin refs/pull/7000/head
+git -C "$BRIDGE" checkout --detach c5ac3c22b772db7c433fe42614d60295b0a811b8
+git -C "$MCORE" fetch origin refs/pull/9506/head
+git -C "$MCORE" checkout --detach 3ba272c0e128d6e0b5147142363710fcbcaa2671
+export NCCL_ALGO=Ring
+capture_optimizer_bridge "$OPT/bridge-all-strict-g2" 2 ernie55-uniform-all-strict-g2 \
+  model.moe_router_bias_bf16_counts=true model.ernie_router_bias_contiguous_cp_counts=true \
+  model.ernie_dsa_contiguous_backward=true model.ernie_mtp_strict_head_backward=true
+```
+
+After all 64 ranks finish, score the capture on a CPU host.
+
+```bash
+python "$EX/compare_optimizer_256k.py" "$OPT/swift-capture" "$OPT/bridge-all-strict-g2" \
+  --json "$OPT/optimizer-all-strict-g2.json" --check
+```
+
+| Step-2 parameter | Gradient relative L2 | Gradient peak-relative | True update relative L2 | True update peak-relative |
+| --- | ---: | ---: | ---: | ---: |
+| LM output weight | 0.1896% | 0.0807% | 0.1745% | 7.2566% |
+| Token embedding | 0.4061% | 0.1702% | 0.5155% | 26.7598% |
+| Embedding BOS row | 0.4061% | 0.1702% | 0.7890% | 26.7598% |
+| Sampled non-BOS embedding | 0.4118% | 0.4320% | 0.3987% | 6.3753% |
+| Last shared-expert FC2 | 0.0904% | 0.0950% | 2.9537% | 17.0310% |
+
+The comparator confirmed identical actual input IDs and main labels across both updates and identical sampled starting masters. All three sampled parameter gradients met both gates. Each of the three master-weight updates exceeded at least one gate. The table measures the combined configuration in one instrumented run. Measuring steady-state throughput or the effect of an individual switch requires a separate control. [Swift reference](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/5txaup4e) · [Combined G2 Bridge run](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/cbw736ek)
