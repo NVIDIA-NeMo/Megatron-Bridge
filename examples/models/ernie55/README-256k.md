@@ -6,13 +6,13 @@ This experiment trains the public ERNIE-5.5-Flash-Base checkpoint with both its 
 
 Use a Linux GPU container supporting SM103/SM103a on **every** node. The measured base was NGC PyTorch 26.04 (Python 3.12, CUDA 13.2, PyTorch 2.12.0a0, Triton 3.6). The training stack used Transformer Engine 2.20.2, FlashMLA with sparse sink attention (commit `b7643bd`), DeepEP hybrid-ep (`10d4dd7`), cuDNN frontend 1.29.1 with CUTLASS DSL 4.8.1, fast-hadamard-transform 1.1.0, Emerging Optimizers 0.3.0 and Transformers 5.20.2. The base NGC image alone needs these additions. Install the dependencies in the same Python environment used by torchrun. [NGC PyTorch](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch) · [FlashMLA source and build instructions](https://github.com/deepseek-ai/FlashMLA/tree/b7643bd54521f563b839b98289b5cd048c062ba2) · [DeepEP HybridEP source and build instructions](https://github.com/deepseek-ai/DeepEP/tree/10d4dd7377d5bce900fbb4b80cce863764892b95) · [Transformer Engine](https://github.com/NVIDIA/TransformerEngine)
 
-Run the following from a shared workspace visible on all nodes. `BRIDGE` is the checkout of [Bridge #7000](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/7000) containing this README and its helpers. The training implementation was introduced in `43acf2daf25ab96870fb530dad546f9dbb201ad4`. The companion [MCore #9506](https://github.com/NVIDIA/Megatron-LM/pull/9506) supplies the MoonEP backend, packed H support and stable D-indexer selection.
+Run the following from a shared workspace visible on all nodes. `BRIDGE` is the checkout of [Bridge #7000](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/7000) containing this README and its helpers. The runtime and all executable helpers in this guide are pinned to `aeec72b844cbb8b951300b738cea6ab4fddb59c5` (training implementation introduced in `43acf2daf25ab96870fb530dad546f9dbb201ad4`). The companion [MCore #9506](https://github.com/NVIDIA/Megatron-LM/pull/9506) supplies the MoonEP backend, packed H support and stable D-indexer selection.
 
 ```bash
 export WORK=$PWD
 git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
 git -C Megatron-Bridge fetch origin refs/pull/7000/head
-git -C Megatron-Bridge checkout --detach FETCH_HEAD
+git -C Megatron-Bridge checkout --detach aeec72b844cbb8b951300b738cea6ab4fddb59c5
 git clone https://github.com/NVIDIA/Megatron-LM.git
 git -C Megatron-LM fetch origin refs/pull/9506/head
 git -C Megatron-LM checkout --detach 32efd940666ed3efd8fbbaeacc2a75d9d7caa3c9
@@ -37,7 +37,7 @@ The installer builds and installs the native extension from the [public MoK comm
 
 ### Optional public container build
 
-If a compatible SM103 training environment is already installed, continue to step 2. For a source-built environment, the companion MCore checkout provides its [CI development Dockerfile](https://github.com/NVIDIA/Megatron-LM/blob/32efd940666ed3efd8fbbaeacc2a75d9d7caa3c9/docker/Dockerfile.ci.dev). The following uses the public NGC **26.09** base and the Dockerfile's locked GPU libraries. This is a source-reviewed build route. The historical throughput table used the **26.04** stack above. A complete build and 64-GPU training from the 26.09 image have not been validated for this benchmark.
+If a compatible SM103 training environment is already installed, continue to step 2. For a source-built environment, the companion MCore checkout provides its [CI development Dockerfile](https://github.com/NVIDIA/Megatron-LM/blob/32efd940666ed3efd8fbbaeacc2a75d9d7caa3c9/docker/Dockerfile.ci.dev). The following uses the public NGC **26.09** base and the Dockerfile's locked GPU libraries, including cuDNN frontend 1.32.0. This is a source-reviewed build route. The historical throughput table used the **26.04** stack above. A complete build and 64-GPU training from the 26.09 image have not been validated for this benchmark.
 
 ```bash
 # Build on a Linux arm64 host with a CUDA toolchain and Docker Buildx.
@@ -56,7 +56,19 @@ uv pip install --python "$UV_PROJECT_ENVIRONMENT/bin/python" --no-build-isolatio
 export ERNIE55_CUDA_HEAD_LIBRARY=$WORK/libernie55_multimax_sm103.so
 python "$BRIDGE/src/megatron/bridge/models/ernie/modeling_ernie55/cuda_head.py" \
   --arch sm_103 --output "$ERNIE55_CUDA_HEAD_LIBRARY"
-python -c 'import megatron.core, megatron.bridge, torch, mok, deep_ep, flash_mla, transformer_engine; print(torch.__version__)'
+# Inside an allocated GB300 container.
+python - <<'PYGPU'
+import inspect
+import torch
+import cudnn, mok, transformer_engine.pytorch
+import megatron.bridge, megatron.core
+from deep_ep import HybridEPBuffer
+from fast_hadamard_transform import hadamard_transform
+from flash_mla import flash_mla_sparse_fwd
+assert torch.cuda.get_device_capability() == (10, 3)
+assert {"attn_sink", "topk_length", "indexer_topk"} <= set(inspect.signature(flash_mla_sparse_fwd).parameters)
+print(torch.__version__, torch.version.cuda)
+PYGPU
 ```
 
 ## 2. Download and convert the weights
@@ -71,12 +83,13 @@ export CKPT=$WORK/ernie256k-mcore-step0
 mkdir -p "$DATA"
 hf download baidu/ERNIE-5.5-Flash-Base --revision 028544b2ffceea189b2d8768ed2b9d09b06f2343 --local-dir "$HF_MODEL"
 python "$EX/benchmark_256k.py" architecture "$HF_MODEL" "$ERNIE55_HF_PATH"
+printf '%s  %s\n' 3d1790a86b6debaa6cb0201aa3397541e17743b030a08bb3b5024a04f2011e62 "$ERNIE55_HF_PATH/config.json" | sha256sum -c -
 # Once on one four-GB300 node. CKPT must be a new path.
 python -m torch.distributed.run --standalone --nproc-per-node=4 \
   "$EX/benchmark_256k.py" convert "$HF_MODEL" "$CKPT"
 ```
 
-The architecture helper keeps the official model dimensions and MTP topology, selects the 262,144-position benchmark limit, makes the release's YaRN factor (16) and original context (65,536) explicit, selects adjacent-pair D RoPE, uses the registered ERNIE alias and removes the HF quantization metadata from the training config. The pretraining recipe sets the D indexer loss coefficient to 0.01. The official checkpoint is read without modification. [Model release](https://huggingface.co/baidu/ERNIE-5.5-Flash-Base/tree/028544b2ffceea189b2d8768ed2b9d09b06f2343)
+The architecture helper keeps the official model dimensions and MTP topology, selects the 262,144-position benchmark limit, makes the release's YaRN factor (16) and original context (65,536) explicit, selects adjacent-pair D RoPE, uses the registered ERNIE alias and removes the HF quantization metadata from the training config. The pretraining recipe sets the D indexer loss coefficient to 0.01. The official checkpoint is read without modification. A four-GB300 EP4 preflight with the public runtime checked all 134,231 indexed keys across the 128 official shards. The three complete sampled FP8 projection matrices dequantized bitwise identically to an independent BF16 calculation. Earlier conversions wrote and verified 561.3 GB distributed checkpoints at two sites. The public training validation reused a converted checkpoint. [Model release](https://huggingface.co/baidu/ERNIE-5.5-Flash-Base/tree/028544b2ffceea189b2d8768ed2b9d09b06f2343)
 
 ## 3. Prepare one fixed packed row
 
@@ -183,6 +196,17 @@ The following integrated measurements compare two **MoonEP-enabled** arms. The b
 | Eight equal | 4,440.8 → 4,548.1 | 227.582 → 173.082 |
 | Twelve skewed | 4,233.8 → 4,303.4 | 228.662 → 174.162 |
 
+### Public checkout validation
+
+These runs loaded the same released weights and twelve-document fixture on 64 GB300s. Both used public MCore `32efd9406`, natural MoK + MoonEP, full two-symbol recomputation, both heads and the 26.04 environment from step 1. All twelve optimizer updates completed. The 4–12 window includes every step.
+
+| Public Bridge revision | D-indexer tie selection | Average seconds/update | Tokens/s/GPU |
+| --- | --- | ---: | ---: |
+| `a170a3321` | Stable (precision) | 48.104 | 2,724.74 |
+| `b4994e8e5` | Native (performance) | 30.372 | 4,315.58 |
+
+The original launchers did not return allocator watermarks. The pinned launcher in step 1 preserves measurement hooks across environment re-execution and writes their results outside the training logger’s warning filter. A fresh run is measuring all 64 allocator peaks and exercising both first-microbatch memory-optimization captures on the public pair.
+
 ## 6. Compare head values before the first optimizer update
 
 Run this separately from timing. Enable deterministic D-indexer tie selection, keep the input/checkpoint/seed fixed and allocate a **new directory** for each capture. The probe reads real CUDA-head logits and records all per-token losses, sampled raw logits and head-input gradients for the **first microbatch**. It maps CP16 zigzag rows back to global padded positions, verifies document coordinates and requires the complete set of 64 rank records. Run on every node with the same function and environment from step 4.
@@ -199,9 +223,45 @@ python "$EX/head_parity_256k.py" "$LOGS/mok-heads" "$LOGS/moon-heads"
 
 The comparator checks token IDs, document boundaries, target masks and physical positions in every dense replica before comparing LM and MTP. It reports mean valid-token CE, sampled raw-logit L2, sampled head-input gradient L2 and peak-relative errors. The diagnostic gates are 0.001% relative mean CE, 0.5% relative L2 and 1% maximum absolute difference divided by reference peak. All outputs of the helper are unitless fractions. Training loss averaged over a full update, including W&B loss, cannot identify the per-token or per-head differences measured here.
 
+A separate 32-GPU test of the public packed H implementation used two independent CP16 groups and a per-document CP1 oracle. Both the window-only and ratio-128 configurations passed on all ranks. The worst relative L2 across contiguous and zigzag layouts was 0.21575% for output, 0.54794% for input gradients and 0.66828% for any parameter gradient; cross-document leakage was zero. This H-layer test used its unit-test geometry.
+
 With stable index selection, earlier integrated runs of MoK versus MoK + MoonEP matched all captured CE, sampled raw logits and sampled head-input gradients on all three layouts before the first update. The native selector permits different choices at tied score cutoffs. On the uniform fixture a full GA8 gradient check of the optimized versus baseline integrated MoK + MoonEP configuration gave 0.2982% relative L2 and 0.2428% peak-relative over 279.6B gradient elements. Some individual shards exceeded those aggregate thresholds.
 
 **Whole-model parity with the independent Baidu Swift implementation remains open on all three layouts.** In a deterministic-reference comparison using native pre-FC2 weighting and stable key-ID ties, the main/MTP raw-logit L2 values were 2.306%/14.398% (single), 2.138%/3.265% (uniform) and 1.915%/2.541% (skew). A separate same-input first-routed-FFN diagnostic attained 0.05113% output L2 against deterministic Swift using a modified pre-FC2 weighting kernel. Those independent-reference diagnostics use different expert arithmetic from the default public MoK production command above. A backend-to-backend pass is compatible with a failure against Swift. To test Swift, load the same released weights independently, fix the identical packed token/target rows and record raw LM/MTP values before updating; compare them at the same physical positions and valid targets.
 
+For an independent reference that uses contiguous CP, export the same NPZ schema as the probe. A file contains its dense replica ID (`dp`), global padded document boundaries (`bounds`), local rows' physical global coordinates (`pos`), `tokens`, the actual `main_labels` and rolled `mtp_labels` with invalid targets set to −100, and both `main_ce` and `mtp_ce`. Store the global positions in `sample` and the corresponding `main_logits`, `mtp_logits`, `main_dh` and `mtp_dh` in that order. Raw logits take vocabulary IDs 0, 1237, 2474, …; the hidden-gradient samples contain every channel. The comparator reconstructs each full replica independently of CP sharding and joins sampled values on global position. For each implementation write `rank00.npz` through `rank63.npz`, covering every global position in each of the four dense data replicas. Use the same vocabulary IDs and loss scaling in both trainers. For matching samples, select physical positions where `pos % 2048` is 15 or 1023, plus each padded document end minus two. After recording the original Swift run and the candidate run into separate directories, use Swift as the reference denominator.
 
-For an independent reference that uses contiguous CP, export the same NPZ schema as the probe. A file contains its dense replica ID (`dp`), global padded document boundaries (`bounds`), local rows' physical global coordinates (`pos`), `tokens`, the actual `main_labels` and rolled `mtp_labels` with invalid targets set to −100, and both `main_ce` and `mtp_ce`. Store the global positions in `sample` and the corresponding `main_logits`, `mtp_logits`, `main_dh` and `mtp_dh` in that order. Raw logits take vocabulary IDs 0, 1237, 2474, …; the hidden-gradient samples contain every channel. Use identical loss scaling. The comparator reconstructs each full replica independently of CP sharding and joins sampled values on global position.
+```bash
+python "$EX/head_parity_256k.py" "$SWIFT_CAPTURE" "$CANDIDATE_CAPTURE"
+```
+
+### 6b. Check precision of the activation-memory optimization
+
+Use the two MCore checkouts from step 4b. Keep MoonEP enabled in **both** arms. Enable stable D-indexer selection and compare their first microbatch before any weights are updated. These short instrumented runs are separate from the throughput table. Start from the same checkpoint, reuse the same JSONL within each pair, and use a fresh `PARITY_DIR` shared by all nodes. The recipe fixes the RNG seed at 42.
+
+```bash
+# Run on each of the 16 nodes with the step 4 function.
+(
+  export PARITY_DIR=$WORK/ernie256k-memory-precision
+  export MCORE_DSA_STABLE_INDEXER_TOPK=1
+  for LAYOUT in single uniform skew; do
+    case "$LAYOUT" in single) DOCS=1 ;; uniform) DOCS=8 ;; skew) DOCS=12 ;; esac
+    export LAYOUT DOCS
+    export INPUT="$DATA/$LAYOUT.jsonl" LOGS="$PARITY_DIR/$LAYOUT"
+    mkdir -p "$LOGS"
+    ( export PYTHONPATH="$MCORE_RETAIN:$BRIDGE/src:${PYTHONPATH:-}"
+      export ERNIE55_COMPARE_HEADS="$LOGS/retain-capture"
+      run_arm retain-check true model.recompute_num_layers=1 train.train_iters=1 )
+    ( export PYTHONPATH="$MCORE:$BRIDGE/src:${PYTHONPATH:-}"
+      export ERNIE55_COMPARE_HEADS="$LOGS/release-capture"
+      run_arm release-check true model.recompute_num_layers=2 train.train_iters=1 )
+  done
+)
+# After all workers exit, run on one node.
+for layout in single uniform skew; do
+  d="$WORK/ernie256k-memory-precision/$layout"
+  python "$EX/head_parity_256k.py" "$d/retain-capture" "$d/release-capture"
+done
+```
+
+The checked quantities are the main/MTP valid-token CE, sampled raw logits and sampled head-input gradients. The earlier GA8 full-parameter-gradient measurement above is a separate test and covers the eight-document fixture.
