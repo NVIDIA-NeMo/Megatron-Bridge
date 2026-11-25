@@ -261,6 +261,10 @@ def _pg_collection():
 
 
 class TestStep37ModelBuilder:
+    @pytest.fixture(autouse=True)
+    def _native_head_wise_gate(self, monkeypatch):
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: True)
+
     def _model_config(self, **overrides) -> Step37ModelConfig:
         model_config = Step37Bridge().hf_config_to_model_config(_make_hf_config())
         model_config.transformer_layer_spec = SimpleNamespace(name="decoder-spec")
@@ -332,6 +336,27 @@ class TestStep37ModelBuilder:
             Step37ModelBuilder(SimpleNamespace()).build_model(_pg_collection())
         with pytest.raises(ValueError, match="vision_config"):
             Step37ModelBuilder(self._model_config(vision_config=None)).build_model(_pg_collection())
+
+    def test_rejects_head_wise_gate_without_native_mcore_support(self, monkeypatch):
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: False)
+
+        with _BuildRecorders() as records, pytest.raises(ValueError, match="head_wise_attn_gate"):
+            Step37ModelBuilder(self._model_config()).build_model(_pg_collection(), True, True)
+
+        assert "language" not in records
+
+    @pytest.mark.parametrize("override", [{"head_wise_attn_gate": False}, {"attention_output_gate": True}])
+    def test_builds_without_native_mcore_support_when_gate_is_not_native(self, monkeypatch, override):
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: False)
+        model_config = self._model_config()
+        for name, value in override.items():
+            setattr(model_config.transformer, name, value)
+
+        with _BuildRecorders() as records:
+            model = Step37ModelBuilder(model_config).build_model(_pg_collection(), True, True)
+
+        assert isinstance(model, Step37Model)
+        assert records["language"]["config"] is model_config.transformer
 
 
 class TestStep37BridgeReverseConfig:

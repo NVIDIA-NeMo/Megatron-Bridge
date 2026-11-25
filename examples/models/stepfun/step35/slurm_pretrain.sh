@@ -14,11 +14,12 @@
 # limitations under the License.
 
 # ==============================================================================
-# Step-3.5-Flash Pretrain / Resume (PP=16, 2 nodes, 16 GPUs)
+# Step-3.5-Flash Pretrain / Resume (PP=8, EP=8, 8 nodes, 64 GPUs, H100 80GB)
 #
 # Launches the `step35_196b_a11b_pretrain_config` recipe with the parallelism
-# layout used for the alignment / resume run: PP=16 with thinned head/tail
-# stages, TP=EP=CP=1, MTP disabled, sliding-window mask matching `layer_types`.
+# layout used for the alignment / resume run: PP=8 with a thinned last stage,
+# EP=8, TP=CP=1, MTP disabled, sliding-window mask matching `layer_types`.
+# The optimizer state is offloaded to CPU so the layout fits 80 GB GPUs.
 #
 # Usage:
 #   sbatch --requeue --parsable slurm_pretrain.sh
@@ -35,7 +36,7 @@
 # ==============================================================================
 
 #SBATCH --job-name=step35-pretrain
-#SBATCH --nodes=2
+#SBATCH --nodes=8
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH --time=24:00:00
@@ -55,7 +56,7 @@ WORKSPACE=${WORKSPACE:-/workspace}
 MEGATRON_BRIDGE_PATH=${MEGATRON_BRIDGE_PATH:-/opt/Megatron-Bridge}
 PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/stepfun-ai/Step-3.5-Flash}
 
-TEST_NAME=${TEST_NAME:-step35_pretrain_pp16}
+TEST_NAME=${TEST_NAME:-step35_pretrain_pp8}
 LOG_DIR=${LOG_DIR:-${WORKSPACE}/logs}
 mkdir -p "${LOG_DIR}"
 
@@ -96,6 +97,12 @@ export NVLINK_DOMAIN_SIZE=72
 
 # Translate Slurm env -> torch.distributed env (each srun task is one rank).
 export MASTER_PORT=${MASTER_PORT:-29500}
+MASTER_ADDR=$(scontrol show hostnames "${SLURM_JOB_NODELIST}" | head -n1)
+if [ -z "${MASTER_ADDR}" ]; then
+    echo "ERROR: could not resolve MASTER_ADDR from SLURM_JOB_NODELIST."
+    exit 1
+fi
+export MASTER_ADDR
 
 # ==============================================================================
 # Job Execution
@@ -105,7 +112,7 @@ NUM_NODES=${SLURM_JOB_NUM_NODES:-8}
 GPUS_PER_NODE=${SLURM_GPUS_PER_NODE:-8}
 
 echo "======================================"
-echo "Step-3.5-Flash Pretrain (PP=16)"
+echo "Step-3.5-Flash Pretrain (PP=8, EP=8)"
 echo "======================================"
 echo "Job ID: ${SLURM_JOB_ID}"
 echo "Nodes: ${NUM_NODES}"
@@ -130,6 +137,9 @@ CLI_OVERRIDES="\
     model.moe_token_dispatcher_type=alltoall \
     model.moe_permute_fusion=False \
     model.mtp_num_layers=0 \
+    optimizer.use_precision_aware_optimizer=true \
+    optimizer.optimizer_cpu_offload=true \
+    optimizer.optimizer_offload_fraction=1.0 \
     train.micro_batch_size=${MICRO_BATCH_SIZE} \
     train.global_batch_size=${GLOBAL_BATCH_SIZE} \
     train.train_iters=${TRAIN_ITERS} \
@@ -155,7 +165,6 @@ CLI_OVERRIDES="\
 # Inline script run on every srun task. Each task is one rank.
 read -r -d '' INNER_SCRIPT <<'EOF' || true
 set -euo pipefail
-export MASTER_ADDR=$(scontrol show hostnames "${SLURM_JOB_NODELIST}" | head -n1)
 export RANK=${SLURM_PROCID}
 export WORLD_SIZE=${SLURM_NTASKS}
 export LOCAL_RANK=${SLURM_LOCALID}
@@ -183,7 +192,7 @@ ${SRUN_CMD} \
     --wait=60 \
     --kill-on-bad-exit=1 \
     --no-container-mount-home \
-    bash -c "export CLI_OVERRIDES=\"${CLI_OVERRIDES}\"; export MEGATRON_BRIDGE_PATH=\"${MEGATRON_BRIDGE_PATH}\"; export MASTER_PORT=\"${MASTER_PORT}\"; ${INNER_SCRIPT}"
+    bash -c "export CLI_OVERRIDES=\"${CLI_OVERRIDES}\"; export MEGATRON_BRIDGE_PATH=\"${MEGATRON_BRIDGE_PATH}\"; export MASTER_ADDR=\"${MASTER_ADDR}\"; export MASTER_PORT=\"${MASTER_PORT}\"; ${INNER_SCRIPT}"
 
 echo "======================================"
 echo "Job completed"

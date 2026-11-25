@@ -111,14 +111,21 @@ Before launching, ensure the following environment variables are set:
 
 ### Multi-Node Pretrain via Slurm (PP=8, EP=8, 8 nodes, 64 gpus)
 
-[slurm_pretrain.sh](slurm_pretrain.sh)
+[slurm_pretrain.sh](slurm_pretrain.sh) (8 nodes x 8 H100 80GB)
 
 * launches one srun task per GPU and translates Slurm env vars to
   `torch.distributed` env vars inside the container,
 * overrides the recipe to PP=8 with the tail stages thinned out via
   `model.num_layers_in_last_pipeline_stage=3`,
 * inherits the attention windows, layer types, and RoPE settings from the HF
-  model config through `AutoBridge`, and
+  model config through `AutoBridge`,
+* offloads the optimizer to CPU (`optimizer.use_precision_aware_optimizer=true`,
+  `optimizer.optimizer_cpu_offload=true`, `optimizer.optimizer_offload_fraction=1.0`)
+  because at 64 GPUs expert data parallel is 1, so routed-expert optimizer
+  state is unsharded: persistent weights, gradients and optimizer state take
+  about 69 GB per GPU, and the training peak with activations and MoE
+  workspaces does not fit in 80 GB (the offloaded state needs several
+  hundred GB of host memory per node), and
 * loads the pre-converted Megatron checkpoint as a fine-tune source
   (`checkpoint.finetune=true`, `load_optim=false`, `load_rng=false`,
   `exit_on_missing_checkpoint=true`).
@@ -142,6 +149,11 @@ model.num_layers_in_last_pipeline_stage=3
 model.seq_length=4096
 train.micro_batch_size=1
 train.global_batch_size=1024
+
+# Optimizer CPU offload
+optimizer.use_precision_aware_optimizer=true
+optimizer.optimizer_cpu_offload=true
+optimizer.optimizer_offload_fraction=1.0
 ```
 
 ### Hybrid Attention (Full / Sliding)

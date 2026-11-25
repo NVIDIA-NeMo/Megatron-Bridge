@@ -45,6 +45,9 @@ def inkling2_collate_fn(
     examples: list[dict[str, Any]],
     processor: Inkling2Processor,
     *,
+    visual_keys: object = None,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
     sequence_length: int | None = None,
     pad_to_max_length: bool = False,
     pad_to_multiple_of: int = 128,
@@ -72,6 +75,7 @@ def inkling2_collate_fn(
         ValueError: If in-batch packing is requested, or a row sets template arguments the chat template does
             not read.
     """
+    del visual_keys, min_pixels, max_pixels
     if not isinstance(processor, Inkling2Processor):
         # The collator registry matches processors by class name, and Transformers 5.23 has its own Inkling2Processor.
         raise TypeError(
