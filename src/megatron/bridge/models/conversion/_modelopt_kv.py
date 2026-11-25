@@ -75,6 +75,8 @@ class _KVExportHook:
     hf_parent: str
     spec: tuple[str, bool] | None
     values: torch.Tensor | None = None
+    # Checkpoints follow ModelOpt's exporters: FP8 K/V scales of at least one, and no Q scale unless Q is quantized.
+    checkpoint: bool = False
 
     def validate(self) -> None:
         if self.attention is not None and _kv_spec(self.attention) != self.spec:
@@ -92,7 +94,7 @@ class _KVExportHook:
             return None
         from modelopt.torch.export.quantized_weight_export import capture_kv_cache_export_state
 
-        state = capture_kv_cache_export_state(self.attention, clamp_fp8_scales=False, cpu=False)
+        state = capture_kv_cache_export_state(self.attention, clamp_fp8_scales=self.checkpoint, cpu=False)
         if state is None:
             raise ValueError("KV quantizers were disabled after export planning")
         q_scale = torch.ones_like(state.k_scale)
@@ -132,6 +134,8 @@ class _KVExportHook:
         # Q calibration is local to each TP rank's heads; deployment needs one range.
         q_scale = shards[0][0] if len(shards) == 1 else torch.stack([shard[0] for shard in shards]).amax()
         for name, value in zip(("q", "k", "v"), (q_scale, values[1], values[2]), strict=True):
+            if name == "q" and self.checkpoint and not self.spec[1]:
+                continue
             yield HFWeightTuple(f"{self.hf_parent}.{name}_scale", value.clone())
 
 

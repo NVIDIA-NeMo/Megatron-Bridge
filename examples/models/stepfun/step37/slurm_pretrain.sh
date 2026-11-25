@@ -82,6 +82,12 @@ export CUDA_DEVICE_MAX_CONNECTIONS=32
 export NVTE_FWD_LAYERNORM_SM_MARGIN=20
 export NVTE_BWD_LAYERNORM_SM_MARGIN=20
 export MASTER_PORT=${MASTER_PORT:-29500}
+MASTER_ADDR=$(scontrol show hostnames "${SLURM_JOB_NODELIST}" | head -n1)
+if [ -z "${MASTER_ADDR}" ]; then
+    echo "ERROR: could not resolve MASTER_ADDR from SLURM_JOB_NODELIST."
+    exit 1
+fi
+export MASTER_ADDR
 
 NUM_NODES=${SLURM_JOB_NUM_NODES:-8}
 GPUS_PER_NODE=${SLURM_GPUS_PER_NODE:-4}
@@ -128,7 +134,6 @@ CLI_OVERRIDES="\
 # ─── Launch (one srun task per GPU = one rank) ────────────────────────────────
 read -r -d '' INNER_SCRIPT <<'EOF' || true
 set -euo pipefail
-export MASTER_ADDR=$(scontrol show hostnames "${SLURM_JOB_NODELIST}" | head -n1)
 export RANK=${SLURM_PROCID}
 export WORLD_SIZE=${SLURM_NTASKS}
 export LOCAL_RANK=${SLURM_LOCALID}
@@ -153,4 +158,4 @@ ${SRUN_CMD} \
     --wait=60 \
     --kill-on-bad-exit=1 \
     --no-container-mount-home \
-    bash -c "export MEGATRON_BRIDGE_PATH=\"${MEGATRON_BRIDGE_PATH}\" HF_MODEL=\"${HF_MODEL}\" MASTER_PORT=\"${MASTER_PORT}\" CLI_OVERRIDES=\"${CLI_OVERRIDES}\"; ${INNER_SCRIPT}"
+    bash -c "export MEGATRON_BRIDGE_PATH=\"${MEGATRON_BRIDGE_PATH}\" HF_MODEL=\"${HF_MODEL}\" MASTER_ADDR=\"${MASTER_ADDR}\" MASTER_PORT=\"${MASTER_PORT}\" CLI_OVERRIDES=\"${CLI_OVERRIDES}\"; ${INNER_SCRIPT}"

@@ -44,6 +44,8 @@ by default. The Qwen3.5-VL performance recipes turn it on, except the H100
 35B-A3B BF16 recipe, which keeps its library recipe's execution policy; the
 library recipes keep it off.
 
+For the example scripts, see the [Qwen3.5/3.6-VL examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/qwen/qwen35_vl/README.md).
+
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
 ## Verified configurations
@@ -480,7 +482,7 @@ GPU export completed on four GB300 GPUs at TP1/PP1/EP4/ETP1. All 1,811 keys and 
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.
+        <p>Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights. Build its Energon input first with uv run python tutorials/data/energon/prepare_medpix_data.py --output-dir work/data/medpix/energon-pinned --revision 69eb219d477ab8699296da1fd6b89beb768042d3 --train-rows all, which packages every training row of mmoukouba/MedPix-VQA at that revision; checkpoint_resume reuses it.
 
 Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: ad196b9a6d14ef62979fc8532af62a7d6ea0fe66. Verified on 2026-11-04.
 Executed Qwen3.5 command(s):
@@ -550,30 +552,30 @@ Qwen3.5 observed metrics: {&quot;final_loss&quot;: 0.03088333, &quot;initial_los
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-30</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-09</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>2.212866</dd>
+            <dd>2.209864</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.9978729</dd>
+            <dd>0.9722831</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>9,899.640 ms</dd>
+            <dd>5,580.560 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>38.180 TFLOP/s/GPU</dd>
+            <dd>67.550 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>1,655.010 tokens/s/GPU</dd>
+            <dd>2,935.906 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -589,7 +591,7 @@ Qwen3.5 observed metrics: {&quot;final_loss&quot;: 0.03088333, &quot;initial_los
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 8x GB200, the shared Qwen3.5/Qwen3.6-VL functional recipe completed exactly 100 MedPix SFT steps at TP1/PP1/CP1/EP8/ETP1, MBS1/GBS32, natural routing, HybridEP, no activation recompute, and BF16 gradient reduction. Loss was finite from 2.212866 to 0.9978729 with zero skipped or NaN iterations. Steps 91-100 averaged 9,899.640 ms and 38.180 model TFLOP/s/GPU. The recipe intentionally disables checkpoint output for this bounded functional run; reload/export coverage remains represented by the H100 SFT and sft_export_inference items.
+        <p>On 8x GB200, measured at this item&#x27;s Bridge commit, the shared Qwen3.5/Qwen3.6-VL functional recipe completed exactly 100 MedPix SFT steps at TP1/PP1/CP1/EP8/ETP1, MBS1/GBS32, natural routing, HybridEP, no activation recompute, and BF16 gradient reduction. Loss was finite from 2.209864 to 0.9722831 with zero skipped or NaN iterations. Steps 91-100 averaged 5,580.560 ms and 67.550 model TFLOP/s/GPU. The recipe intentionally disables checkpoint output for this bounded functional run; reload/export coverage remains represented by the H100 SFT and sft_export_inference items.
 </p>
       </section>
     </article>

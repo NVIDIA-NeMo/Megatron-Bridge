@@ -53,7 +53,9 @@ from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
 )
 from megatron.bridge.perf_recipes.deepseek.h100.deepseek_v3 import (
     deepseek_v3_pretrain_64gpu_h100_bf16_config,
+    deepseek_v3_pretrain_64gpu_h100_bf16_proxy_config,
     deepseek_v3_pretrain_64gpu_h100_fp8cs_config,
+    deepseek_v3_pretrain_64gpu_h100_fp8cs_proxy_config,
     deepseek_v3_pretrain_1024gpu_h100_bf16_config,
     deepseek_v3_pretrain_1024gpu_h100_fp8cs_config,
     deepseek_v3_pretrain_1024gpu_h100_fp8sc_config,

@@ -170,6 +170,7 @@ class _OfflineModelProvider:
         self.tp_comm_overlap = False
         self.use_te_rng_tracker = False
         self.use_transformer_engine_op_fuser = False
+        self.vision_config = {"patch_size": 16, "temporal_patch_size": 2, "spatial_merge_size": 2}
         self.vocab_size = 256000
         self.yarn_original_max_position_embeddings = 32768
 

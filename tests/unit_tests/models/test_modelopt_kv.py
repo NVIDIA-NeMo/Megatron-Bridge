@@ -125,6 +125,27 @@ def test_kv_only_plan_captures_fresh_unclamped_scales_exactly_once(kv_format, qu
     assert first[f"{prefix}.k_scale"].item() == 0.25
 
 
+@pytest.mark.parametrize("kv_format", ["FP8", "NVFP4"])
+@pytest.mark.parametrize("query", [False, True])
+def test_checkpoint_plan_writes_kv_scales_like_modelopt_exporters(kv_format, query):
+    from modelopt.torch.export.quant_utils import get_kv_cache_scaling_factor
+
+    model, attention, task = _model_and_task(kv_format, query)
+    plan = modelopt_utils._checkpoint_export_plan(modelopt_utils.build_modelopt_export_plan([task], model=[model]))
+    prepared = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+    outputs = dict(
+        item for hf_name in task.mapping.hf_param.values() for item in prepared.export_hook(hf_name, task.param_weight)
+    )
+
+    prefix = "model.layers.0.self_attn"
+    # FP8 K/V scales are raised to at least one; a Q scale is written only for a quantized query.
+    k_scale, v_scale = get_kv_cache_scaling_factor(attention)
+    expected = {f"{prefix}.k_scale": k_scale.item(), f"{prefix}.v_scale": v_scale.item()}
+    if query:
+        expected[f"{prefix}.q_scale"] = 0.5
+    assert {name: tensor.item() for name, tensor in outputs.items() if name.endswith("_scale")} == expected
+
+
 @pytest.mark.parametrize("custom_mapping", [False, True])
 def test_quantized_qkv_plan_reuses_weight_and_kv_companions(custom_mapping):
     model, attention, task = _model_and_task(query=True)

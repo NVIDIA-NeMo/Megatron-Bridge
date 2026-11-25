@@ -317,11 +317,11 @@ def test_openmath_sft_uses_48_node_layout() -> None:
     stages = cfg.model.hybrid_layer_pattern.split("|")
     assert [len(stage) for stage in stages] == [9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 11, 5]
     assert "".join(stages) == NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN
-    # A recomputed TE norm as a stage's first backward op fails on TE >= 2.18 (invalid device context).
+    # The 48-node layout was validated without recomputing the pre-MLP norms.
     assert "layernorm" not in cfg.model.recompute_modules
     assert cfg.dist.distributed_timeout_minutes == 90
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
-    # cuDNN norms avoid TE's NVRTC norm path and its first-backward "invalid device context" failure.
+    # The 48-node layout was validated with cuDNN normalization kernels.
     assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
 
@@ -384,6 +384,7 @@ def test_openmath_peft_uses_validated_parallelism_values() -> None:
     assert cfg.model.recompute_method is None
     assert cfg.model.recompute_num_layers is None
     assert cfg.model.recompute_modules == ["moe", "layernorm", "core_attn", "moe_act", "mlp", "shared_experts"]
+    assert cfg.dist.distributed_timeout_minutes == 90
 
     assert cfg.optimizer.lr == 1e-4
     assert cfg.optimizer.min_lr == 1e-5

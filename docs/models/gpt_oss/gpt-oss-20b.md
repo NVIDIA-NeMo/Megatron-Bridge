@@ -6,6 +6,8 @@ The GPT OSS models feature decoder-only architectures with routed expert layers,
 
 GPT OSS models are supported via the Bridge system with specialized configurations for MoE optimizations and long-context training.
 
+For the example scripts, see the [GPT-OSS examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/gpt_oss/README.md).
+
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
 ## Verified configurations
