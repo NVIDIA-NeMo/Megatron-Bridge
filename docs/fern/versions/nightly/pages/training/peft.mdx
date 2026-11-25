@@ -161,6 +161,45 @@ finalize path takes over (Bridge's setup removes the hooks before the first step
 the wrapper's first call does). The fallback cannot cover fused weight-gradient accumulation
 and logs a warning in that case.
 
+#### LoRA+
+
+[LoRA+](https://arxiv.org/abs/2402.12354) gives adapter B (`linear_out`) a
+learning rate that is a fixed multiple of adapter A (`linear_in`). For a new
+recipe, use the shared Megatron-LM optimizer policy after configuring the LoRA
+adapters and freezing the intended base parameters:
+
+```python
+from megatron.training.config.optimizer_config import LoRAPlusOptimizerOverrides
+
+cfg.optimizer_config_overrides = LoRAPlusOptimizerOverrides(ratio=16.0)
+cfg.scheduler.lr_warmup_init = 0.0
+```
+
+For example, base `lr=0.001` and `min_lr=0.0001` give A bounds of
+`0.001 / 0.0001` and B bounds of `0.016 / 0.0016`. Both bounds are scaled,
+so the ratio is preserved through warmup and decay when the initial warmup LR is
+zero. Standard weight-decay exclusions and decoupled-LR rules remain active in
+the default `extend` mode. The ratio can also be changed through CLI/YAML
+overrides of `optimizer_config_overrides.ratio`.
+
+The ratio must be finite and positive. Ratio one contributes no extra groups.
+The callable rejects use with muP; that combination needs an explicit combined
+optimizer mapping. The policy configures optimizer groups only: Bridge still
+constructs and freezes adapters and filters adapter checkpoints.
+
+**Existing callers and checkpoint resumes:**
+`megatron.bridge.peft.lora.get_lora_plus_config_overrides(config, ratio)` remains
+available as a thin wrapper around the shared LR calculation and standard rules.
+It retains the existing explicit A/B group configuration, including at ratio
+one, and treats an unset `min_lr` as zero. Bridge delegates the warmup check to
+Megatron-LM: unequal A/B LR bounds selected by the standard adapter name globs
+require `lr_warmup_init=0`. Arbitrary layer-specific selectors need their own
+validation.
+
+Keep the original optimizer policy when resuming an existing run. Switching from
+the legacy helper to the new callable can change group structure despite equal
+effective learning rates; no checkpoint group conversion is performed.
+
 ### Canonical LoRA: Performant vs Canonical Variants
 
 There are two variants of LoRA implemented in Megatron Bridge: "performant LoRA" (`LoRA`) and "canonical LoRA" (`CanonicalLoRA`).

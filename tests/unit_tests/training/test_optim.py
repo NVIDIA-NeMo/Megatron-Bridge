@@ -990,9 +990,9 @@ class TestGetLoraPlusConfigOverrides:
                 return val
         return None
 
-    @pytest.mark.parametrize("ratio", [0, -1, -0.5])
+    @pytest.mark.parametrize("ratio", [0, -1, -0.5, float("nan"), float("inf")])
     def test_non_positive_ratio_raises(self, ratio):
-        with pytest.raises(ValueError, match="lora_plus_ratio must be > 0"):
+        with pytest.raises(ValueError, match=r"LoRA\+ ratio must be finite and positive"):
             get_lora_plus_config_overrides(self._make_config(), ratio)
 
     def test_a_keeps_base_lr(self):

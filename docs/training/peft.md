@@ -181,23 +181,42 @@ and logs a warning in that case.
 
 #### LoRA+
 
-[LoRA+](https://arxiv.org/abs/2402.12354) trains the B matrix (`linear_out`) at a higher learning rate than A (`linear_in`) by a fixed ratio `lr_B = lora_plus_ratio * lr_A` (paper default 16). The ratio is set on the optimizer, not the `LoRA` adapter: when it differs from `1.0`, `get_lora_plus_config_overrides` (`megatron.bridge.peft.lora`) builds Megatron-Core per-group overrides giving the `*.linear_out.weight` group `max_lr`/`min_lr` scaled by the ratio. Pass `1.0` (or skip the call) to keep a single learning rate.
+[LoRA+](https://arxiv.org/abs/2402.12354) gives adapter B (`linear_out`) a
+learning rate that is a fixed multiple of adapter A (`linear_in`). For a new
+recipe, use the shared Megatron-LM optimizer policy after configuring the LoRA
+adapters and freezing the intended base parameters:
 
 ```python
-from megatron.bridge.peft.lora import get_lora_plus_config_overrides
-from megatron.core.optimizer import OptimizerConfig, get_megatron_optimizer
+from megatron.training.config.optimizer_config import LoRAPlusOptimizerOverrides
 
-opt_config = OptimizerConfig(optimizer="adam", lr=1e-4, bf16=True)
-
-# LoRA+ LR split: lr_B = lora_plus_ratio * lr_A; pass 1.0 (or skip) to disable.
-lora_plus_ratio = 16
-config_overrides = get_lora_plus_config_overrides(opt_config, lora_plus_ratio)
-optimizer = get_megatron_optimizer(
-    config=opt_config,
-    model_chunks=model_chunks,
-    config_overrides=config_overrides,
-)
+cfg.optimizer_config_overrides = LoRAPlusOptimizerOverrides(ratio=16.0)
+cfg.scheduler.lr_warmup_init = 0.0
 ```
+
+For example, base `lr=0.001` and `min_lr=0.0001` give A bounds of
+`0.001 / 0.0001` and B bounds of `0.016 / 0.0016`. Both bounds are scaled,
+so the ratio is preserved through warmup and decay when the initial warmup LR is
+zero. Standard weight-decay exclusions and decoupled-LR rules remain active in
+the default `extend` mode. The ratio can also be changed through CLI/YAML
+overrides of `optimizer_config_overrides.ratio`.
+
+The ratio must be finite and positive. Ratio one contributes no extra groups.
+The callable rejects use with muP; that combination needs an explicit combined
+optimizer mapping. The policy configures optimizer groups only: Bridge still
+constructs and freezes adapters and filters adapter checkpoints.
+
+**Existing callers and checkpoint resumes:**
+`megatron.bridge.peft.lora.get_lora_plus_config_overrides(config, ratio)` remains
+available as a thin wrapper around the shared LR calculation and standard rules.
+It retains the existing explicit A/B group configuration, including at ratio
+one, and treats an unset `min_lr` as zero. Bridge delegates the warmup check to
+Megatron-LM: unequal A/B LR bounds selected by the standard adapter name globs
+require `lr_warmup_init=0`. Arbitrary layer-specific selectors need their own
+validation.
+
+Keep the original optimizer policy when resuming an existing run. Switching from
+the legacy helper to the new callable can change group structure despite equal
+effective learning rates; no checkpoint group conversion is performed.
 
 ### Canonical LoRA: Performant vs Canonical Variants
 

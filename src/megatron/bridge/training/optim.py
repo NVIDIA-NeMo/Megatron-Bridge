@@ -16,7 +16,6 @@ import logging
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from copy import copy
-from fnmatch import fnmatch
 from types import MethodType
 from typing import Literal, Optional, Union, cast
 
@@ -28,7 +27,7 @@ from megatron.core.optimizer import (
     get_mup_config_overrides,
     merge_config_overrides,
 )
-from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler, combine_param_group_overrides
+from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_model_config
@@ -36,6 +35,7 @@ from megatron.training.config.optimizer_config import (
     OptimizerConfigOverrideHook,
     OptimizerConfigOverrides,
     build_optimizer_config_overrides,
+    validate_lora_plus_warmup,
 )
 
 from megatron.bridge.training.config import (
@@ -132,28 +132,7 @@ def setup_optimizer(
                 f"applied {len(mup_overrides)} optimizer param-group override(s)."
             )
 
-    # Check name-based LoRA+ overrides without depending on rank-local parameters.
-    # MCore scales peak/minimum rates but uses one shared initial rate during warmup.
-    if config_overrides and scheduler_config.lr_warmup_init != 0:
-
-        def effective_lr_bounds(param_name: str) -> tuple[float | None, float | None]:
-            override = combine_param_group_overrides(
-                [
-                    value
-                    for key, value in config_overrides.items()
-                    if any(
-                        fnmatch(param_name, name) for name in ((key.name,) if isinstance(key.name, str) else key.name)
-                    )
-                ]
-            )
-            return override.get("max_lr", optimizer_config.lr), override.get("min_lr", optimizer_config.min_lr)
-
-        if effective_lr_bounds("adapter.linear_in.weight") != effective_lr_bounds("adapter.linear_out.weight"):
-            raise ValueError(
-                "LoRA+ with different A/B learning rates requires SchedulerConfig.lr_warmup_init=0. "
-                "A nonzero warmup initial learning rate breaks the LoRA+ ratio. "
-                "Set lr_warmup_init=0 or lora_plus_ratio=1."
-            )
+    validate_lora_plus_warmup(config_overrides, optimizer_config, scheduler_config.lr_warmup_init)
 
     # Bridge's existing builder does not apply these inherited MLM-only settings.
     # Preserve that behavior here; the shared MLM entry point supports them directly.
