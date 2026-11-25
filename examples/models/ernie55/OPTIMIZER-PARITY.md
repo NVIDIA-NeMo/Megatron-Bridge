@@ -157,3 +157,15 @@ python "$EX/compare_optimizer_256k.py" "$OPT/swift-capture" "$OPT/bridge-all-str
 | Last shared-expert FC2 | 0.0904% | 0.0950% | 2.9537% | 17.0310% |
 
 The comparator confirmed identical actual input IDs and main labels across both updates and identical sampled starting masters. All three sampled parameter gradients met both gates. Each of the three master-weight updates exceeded at least one gate. The table measures the combined configuration in one instrumented run. Measuring steady-state throughput or the effect of an individual switch requires a separate control. [Swift reference](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/5txaup4e) · [Combined G2 Bridge run](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/cbw736ek)
+
+### Full final shared-expert FC2 on the eight-document update
+
+A separate experiment captured all 8,388,608 FP32 coordinates of the shared FC2 matrix used by the last trunk block and MTP, before and after the native second GA8 update at LR 2e-6. The trainers consumed the original inputs. All three Bridge arms applied the same measured original-Swift router bias at the first update boundary to isolate the FC2 comparison.
+
+| Last shared FC2 backward | Reduced preclip gradient relative L2 | Actual FP32 update relative L2 | Actual update relative peak |
+|---|---:|---:|---:|
+| Fused, zigzag owners | 0.08750% | 3.39679% | 38.1548% |
+| BF16 return, zigzag owners | 0.11878% | 3.96637% | 39.5100% |
+| BF16 return, original contiguous CP owners | 0.04199% | 2.10345% | 37.6205% |
+
+All three full-matrix updates exceed both preset tolerances against independent Swift. With identical full gradients, optimizer inputs and clipping norms, the two container implementations of Muon produced elementwise-identical FP32 updates. Changing ownership reduced the observed FC2 gradient discrepancy under BF16 returns. Substantial update differences remain.

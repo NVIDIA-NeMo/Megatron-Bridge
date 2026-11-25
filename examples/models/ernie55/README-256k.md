@@ -479,6 +479,15 @@ The source-enabled two-update comparison used the reference-arithmetic recipe, o
 
 The normal 64-GPU training entry also ran one G2 full-recompute GA8 update on a single 256K document and on twelve unequal documents. For each pack, an independent observer summed the actual boolean route maps over contiguous token intervals and checked all 180,355,072 local integer histogram entries and all 1,409,024 owner-local BF16 counters across 64 ranks. Every entry matched, including the MTP router. This checks count ownership across packing shapes. The two-update comparison against independent Swift above uses the eight-document case.
 
+A clean same-rack pair measured both settings on the eight-document reference-arithmetic recipe with G2 full recompute. The jobs used identical 64 GB300s, NCCL Ring and default MTP-head backward. Each ran 12 optimizer updates with graphs and profiling disabled. Throughput uses the summed time for every update from 4 through 12. Memory is the largest PyTorch watermark over all 64 ranks.
+
+| G2 router correction | Mean update, s | Physical tokens/s/GPU | Peak allocated, GiB | Peak reserved, GiB |
+|---|---:|---:|---:|---:|
+| Default integer counts | 56.1764 | 2,333.22 | 175.5705 | 176.4316 |
+| Contiguous owners and BF16 counts | 56.1671 | 2,333.61 | 175.5796 | 176.4414 |
+
+The measured difference was +0.0167% throughput and +0.0091 GiB allocated. This single pair does not resolve a systematic step-time cost.
+
 #### Optional contiguous CP owners for D attention backward
 
 The opt-in setting `model.ernie_dsa_contiguous_backward=true` keeps the forward zigzag layout. In backward it moves query-side tensors to their contiguous CP owners, runs sparse attention backward there, reduce-scatters the BF16 key gradient to the contiguous owners, and returns the local gradients to zigzag. It adds CP communication to every D backward including MTP. The benchmark table above uses the default backward.
