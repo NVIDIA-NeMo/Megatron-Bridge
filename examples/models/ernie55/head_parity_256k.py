@@ -42,13 +42,13 @@ def install(dest: Path) -> Callable[[], None]:
     mb, start, tag = 0, 0, None
     data = {}
     pieces = []
-    local = None
+    local = raw_local = None
 
     def cpu(t):
         return t.detach().cpu().numpy().copy()
 
     def batch(iterator, config, *, cp_group, device):
-        nonlocal mb, local
+        nonlocal mb, local, raw_local
         mb += 1
         result = original_batch(iterator, config, cp_group=cp_group, device=device)
         if mb == 1:
@@ -73,9 +73,21 @@ def install(dest: Path) -> Callable[[], None]:
                 raise ValueError("Global mapping disagrees with the batch's per-document position IDs.")
             data["tokens"] = cpu(result.tokens).ravel()
             data["main_labels"] = cpu(result.labels).ravel()
-            chosen = np.flatnonzero(np.isin(pos % 2048, [15, 1023]) | np.isin(pos, bounds[1:] - 2))
+
+            def sample_rows(positions):
+                return np.flatnonzero(np.isin(positions % 2048, [15, 1023]) | np.isin(positions, bounds[1:] - 2))
+
+            chosen = sample_rows(pos)
             data["sample"] = pos[chosen]
             local = torch.as_tensor(chosen, device=device)
+            raw_local = local
+            if getattr(config, "ernie_head_reference_wgrad", False):
+                # Raw logits are now inside the contiguous-owner projection. The public
+                # loss and the incoming hidden gradient still use the stack's zigzag rows.
+                raw_pos = cp * len(pos) + np.arange(len(pos))
+                raw_rows = sample_rows(raw_pos)
+                data["logit_sample"] = raw_pos[raw_rows]
+                raw_local = torch.as_tensor(raw_rows, device=device)
         return result
 
     def roll(*args, **kwargs):
@@ -88,7 +100,7 @@ def install(dest: Path) -> Callable[[], None]:
     def raw(logits, rt, labels, maxima, denom, loss, preds):
         nonlocal start
         if mb == 1 and tag is not None:
-            rows = local[(local >= start) & (local < start + len(logits))] - start
+            rows = raw_local[(raw_local >= start) & (raw_local < start + len(logits))] - start
             sample = logits.index_select(0, rows)
             pieces.append(cpu(sample[:, ::1237].float()))
             start += len(logits)
@@ -152,17 +164,25 @@ def compare(a: Path, b: Path) -> dict:
             combined = {"bounds": ranks[0]["bounds"]}
             for coord, fields in (
                 ("pos", ["tokens", "main_labels", "mtp_labels", "main_ce", "mtp_ce"]),
-                ("sample", ["main_logits", "mtp_logits", "main_dh", "mtp_dh"]),
+                ("sample", ["main_dh", "mtp_dh"]),
+                ("logit_sample", ["main_logits", "mtp_logits"]),
             ):
-                coords = np.concatenate([r[coord] for r in ranks])
+                # Older Bridge and independent reference captures share one sample
+                # mapping for logits and dHidden. New head owners may differ per rank.
+                rank_coords = [
+                    r.get("logit_sample", r["sample"]) if coord == "logit_sample" else r[coord] for r in ranks
+                ]
+                coords = np.concatenate(rank_coords)
                 if len(np.unique(coords)) != len(coords):
                     raise ValueError(f"{path}: duplicate {coord} in DP{dp}.")
                 order = np.argsort(coords)
                 combined[coord] = coords[order]
                 for key in fields:
-                    if any(len(r[key]) != len(r[coord]) for r in ranks):
+                    if any(len(r[key]) != len(rows) for r, rows in zip(ranks, rank_coords)):
                         raise ValueError(f"{path}: {key} disagrees with {coord} in DP{dp}.")
                     combined[key] = np.concatenate([r[key] for r in ranks])[order]
+            if not np.array_equal(combined["sample"], combined["logit_sample"]):
+                raise ValueError(f"{path}: logits and dHidden cover different global sample coordinates in DP{dp}.")
             if not np.array_equal(combined["pos"], np.arange(262144)):
                 raise ValueError(f"{path}: incomplete global coordinates in DP{dp}.")
             yield dp, combined
