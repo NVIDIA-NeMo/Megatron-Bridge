@@ -175,6 +175,9 @@ def pg_collection(tmp_path_factory):
             # these tests run on CPU even when a GPU is present (torch's own callers still see the GPU).
             patch.setattr(torch.cuda, "current_device", cpu_current_device)
             patch.setattr(rotary_pos_embedding, "torch", _CPURotaryTorch())
+            # Both the cache and its capture-lifetime registry query the active CUDA stream.
+            # These tensors live on CPU and cannot be CUDA graph capture constants.
+            patch.setattr(torch.cuda, "is_current_stream_capturing", lambda: False)
             # DSAIndexer's Hadamard rotation needs fast_hadamard_transform and bf16 CUDA input. Any
             # orthonormal transform leaves the indexer scores unchanged, so use an exact one.
             patch.setattr(dsa, "rotate_activation", _sylvester_hadamard)
