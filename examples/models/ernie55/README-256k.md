@@ -477,6 +477,8 @@ The source-enabled two-update comparison used the reference-arithmetic recipe, o
 | Token embedding | 0.58638% | 0.60379% | 15.63181% |
 | Final shared expert FC2 | 0.09009% | 2.89354% | 16.48452% |
 
+The normal 64-GPU training entry also ran one G2 full-recompute GA8 update on a single 256K document and on twelve unequal documents. For each pack, an independent observer summed the actual boolean route maps over contiguous token intervals and checked all 180,355,072 local integer histogram entries and all 1,409,024 owner-local BF16 counters across 64 ranks. Every entry matched, including the MTP router. This checks count ownership across packing shapes. The two-update comparison against independent Swift above uses the eight-document case.
+
 #### Optional contiguous CP owners for D attention backward
 
 The opt-in setting `model.ernie_dsa_contiguous_backward=true` keeps the forward zigzag layout. In backward it moves query-side tensors to their contiguous CP owners, runs sparse attention backward there, reduce-scatters the BF16 key gradient to the contiguous owners, and returns the local gradients to zigzag. It adds CP communication to every D backward including MTP. The benchmark table above uses the default backward.
