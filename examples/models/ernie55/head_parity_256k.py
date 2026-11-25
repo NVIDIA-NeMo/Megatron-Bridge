@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 
 
-def install(dest: Path, *, model_parts=()) -> Callable[[], None]:
+def install(dest: Path, *, model_parts=(), observe_ce_gradient=None) -> Callable[[], None]:
     """Record real CE, sampled logits and head-input gradients at global packed coordinates."""
     import torch
     import torch.distributed as dist
@@ -120,6 +120,8 @@ def install(dest: Path, *, model_parts=()) -> Callable[[], None]:
             raise RuntimeError("The CUDA head did not produce one logit row per hidden row.")
         data[kind + "_logits"] = np.concatenate(pieces)
         data[kind + "_ce"] = cpu(result[0].float()).ravel()
+        if observe_ce_gradient is not None:
+            observe_ce_gradient(kind, result[0], data[kind + "_labels"])
 
         def capture_grad(grad):
             data[kind + "_dh"] = cpu(grad.index_select(0, local).float().flatten(1))
