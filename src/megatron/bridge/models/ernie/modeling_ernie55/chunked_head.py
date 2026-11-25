@@ -51,7 +51,6 @@ class _MultimaxTrainingLoss(torch.autograd.Function):
     @staticmethod
     def backward(ctx, loss_grad, unused_predictions_grad):
         import fused_weight_gradient_mlp_cuda
-        from transformer_engine.pytorch.module.base import get_dummy_wgrad
 
         from . import chunked_multimax_kernels as kernels
 
@@ -75,11 +74,37 @@ class _MultimaxTrainingLoss(torch.autograd.Function):
             fused_weight_gradient_mlp_cuda.wgrad_gemm_accum_fp32(hidden[group], dlogits, weight.main_grad)
             del dlogits, logits
         # Mirror MCore's gradient-accumulation-fusion contract for the DDP parameter hook.
-        dummy = None
-        if hasattr(weight, "grad_added_to_main_grad"):
-            dummy = get_dummy_wgrad(list(weight.shape), hidden.dtype, zero=getattr(weight, "zero_out_wgrad", False))
-            weight.grad_added_to_main_grad = True
-        return dx, dummy, grad_rt[:4].to(ranges.dtype), grad_rt[4:].to(scales.dtype), None, None, None, None, None
+        return (
+            dx,
+            _weight_gradient_hook_tensor(weight, hidden.dtype),
+            grad_rt[:4].to(ranges.dtype),
+            grad_rt[4:].to(scales.dtype),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+
+
+def _weight_gradient_hook_tensor(weight, dtype):
+    if not hasattr(weight, "grad_added_to_main_grad"):
+        return None
+    from transformer_engine.pytorch.module.base import get_dummy_wgrad
+
+    dummy = get_dummy_wgrad(list(weight.shape), dtype, zero=getattr(weight, "zero_out_wgrad", False))
+    weight.grad_added_to_main_grad = True
+    return dummy
+
+
+class _StrictMtpTrainingLoss(_MultimaxTrainingLoss):
+    @staticmethod
+    def backward(ctx, loss_grad, unused_predictions_grad):
+        from .strict_mtp_head import accumulate_strict_mtp_gradients
+
+        dx, d_ranges, d_scales = accumulate_strict_mtp_gradients(ctx, loss_grad)
+        hidden, weight = ctx.saved_tensors[:2]
+        return dx, _weight_gradient_hook_tensor(weight, hidden.dtype), d_ranges, d_scales, None, None, None, None, None
 
 
 def chunked_training_loss(
@@ -113,7 +138,12 @@ def chunked_training_loss(
             )
         return None
     seq, batch, width = hidden.shape
-    losses, predictions = _MultimaxTrainingLoss.apply(
+    loss_function = (
+        _StrictMtpTrainingLoss
+        if head_kind == "mtp" and getattr(layer.config, "ernie_mtp_strict_head_backward", False)
+        else _MultimaxTrainingLoss
+    )
+    losses, predictions = loss_function.apply(
         hidden.reshape(-1, width),
         weight,
         layer.multimax_ranges,

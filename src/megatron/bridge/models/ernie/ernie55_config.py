@@ -268,6 +268,9 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     ernie_head_save_projection: bool = True
     """Retain pre-multimax BF16 logits for backward when running the chunked training head."""
 
+    ernie_mtp_strict_head_backward: bool = False
+    """Use the reference CE rounding and 1,024-row dHidden contraction for the TP1 chunked MTP head."""
+
     ernie_fused_ops: bool = True
     """Run the reference implementation's Triton kernels (adapted in
     :mod:`~megatron.bridge.models.ernie.modeling_ernie55.fused_ops`) wherever their inputs fit: SiTU-GLU in the
@@ -378,6 +381,10 @@ class Ernie55TransformerConfig(MLATransformerConfig):
             raise ValueError("ernie_chunked_head_backend must be 'triton' or 'cuda'")
         if self.ernie_chunked_head_backend == "cuda" and not self.ernie_chunked_head_rows:
             raise ValueError("The CUDA head requires positive ernie_chunked_head_rows")
+        if not isinstance(self.ernie_mtp_strict_head_backward, bool):
+            raise ValueError("ernie_mtp_strict_head_backward must be a bool")
+        if self.ernie_mtp_strict_head_backward and not self.ernie_chunked_head_rows:
+            raise ValueError("ernie_mtp_strict_head_backward requires the chunked training head")
         if not isinstance(self.ernie_head_save_projection, bool):
             raise ValueError("ernie_head_save_projection must be a bool")
         if self.ernie_chunked_head_rows and not (
