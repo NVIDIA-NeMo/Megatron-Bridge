@@ -310,6 +310,12 @@ also requires:
 Validation also checks that the pinned Megatron-Core registers the requested
 scheduler, and reports what is missing before training starts.
 
+A bin is as long as its sequences add up to, so its token count per rank
+changes from microbatch to microbatch. When the model's kernels are tuned or
+compiled per sequence length, set `model.pad_packed_seq_alignment` to give
+every bin the same width; see
+[Fixed-Width Bins](dynamic-context-parallel.md#fixed-width-bins).
+
 ### When It Helps
 
 Balancing across ranks matters when there is more than one data-parallel rank.

@@ -1,271 +1,190 @@
 # Qwen3.5-35B-A3B with dynamic context parallelism
 
-`qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config` trains the **full 40-layer Qwen3.5-35B-A3B (plus one MTP
-layer)** on one four-GPU GB200 node with **dynamic** context parallelism (CP), on **mock data** whose sample lengths
-follow an agentic tool-use workload. Dynamic CP runs each packed bin on a CP1, CP2 or CP4 group sized for its longest
-sequence instead of splitting every bin across the full CP4 group. This directory shows how to run the recipe in both
-modes and compare them.
+`qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config` fine-tunes the **full 40-layer
+Qwen3.5-35B-A3B (plus one MTP layer)** on [CoderForge-Preview](https://huggingface.co/datasets/togethercomputer/CoderForge-Preview)
+SWE-Rebench trajectories at a 131,072-token context on 16 GB300 GPUs with **dynamic** context parallelism (CP): each
+step, the global-batch scheduler re-bins the sequences of the step's packed rows and runs every bin on a group of
+ranks sized for it (one GPU, CP2, CP4, CP8 or, rarely, the whole 16-rank pool), instead of splitting every row across
+the full CP8 group.
 
-The same model also trains on real agentic data:
-[CoderForge at a 128K context](#coderforge-at-a-128k-context-on-gb300) fine-tunes it on CoderForge-Preview
-trajectories on eight or more GB300 GPUs, online or from offline packed rows.
+The recipe is the static long-context recipe `qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config` with
+global-batch packing and dynamic CP switched on. Everything else is taken from it: TP1, base CP8, EP16, 16,384 tokens
+per rank, the offline packed CoderForge rows (32 rows per step, 5% held out for validation), MXFP8 compute, selective
+recompute of the Gated DeltaNet output norm and the MoE layers, NCCL EP, the optimizer and the schedule. Three settings
+differ, each because dynamic CP needs it:
 
-The model and training configuration follow the Megatron-LM agentic SFT example by Zhongbo Zhu
-([`examples/agentic_sft`, commit `420686e`](https://github.com/zhongbozhu/Megatron-LM/commit/420686e1a7e9d51d422e8ac1a18a35818843bb86)):
-TP1/PP1/base CP4/EP4/ETP1, 64K context, micro batch 1, global batch 32, per-token loss, MXFP8 compute, FP32 Adam state
-offloaded to the host, HybridEP and full recompute. The model is built from the pinned Hugging Face config through the
-Qwen3.5 bridge.
+* **Every bin is padded to its group's capacity** (`model.pad_packed_seq_alignment="max"`), so a rank always runs
+  16,384 tokens, as it does on the static recipe's fixed-width rows. See [Fixed-width bins](#fixed-width-bins).
+* **Evaluation takes two global batches instead of eight** (`validation.eval_iters=2`). Global-batch packing draws the
+  rows of every evaluation of a run from the validation split without cycling, and 11 evaluations of 8 x 32 rows do
+  not fit the 5% split.
+* **The Gated DeltaNet layers run without the fused pre-delta-rule kernels**
+  (`model.gdn_pre_gated_delta_rule_fusion=false`). A bin can run on the whole 16-rank pool, where those kernels fail
+  (the channels a rank holds must be a multiple of 8; with one key head and two value heads per rank they are not).
+  The unfused path is a few percent slower.
+
+This directory has the commands to run it and compare it with static CP, and a launcher that runs the same recipe on
+mock mixed-length data, where dynamic CP has short sequences to place on small groups.
 
 ## Requirements
 
-* Four GB200 GPUs and a container with Transformer Engine, CuTeDSL and DeepEP HybridEP.
-* Megatron-Core with [NVIDIA/Megatron-LM#7048](https://github.com/NVIDIA/Megatron-LM/pull/7048), which propagates
-  the runtime CP group through the Gated DeltaNet layers. Without it, a bin on a group smaller than the base CP fails
-  with `GDN: cu_seqlens_q[-1]=16384 does not match total_sequence_length=65536`.
-* A large host-memory allocation for the CPU optimizer.
-
-## Mock data
-
-`MockGPTSFTDatasetConfig` generates random token IDs, so no dataset or tokenizer is read. Half of the samples need at
-most CP1 capacity (up to 16K tokens), 30% need CP2 (16K–32K) and 20% need CP4 (32K–64K), with lengths uniform inside
-each bucket. That puts about 19% / 35% / 46% of the tokens in the three buckets and averages 21K tokens per sample,
-close to the original example's mixed data (19% / 36% / 45%). The last 20% of each sample is supervised. Lengths and
-tokens are deterministic in the seed, so two runs see identical samples in identical order. The loss is not
-meaningful: random tokens have nothing to learn.
-
-## Run
-
-From scratch, as in the original example:
-
-```bash
-uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_recipe.py \
-    --recipe qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config --mode pretrain \
-    train.train_iters=200 scheduler.lr_decay_iters=200 scheduler.lr_warmup_iters=20
-```
-
-Static-CP4 baseline on the same packing path and the same data:
-
-```bash
-uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_recipe.py \
-    --recipe qwen35_text_35b_a3b_4gpu_gb200_fp8mx_dynamic_cp_config --mode pretrain \
-    train.train_iters=200 scheduler.lr_decay_iters=200 scheduler.lr_warmup_iters=20 \
-    model.dynamic_context_parallel=false
-```
-
-Offline packing, as the original example's `offline_dynamic_cp` mode: the same samples are packed ahead of time,
-first-fit decreasing, into 64K-token rows, each step takes eight rows, and dynamic CP re-bins their samples. Add
-`model.dynamic_context_parallel=false` for static CP4 on the same rows:
-
-```bash
-uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_recipe.py \
-    --recipe qwen35_text_35b_a3b_4gpu_gb200_fp8mx_offline_dynamic_cp_config --mode pretrain \
-    train.train_iters=200 scheduler.lr_decay_iters=200 scheduler.lr_warmup_iters=20
-```
-
-To start from converted weights, use `--mode sft` with `checkpoint.pretrained_checkpoint=/path/to/megatron/checkpoint`.
-Nothing is saved unless `checkpoint.save` is set; a full-model checkpoint with optimizer state is about 460 GB.
-
-The recipe sets `train.cuda_memory_fraction=0.9`. PyTorch's caching allocator otherwise grows to nearly all device
-memory on these variable-length batches, and NCCL then fails to create the communicator it builds lazily at the end of
-the first step (`NCCL WARN Cuda failure 2 'out of memory'`).
-
-## Compare the two runs
-
-Keep each run's log. The first steps include one-time compilation, so they are excluded. With the mock dataset's
-settings, `compare_runs.py` also reports runtime tokens per second and compares by it:
-
-```bash
-uv run python examples/agentic_sft/compare_runs.py --baseline static.log --candidate dynamic.log --warmup 10 \
-    --mock-seq-length 65536 --train-iters 200 --global-batch-size 32
-```
-
-Online and offline runs process different samples per step, so give each run its batch:
-
-```bash
-uv run python examples/agentic_sft/compare_runs.py --baseline online.log --candidate offline.log --warmup 10 \
-    --mock-seq-length 65536 --train-iters 200 --baseline-global-batch-size 32 \
-    --candidate-global-batch-size 8 --candidate-packed-sequence-size 65536
-```
-
-Step times depend on the batch, and a batch can favor either mode, so compare over many steps (a few dozen is a limited
-sample).
-
-## Measured performance
-
-One four-GPU GB200 node per run, NeMo 26.10 container, Megatron-Core at Bridge's pin (which includes
-[NVIDIA/Megatron-LM#7048](https://github.com/NVIDIA/Megatron-LM/pull/7048)), the two commands above (200 steps, global
-batch 32, 6,400 mock samples), steps 1–10 excluded as compilation warmup:
-
-| Mode | Mean s/step | Median s/step | Runtime tokens/s | Median model TFLOP/s per GPU |
-| --- | ---: | ---: | ---: | ---: |
-| Static CP4 (`dp_balanced`) | 55.43 | 53.87 | 12,253 | 95 |
-| Dynamic CP | 50.07 | 47.56 | 13,564 | 109 |
-
-**Dynamic CP is 10.7% faster in throughput** (95% bootstrap interval +7.5% to +14.0%) and its median step is 13.3%
-faster. It is faster on 158 of the 190 paired steps (mean paired difference 5.4 ± 0.8 s) and in each of five
-consecutive 38-step blocks (+3.9% to +13.7%; the first block includes dynamic CP's longer warmup, and steps 41–200
-give +12.5%).
-
-* Step times depend on the batch, so short runs can mislead in either direction.
-* The two runs used different nodes.
-* The original example reports +20.6% on its own mixed-length data (11.9K static tokens/s); its samples and order
-  differ from this mock data, so the two gains are not directly comparable.
-
-These numbers predate Qwen3.5's move to Megatron-Core's hybrid model. On the current model, one four-GPU GB300
-node and the same container, the two commands give 14,903 runtime tokens/s for static CP4 and 15,733 for dynamic CP
-over steps 11–200 (+5.6%), and 15,244 against 17,118 over steps 41–200 (+12.3%): dynamic CP's first 40 steps are
-slower there, and it is ahead afterwards.
-
-### Offline packing
-
-Same model, mock data, node type, container and Megatron-Core. The offline runs pack the samples first-fit decreasing,
-in chunks of 4,096 samples, into rows of 64K tokens and take eight rows per step (524K runtime tokens per step, against
-679K on average for 32 online samples). Steps 1–10 are excluded:
-
-| Packing | Mode | Mean s/step | Runtime tokens/s | Median model TFLOP/s per GPU |
-| --- | --- | ---: | ---: | ---: |
-| Online, GBS 32 samples | Static CP4 | 55.43 | 12,253 | 95 |
-| Online, GBS 32 samples | Dynamic CP | 50.07 | 13,564 | 109 |
-| Offline, GBS 8 rows | Static CP4 | 39.49 | 13,271 | 103 |
-| Offline, GBS 8 rows | Dynamic CP | 41.80 | 12,536 | 104 |
-
-* **Online dynamic CP is the fastest setup here.** Offline packing speeds up static CP4 by 8.3% (95% bootstrap
-  interval +5.3% to +11.3%), but offline static CP4 stays 2.2% behind online dynamic CP.
-* On identical offline rows, dynamic CP brings no gain over static CP4. Over steps 11–200 it is 5.5% slower (95%
-  bootstrap interval −8.5% to −2.4%), almost all of it in its longer warmup: by consecutive 38-step blocks it is
-  −22.6%, +0.7%, −2.4%, +1.9% and −0.9%. Over steps 41–200 it is 1.2% slower (−3.9% to +1.6%), with a 1.9% faster
-  median step, and it is faster on 92 of those 160 paired steps.
-* First-fit decreasing fills each row to nearly its 64K capacity, and static CP4 runs each row as one balanced CP4
-  bin. Dynamic CP re-bins a step's sequences into about one more microbatch (simulated with Megatron-Core's
-  scheduler: 9.03 against 8.00; online it is the reverse, 11.33 against 13.64).
-* The original example reports offline dynamic CP at 14,925 tokens/s against 14,342 online on its own mixed data; it
-  did not measure offline static CP4.
-
-## CoderForge at a 128K context on GB300
-
-`qwen35_text_35b_a3b_sft_long_context_8gpu_gb300_fp8mx_dynamic_cp_config` fine-tunes the same full model on the
-[CoderForge-Preview](https://huggingface.co/datasets/togethercomputer/CoderForge-Preview) SWE-Rebench trajectories at a
-131,072-token context on eight GB300 GPUs (two four-GPU nodes in one NVL72 rack): TP1, PP1, base CP8, EP8, 16,384
-tokens per rank, 16 trajectories per step, and otherwise the settings of the mock-data recipe (MXFP8, FP32 Adam state
-on the host, HybridEP, full recompute). `qwen35_text_35b_a3b_sft_long_context_8gpu_gb300_fp8mx_offline_dynamic_cp_config`
-reads the same trajectories packed offline into 131,072-token rows, eight rows per step. Both read the dataset as the
-other CoderForge recipes do, through `default_coderforge_config`, and truncate a longer trajectory to the context.
-
-### Requirements
-
-* Eight GB300 GPUs in one NVLink domain, the container and Megatron-Core of the mock-data recipe, and host memory for
-  the CPU optimizer.
+* 16 GB300 GPUs in one NVLink domain (four nodes of one NVL72 rack): the expert-parallel group spans all 16 ranks.
+* The NeMo container, with Transformer Engine built with NCCL EP, and Megatron-Core at Bridge's pin.
 * A Megatron checkpoint of the text model. Extract the text weights and import them as described in
   [the Qwen3.5 example](../models/qwen/qwen35_vl/README.md#prepare-a-text-only-checkpoint-with-pretrained-mtp).
 * `HF_HOME` and `NEMO_HOME` on storage every node can read: rank 0 writes the dataset under `NEMO_HOME`.
 
-### Prepare the data
+Megatron-Core splits Gated DeltaNet's heads across a bin's CP group, and the largest group is the whole `dp x cp`
+pool. Qwen3.5-35B-A3B has 16 key heads, so dynamic CP runs it on at most 16 GPUs per pool; configuration validation
+rejects a larger pool. Static CP has no such limit.
 
-`item_tokens.py` prepares a recipe's data the way rank 0 of a training run would (download, JSONL and, for the offline
-recipe, tokenization and packing), and writes the token count of every training item for `compare_runs.py`. Run it
-once per recipe before training; tokenizing a trajectory takes seconds, so use many workers:
+## Prepare the data
+
+`item_tokens.py` prepares a recipe's data the way rank 0 of a training run would (download, JSONL, tokenization and
+packing), and writes the token count of every training row for `compare_runs.py`. Run it once before training;
+tokenizing a trajectory takes seconds, so use many workers:
 
 ```bash
 uv run python examples/agentic_sft/item_tokens.py \
-    --recipe qwen35_text_35b_a3b_sft_long_context_8gpu_gb300_fp8mx_offline_dynamic_cp_config \
-    --output offline_items.json --num-workers 96 "dataset.hf_dataset.split='SWE_Rebench[:8000]'"
-uv run python examples/agentic_sft/item_tokens.py \
-    --recipe qwen35_text_35b_a3b_sft_long_context_8gpu_gb300_fp8mx_dynamic_cp_config \
-    --output online_items.json --num-workers 96 "dataset.hf_dataset.split='SWE_Rebench[:8000]'"
+    --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config \
+    --output items.json --num-workers 96 "dataset.hf_dataset.split='SWE_Rebench[:8000]'"
 ```
 
 The split override keeps the first 8,000 of the 77,169 trajectories, which the measurements below use; drop it to
-train on all of them. Of these 8,000 trajectories, 12% fit a CP2 group (up to 32K tokens), 66% need CP4 (32K–64K) and
-22% need CP8 (64K–128K); almost none fits one GPU. They hold 420M tokens, 52K per trajectory, and pack into 3,413 rows
-of 123K tokens on average.
+train on all of them. Of these 8,000, 7,600 are training trajectories: 12% fit a CP2 group (up to 32K tokens), 66%
+need CP4 (32K–64K) and 22% need CP8 (64K–128K); almost none fits one GPU. They hold 399M tokens, 52K per trajectory,
+and pack into 3,245 rows of 123K tokens on average.
 
-### Run
+## Run
 
-One process per GPU, on two nodes with Slurm:
-
-```bash
-srun --nodes=2 --ntasks-per-node=4 --gpus-per-node=4 \
-    uv run python scripts/training/run_recipe.py \
-    --recipe qwen35_text_35b_a3b_sft_long_context_8gpu_gb300_fp8mx_offline_dynamic_cp_config --mode sft \
-    checkpoint.pretrained_checkpoint=/path/to/megatron/qwen3.5-35b-a3b-text \
-    "dataset.hf_dataset.split='SWE_Rebench[:8000]'" \
-    train.train_iters=100 scheduler.lr_decay_iters=100
-```
-
-* Static-CP8 baseline on the same packing path and data: add `model.dynamic_context_parallel=false`.
-* Online packing: use `qwen35_text_35b_a3b_sft_long_context_8gpu_gb300_fp8mx_dynamic_cp_config`.
-* More GPUs: the extra ranks become data-parallel replicas. Scale the batch with them, for example
-  `train.global_batch_size=16` rows on 16 GPUs. With dynamic CP they also join the pool a bin's group is drawn from,
-  and Megatron-Core's Gated DeltaNet splits its 16 key heads across that group, so dynamic CP runs this model on at
-  most 16 GPUs per pool. Configuration validation rejects a larger pool; static CP has no such limit.
-
-### Compare runs
+One process per GPU, on four nodes with Slurm. NCCL EP maps its buffers into every GPU a process can see, so expose
+one GPU to each rank:
 
 ```bash
-uv run python examples/agentic_sft/compare_runs.py --baseline static.log --candidate dynamic.log --warmup 40 \
-    --item-tokens offline_items.json --global-batch-size 8
+srun --nodes=4 --ntasks-per-node=4 --gpus-per-node=4 bash -c '
+    CUDA_VISIBLE_DEVICES=$SLURM_LOCALID uv run python scripts/training/run_recipe.py \
+    --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config --mode sft \
+    checkpoint.pretrained_checkpoint=/path/to/megatron/qwen3.5-35b-a3b-text'
 ```
 
-For an online run against an offline run, give each its token counts and batch, as in the mock-data comparison above.
+* Static CP8 on the same packing path and data: add `model.dynamic_context_parallel=false`.
+* The runs measured below add `"dataset.hf_dataset.split='SWE_Rebench[:8000]'" train.train_iters=100
+  validation.eval_iters=1 logger.log_interval=1 checkpoint.save=null`: the first 8,000 trajectories, whose
+  validation split holds 172 rows (enough for evaluations of one global batch), every step logged, nothing saved.
+* Without `checkpoint.save=null` the recipe saves a full checkpoint with optimizer state under `nemo_experiments/`
+  when training ends; point `checkpoint.save` at storage with room for it.
+
+## Compare runs
+
+Keep each run's log, with `logger.log_interval=1` so that every step is logged. The first steps include one-time
+compilation, so they are excluded:
+
+```bash
+uv run python examples/agentic_sft/compare_runs.py --baseline static.log --candidate dynamic.log --warmup 10 \
+    --item-tokens items.json --global-batch-size 32
+```
+
+With the token counts, the script reports runtime tokens per second and compares by it, so runs that process
+different work per step can be compared too; give each run its own `--baseline-item-tokens` /
+`--candidate-item-tokens` and batch size.
+
+## Measured performance on CoderForge
+
+Four GB300 nodes of one NVL72 rack (16 GPUs of 284 GB each), NeMo 26.10.01 container with the `transformers`
+version Bridge locks, Megatron-Core at Bridge's pin, one GPU visible per rank, the pretrained text checkpoint of
+`Qwen/Qwen3.5-35B-A3B`, and the first 8,000 SWE-Rebench trajectories: 100 steps of 32 rows (3.9M tokens per step),
+with the overrides listed under [Run](#run) and no checkpoint saved. Throughput is runtime tokens per second from
+`compare_runs.py` over steps 11–100; the median step and model TFLOP/s are over steps 41–100; memory is the peak
+device memory in use on any GPU.
+
+| Recipe | Mode | Tokens/s | Median s/step | Median model TFLOP/s per GPU | Peak GiB per GPU |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Static long-context recipe, unchanged | Static CP8 on fixed-width rows | 146,651 | 26.6 | 358 | 135 |
+| This recipe with `model.dynamic_context_parallel=false` | Static CP8, global-batch packing | 152,732 | 25.9 | 355 | 140 |
+| This recipe | Dynamic CP | 145,985 | 26.7 | 345 | 153 |
+
+| Recipe | Train loss at step 1 / 50 / 100 | Validation loss at step 50 / 100 |
+| --- | --- | --- |
+| Static long-context recipe, unchanged | 0.19829 / 0.14810 / 0.13699 | 0.14302 / 0.13259 |
+| This recipe with `model.dynamic_context_parallel=false` | 0.19822 / 0.15051 / 0.13327 | 0.14388 / 0.13190 |
+| This recipe | 0.19820 / 0.15049 / 0.13341 | 0.14396 / 0.13189 |
+
+* **The recipe trains.** From the pretrained checkpoint the training loss falls from 0.198 to 0.133 in 100 steps and
+  the validation loss from 0.144 at step 50 to 0.132 at step 100, as with the static recipe. The learning rate is
+  still warming up over these steps (200 warm-up steps). No run skipped an iteration or produced a NaN.
+* **Dynamic CP trains the same model as static CP8.** On identical rows the training losses of the two modes differ
+  by 0.00007 on average over the 100 steps and by 0.0002 at most, and the validation losses by 0.0001. The unchanged
+  static recipe reads the rows in another order (its `batch` loader), so its losses are comparable only as a curve.
+* **On these trajectories dynamic CP is 4.4% behind static CP8** on the same packing path (95% paired bootstrap
+  interval −8.4% to −1.2%), and level with the unchanged static recipe (−0.5%, interval −4.8% to +3.1%). Almost
+  none of them fits one GPU, so the scheduler has nothing to move to small groups: on these rows Megatron-Core's
+  scheduler forms 17.7 microbatches per step with dynamic CP against 16 with static CP8. Expect a gain on data with a
+  meaningful share of short sequences; see [Mock mixed-length data](#mock-mixed-length-data).
+* **Static CP8 through global-batch packing runs like the unchanged static recipe**, slightly ahead: by 4.1% in
+  these runs and by 2.4% in a second pair of 30-step runs on other nodes (median step 25.5 s against 26.2 s). Stack
+  samples of that pair show the same split of time between forward, backward and communication.
+* **Dynamic CP's first microbatch on a new group size takes about a minute** (communicators and kernels): steps 8, 13
+  and 56 took 55–69 s here. Its peak device memory is 153 GiB against 140 GiB.
+* With the fused pre-delta-rule kernels switched back on, static CP8 on the packing path reached 159,377 tokens/s
+  in another 100-step run (4.2% more; other nodes). Dynamic CP cannot use them on 16 GPUs, see above.
+
+### Fixed-width bins
+
+A packed bin holds whatever its sequences add up to, so without padding nearly every microbatch gives a rank a token
+count it has not run before. Kernels on this model's training path are specialized per sequence length (Triton kernels
+are autotuned for each new length, CuTe DSL kernels compiled for it), which costs seconds on one rank while the ranks
+it communicates with wait. On 16 GPUs most steps then contain such a microbatch: on the mock data below (32 samples
+per step), steps 9–14 of a dynamic-CP run took 40–66 s without padding, with a third of the run's first minutes
+spent inside the autotuner. With every bin padded to 16,384 tokens per rank, a step takes 4–13 s once each group
+size has been used.
+
+The static recipe never meets this, because its rows are padded to the full 131,072 tokens.
+`model.pad_packed_seq_alignment="max"` gives the bins of global-batch packing the same property: Megatron-Core appends
+a masked dummy sequence to every bin so that each rank of its group runs exactly `max_seqlen_per_dp_cp_rank` tokens.
+The padding is computed but not trained on. On the CoderForge rows it is 6% of the tokens run with static CP8 (16
+microbatches per step) and 15% with dynamic CP (17.7).
+
+## Mock mixed-length data
+
+`mock_data.py` trains the same recipe on `MockGPTSFTDatasetConfig` samples instead of CoderForge: random token IDs
+whose lengths mix short and long sequences, as an agentic tool-use workload does. Only the data changes; the model,
+parallelism, precision and execution settings are the recipe's. 40% of the samples need at most a CP1 group (up to
+16K tokens), 30% CP2, 20% CP4 and 10% CP8, with lengths uniform inside each bucket: 11% / 24% / 33% / 32% of the
+tokens, 30K tokens per sample on average. The last 20% of each sample is supervised. Lengths and tokens are
+deterministic in the seed, so two runs see identical samples in identical order. The model trains from random weights
+and the loss is not meaningful: random tokens have nothing to learn. Nothing is saved.
+
+```bash
+srun --nodes=4 --ntasks-per-node=4 --gpus-per-node=4 bash -c '
+    CUDA_VISIBLE_DEVICES=$SLURM_LOCALID uv run python examples/agentic_sft/mock_data.py --packing online \
+    train.train_iters=120 train.global_batch_size=64 logger.log_interval=1'
+```
+
+* Static CP8 on the same samples: add `model.dynamic_context_parallel=false`.
+* `--packing offline` first packs the samples, first-fit decreasing, into 131,072-token rows; a step then takes a
+  global batch of rows and the scheduler re-bins their samples.
+* Token counts for `compare_runs.py`: `item_tokens.py --mock-packing online --num-items 7680 --output mock_items.json`
+  with the same recipe (`--num-items` is `train.train_iters x train.global_batch_size`).
 
 ### Measured performance
 
-GB300 nodes (four GPUs of 284 GB each), NeMo 26.10.00 container with the `transformers` version Bridge locks,
-Megatron-Core at Bridge's pin, the pretrained text checkpoint of `Qwen/Qwen3.5-35B-A3B`, and the first 8,000
-SWE-Rebench trajectories. Each context-parallel and expert-parallel group of eight ranks runs on two nodes of one NVL72
-rack; at 16 and 32 GPUs the data-parallel replicas are in different racks. A run takes 100 steps at 8 rows or 16
-trajectories per 8 GPUs, or as many as fit in its job's two hours; the tables give the steps reached. Throughput is
-runtime tokens per second from `compare_runs.py`; the median step and model TFLOP/s are over the steps from 41 on;
-memory is the peak device memory in use on any GPU.
+Four GB300 nodes of one NVL72 rack (16 GPUs of 284 GB each), NeMo 26.10.01 container, Megatron-Core at Bridge's pin,
+one GPU visible per rank. Throughput is runtime tokens per second from `compare_runs.py` over the steps from 11 on;
+the median step and model TFLOP/s are over the steps from 41 on; memory is the peak device memory in use on any GPU.
 
-Offline packed rows (about 1.0M tokens per step on 8 GPUs):
+| Packing | Mode | Steps | Tokens/s | Median s/step | Median model TFLOP/s per GPU | Peak GiB per GPU |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Online, 64 samples per step (1.9M tokens) | Static CP8 | 120 | 119,375 | 16.1 | 275 | 142 |
+| Online, 64 samples per step (1.9M tokens) | Dynamic CP | 120 | 147,069 | 12.2 | 368 | 156 |
+| Offline, 32 rows per step (4.2M tokens) | Static CP8 | 60 | 164,872 | 24.9 | 392 | 149 |
+| Offline, 32 rows per step (4.2M tokens) | Dynamic CP | 60 | 140,111 | 30.3 | 322 | 158 |
 
-| GPUs | Mode | Steps | Tokens/s from step 11 | Tokens/s from step 41 | Median s/step | Median model TFLOP/s per GPU | Peak GiB per GPU |
-| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 8 | Static CP8 | 100 | 35,099 | 36,190 | 25.6 | 182 | 118 |
-| 8 | Dynamic CP | 100 | 25,432 | 32,448 | 25.9 | 177 | 123 |
-| 16 | Static CP8 | 100 | 66,019 | 70,858 | 24.7 | 188 | 120 |
-| 16 | Dynamic CP | 98 | 40,606 | 49,484 | 34.2 | 134 | 127 |
-| 32 | Static CP8 | 100 | 115,393 | 125,425 | 24.5 | 187 | 120 |
-
-Online packing (about 0.8M tokens per step on 8 GPUs):
-
-| GPUs | Mode | Steps | Tokens/s from step 11 | Tokens/s from step 41 | Median s/step | Median model TFLOP/s per GPU | Peak GiB per GPU |
-| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 8 | Static CP8 | 100 | 17,252 | 20,246 | 38.3 | 106 | 118 |
-| 8 | Dynamic CP | 100 | 14,556 | 16,331 | 38.9 | 98 | 123 |
-| 16 | Static CP8 | 82 | 27,711 | 34,768 | 37.9 | 98 | 120 |
-| 16 | Dynamic CP | 73 | 24,022 | 24,888 | 55.0 | 77 | 127 |
-| 32 | Static CP8 | 40 | 28,565 | | | | 119 |
-
-* **Dynamic CP trains the same model.** From the same checkpoint and on identical rows, the step-1 loss on 8 GPUs is
-  0.18854 with static CP8 and 0.18860 with dynamic CP, and 0.14035 against 0.14028 at step 100; on 16 GPUs it is
-  0.18525 and 0.18529 at step 1 and 0.14107 and 0.14121 at step 98. Online, the two modes give 0.18065 and 0.18071 at
-  step 1 and 0.14700 at step 100 on 8 GPUs. No run skipped an iteration or produced a NaN.
-* **Offline rows with static CP8 are the fastest setup on this data, and scale with GPUs.** Per GPU, the steps from 41
-  on run at 4,524 tokens/s on 8 GPUs, 4,429 on 16 and 3,920 on 32, with the median step flat at about 25 s. A
-  300-step run on another pair of nodes reached 40,641 tokens/s over steps 41–300 (median 23.3 s), so differences of
-  about 10% between runs are within node-to-node variation.
-* **On these trajectories dynamic CP has little to gain.** Almost none of them fits one GPU, and the scheduler puts
-  47% of the offline tokens on CP4 groups and 53% on CP8 groups, in 9.1 microbatches per step against 8.0 for static
-  CP8. On 8 GPUs a warm dynamic-CP step takes as long as a static one (median 25.9 s against 25.6 s); over steps
-  41–100 it is 10.3% behind in throughput (95% bootstrap interval −19.0% to −0.6%), and 27.5% behind over steps
-  11–100. Expect a gain only on streams with a meaningful share of short sequences, as on the mock data above.
-* **Warm-up is kernel compilation per microbatch shape.** The first microbatch a rank runs with a token count it has
-  not seen takes about 20 s longer: about 6 s in its first MoE layer's forward pass and 12 s in backward, while the
-  other ranks wait. Offline rows under static CP8 are nearly full, so a rank sees few distinct token counts (79 in 623
-  microbatches, 21 of them slow, 15 among the first 90). Dynamic CP and online packing produce bins of many more
-  sizes: with dynamic CP on offline rows and 8 GPUs, 49 of the first 90 microbatches were slow, 22 of the next 90, and
-  at most 4 of every 90 after step 30.
-* **Warm-up lengthens with the number of ranks**, because a step waits for every rank that compiles. On 16 GPUs dynamic
-  CP on offline rows is 30.9% behind static CP8 over steps 41–98 (−39.0% to −22.0%), with a median step of 34.2 s
-  against 24.4 s; 10 of its last 15 steps take 30 s or less.
-* **Online packing is slower here for the same reason.** Its bins hold whatever a step's trajectories add up to, so new
-  token counts keep appearing. On 8 GPUs static CP8 reaches 20,246 tokens/s over steps 41–100 and dynamic CP 16,331
-  (19.3% behind, interval −30.2% to −7.2%). In a longer pair of runs dynamic CP is level with static CP8 after step
-  100: 19,932 against 20,913 tokens/s over steps 101–159 (−4.7%, interval −15.0% to +5.8%). On 16 GPUs dynamic CP is
-  28.2% behind over steps 41–73 (−46.1% to +0.2%). On 32 GPUs static CP8 reached step 40 at 28,565 tokens/s from step
-  11, with a median step of 107 s that was still falling.
-* **Memory.** Device memory in use peaks at 118–120 GiB per GPU with static CP8 and 123–127 GiB with dynamic CP.
-* **Dynamic CP is limited to 16 GPUs per pool for this model**, as described under Run, so only static CP8 was run on
-  32 GPUs.
+* **Online, dynamic CP is 23.2% faster** on identical samples (95% paired bootstrap interval +17.1% to +29.1%) and
+  27.2% faster over steps 41–120 (+21.9% to +32.5%); it is faster on 94 of the 110 steps. With every bin padded to
+  16,384 tokens per rank, the cost of a step follows its number of microbatches, and Megatron-Core's scheduler needs
+  8.1 per step with dynamic CP against 9.5 with static CP8.
+* **On full offline rows, dynamic CP is 15.0% behind static CP8** (−21.0% to −9.4%). First-fit decreasing fills
+  each row to nearly its 131,072-token capacity, so static CP8 runs a step as 16 full microbatches, while dynamic CP
+  re-bins the same sequences into 17.2. Offline packing with static CP8 is also the fastest of the four setups.
+* Dynamic CP's first steps are slower: the first microbatch on each group size (CP1, CP2, CP4, CP8 and the whole
+  16-rank pool) sets up communicators and kernels, about a minute each time. Steps 1–10 are excluded above.
