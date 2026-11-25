@@ -12,127 +12,196 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the eight-GPU GB300 Qwen3.5-35B-A3B 128K dynamic-CP recipes on CoderForge."""
+"""Tests for the 16-GPU GB300 Qwen3.5-35B-A3B 128K dynamic-CP recipe on CoderForge."""
+
+import importlib
+from types import SimpleNamespace
 
 import pytest
 import torch
 from transformers import Qwen3_5MoeConfig
 
-from megatron.bridge.data.builders import GPTSFTDatasetConfig
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.recipes.qwen.gb200 import qwen35 as gb200_qwen35
 from megatron.bridge.recipes.qwen.gb300 import qwen35
-from tests.unit_tests.recipes.qwen.test_qwen35_dynamic_cp_mock_recipe import _TEXT_CONFIG
-from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
 pytestmark = pytest.mark.unit
 
+_STATIC = gb200_qwen35.qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config
+_DYNAMIC = qwen35.qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config
 
-@pytest.fixture
-def requested(monkeypatch: pytest.MonkeyPatch) -> dict:
-    """Build recipes through the real Qwen3.5 bridge on the published 35B-A3B config, offline."""
-    patch_recipe_construction_dependencies(monkeypatch)
-    monkeypatch.setattr(gb200_qwen35, "AutoBridge", AutoBridge)
-    requested = {}
+# Text configuration of Qwen/Qwen3.5-35B-A3B at the recipe's pinned revision.
+_TEXT_CONFIG = {
+    "attention_bias": False,
+    "attention_dropout": 0.0,
+    "attn_output_gate": True,
+    "full_attention_interval": 4,
+    "head_dim": 256,
+    "hidden_act": "silu",
+    "hidden_size": 2048,
+    "initializer_range": 0.02,
+    "layer_types": (["linear_attention"] * 3 + ["full_attention"]) * 10,
+    "linear_conv_kernel_dim": 4,
+    "linear_key_head_dim": 128,
+    "linear_num_key_heads": 16,
+    "linear_num_value_heads": 32,
+    "linear_value_head_dim": 128,
+    "max_position_embeddings": 262144,
+    "moe_intermediate_size": 512,
+    "mtp_num_hidden_layers": 1,
+    "num_attention_heads": 16,
+    "num_experts": 256,
+    "num_experts_per_tok": 8,
+    "num_hidden_layers": 40,
+    "num_key_value_heads": 2,
+    "rms_norm_eps": 1e-06,
+    "router_aux_loss_coef": 0.001,
+    "shared_expert_intermediate_size": 512,
+    "vocab_size": 248320,
+    "rope_parameters": {
+        "mrope_interleaved": True,
+        "mrope_section": [11, 11, 10],
+        "rope_type": "default",
+        "rope_theta": 10000000,
+        "partial_rotary_factor": 0.25,
+    },
+}
 
-    def from_pretrained(path, **kwargs):
-        requested.update(path=path, **kwargs)
-        return Qwen3_5MoeConfig(text_config=_TEXT_CONFIG, tie_word_embeddings=False)
 
-    monkeypatch.setattr(gb200_qwen35.AutoConfig, "from_pretrained", from_pretrained)
-    return requested
-
-
-@pytest.fixture
-def online(requested):
-    return qwen35.qwen35_text_35b_a3b_sft_long_context_8gpu_gb300_fp8mx_dynamic_cp_config()
-
-
-@pytest.fixture
-def offline(requested):
-    return qwen35.qwen35_text_35b_a3b_sft_long_context_8gpu_gb300_fp8mx_offline_dynamic_cp_config()
-
-
-def test_model_and_tokenizer_share_the_pinned_revision(online, requested):
-    revision = gb200_qwen35._QWEN35_35B_A3B_INSTRUCT_REVISION
-
-    assert requested == {"path": "Qwen/Qwen3.5-35B-A3B", "revision": revision}
-    assert online.tokenizer.tokenizer_model == "Qwen/Qwen3.5-35B-A3B"
-    assert online.tokenizer.hf_tokenizer_kwargs == {"revision": revision}
-    # 40 HF blocks, each a mixer position followed by its MoE in Megatron-Core's hybrid stack.
-    assert online.model.hybrid_layer_pattern == "GEGEGE*E" * 10
-    assert (online.model.num_layers, online.model.num_moe_experts, online.model.mtp_num_layers) == (80, 256, 1)
-
-
-def test_128k_context_runs_on_a_cp8_pool_with_16k_tokens_per_rank(online):
-    model = online.model
-
-    assert model.seq_length == 131072 == online.dataset.seq_length
-    assert (model.tensor_model_parallel_size, model.pipeline_model_parallel_size) == (1, 1)
-    assert (model.context_parallel_size, model.expert_model_parallel_size, model.expert_tensor_parallel_size) == (
-        8,
-        8,
-        1,
+@pytest.fixture(autouse=True)
+def published_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build recipes on the published 35B-A3B text config without reaching the Hub."""
+    monkeypatch.setattr(
+        gb200_qwen35.AutoConfig,
+        "from_pretrained",
+        lambda *_args, **_kwargs: Qwen3_5MoeConfig(text_config=_TEXT_CONFIG, tie_word_embeddings=False),
     )
+
+
+def _validated(cfg, monkeypatch: pytest.MonkeyPatch, *, world_size: int):
+    """Mirror runtime_config_update on ``world_size`` GB300 GPUs: set up mixed precision, then validate."""
+    training_module = importlib.import_module("megatron.bridge.training.config")
+    monkeypatch.setattr(training_module, "get_world_size_safe", lambda: world_size)
+    monkeypatch.setattr(
+        torch.cuda, "get_device_properties", lambda index: SimpleNamespace(major=10, name="NVIDIA GB300")
+    )
+    cfg.mixed_precision.finalize()
+    cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
+    cfg.validate()
+    return cfg
+
+
+# Settings the dynamic-CP recipe takes unchanged from the static long-context recipe.
+_SHARED_SETTINGS = (
+    "model.seq_length",
+    "model.tensor_model_parallel_size",
+    "model.context_parallel_size",
+    "model.expert_model_parallel_size",
+    "model.mtp_num_layers",
+    "model.recompute_granularity",
+    "model.recompute_modules",
+    "model.moe_token_dispatcher_type",
+    "model.moe_flex_dispatcher_backend",
+    "model.gdn_kernel_backend",
+    "model.calculate_per_token_loss",
+    "dataset.seq_length",
+    "dataset.hf_dataset",
+    "dataset.enable_offline_packing",
+    "dataset.offline_packing_specs",
+    "dataset.dataset_kwargs",
+    "dataset.do_validation",
+    "dataset.hf_validation_proportion",
+    "dataset.seed",
+    "train.global_batch_size",
+    "train.micro_batch_size",
+    "train.train_iters",
+    "validation.eval_interval",
+    "optimizer.lr",
+    "optimizer.min_lr",
+    "scheduler.lr_warmup_iters",
+    "scheduler.lr_decay_iters",
+    "mixed_precision.fp8_recipe",
+    "checkpoint.load_main_params_from_ckpt",
+    "tokenizer.tokenizer_model",
+    "tokenizer.hf_tokenizer_kwargs",
+    "rng.seed",
+    "env_vars",
+)
+
+
+def _setting(cfg, path: str):
+    value = cfg
+    for name in path.split("."):
+        value = getattr(value, name)
+    return value
+
+
+def test_keeps_the_static_recipe_and_adds_packing_and_dynamic_cp():
+    static, dynamic = _STATIC(), _DYNAMIC()
+
+    for path in _SHARED_SETTINGS:
+        assert _setting(dynamic, path) == _setting(static, path), path
+    assert (static.dataset.enable_global_batch_packing, dynamic.dataset.enable_global_batch_packing) == (False, True)
+    assert not getattr(static.model, "dynamic_context_parallel", False)
+    assert dynamic.model.dynamic_context_parallel is True
+    assert dynamic.model.min_dynamic_context_parallel_size == 1
+    # Fixed per-rank length: every bin is padded to its group's capacity.
+    assert dynamic.model.pad_packed_seq_alignment == "max"
+    assert dynamic.dataset.dataloader_type == "single"
+    assert dynamic.dataset.fold_alignment_padding is True  # 256-wide heads train on FlashAttention only
+    assert dynamic.ddp.average_in_collective is False
+    # The fused pre-delta-rule kernels cannot run a bin on the whole 16-rank pool.
+    assert (static.model.gdn_pre_gated_delta_rule_fusion, dynamic.model.gdn_pre_gated_delta_rule_fusion) == (
+        True,
+        False,
+    )
+    # Every evaluation of the run draws new validation rows, so evaluations are shorter than the static recipe's.
+    assert (static.validation.eval_iters, dynamic.validation.eval_iters) == (8, 2)
+
+
+def test_runs_the_long_context_recipe_on_a_16_rank_dynamic_cp_pool(monkeypatch: pytest.MonkeyPatch):
+    cfg = _validated(_DYNAMIC(), monkeypatch, world_size=16)
+    model, dataset = cfg.model, cfg.dataset
+
+    assert model.seq_length == dataset.seq_length == 131072
+    assert (model.tensor_model_parallel_size, model.context_parallel_size, model.expert_model_parallel_size) == (
+        1,
+        8,
+        16,
+    )
+    assert model.sequence_packing_scheduler == "default_dynamic_cp"
     assert model.max_seqlen_per_dp_cp_rank == 16384
-    assert model.dynamic_context_parallel is True
-    assert model.min_dynamic_context_parallel_size == 1
-    # The scheduler is selected at validation from the dataset switch.
-    assert getattr(model, "sequence_packing_scheduler", None) is None
-    assert model.calculate_per_token_loss is True
-    assert online.ddp.average_in_collective is False
-    assert (online.train.micro_batch_size, online.train.global_batch_size) == (1, 16)
-    assert online.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
-
-
-def test_data_is_coderforge_with_global_batch_packing(online):
-    dataset = online.dataset
-
-    assert isinstance(dataset, GPTSFTDatasetConfig)
-    assert dataset.hf_dataset is not None and dataset.hf_dataset.dataset_name == "coderforge"
-    assert dataset.hf_dataset.load_kwargs == {"revision": gb200_qwen35._CODERFORGE_REVISION}
-    assert dataset.enable_global_batch_packing is True and dataset.yields_unpacked_samples is True
-    assert dataset.enable_offline_packing is False and dataset.enable_in_batch_packing is False
-    assert dataset.dataloader_type == "single"
-    assert dataset.fold_alignment_padding is True  # 256-wide heads train on FlashAttention only
-    # Lazily tokenized long trajectories need enough loader workers to keep the GPUs busy.
-    assert dataset.num_workers == 16
-    assert dataset.do_validation is False and online.validation.eval_iters == 0
-    dataset.validate()
-
-
-def test_performance_settings_match_the_mock_data_recipe(online):
-    model = online.model
-
-    assert online.mixed_precision.fp8_recipe == "mxfp8"
-    assert online.optimizer.optimizer_cpu_offload is True and online.optimizer.optimizer_offload_fraction == 1.0
-    for name in ("main_params_dtype", "main_grads_dtype", "exp_avg_dtype", "exp_avg_sq_dtype"):
-        assert getattr(online.optimizer, name) == torch.float32
-    assert model.moe_token_dispatcher_type == "flex" and model.moe_flex_dispatcher_backend == "hybridep"
-    assert (model.recompute_granularity, model.recompute_method, model.recompute_num_layers) == ("full", "uniform", 1)
-    assert online.train.cuda_memory_fraction == 0.9
-    assert online.checkpoint.pretrained_checkpoint is None
-
-
-def test_offline_variant_packs_128k_rows_and_counts_the_global_batch_in_rows(online, offline):
-    dataset = offline.dataset
-
-    assert dataset.enable_offline_packing is True and dataset.enable_global_batch_packing is True
+    # Selective recompute and NCCL EP come from the static long-context recipe.
+    assert (model.recompute_granularity, model.recompute_modules) == ("selective", ["gdn_norm_out", "moe"])
+    assert model.moe_flex_dispatcher_backend == "ncclep"
+    assert model.transformer.max_seq_length_per_sample == 131072
+    assert cfg.mixed_precision.fp8_recipe == "mxfp8"
+    # The real CoderForge rows, re-binned by the scheduler; the global batch counts rows.
+    assert dataset.hf_dataset.dataset_name == "coderforge"
+    assert dataset.enable_offline_packing is True and dataset.yields_unpacked_samples is True
     specs = dataset.offline_packing_specs
-    # Aligned to 2 x CP8, so a longer trajectory is truncated to the row instead of dropped.
     assert (specs.packed_sequence_size, specs.pad_seq_to_mult, specs.pad_cu_seqlens) == (131072, 16, False)
-    assert offline.train.global_batch_size == 8
-    dataset.validate()
-    # Everything else matches the online recipe: the same trajectories, model and dynamic CP.
-    assert dataset.hf_dataset == online.dataset.hf_dataset
-    assert dataset.fold_alignment_padding is True and dataset.dataloader_type == "single"
-    assert offline.model.dynamic_context_parallel is True
-    assert offline.model.max_seqlen_per_dp_cp_rank == online.model.max_seqlen_per_dp_cp_rank
+    assert (cfg.train.micro_batch_size, cfg.train.global_batch_size) == (1, 32)
+    assert cfg.checkpoint.pretrained_checkpoint is None
 
 
-def test_common_builder_rejects_a_context_the_cp_group_cannot_split(requested):
-    with pytest.raises(ValueError, match="multiple of context_parallel_size"):
-        gb200_qwen35.qwen35_text_35b_a3b_fp8mx_dynamic_cp_common(
-            seq_length=65537, context_parallel_size=4, expert_model_parallel_size=4
-        )
+def test_static_cp_override_keeps_the_packing_path(monkeypatch: pytest.MonkeyPatch):
+    cfg = _DYNAMIC()
+    cfg.model.dynamic_context_parallel = False
+    cfg = _validated(cfg, monkeypatch, world_size=16)
+
+    assert cfg.model.sequence_packing_scheduler == "dp_balanced"
+    assert cfg.dataset.enable_global_batch_packing is True
+
+
+def test_pool_beyond_the_gated_delta_net_key_heads_is_rejected(monkeypatch: pytest.MonkeyPatch):
+    with pytest.raises(ValueError, match="Gated DeltaNet"):
+        _validated(_DYNAMIC(), monkeypatch, world_size=32)
+
+
+def test_sequence_length_sets_the_tokens_per_rank():
+    cfg = _DYNAMIC(65536)
+
+    assert cfg.model.seq_length == cfg.dataset.seq_length == 65536
+    assert cfg.model.max_seqlen_per_dp_cp_rank == 8192
+    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 65536
