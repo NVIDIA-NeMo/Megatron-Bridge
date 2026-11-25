@@ -102,6 +102,20 @@ def test_one_gpu_per_rank_device_mapping_follows_backend_and_environment(monkeyp
     assert updated.dist.external_gpu_device_mapping is expected
 
 
+def test_one_gpu_per_rank_device_mapping_skips_moe_megakernel(monkeypatch):
+    # bootstrap.py does not narrow megakernel recipes, so one visible GPU is the launcher's choice.
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2")
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    recipe.model.moe_flex_dispatcher_backend = "ncclep"
+    if not hasattr(recipe.model, "moe_megakernel_backend"):
+        raise ValueError("model config has no moe_megakernel_backend field")
+    recipe.model.moe_megakernel_backend = "mok"
+
+    updated = apply_one_gpu_per_rank_device_mapping(recipe)
+
+    assert updated.dist.external_gpu_device_mapping is False
+
+
 def _nccl_ub_recipe():
     # Model a recipe that enables NCCL UB with Megatron FSDP, as the GB300 Llama 3 70B recipe does.
     recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()

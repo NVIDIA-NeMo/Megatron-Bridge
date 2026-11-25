@@ -477,6 +477,9 @@ jobs:
           # Store for Docker build arg
           echo "MCORE_COMMIT_SHA=${EXPECTED_COMMIT}" | tee -a "$GITHUB_ENV"
 
+      - name: Exclude upstream Bridge from the MCore build context
+        run: bash scripts/prepare_mcore.sh
+
       - name: Set environment for MCore testing
         if: ${{ github.event.inputs.mcore_ref != '' }}
         run: |

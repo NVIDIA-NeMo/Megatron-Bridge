@@ -4219,13 +4219,32 @@ class TestRuntimeConfigUpdate:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     @staticmethod
-    def _ncclep_binding_cfg(backend="ncclep", dispatcher="flex"):
+    def _ncclep_binding_cfg(backend="ncclep", dispatcher="flex", megakernel=None):
         from types import SimpleNamespace
 
         return SimpleNamespace(
-            model=SimpleNamespace(moe_token_dispatcher_type=dispatcher, moe_flex_dispatcher_backend=backend),
+            model=SimpleNamespace(
+                moe_token_dispatcher_type=dispatcher,
+                moe_flex_dispatcher_backend=backend,
+                moe_megakernel_backend=megakernel,
+            ),
             dist=SimpleNamespace(external_gpu_device_mapping=False),
         )
+
+    @pytest.mark.parametrize("visible", ["0,1,2,3", "5"])
+    def test_ncclep_one_gpu_per_rank_is_noop_for_moe_megakernel(self, monkeypatch, visible):
+        """The megakernel owns dispatch/combine; its symmetric-memory buffers need each rank's device index."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "2")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
+        monkeypatch.setattr("torch.cuda.is_initialized", lambda: False)
+        cfg = self._ncclep_binding_cfg(megakernel="mok")
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == visible
+        assert cfg.dist.external_gpu_device_mapping is False
 
     def test_ncclep_one_gpu_per_rank_narrows_visible_devices(self, monkeypatch):
         """NCCL EP recipes keep only the local rank's GPU and switch the trainer to device 0."""
