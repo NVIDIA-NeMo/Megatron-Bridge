@@ -10,9 +10,40 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMI
 
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
+    from torch.distributed import ProcessGroupNCCL
 
 
 EXPERT_VIEW_NAME = "expert"
+
+
+def _lazy_nccl_pg_options() -> "ProcessGroupNCCL.Options | None":
+    """Return new NCCL options that create a MegatronMIMO group's communicator on first use.
+
+    With PyTorch's ProcessGroupNCCL2 backend (the ``nccl`` backend of NeMo 26.12 images), the
+    default process group is bound to a device, so every later ``new_group`` splits its NCCL
+    communicator eagerly, even if the group never communicates. MegatronMIMO creates every
+    parallelism group of every module on every rank, so eager splitting holds NCCL buffers for
+    groups the rank never uses. ``lazy_init`` defers each communicator to the group's first
+    operation, as the legacy NCCL backend does.
+
+    Returns:
+        Options with ``lazy_init=True``, or None (default options) when the default process group
+        is not an NCCL group bound to a device, so subgroups are not split eagerly, or when this
+        PyTorch build has no ``lazy_init`` option. Each call returns a new object because PyTorch
+        writes per-group settings into the options it is given.
+    """
+    if not dist.is_initialized() or dist.get_backend() != dist.Backend.NCCL:
+        return None
+    if getattr(dist.group.WORLD, "bound_device_id", None) is None:
+        return None
+    process_group_nccl = getattr(dist, "ProcessGroupNCCL", None)
+    if process_group_nccl is None:
+        return None
+    options = process_group_nccl.Options()
+    if not hasattr(options, "lazy_init"):
+        return None
+    options.lazy_init = True
+    return options
 
 
 def build_hypercomm_grids(
@@ -27,6 +58,10 @@ def build_hypercomm_grids(
     rank span. Dense process groups (tp/cp/dp/pp) come from the base view; expert-parallel groups
     (expt_tp/ep/expt_dp) come from the expert view, matching the contract mcore's
     ``get_mimo_optimizer`` expects.
+
+    The groups are created with lazy NCCL initialization when the backend would otherwise split
+    every group eagerly (see ``_lazy_nccl_pg_options``), so a group allocates NCCL resources only
+    once it communicates.
 
     Args:
         megatron_mimo_parallelism_config: MegatronMIMOParallelismConfig specifying parallelism per module.
@@ -74,7 +109,7 @@ def build_hypercomm_grids(
             ["tp", "dp", "cp"],
             ["tp", "cp", "dp", "pp"],
         ):
-            _ = grid.create_pg(dims)
+            _ = grid.create_pg(dims, pg_options=_lazy_nccl_pg_options())
 
         for dims in (
             ["ep"],
@@ -83,7 +118,7 @@ def build_hypercomm_grids(
             ["expt_tp", "ep"],
             ["expt_tp", "ep", "pp"],
         ):
-            _ = grid.create_pg(dims, view=EXPERT_VIEW_NAME)
+            _ = grid.create_pg(dims, view=EXPERT_VIEW_NAME, pg_options=_lazy_nccl_pg_options())
 
         grids[module_name] = grid
 
@@ -120,12 +155,12 @@ def populate_embedding_and_position_groups(
 
         # Every global rank must create every derived group in the same order.
         pos_embd_ranks = [pp_ranks[0]]
-        pos_embd_pg = dist.new_group(ranks=pos_embd_ranks)
+        pos_embd_pg = dist.new_group(ranks=pos_embd_ranks, pg_options=_lazy_nccl_pg_options())
 
         embd_ranks = [pp_ranks[0]]
         if len(pp_ranks) > 1 and pp_ranks[-1] != pp_ranks[0]:
             embd_ranks.append(pp_ranks[-1])
-        embd_pg = dist.new_group(ranks=embd_ranks)
+        embd_pg = dist.new_group(ranks=embd_ranks, pg_options=_lazy_nccl_pg_options())
 
         if current_rank in pos_embd_ranks:
             local_pos_embd_pg = pos_embd_pg

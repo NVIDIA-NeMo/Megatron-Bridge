@@ -15,7 +15,7 @@ from __future__ import annotations
 import copy
 import inspect
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -150,6 +150,11 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
     # Cached grids after build_model() - used by data loading
     _grids: Optional[Dict[str, "HyperCommGrid"]] = field(default=None, repr=False)
 
+    # (parallelism config, infra) of the last build_infra() call, reused while the config is unchanged.
+    _infra_cache: Optional[Tuple[Optional[MegatronMIMOParallelismConfig], MegatronMIMOInfra]] = field(
+        default=None, repr=False
+    )
+
     # Freezing options
     freeze_language_model: bool = False
     freeze_modality_encoders: Dict[str, bool] = field(default_factory=dict)
@@ -254,8 +259,11 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         """Build MegatronMIMO parallelism infrastructure.
 
         This method builds HyperCommGrids, ProcessGroupCollections, and topology
-        for MegatronMIMO's heterogeneous parallelism. It is idempotent and does not
-        mutate provider state (results are not cached).
+        for MegatronMIMO's heterogeneous parallelism. The process groups are
+        created by the first call only: later calls return the same infra while
+        ``megatron_mimo_parallelism_config`` is the same object, so ``provide()``,
+        ``provide_distributed_model()`` and the training loop share one set of
+        process groups instead of each creating its own.
 
         Can be called before or after provide(). Call finalize() first to
         validate the parallelism configuration.
@@ -264,6 +272,9 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             MegatronMIMOInfra containing grids, topology, pg_collections,
             and the list of modules this rank participates in.
         """
+        if self._infra_cache is not None and self._infra_cache[0] is self.megatron_mimo_parallelism_config:
+            return self._infra_cache[1]
+
         if self.megatron_mimo_parallelism_config is not None:
             grids = build_hypercomm_grids(self.megatron_mimo_parallelism_config)
             language_grid = grids.get(MIMO_LANGUAGE_MODULE_KEY)
@@ -293,13 +304,15 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         else:
             output_ndim = {name: 3 if name == MIMO_LANGUAGE_MODULE_KEY else 2 for name in grids}
 
-        return MegatronMIMOInfra(
+        infra = MegatronMIMOInfra(
             module_to_grid_map=grids,
             topology=topology,
             pg_collections=pg_collections,
             participating_modules=participating_modules,
             module_output_ndim=output_ndim,
         )
+        object.__setattr__(self, "_infra_cache", (self.megatron_mimo_parallelism_config, infra))
+        return infra
 
     def _get_pg_collections_from_grids(
         self,
