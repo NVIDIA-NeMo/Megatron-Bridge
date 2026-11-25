@@ -6,7 +6,7 @@ This experiment trains the public ERNIE-5.5-Flash-Base checkpoint with both its 
 
 Use a Linux GPU container supporting SM103/SM103a on **every** node. The measured base was NGC PyTorch 26.04 (Python 3.12, CUDA 13.2, PyTorch 2.12.0a0, Triton 3.6). The training stack used Transformer Engine 2.20.2, FlashMLA with sparse sink attention (commit `b7643bd`), DeepEP hybrid-ep (`10d4dd7`), cuDNN frontend 1.29.1 with CUTLASS DSL 4.8.1, fast-hadamard-transform 1.1.0, Emerging Optimizers 0.3.0 and Transformers 5.20.2. The base NGC image alone needs these additions. Install the dependencies in the same Python environment used by torchrun. [NGC PyTorch](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch) · [FlashMLA source and build instructions](https://github.com/deepseek-ai/FlashMLA/tree/b7643bd54521f563b839b98289b5cd048c062ba2) · [DeepEP HybridEP source and build instructions](https://github.com/deepseek-ai/DeepEP/tree/10d4dd7377d5bce900fbb4b80cce863764892b95) · [Transformer Engine](https://github.com/NVIDIA/TransformerEngine)
 
-Run the following from a shared workspace visible on all nodes. `BRIDGE` is the checkout of [Bridge #7000](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/7000) containing this README and its helpers. The runtime and all executable helpers in this guide are pinned to `aeec72b844cbb8b951300b738cea6ab4fddb59c5` (training implementation introduced in `43acf2daf25ab96870fb530dad546f9dbb201ad4`). The companion [MCore #9506](https://github.com/NVIDIA/Megatron-LM/pull/9506) supplies the MoonEP backend, packed H support and stable D-indexer selection.
+Run the following from a shared workspace visible on all nodes. `BRIDGE` is the checkout of [Bridge #7000](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/7000) containing this README and its helpers. The performance runs and their helpers in steps 1–6b use `aeec72b844cbb8b951300b738cea6ab4fddb59c5` (training implementation introduced in `43acf2daf25ab96870fb530dad546f9dbb201ad4`). The companion [MCore #9506](https://github.com/NVIDIA/Megatron-LM/pull/9506) supplies the MoonEP backend, packed H support and stable D-indexer selection.
 
 ```bash
 export WORK=$PWD
@@ -230,7 +230,7 @@ A separate 32-GPU test of the public packed H implementation used two independen
 
 With stable index selection, earlier integrated runs of MoK versus MoK + MoonEP matched all captured CE, sampled raw logits and sampled head-input gradients on all three layouts before the first update. The native cuDNN selector requests the top 2,048 keys; equal FP32 scores at the cutoff can admit different eligible keys. The stable diagnostic sorts each query’s entire candidate axis with descending `torch.argsort(stable=True)` before slicing the first 2,048 entries, so lower key IDs win ties. This additional work affects throughput; the independent Swift gate below measures the resulting model values. On the uniform fixture a full GA8 gradient check of the optimized versus baseline integrated MoK + MoonEP configuration gave 0.2982% relative L2 and 0.2428% peak-relative over 279.6B gradient elements. Some individual shards exceeded those aggregate thresholds.
 
-**Whole-model parity with the independent Baidu Swift implementation remains open on all three layouts.** In a deterministic-reference comparison using native pre-FC2 weighting and stable key-ID ties, the main/MTP raw-logit L2 values were 2.306%/14.398% (single), 2.138%/3.265% (uniform) and 1.915%/2.541% (skew). A separate same-input first-routed-FFN diagnostic attained 0.05113% output L2 against deterministic Swift using a modified pre-FC2 weighting kernel. Those independent-reference diagnostics use different expert arithmetic from the default public MoK production command above. A backend-to-backend pass is compatible with a failure against Swift. To test Swift, load the same released weights independently, fix the identical packed token/target rows and record raw LM/MTP values before updating; compare them at the same physical positions and valid targets.
+The earlier pre-FC2 and key-ID tie controls still showed differences against independent Swift. Section 6c gives the subsequent reference-arithmetic recipe and its checks for both heads.
 
 For an independent reference that uses contiguous CP, export the same NPZ schema as the probe. A file contains its dense replica ID (`dp`), global padded document boundaries (`bounds`), local rows' physical global coordinates (`pos`), `tokens`, the actual `main_labels` and rolled `mtp_labels` with invalid targets set to −100, and both `main_ce` and `mtp_ce`. Store the global positions in `sample` and the corresponding `main_logits`, `mtp_logits`, `main_dh` and `mtp_dh` in that order. Raw logits take vocabulary IDs 0, 1237, 2474, …; the hidden-gradient samples contain every channel. The comparator reconstructs each full replica independently of CP sharding and joins sampled values on global position. For each implementation write `rank00.npz` through `rank63.npz`, covering every global position in each of the four dense data replicas. Use the same vocabulary IDs and loss scaling in both trainers. For matching samples, select physical positions where `pos % 2048` is 15 or 1023, plus each padded document end minus two. The comparator uses the intersection of sampled coordinates. Check coverage before interpreting a small difference: for the fixed twelve-document skew fixture, the rule gives 268 sampled physical coordinates per dense replica, including 266 valid main targets and 255 valid MTP targets. After recording the original Swift run and the candidate run into separate directories, use Swift as the reference denominator.
 
@@ -270,3 +270,81 @@ done
 On the twelve-document fixture, the public Bridge/MCore pair used production MoK expert arithmetic with stable D-indexer ties and produced 64 rank files per arm. All 13 recorded fields on every rank were byte-identical between retain/group 1 and release/group 2. The comparison covered 1,048,576 padded positions across four replicas and 1,048,148 valid CE entries for each head. At the sampled valid positions, it compared 173,432 main and 166,260 MTP logit elements, and 4,358,144 main and 4,177,920 MTP head-input gradient elements. All ten error metrics were zero. These are observations of the first pre-update microbatch. The independent Swift comparison and the earlier eight-document full GA8 parameter-gradient measurement check different quantities.
 
 Each of these instrumented arms completed one full GA8 optimizer update. Across all 64 ranks, allocated/reserved peaks were 222.659/224.350 GiB with retain/group 1 and 157.527/165.072 GiB with release/group 2. These one-update peaks include precision instrumentation and a stable D indexer. Use the clean twelve-update native-selector run above for a production memory number.
+
+### 6c. Compare the 256K training forward and head gradients with Swift
+
+The accuracy run uses the original Base weights, real router choices, one MTP layer, MoK with MoonEP and full recomputation. Use the three fixed input files and the converted checkpoint from steps 2–3. Keep the throughput runs in their original environment. The following commands set up separate checkouts for the accuracy measurement.
+
+**1. Fetch both source revisions.** Run this once in the shared workspace. The Bridge revision includes the native source patch, both head recorders, the comparator and the reference-arithmetic switches.
+
+```bash
+git -C "$BRIDGE" fetch origin refs/pull/7000/head
+git -C "$BRIDGE" worktree add --detach "$WORK/Bridge-accuracy" 88efc31c89d7e0ccf279ecaa9d4fd22dbe2ec5fd
+git -C "$MCORE" fetch origin refs/pull/9506/head
+git -C "$MCORE" worktree add --detach "$WORK/MCore-accuracy" 6ce5dfe9c8c9988972f4a5123e1e6a6c51231636
+export BRIDGE=$WORK/Bridge-accuracy MCORE=$WORK/MCore-accuracy
+export EX=$BRIDGE/examples/models/ernie55
+```
+
+**2. Build the BF16 MoK variant on a GB300.** Use the SM103 development environment from step 1. All workers must be able to read the resulting checkout and extension. The build generates the SiTU lookup table from BF16 inputs and FP32 elementary functions on the GPU.
+
+```bash
+export MOK=$WORK/MoK-accuracy
+git clone https://github.com/QiZhangNV/mixture-of-kittens.git "$MOK"
+git -C "$MOK" checkout --detach ee7bdaba515fd3d557105d71809ec74cd523d5a1
+git -C "$MOK" submodule update --init --recursive
+git -C "$MOK/third_party/ThunderKittens" apply "$MOK/patches/thunderkittens-mxfp8-mn-major.patch"
+git -C "$MOK" apply --check "$EX/mok-sm103-bf16-reference.patch"
+git -C "$MOK" apply "$EX/mok-sm103-bf16-reference.patch"
+make -C "$MOK" ARCH=SM103 PYTHON="$(command -v python)"
+export PYTHONPATH=$MOK:$MCORE:$BRIDGE/src:${PYTHONPATH:-}
+python -c 'import pathlib,os,mok._C as c; assert c.strict_bf16_reference_situ and pathlib.Path(c.__file__).resolve().is_relative_to(pathlib.Path(os.environ["MOK"]).resolve())'
+```
+
+**3. Run one update for each packing.** In the 16-node allocation, run the step-4 `run_arm` function on each node with its own `NODE_RANK`. Export `BRIDGE`, `MCORE`, `EX`, `MOK` and `PYTHONPATH` above on every node. Set `WANDB_PROJECT` to a project writable by the logging rank. Use separate capture directories. The model uses per-document zigzag at CP16, EP64, GBS32, MBS1 and GA8.
+
+```bash
+export MCORE_DSA_STABLE_INDEXER_TOPK=1 MCORE_DSA_PRESERVE_SELECTED_SLOT_ORDER=1
+export MCORE_DSV4_GROUP_PROJ_BMM=1 NCCL_MAX_P2P_NCHANNELS=8 NCCL_GRAPH_REGISTER=0
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+export WANDB_PROJECT=${WANDB_PROJECT:-ernie55-256k-accuracy}
+for LAYOUT in single uniform skew; do
+  case "$LAYOUT" in single) DOCS=1 ;; uniform) DOCS=8 ;; skew) DOCS=12 ;; esac
+  INPUT=$DATA/$LAYOUT.jsonl
+  export ERNIE55_COMPARE_HEADS="$LOGS/accuracy-$LAYOUT-heads"
+  run_arm "accuracy-$LAYOUT" true train.train_iters=1 \
+    optimizer.lr=1e-5 optimizer.min_lr=1e-5 scheduler.lr_decay_style=constant \
+    scheduler.lr_warmup_iters=5 scheduler.lr_decay_iters=6 \
+    model.recompute_num_layers=1 model.ernie_reference_rmsnorm=true \
+    model.ernie_fused_mhc=false model.ernie_vha_batched_mix=false \
+    model.ernie_dsa_preserve_cp_key_slots=true \
+    '+model.moe_megakernel_backend_config.reference_pre_fc2_gate=true' \
+    "logger.wandb_project=$WANDB_PROJECT" "logger.wandb_exp_name=ernie55-accuracy-$LAYOUT"
+done
+```
+
+**4. Capture the original Swift trainer and compare.** In the reference environment, prepare the same three JSONL rows and launch the original trainer with its head recorder. The companion guide gives the setup, complete multi-node commands and the expected 64 files for each packing. Use a shared `WORK` and a fresh capture directory for each arm. [Swift head capture and input preparation](SWIFT-HEAD-PARITY.md)
+
+After recording both trainers, run this on one node with NumPy. The comparator reconstructs each dense replica separately, checks the actual targets, masks and global coordinates, and returns the two head scores.
+
+```bash
+for LAYOUT in single uniform skew; do
+  python "$EX/head_parity_256k.py" "$WORK/swift-heads/$LAYOUT" "$LOGS/accuracy-$LAYOUT-heads" --check
+done
+```
+
+The preregistered thresholds for each head are 0.001% for mean valid-token CE, 0.5% for relative L2 and 1% for maximum difference divided by the reference peak. The latter two checks cover valid per-token CE, sampled pre-multimax logits and sampled head-input gradients. The CLI prints relative errors as fractions and exits nonzero on a failed gate.
+
+#### Independent reference measurements
+
+The integrated reference-arithmetic run compared one physical 256K packed row from each fixture on 64 GB300s. Both trainers consumed the released Base parameters and computed their own activations, labels and losses. The following table covers one dense replica of the first pre-update microbatch. CE includes every valid target. Raw logits use sampled vocabulary columns at shared positions. Head-input gradients include all 4,096 channels at each sampled valid position.
+
+| Documents per row | Valid targets per head | Shared physical positions | Main / MTP raw logits relative L2 | Main / MTP CE mean relative error | Main / MTP head-input gradient relative L2 |
+|---|---:|---:|---:|---:|---:|
+| 1 | 262,136 | 99 | 0% / 0% | 0.00000136% / 0.00000072% | 0.00003353% / 0% |
+| 8 equal | 262,080 | 162 | 0% / 0% | 0.00000145% / 0.00000085% | 0.00003807% / 0.00057860% |
+| 12 unequal | 262,037 | 200 | 0% / 0% | 0.00000141% / 0.00000075% | 0.00003036% / 0.00101736% |
+
+On the single-document fixture, a separate full-vocabulary projection checked 52,745,957,376 raw BF16 logit elements **per head** at the 262,136 valid targets. Every element matched. All four replicas' original four-stream trunk and shifted embedding matched before that projection.
+
+The single-document backbone backward exceeded the 0.5% relative L2 threshold. The gradient at the input of block 43 measured 0.36896% over all 262,144 tokens and all four residual streams. Block 22 measured 0.98234% and block 1 measured 2.26123%. The per-token loss gradients for both heads matched exactly, including masked targets. The tested decoder has 43 blocks. These checks quantify the first training microbatch. Full-model parameter-gradient and multi-update optimizer agreement require additional measurements.
