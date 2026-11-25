@@ -237,6 +237,15 @@ The ordinary public training recipe then ran two complete optimizer updates with
 
 All 807,229 sampled LM updates met the 1%-of-reference-peak limit. The LM update also met the 0.5% aggregate L2 limit. The token embedding and final shared-expert weight updates still exceed at least one limit. The independent full-model gradient norms were 80.470665 (Swift) and 80.551552 (Bridge). [Original Swift training](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/5txaup4e) · [Bridge with reference head weight gradients](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/lm8zjwea)
 
+Two clean training processes ran successively on the same 64 GB300 GPUs using the eight-document fixture and the G2 settings above. Each ran eight GA8 optimizer updates. Throughput divides the physical tokens in updates 4–8 by their total elapsed time and the number of GPUs. Each memory column reports the maximum PyTorch high-water mark across 64 ranks over the entire process.
+
+| Shared output-weight gradient | Seconds/update | Tokens/s/GPU | Peak allocated GiB | Peak reserved GiB |
+|---|---:|---:|---:|---:|
+| [Fused FP32 accumulation](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/4zq294lg) | 58.303 | 2,248.13 | 176.874 | 181.266 |
+| [Contiguous-owner BF16](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/67lslrwq) | 58.444 | 2,242.68 | 178.197 | 180.506 |
+
+Enabling the option changed throughput by -0.24% and the full-model allocated peak by +1.322 GiB on this pair.
+
 ### Input embedding and the BOS row
 
 This comparison isolates the input embedding lookup on the combined G2 recipe above. In the eight-document fixture, the original Swift trainer places one of the eight BOS tokens on each even-numbered CP rank. Per-document zigzag places all eight on CP rank zero. Both use BF16 embedding weights and an FP32 main gradient. The production Bridge lookup uses `F.embedding`. Its MTP-shared input weight has `zero_out_wgrad=True` and bypasses fused embedding-gradient accumulation. Original Swift indexes the weight by token ID with PyTorch deterministic algorithms enabled. Neither trainer's shifted MTP embedding input contains a BOS token on this fixture.
