@@ -169,3 +169,61 @@ A separate experiment captured all 8,388,608 FP32 coordinates of the shared FC2 
 | BF16 return, original contiguous CP owners | 0.04199% | 2.10345% | 37.6205% |
 
 All three full-matrix updates exceed both preset tolerances against independent Swift. With identical full gradients, optimizer inputs and clipping norms, the two container implementations of Muon produced elementwise-identical FP32 updates. Changing ownership reduced the observed FC2 gradient discrepancy under BF16 returns. Substantial update differences remain.
+
+### Shared output-weight rounding
+
+Run the same natural eight-document G2 optimizer comparison with one additional option. Keep the reference capture, weights and training environment used above. On each Bridge node, run:
+
+```bash
+git -C "$BRIDGE" fetch origin refs/pull/7000/head
+git -C "$BRIDGE" checkout --detach 25be9c87f028af2cef2e2a430aba43cc5401635a
+git -C "$MCORE" checkout --detach 3ba272c0e128d6e0b5147142363710fcbcaa2671
+export NCCL_ALGO=Ring
+capture_optimizer_bridge "$OPT/bridge-head-wgrad-g2" 2 ernie55-uniform-shared-head-wgrad \
+  model.moe_router_bias_bf16_counts=true model.ernie_router_bias_contiguous_cp_counts=true \
+  model.ernie_dsa_contiguous_backward=true model.ernie_mtp_strict_head_backward=true \
+  model.ernie_head_reference_wgrad=true
+```
+
+After all ranks have exited, score the two captures on one CPU host:
+
+```bash
+python "$EX/compare_optimizer_256k.py" "$OPT/swift-capture" "$OPT/bridge-head-wgrad-g2" \
+  --json "$OPT/optimizer-head-wgrad-g2.json"
+```
+
+A controlled two-update experiment first supplied the same observed original router bias to both trainers after the zero-LR update. At 807,229 output-weight coordinates, the second pre-clipping gradient error was 0.18961% relative L2 with the fused FP32 accumulation, 0.25945% with BF16 weight GEMMs on zigzag token owners, and 0.00439% with BF16 weight GEMMs on the original contiguous token owners. The largest error in the actual master-weight update fell from 7.26% of the reference peak to 0.375%. No sampled coordinate exceeded the 1% update peak gate with contiguous owners.
+
+On identical original-training hidden states and raw-logit gradients, replaying fused FP32 accumulation reproduced 0.18965% gradient error. The original BF16 per-head GEMMs followed by BF16 addition reproduced the gradient within 0.0000032% after global reduction. This accounts for the two distinct roundings at the shared weight.
+
+The ordinary public training recipe then ran two complete optimizer updates with all G2 strict options and the new head option. All 64 ranks used their own router counts and model gradients. The recorded inputs and pre-update weights matched the independent Swift run. The second optimizer learning rate was 2e−6.
+
+| Step-2 parameter | Preclip gradient L2 | Gradient peak | Actual update L2 | Actual update peak |
+|---|---:|---:|---:|---:|
+| LM output weight | 0.00170% | 0.00276% | 0.03947% | 0.37453% |
+| Token embedding | 0.58350% | 0.28696% | 0.61977% | 35.24053% |
+| BOS embedding row | 0.58350% | 0.28696% | 1.05725% | 35.24053% |
+| Non-BOS embedding | 0.41202% | 0.41182% | 0.40583% | 10.31305% |
+| Final shared-expert FC2 | 0.09039% | 0.09486% | 2.94596% | 16.80328% |
+
+All 807,229 sampled LM updates met the 1%-of-reference-peak limit. The LM update also met the 0.5% aggregate L2 limit. The token embedding and final shared-expert weight updates still exceed at least one limit. The independent full-model gradient norms were 80.470665 (Swift) and 80.551552 (Bridge). [Original Swift training](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/5txaup4e) · [Bridge with reference head weight gradients](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/lm8zjwea)
+
+### Input embedding and the BOS row
+
+This comparison isolates the input embedding lookup on the combined G2 recipe above. In the eight-document fixture, the original Swift trainer places one of the eight BOS tokens on each even-numbered CP rank. Per-document zigzag places all eight on CP rank zero. Both use BF16 embedding weights and an FP32 main gradient. The production Bridge lookup uses `F.embedding`. Its MTP-shared input weight has `zero_out_wgrad=True` and bypasses fused embedding-gradient accumulation. Original Swift indexes the weight by token ID with PyTorch deterministic algorithms enabled. Neither trainer's shifted MTP embedding input contains a BOS token on this fixture.
+
+**Native training measurements.** Each row compares the first nonzero AdamW update after a zero-LR warmup. Both optimizers retain their own state. All 32 GA/DP input and target vectors on both steps and all sampled starting master values matched. For the three diagnostic Bridge runs, the actual input IDs to both main and MTP lookups also matched the original at every physical position. There are 811,321 sampled embedding coordinates, including every channel of the 4,096-element BOS row. Each cell gives relative L2 / peak-relative error.
+
+| Compared pair | Preclip embedding gradient | True embedding update | True BOS update |
+| --- | ---: | ---: | ---: |
+| Two original Swift starts | 0.3361% / 0.1923% | 0.4502% / 32.4442% | 0.8028% / 32.4442% |
+| Production combined G2 vs fresh Swift | 0.3096% / 0.2059% | 0.5009% / 25.0264% | 0.7476% / 25.0264% |
+| Advanced indexing on zigzag owners vs fresh Swift | 0.3083% / 0.1156% | 0.5163% / 22.6154% | 0.7671% / 22.6154% |
+| Advanced indexing on contiguous owners vs fresh Swift | 0.2756% / 0.1571% | 0.5421% / 25.6948% | 0.8859% / 25.6948% |
+| Deterministic advanced indexing on contiguous owners vs fresh Swift | 0.3272% / 0.1460% | 0.5088% / 20.3386% | 0.7723% / 20.3386% |
+
+The fixed gates are 0.5% relative L2 and 1% peak-relative. Every Bridge embedding update exceeded the peak limit. Across the three interventions, the incoming BOS gradients on step 2 already differed by 2.06%–2.21% relative L2 before the lookup backward combined them by token ID. This covers 1,048,576 BF16 components across all eight microbatches and four dense replicas. The independent original-Swift repeat also exceeded the peak gate. [Previous Swift run](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/5txaup4e) · [Fresh Swift run](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/ii7w48np) · [Production G2](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/cbw736ek) · [Zigzag index](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/dembu758) · [Contiguous index](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/iuqjfqav) · [Contiguous deterministic index](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/n4fprtlo)
+
+**Fixed-input lookup replay.** To isolate the local backward, record the actual input IDs and the BF16 incoming gradients at every BOS occurrence on every rank of both Swift updates. Keep the full original token-ID vectors and original hidden dimension when replaying the CUDA lookup backward. Other vocabulary rows have independent weight gradients, so their incoming gradients can be zeroed for this BOS-only replay. Reconstruct each layout in physical row order, accumulate eight native microbatch gradients, average over the 64-rank dense DP-with-CP group, and use the original step's clip factor and AdamW state progression. The reconstructed original step-2 BOS gradient matched the measured preclip gradient to 0.0000013% L2 and 0.0000037% peak-relative.
+
+On these identical original operands, the production zigzag `F.embedding` gives **0.02906% L2 / 0.02529% peak** on the step-2 BOS gradient and **0.00610% / 0.08113%** on the resulting two-step AdamW update. Using advanced indexing on zigzag owners raises the replayed update peak to 1.2680%. On the original contiguous owners, both advanced-index algorithms reproduce the same BOS gradients and replayed update. The production lookup therefore passes the fixed-input gates on this BOS row. The independent training measurements above continue to include the variation already present in the incoming gradients.

@@ -61,3 +61,84 @@ def test_reference_wgrad_uses_both_bf16_head_gradients(save_projection, strict_m
         relative_l2 = (gradient.float() - reference.float()).norm() / reference.float().norm()
         assert relative_l2 < 0.004
     assert torch.equal(w.main_grad, torch.full_like(w.main_grad, 0.125))
+
+
+def test_cp4_packed_reference_head_uses_contiguous_gradient_owners():
+    """Run with torchrun --nproc-per-node=4 -m pytest -k cp4_packed_reference_head."""
+    import os
+
+    import torch.distributed as dist
+    from megatron.core.context_parallel_layout.routes import build_thd_cp_partition_route
+
+    if not torch.cuda.is_available() or os.environ.get("WORLD_SIZE") != "4" or "LOCAL_RANK" not in os.environ:
+        pytest.skip("requires four CUDA ranks launched by torchrun")
+    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+    own_group = not dist.is_initialized()
+    if own_group:
+        dist.init_process_group("nccl")
+    try:
+        group = dist.group.WORLD
+        rank, cp = group.rank(), group.size()
+        for lengths in [(256,), (8, 24, 96, 128)]:
+            torch.manual_seed(303)
+            cu = torch.tensor([0, *lengths], device="cuda", dtype=torch.int32).cumsum(0, dtype=torch.int32)
+            positions = []
+            for lo, hi in zip(cu.tolist()[:-1], cu.tolist()[1:]):
+                width = (hi - lo) // (2 * cp)
+                for part in (rank, 2 * cp - rank - 1):
+                    positions.extend(range(lo + part * width, lo + (part + 1) * width))
+            zig = torch.tensor(positions, device="cuda")
+            cont = torch.arange(rank * len(zig), (rank + 1) * len(zig), device="cuda")
+            rows = sum(lengths)
+            states = torch.randn(rows, 1, 64, device="cuda", dtype=torch.bfloat16)
+            weight = torch.randn(128, 64, device="cuda", dtype=torch.bfloat16) * 0.1
+            targets = torch.randint(128, (1, rows), device="cuda")
+            targets[:, ::9] = -100
+            dy = torch.randn(1, rows, device="cuda").masked_fill(targets < 0, 0)
+            route = build_thd_cp_partition_route(cu, cp, rank)
+            observed = []
+            for layout, pos in (("zigzag", zig), ("contiguous", cont)):
+                pack = SimpleNamespace(
+                    qkv_format="thd",
+                    cu_seqlens_q_padded=cu,
+                    local_cp_size=None,
+                    cp_partition_mode=layout,
+                    cp_partition_route=route,
+                )
+                cfg = SimpleNamespace(
+                    ernie_chunked_head_backend="triton",
+                    ernie_chunked_head_rows=32,
+                    ernie_head_save_projection=True,
+                    ernie_head_reference_wgrad=True,
+                    context_parallel_size=cp,
+                    cp_partition_mode=layout,
+                    cuda_graph_impl="none",
+                )
+                w = weight.detach().clone().requires_grad_()
+                w.main_grad = torch.zeros_like(w, dtype=torch.float32)
+                layer = SimpleNamespace(
+                    training=True,
+                    output_dtype=None,
+                    config=cfg,
+                    weight=w,
+                    sequence_parallel=False,
+                    multimax_ranges=torch.zeros(4, device="cuda"),
+                    multimax_ts=torch.zeros(4, device="cuda"),
+                )
+                h = states[pos].detach().requires_grad_()
+                with head_owners.reference_head_pack(pack, group):
+                    loss, argmax = chunked_head.chunked_training_loss(
+                        layer, h, targets[:, pos], None, return_argmax=True
+                    )
+                dx, dw = torch.autograd.grad(loss, (h, w), dy[:, pos])
+                observed.append((loss.T.contiguous(), argmax, dx, dw))
+                assert pack.cp_partition_mode == layout
+            left, right = observed
+            for actual, contiguous in zip(left[:3], right[:3]):
+                gathered = [torch.empty_like(contiguous) for _ in range(cp)]
+                dist.all_gather(gathered, contiguous, group=group)
+                assert torch.equal(actual, torch.cat(gathered)[zig])
+            assert torch.equal(left[3], right[3])
+    finally:
+        if own_group:
+            dist.destroy_process_group()
