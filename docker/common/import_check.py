@@ -47,9 +47,14 @@ from pathlib import Path
 
 
 # Submodules to import alongside their installed top-level package, because importing the
-# package alone does not load them. sentencepiece's generated protobuf module requires a
-# minimum protobuf runtime, and transformers imports it to convert SentencePiece models.
+# package alone does not load them. Each is checked for the distributions that ship it.
+# sentencepiece's generated protobuf module requires a minimum protobuf runtime, and
+# transformers imports it to convert SentencePiece models. OpenTelemetry's SDK imports
+# helpers from the API release it was built with, and MLflow imports the SDK's metrics
+# module when it sets a tracking URI; the shared ``opentelemetry`` namespace package loads
+# no SDK code.
 EXTRA_SUBMODULES: dict[str, tuple[str, ...]] = {
+    "opentelemetry": ("opentelemetry.sdk.metrics",),
     "sentencepiece": ("sentencepiece.sentencepiece_model_pb2",),
 }
 
@@ -137,11 +142,37 @@ def _modules_from_top_level_txt(dist: md.Distribution) -> set[str]:
     return {line.strip() for line in text.splitlines() if line.strip().isidentifier()}
 
 
+def _ships_module(dist: md.Distribution, module: str) -> bool:
+    """Return whether a distribution's file list contains a module.
+
+    Namespace packages such as ``opentelemetry`` are shared by several
+    distributions, so an extra submodule is attributed only to the
+    distributions that ship it.
+
+    Args:
+        dist: The installed distribution to inspect.
+        module: The dotted module name.
+
+    Returns:
+        True when the distribution ships the module, or lists no files.
+    """
+    if dist.files is None:
+        return True
+    path = module.replace(".", "/")
+    for entry in dist.files:
+        file = entry.as_posix()
+        if file in (f"{path}.py", f"{path}/__init__.py"):
+            return True
+        if file.startswith(f"{path}.") and file.endswith((".so", ".pyd")):
+            return True
+    return False
+
+
 def discover_modules(skip: set[str]) -> dict[str, list[str]]:
     """Map each importable top-level module to the distributions providing it.
 
-    A top-level module listed in ``EXTRA_SUBMODULES`` also contributes its
-    submodules from that table.
+    A top-level module listed in ``EXTRA_SUBMODULES`` also contributes the
+    submodules from that table that its distribution ships.
 
     Args:
         skip: Module names to exclude from the result. Skipping a top-level
@@ -158,9 +189,10 @@ def discover_modules(skip: set[str]) -> dict[str, list[str]]:
         for module in modules:
             if module in skip:
                 continue
-            for target in (module, *EXTRA_SUBMODULES.get(module, ())):
-                if target not in skip:
-                    providers.setdefault(target, set()).add(name)
+            providers.setdefault(module, set()).add(name)
+            for extra in EXTRA_SUBMODULES.get(module, ()):
+                if extra not in skip and _ships_module(dist, extra):
+                    providers.setdefault(extra, set()).add(name)
     return {module: sorted(names) for module, names in providers.items()}
 
 

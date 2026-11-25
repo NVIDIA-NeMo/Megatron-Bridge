@@ -74,6 +74,13 @@ override-dependencies = [
     "pyarrow>=21.0.0,<26",
     "fsspec[http]>=2026.6.0",                  # GHSA-27vj-qcqg-25rc
     "transformers; sys_platform == 'never'",    # Defer to transformers in MBridge install
+    # OpenTelemetry packages require each other at exact releases (the SDK pins the API). Only the API was
+    # installable here (through wandb), so syncing it replaced MBridge's API and broke MLflow's SDK import.
+    "opentelemetry-api; sys_platform == 'never'",                        # Installed by MBridge
+    "opentelemetry-exporter-otlp-proto-common; sys_platform == 'never'", # Installed by MBridge
+    "opentelemetry-proto; sys_platform == 'never'",                      # Installed by MBridge
+    "opentelemetry-sdk; sys_platform == 'never'",                        # Installed by MBridge
+    "opentelemetry-semantic-conventions; sys_platform == 'never'",       # Installed by MBridge
     "packaging>=25.0",
     "nvidia-pytriton>=0.7.0",
     "flashinfer-python==0.7.2.post1",           # Match flashinfer-cubin installed by MBridge

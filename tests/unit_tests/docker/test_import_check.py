@@ -75,6 +75,59 @@ def test_extra_submodules_need_their_package(import_check, monkeypatch):
     assert import_check.discover_modules(set()) == {"other": ["other"]}
 
 
+def test_extra_submodules_without_a_file_list(import_check, monkeypatch):
+    dist = SimpleNamespace(
+        metadata={"Name": "sentencepiece"},
+        files=None,
+        read_text=lambda name: "sentencepiece\n" if name == "top_level.txt" else None,
+    )
+    monkeypatch.setattr(import_check.md, "distributions", lambda: [dist])
+    assert import_check.discover_modules(set()) == {
+        "sentencepiece": ["sentencepiece"],
+        "sentencepiece.sentencepiece_model_pb2": ["sentencepiece"],
+    }
+
+
+def _opentelemetry_dists():
+    return [
+        _dist("opentelemetry-api", "opentelemetry/attributes/__init__.py"),
+        _dist("opentelemetry-sdk", "opentelemetry/sdk/metrics/__init__.py"),
+    ]
+
+
+def test_opentelemetry_sdk_metrics_module_is_checked(import_check, monkeypatch):
+    monkeypatch.setattr(import_check.md, "distributions", _opentelemetry_dists)
+    assert import_check.discover_modules(set()) == {
+        "opentelemetry": ["opentelemetry-api", "opentelemetry-sdk"],
+        "opentelemetry.sdk.metrics": ["opentelemetry-sdk"],
+    }
+
+
+def test_opentelemetry_api_alone_checks_no_sdk_module(import_check, monkeypatch):
+    monkeypatch.setattr(
+        import_check.md, "distributions", lambda: [_dist("opentelemetry-api", "opentelemetry/attributes/__init__.py")]
+    )
+    assert import_check.discover_modules(set()) == {"opentelemetry": ["opentelemetry-api"]}
+
+
+def test_check_fails_when_opentelemetry_api_is_older_than_sdk(import_check, monkeypatch, tmp_path, capsys):
+    # opentelemetry-sdk 1.45 imports a helper that opentelemetry-api 1.43 does not define.
+    attributes = tmp_path / "opentelemetry" / "attributes"
+    metrics = tmp_path / "opentelemetry" / "sdk" / "metrics"
+    attributes.mkdir(parents=True)
+    metrics.mkdir(parents=True)
+    (attributes / "__init__.py").write_text("def _clean_attribute(key, value, max_len):\n    return value\n")
+    (metrics / "__init__.py").write_text("from opentelemetry.attributes import _clean_attribute_value\n")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    monkeypatch.setattr(import_check.md, "distributions", _opentelemetry_dists)
+
+    assert import_check.main([]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL  opentelemetry.sdk.metrics" in out
+    assert "cannot import name '_clean_attribute_value'" in out
+    assert "1 ok, 1 failed" in out
+
+
 def test_check_fails_when_only_the_protobuf_module_is_skewed(import_check, monkeypatch, tmp_path, capsys):
     package = tmp_path / "sentencepiece"
     package.mkdir()
@@ -82,7 +135,9 @@ def test_check_fails_when_only_the_protobuf_module_is_skewed(import_check, monke
     (package / "sentencepiece_model_pb2.py").write_text("raise RuntimeError('gencode 7.36.1 runtime 6.33.5')\n")
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
     monkeypatch.setattr(
-        import_check.md, "distributions", lambda: [_dist("sentencepiece", "sentencepiece/__init__.py")]
+        import_check.md,
+        "distributions",
+        lambda: [_dist("sentencepiece", "sentencepiece/__init__.py", "sentencepiece/sentencepiece_model_pb2.py")],
     )
 
     assert import_check.main([]) == 1
