@@ -2,7 +2,7 @@
 
 This experiment trains the public ERNIE-5.5-Flash-Base checkpoint with both its main LM head and MTP head. It compares natural MoK routing with the same routing under MoonEP expert replication. Use one 64-GPU NVLink domain (16 nodes × 4 GB300s). TP1, PP1 and CP16 give four dense data replicas. EP64 spans all ranks. Each replica sees one packed 262,144-position row per microbatch and accumulates eight microbatches. An optimizer update therefore contains 32 rows. The recipe runs eagerly with full uniform recomputation, two hybrid symbols per group, BF16 weights and expert math, FP32 router scores, and a CUDA token-chunked head (4,096 rows) on both outputs.
 
-**Accuracy status.** The native eight-document throughput recipe exceeds the original Swift main and MTP head error limits. Reference arithmetic passes both first-microbatch head comparisons on all three packings. Its first nonzero optimizer update still exceeds the limits for all three sampled parameter matrices on eight equal documents. [Throughput and recompute grouping](#eight-document-throughput-and-precision) · [First nonzero update](#first-nonzero-parameter-update-on-eight-equal-documents)
+**Accuracy status.** The native throughput recipe exceeds the original Swift head error limits on eight equal documents. Reference arithmetic passes both heads on the first microbatch for all three packings. On eight equal documents, using the original BF16 weight-gradient accumulation also passes the sampled shared LM/MTP weight update. The embedding and last shared-expert FC2 updates and the subsequent predictions still exceed the fixed thresholds. Independent Swift restarts also exceed the post-update head thresholds. [Throughput by packing](#packing-zigzag-and-moonep) · [Optimizer and post-update checks](OPTIMIZER-PARITY.md#capture-both-heads-after-the-first-nonzero-weight-update)
 
 ## 1. Check out the source and prepare the training environment
 
@@ -197,6 +197,52 @@ The following integrated measurements compare two **MoonEP-enabled** arms. The b
 | Single | 3,744.8 → 3,751.1 | 236.377 → 182.627 |
 | Eight equal | 4,440.8 → 4,548.1 | 227.582 → 173.082 |
 | Twelve skewed | 4,233.8 → 4,303.4 | 228.662 → 174.162 |
+
+### Packing, zigzag and MoonEP
+
+Each row below gives physical tokens/s/GPU for 12-update BF16 jobs using the source versions in step 1 and two-symbol full recomputation. The three stages for each packing ran on the same 64 GPUs. The three packings used different racks. Each stage starts from the original checkpoint. The measurement includes every update from 4 through 12 and uses the same 131,072 physical token positions/GPU/update for every stage.
+
+| Documents per 256K row | MoK, contiguous | MoK, all-zigzag | MoK + MoonEP, all-zigzag | Gain from zigzag | Further gain from MoonEP | Final seconds/update | Final peak allocated GiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| One × 256K | 2,849.4 | 3,099.0 | 3,760.0 | +8.76% | +21.33% | 34.860 | 182.63 |
+| Eight × 32K | 3,861.3 | 3,919.1 | 4,556.0 | +1.50% | +16.25% | 28.769 | 173.08 |
+| Twelve unequal | 3,446.8 | 3,668.3 | 4,330.1 | +6.43% | +18.04% | 30.270 | 174.16 |
+
+The contiguous baseline converts D and MTP-D into their internal zigzag layout and converts back. The all-zigzag stack gives H a per-document zigzag layout and feeds D directly. In the isolated CP16 H layer, forward plus backward with cached metadata took 55.88 and 47.09 ms with the two layouts on one document, and 39.25 and 39.10 ms on eight equal documents. MoonEP saved a further 4.675 seconds per eight-document optimizer update. [Performance and precision figures (PDF)](benchmarks/ernie55-256k-bf16-ablation.pdf) · [Per-step timings, allocator peaks and nine W&B runs (CSV)](benchmarks/ernie55-256k-bf16-ablation.csv)
+
+Prepare the three fixture files from step 3. In the same environment on each node, define `run_arm` from step 4 and run the block below. Set `WANDB_PROJECT` to a project you can write to. Use a fresh log directory shared by all nodes for each benchmark invocation. For node-local fixture staging, copy each JSONL to the same path on all nodes and set `INPUT` to that path.
+
+```bash
+(
+  set -eo pipefail
+  : "${WANDB_PROJECT:?Set a W&B project for these runs}"
+  unset ERNIE55_COMPARE_HEADS
+  export MCORE_DSA_STABLE_INDEXER_TOPK=0 NCCL_NVLS_ENABLE=0 CUDA_DEVICE_MAX_CONNECTIONS=1
+  export WANDB_MODE=online
+  common=(train.train_iters=12 model.recompute_num_layers=2 profiling.nvtx_ranges=false
+          logger.log_interval=1 "logger.wandb_project=$WANDB_PROJECT")
+  for LAYOUT in single uniform skew; do
+    case "$LAYOUT" in single) DOCS=1 ;; uniform) DOCS=8 ;; skew) DOCS=12 ;; esac
+    export LAYOUT DOCS INPUT="$DATA/$LAYOUT.jsonl" LOGS="$WORK/ernie256k-ablation-$LAYOUT"
+    mkdir -p "$LOGS"
+    for arm in mok_contiguous mok_zigzag moon_zigzag; do
+      case "$arm" in
+        mok_contiguous) layout=contiguous; zigzag=false; moon=false ;;
+        mok_zigzag)     layout=zigzag;     zigzag=true;  moon=false ;;
+        moon_zigzag)    layout=zigzag;     zigzag=true;  moon=true  ;;
+      esac
+      run_arm "$arm" "$moon" "${common[@]}" "model.cp_partition_mode=$layout" \
+        "model.dsv4_cp_zigzag=$zigzag" "logger.wandb_exp_name=ernie256k-$LAYOUT-$arm"
+    done
+  done
+)
+# On one node, after every node has finished.
+for layout in single uniform skew; do
+  for arm in mok_contiguous mok_zigzag moon_zigzag; do
+    python "$EX/benchmark_256k.py" summarize "$WORK/ernie256k-ablation-$layout"/"$arm"-node*.log
+  done
+done
+```
 
 ### Public checkout validation
 
