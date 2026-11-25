@@ -33,7 +33,7 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler, com
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_model_config, unwrap_model
-from megatron.training.config import optimizer_config as optimizer_config_lib
+from megatron.training.config.optimizer_config import OptimizerConfigOverrideHook, OptimizerConfigOverrides
 
 from megatron.bridge.training.config import (
     OptimizerConfigOverrideProvider,
@@ -49,9 +49,9 @@ G_LOGGER = logging.getLogger(__name__)
 def _resolve_optimizer_config_overrides(
     context: OptimizerConfigOverrideProviderContext,
     provider: OptimizerConfigOverrideProvider | None,
-    overrides: optimizer_config_lib.OptimizerConfigOverrides | optimizer_config_lib.OptimizerConfigOverrideHook | None,
+    overrides: OptimizerConfigOverrides | OptimizerConfigOverrideHook | None,
     mode: Literal["extend", "replace"],
-) -> optimizer_config_lib.OptimizerConfigOverrides | None:
+) -> OptimizerConfigOverrides | None:
     """Adapt existing complete-policy providers and new contribution mappings."""
     if mode not in ("extend", "replace"):
         raise ValueError(f"Unknown optimizer override mode: {mode!r}; use 'extend' or 'replace'.")
@@ -93,9 +93,7 @@ def setup_optimizer(
     pg_collection: Optional[ProcessGroupCollection] = None,
     optimizer_config_override_provider: Optional[OptimizerConfigOverrideProvider] = None,
     *,
-    optimizer_config_overrides: (
-        optimizer_config_lib.OptimizerConfigOverrides | optimizer_config_lib.OptimizerConfigOverrideHook | None
-    ) = None,
+    optimizer_config_overrides: OptimizerConfigOverrides | OptimizerConfigOverrideHook | None = None,
     optimizer_config_overrides_mode: Literal["extend", "replace"] = "extend",
 ) -> tuple[MegatronOptimizer, OptimizerParamScheduler]:
     """Set up the optimizer and scheduler.
