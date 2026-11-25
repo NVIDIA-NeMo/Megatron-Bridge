@@ -337,14 +337,14 @@ The preregistered thresholds for each head are 0.001% for mean valid-token CE, 0
 
 #### Independent reference measurements
 
-The integrated reference-arithmetic run compared one physical 256K packed row from each fixture on 64 GB300s. Both trainers consumed the released Base parameters and computed their own activations, labels and losses. The following table covers one dense replica of the first pre-update microbatch. CE includes every valid target. Raw logits use sampled vocabulary columns at shared positions. Head-input gradients include all 4,096 channels at each sampled valid position.
+The commands above were exercised on the same 64 GB300s for both implementations. Each fixture repeats one distinct 256K row across four dense replicas. The table pools the first pre-update microbatch across those replicas. The raw-logit comparison uses 163 vocabulary columns at each shared valid position. The head-input gradient comparison uses all 4,096 channels at those positions. The mean CE covers every valid target in every replica.
 
-| Documents per row | Valid targets per head | Shared physical positions | Main / MTP raw logits relative L2 | Main / MTP CE mean relative error | Main / MTP head-input gradient relative L2 |
+| Documents per row | Valid targets per head per replica | Sampled positions per replica, main / MTP | Unequal sampled raw logits, main / MTP | Mean CE relative error, main / MTP | Head-input gradient relative L2, main / MTP |
 |---|---:|---:|---:|---:|---:|
-| 1 | 262,136 | 99 | 0% / 0% | 0.00000136% / 0.00000072% | 0.00003353% / 0% |
-| 8 equal | 262,080 | 162 | 0% / 0% | 0.00000145% / 0.00000085% | 0.00003807% / 0.00057860% |
-| 12 unequal | 262,037 | 200 | 0% / 0% | 0.00000141% / 0.00000075% | 0.00003036% / 0.00101736% |
+| 1 | 262,136 | 257 / 256 | 0 / 0 | 0.00000136% / 0.00000072% | 0.00321848% / 0.00003684% |
+| 8 equal | 262,080 | 264 / 256 | 0 / 0 | 0.00000145% / 0.00000085% | 0.00629173% / 0.00000736% |
+| 12 unequal | 262,037 | 266 / 255 | 0 / 0 | 0.00000141% / 0.00000075% | 0.00128327% / 0.00066723% |
 
-On the single-document fixture, a separate full-vocabulary projection checked 52,745,957,376 raw BF16 logit elements **per head** at the 262,136 valid targets. Every element matched. All four replicas' original four-stream trunk and shifted embedding matched before that projection.
+Both heads passed every stated threshold on all three fixtures. A separate single-document test saved the main and MTP head inputs produced by original Swift and by true routed MoK + MoonEP. Projecting those inputs through the released head weights gave exactly equal BF16 values for all 52,745,957,376 valid-position logits per head on one dense replica. Projected Swift logits also matched the raw columns sampled directly by its trainer. The largest absolute differences from the native Swift per-token CE were 1.91e-6 for the main head and 2.38e-6 for MTP.
 
-The single-document backbone backward exceeded the 0.5% relative L2 threshold. The gradient at the input of block 43 measured 0.36896% over all 262,144 tokens and all four residual streams. Block 22 measured 0.98234% and block 1 measured 2.26123%. The per-token loss gradients for both heads matched exactly, including masked targets. The tested decoder has 43 blocks. These checks quantify the first training microbatch. Full-model parameter-gradient and multi-update optimizer agreement require additional measurements.
+The complete single-document decoder backward still exceeds the fixed thresholds. At the inputs to blocks 1, 22 and 43, the full four-stream gradient relative L2 differences against Swift were 2.26123%, 0.98234%, 0.36896%, respectively. Two fresh runs of original Swift on the same 64 physical GPUs and the same rank assignments differed by 2.30726%, 1.16300%, 0.05733% at the same points. Each comparison covers all 262,144 tokens on one replica. The unreduced CE gradient coefficients agreed at every token in both heads. These measurements cover the first microbatch. Parameter-gradient and multi-update optimizer agreement with Swift remain open.
