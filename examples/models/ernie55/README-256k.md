@@ -4,7 +4,7 @@ This experiment trains the public ERNIE-5.5-Flash-Base checkpoint with both its 
 
 ## 1. Check out the source and prepare the training environment
 
-Use a Linux GPU container supporting SM103/SM103a on **every** node. The measured base was NGC PyTorch 26.04 (Python 3.12, CUDA 13.2, PyTorch 2.12.0a0, Triton 3.6). The training stack used Transformer Engine 2.20.2, FlashMLA with sparse sink attention (commit `b7643bd`), DeepEP hybrid-ep (`10d4dd7`), cuDNN frontend 1.29.1 with CUTLASS DSL 4.8.1, fast-hadamard-transform 1.1.0, Emerging Optimizers 0.3.0 and Transformers 5.20.2. The base NGC image alone needs these additions. Install the dependencies in the same Python environment used by torchrun. [NGC PyTorch](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch) · [FlashMLA](https://github.com/deepseek-ai/FlashMLA) · [DeepEP](https://github.com/deepseek-ai/DeepEP) · [Transformer Engine](https://github.com/NVIDIA/TransformerEngine)
+Use a Linux GPU container supporting SM103/SM103a on **every** node. The measured base was NGC PyTorch 26.04 (Python 3.12, CUDA 13.2, PyTorch 2.12.0a0, Triton 3.6). The training stack used Transformer Engine 2.20.2, FlashMLA with sparse sink attention (commit `b7643bd`), DeepEP hybrid-ep (`10d4dd7`), cuDNN frontend 1.29.1 with CUTLASS DSL 4.8.1, fast-hadamard-transform 1.1.0, Emerging Optimizers 0.3.0 and Transformers 5.20.2. The base NGC image alone needs these additions. Install the dependencies in the same Python environment used by torchrun. [NGC PyTorch](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch) · [FlashMLA source and build instructions](https://github.com/deepseek-ai/FlashMLA/tree/b7643bd54521f563b839b98289b5cd048c062ba2) · [DeepEP HybridEP source and build instructions](https://github.com/deepseek-ai/DeepEP/tree/10d4dd7377d5bce900fbb4b80cce863764892b95) · [Transformer Engine](https://github.com/NVIDIA/TransformerEngine)
 
 Run the following from a shared workspace visible on all nodes. `BRIDGE` is the checkout of [Bridge #7000](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/7000) containing this README and its helpers. The training implementation was introduced in `43acf2daf25ab96870fb530dad546f9dbb201ad4`. The companion [MCore #9506](https://github.com/NVIDIA/Megatron-LM/pull/9506) supplies the MoonEP backend, packed H support and stable D-indexer selection.
 
@@ -102,6 +102,45 @@ run_arm moon true
 ```
 
 The `false` and `true` arms use identical MoK macrobatches (16,384), expert routes, shapes, full recomputation and optimizer settings. The second arm enables expert replication. MTP is enabled by the model configuration and has loss scale 0.1. Confirm both `ERNIE55_CUDA_HEAD dispatch=main` and `dispatch=mtp` appear. Optional W&B logging uses `logger.wandb_project` and `logger.wandb_exp_name` overrides passed to `run_arm`, with local credentials. Give each arm a distinct name. Disable experiment logging hooks that add profiling to timing runs.
+
+### 4b. Reproduce the two MoonEP-enabled arms in the throughput and memory table
+
+Prepare a separate checkout **once on the shared workspace** for the retain-source baseline. Both checkouts begin at the same verified MCore commit. Reverse just the release commit in the baseline checkout. It removes one runtime assignment and the corresponding unit-test assertion. All packed attention, MoK, MoonEP, CUDA-head and other source changes are shared between the arms. The normal checkout used in step 4 stays intact.
+
+```bash
+export MCORE_RETAIN=$WORK/Megatron-LM-retain-256k
+release=d4c8c19d4b10f9ea8bc6c33ef1ebb979effca024
+git -C "$MCORE" worktree add --detach "$MCORE_RETAIN" 32efd940666ed3efd8fbbaeacc2a75d9d7caa3c9
+git -C "$MCORE" diff "$release^" "$release" > "$WORK/ernie256k-release.patch"
+git -C "$MCORE_RETAIN" apply --reverse --check "$WORK/ernie256k-release.patch"
+git -C "$MCORE_RETAIN" apply --reverse "$WORK/ernie256k-release.patch"
+git -C "$MCORE_RETAIN" diff --stat
+```
+
+Run the following on each node of the same allocation, using the `run_arm` function from step 4. Both arms start from the same model and real expert routing. Each subshell selects the intended MCore path. For each input the script writes to its own directory. Add W&B project and unique run names to the two `run_arm` calls if desired.
+
+```bash
+(
+  unset ERNIE55_COMPARE_HEADS
+  export MCORE_DSA_STABLE_INDEXER_TOPK=0
+  for LAYOUT in single uniform skew; do
+    case "$LAYOUT" in single) DOCS=1 ;; uniform) DOCS=8 ;; skew) DOCS=12 ;; esac
+    export LAYOUT DOCS
+    export INPUT="$DATA/$LAYOUT.jsonl" LOGS="$WORK/ernie256k-memory-$LAYOUT"
+    mkdir -p "$LOGS"
+    ( export PYTHONPATH="$MCORE_RETAIN:$BRIDGE/src:${PYTHONPATH:-}"
+      run_arm moon-retain true model.recompute_num_layers=1 )
+    ( export PYTHONPATH="$MCORE:$BRIDGE/src:${PYTHONPATH:-}"
+      run_arm moon-release true model.recompute_num_layers=2 )
+  done
+)
+# After all sixteen nodes finish, summarize from one node.
+for layout in single uniform skew; do
+  for arm in moon-retain moon-release; do
+    python "$EX/benchmark_256k.py" summarize "$WORK/ernie256k-memory-$layout"/"$arm"-node*.log
+  done
+done
+```
 
 ## 5. Compare time and memory
 
