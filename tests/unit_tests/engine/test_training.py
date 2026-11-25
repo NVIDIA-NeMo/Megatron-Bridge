@@ -389,6 +389,23 @@ def test_call_model_hands_mrope_models_three_position_rows(mrope, shape):
     assert (position_ids == torch.arange(4)).all()
 
 
+class _ThreeDimModel(_RecordingModel):
+    def __call__(self, **kwargs):
+        return torch.zeros(1, 4, 8)
+
+
+@pytest.mark.parametrize("is_last, shape", [(True, (1, 4)), (False, (1, 4, 8))])
+def test_call_model_takes_the_value_from_the_last_chunk_of_the_pipeline_only(monkeypatch, is_last, shape):
+    # The other chunks return hidden states for the next one; slicing them would corrupt the transfer.
+    model = _ThreeDimModel()
+    monkeypatch.setattr("megatron.bridge.engine.schedule.pipeline_stage_roles", lambda chunk: (False, is_last))
+    pg_collection = SimpleNamespace(pp=SimpleNamespace(rank=lambda: 1, size=lambda: 2))
+    output = call_model(
+        model, _rl_batch(), pg_collection, mtp_target_scope="primary", mrope=False, output_head="value"
+    )
+    assert output.shape == shape
+
+
 @pytest.mark.parametrize(
     "model_config, expected",
     [

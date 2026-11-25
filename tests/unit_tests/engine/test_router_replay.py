@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 import torch
 from megatron.core.transformer.moe.router_replay import RouterReplay, RouterReplayAction
@@ -50,7 +52,7 @@ def test_arm_forward_sets_targets_per_layer_and_fills_padding():
     routed = torch.full((1, 4, 2, 3), -1, dtype=torch.int64)
     routed[0, :2, 0] = torch.tensor([[5, 6, 7], [8, 9, 10]])
     routed[0, :2, 1] = torch.tensor([[1, 2, 3], [4, 5, 6]])
-    state.arm_forward(_microbatch(routed))
+    state.arm_forward(_microbatch(routed), None)
     layer0, layer1 = state.routers
     assert layer0.router_replay_action is RouterReplayAction.REPLAY_FORWARD
     assert layer0.target_topk_idx.tolist() == [[5, 6, 7], [8, 9, 10], [0, 1, 2], [0, 1, 2]]
@@ -63,7 +65,7 @@ def test_arm_forward_sets_targets_per_layer_and_fills_padding():
     probs, idx = layer0.get_replay_topk(scores, 3)
     assert torch.equal(idx, layer0.target_topk_idx) and torch.equal(probs, scores.gather(1, idx))
 
-    state.arm_backward(_microbatch(routed))
+    state.arm_backward(_microbatch(routed), None)
     assert layer1.router_replay_action is RouterReplayAction.REPLAY_BACKWARD
     probs, idx = layer1.get_replay_topk(scores, 3)
     assert torch.equal(idx, layer1.target_topk_idx) and layer1.replay_backward_list == []
@@ -84,27 +86,68 @@ def test_layer_indices_follow_megatron_layer_numbers():
         _build(1).layer_indices
 
 
+def test_a_pipeline_stage_replays_the_columns_of_its_own_layers(monkeypatch):
+    # The second of two stages: the model's MoE layers are numbered 2, 4, 6, 8 and this stage owns 6 and 8.
+    state = _build(2)
+    for router, number in zip(state.routers, (6, 8)):
+        router.layer_number = number
+
+    def all_gather_object(gathered, local, group):
+        gathered[:] = [[1, 3], local]
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", all_gather_object)
+    state.span_pipeline_stages(SimpleNamespace(size=lambda: 2))
+    assert state.layer_indices == [1, 3, 5, 7] and state.num_layers == 4
+
+    routed = torch.arange(4 * 4 * 3).view(1, 4, 4, 3)
+    state.arm_forward(_microbatch(routed), None)
+    assert torch.equal(state.routers[0].target_topk_idx, routed[0, :, 2])
+    assert torch.equal(state.routers[1].target_topk_idx, routed[0, :, 3])
+    with pytest.raises(ValueError, match="2 layers, the model has 4"):
+        state.arm_forward(_microbatch(routed[:, :, :2]), None)
+
+
+def test_a_forward_step_arms_only_the_routers_of_its_model_chunk():
+    # Virtual pipeline stages: two model chunks on this rank, one router each.
+    state = _build(2)
+    chunks = [torch.nn.Module(), torch.nn.Module()]
+    for chunk, router in zip(chunks, state.routers):
+        chunk.router = torch.nn.Module()
+        chunk.router.router_replay = router
+    state.split_by_chunk(chunks)
+
+    routed = torch.arange(4 * 2 * 3).view(1, 4, 2, 3)
+    state.arm_forward(_microbatch(routed), chunks[1])
+    first, second = state.routers
+    # Setting a target also queues it for the backward, so the other chunk's router must stay untouched.
+    assert first.target_topk_idx is None and first.replay_backward_list == []
+    assert torch.equal(second.target_topk_idx, routed[0, :, 1]) and len(second.replay_backward_list) == 1
+    state.arm_backward(_microbatch(routed), chunks[1])
+    assert first.router_replay_action is None
+    assert second.router_replay_action is RouterReplayAction.REPLAY_BACKWARD
+
+
 def test_arm_is_a_no_op_without_routing():
     state = _build(2)
-    state.arm_forward(_microbatch(None))
-    state.arm_backward(_microbatch(None))
+    state.arm_forward(_microbatch(None), None)
+    state.arm_backward(_microbatch(None), None)
     assert all(r.router_replay_action is None and r.target_topk_idx is None for r in state.routers)
 
 
 def test_arm_forward_rejects_mismatched_layers_and_missing_routers():
     with pytest.raises(ValueError, match="2 layers, the model has 3"):
-        _build(3).arm_forward(_microbatch(torch.zeros(1, 4, 2, 3, dtype=torch.int64)))
+        _build(3).arm_forward(_microbatch(torch.zeros(1, 4, 2, 3, dtype=torch.int64)), None)
     with pytest.raises(ValueError, match="no replayable routers"):
-        RouterReplayState([]).arm_forward(_microbatch(torch.zeros(1, 4, 2, 3, dtype=torch.int64)))
+        RouterReplayState([]).arm_forward(_microbatch(torch.zeros(1, 4, 2, 3, dtype=torch.int64)), None)
     state = _build(3)
     state.sequence_parallel = True
     with pytest.raises(NotImplementedError, match="sequence parallelism"):
-        state.arm_forward(_microbatch(torch.zeros(1, 4, 3, 3, dtype=torch.int64)))
+        state.arm_forward(_microbatch(torch.zeros(1, 4, 3, 3, dtype=torch.int64)), None)
 
 
 def test_arm_forward_orders_bshd_tokens_sequence_major():
     state = _build(1)
     routed = torch.arange(2 * 3, dtype=torch.int64).view(2, 3, 1, 1)  # [B=2, S=3]
-    state.arm_forward(_microbatch(routed))
+    state.arm_forward(_microbatch(routed), None)
     # Megatron routers flatten [s, b]: token order s0b0, s0b1, s1b0, ...
     assert state.routers[0].target_topk_idx[:, 0].tolist() == [0, 3, 1, 4, 2, 5]

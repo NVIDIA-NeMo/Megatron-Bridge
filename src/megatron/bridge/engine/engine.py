@@ -42,9 +42,11 @@ from megatron.core.utils import get_model_config
 from megatron.bridge.engine import losses
 from megatron.bridge.engine.accumulation import AccumulationWindow
 from megatron.bridge.engine.batching import (
+    broadcast_from_last_stage,
     check_microbatches,
     default_postprocess,
     default_preprocess,
+    is_last_pipeline_stage,
     local_sample_count,
     sequence_pad_multiple,
 )
@@ -446,6 +448,10 @@ class TrainingEngine:
             replay_mark,
             sequence_parallel=runtime.topology.tp > 1 and bool(getattr(recipe.model, "sequence_parallel", False)),
         )
+        if runtime.topology.pp > 1 and recipe.router_replay:
+            self._router_replay.span_pipeline_stages(pg_collection.pp)
+        if len(self._model) > 1 and recipe.router_replay:
+            self._router_replay.split_by_chunk(self._model)
 
         if checkpoint_path is not None and output_head != "value" and peft is None:
             # The value-head and LoRA pre-wrap hooks load the checkpoint into the bare model instead.
@@ -481,13 +487,15 @@ class TrainingEngine:
         gather_output: bool = True,
         broadcast_output: bool = True,
         return_entropy: bool = False,
-    ) -> ForwardOutput:
+    ) -> ForwardOutput | None:
         """Score a batch and return per-token target logprobs (or values, on a value-head engine) per sample.
 
         ``data`` is whatever this engine's ``preprocess`` accepts; the default accepts the same global
         ``list[Datum]`` on every rank. ``gather_output=True`` returns every Datum's complete scores on
         every rank in input order; ``False`` returns only what this rank computed (its DP replica's
-        samples, its CP positions) with ``sample_indices`` and ``token_positions``. Gradients and any
+        samples, its CP positions) with ``sample_indices`` and ``token_positions``. With pipeline
+        parallelism only the last stage computes scores: ``broadcast_output=True`` copies its result to
+        the other stages of the same pipeline, ``False`` returns ``None`` there. Gradients and any
         open accumulation window are untouched. Microbatches carrying ``routed_experts`` are scored
         with those expert choices replayed in the MoE routers (recipe ``router_replay``).
         ``disable_adapters=True`` scores a LoRA engine's base model (the adapters are switched off for
@@ -501,10 +509,6 @@ class TrainingEngine:
             raise NotImplementedError("return_entropy needs the full-logits path, which is not implemented yet.")
         if disable_adapters and self._peft is None:
             raise ValueError("disable_adapters=True needs an engine built with lora=...; this engine has no adapters.")
-        if self._runtime.topology.pp > 1:
-            raise NotImplementedError(
-                "forward_only with pipeline parallelism (broadcast_output) is not supported yet."
-            )
         microbatches = self.preprocess(data, training=False)
         self.check_microbatches(microbatches)
         adapters_off = self._peft.disable_adapter(self._model) if disable_adapters else contextlib.nullcontext()
@@ -518,7 +522,16 @@ class TrainingEngine:
                 output_head=self._output_head,
                 router_replay=self._router_replay,
             )
-        return self.postprocess_forward_only(microbatches, scores, gather_output=gather_output)
+        if self._runtime.topology.pp == 1:
+            return self.postprocess_forward_only(microbatches, scores, gather_output=gather_output)
+        # Only the last stage holds scores; its DP and CP groups span last-stage ranks only.
+        pp_group = self._runtime.pg_collection.pp
+        output = None
+        if is_last_pipeline_stage(pp_group):
+            output = self.postprocess_forward_only(microbatches, scores, gather_output=gather_output)
+        if broadcast_output:
+            output = broadcast_from_last_stage(output, pp_group)
+        return output
 
     def forward_backward(
         self,
@@ -527,12 +540,14 @@ class TrainingEngine:
         loss_fn: str | None = None,
         loss_kwargs: dict[str, Any] | None = None,
         broadcast_output: bool = True,
-    ) -> ForwardBackwardOutput:
+    ) -> ForwardBackwardOutput | None:
         """Run forward/backward with the named loss and accumulate FP32 gradients.
 
         Gradients are summed, unnormalized, into the DDP buffers across calls; ``optim_step`` normalizes
         and applies them. Returns this call's detached loss sum, active-token count and any additive
-        metrics the loss returned, all reduced over DP x CP. ``loss_fn`` defaults to ``cross_entropy``
+        metrics the loss returned, all reduced over DP x CP. With pipeline parallelism the loss runs on
+        the last stage: ``broadcast_output=True`` copies the summary to the other stages of the same
+        pipeline, ``False`` returns ``None`` there. ``loss_fn`` defaults to ``cross_entropy``
         on a language-model engine and ``value_loss`` on a value-head engine; ``loss_kwargs`` are bound
         to the loss method as keyword arguments (for example ``ppo_clip``'s clip bounds). Microbatches
         carrying ``routed_experts`` train with those expert choices replayed (recipe ``router_replay``).
@@ -546,9 +561,6 @@ class TrainingEngine:
         loss_method = self.resolve_loss_method(loss_fn)
         if loss_kwargs:
             loss_method = functools.partial(loss_method, **loss_kwargs)
-        if self._runtime.topology.pp > 1:
-            # TODO(pp): PP output-stage loss, broadcast_output of the summary.
-            raise NotImplementedError("forward_backward with pipeline parallelism is not supported yet.")
         if getattr(self._recipe.ddp, "overlap_grad_reduce", False):
             # TODO(overlap): defer bucket reductions across calls with DDP.no_sync + explicit start_grad_sync.
             raise NotImplementedError("forward_backward with ddp.overlap_grad_reduce=True is not supported yet.")
@@ -564,8 +576,21 @@ class TrainingEngine:
             output_head=self._output_head,
             router_replay=self._router_replay,
         )
-        fwd_bwd_output = self.postprocess_forward_backward(microbatches, loss_sum, num_loss_tokens, metrics)
-        self._add_to_window(fwd_bwd_output)
+        if self._runtime.topology.pp == 1:
+            fwd_bwd_output = self.postprocess_forward_backward(microbatches, loss_sum, num_loss_tokens, metrics)
+            self._add_to_window(fwd_bwd_output)
+            return fwd_bwd_output
+        # Only the last stage ran the loss, so only it has a summary and the window's totals. The other
+        # stages just open their window; optim_step gives them the totals.
+        pp_group = self._runtime.pg_collection.pp
+        fwd_bwd_output = None
+        if is_last_pipeline_stage(pp_group):
+            fwd_bwd_output = self.postprocess_forward_backward(microbatches, loss_sum, num_loss_tokens, metrics)
+            self._add_to_window(fwd_bwd_output)
+        else:
+            self._window.add(num_loss_tokens=0, num_samples=0, loss_sum=0.0)
+        if broadcast_output:
+            fwd_bwd_output = broadcast_from_last_stage(fwd_bwd_output, pp_group)
         return fwd_bwd_output
 
     def _add_to_window(self, fwd_bwd_output: ForwardBackwardOutput) -> None:
@@ -674,6 +699,32 @@ class TrainingEngine:
         and equal microbatch counts across DP replicas. Always runs, for default and custom pipelines."""
         if not microbatches:
             raise ValueError("preprocess returned no microbatches; every DP replica must run at least one.")
+        if (
+            self._runtime.topology.pp > 1
+            and not getattr(self._recipe.model, "variable_seq_lengths", False)
+            and len({tuple(mb.input_ids.shape) for mb in microbatches}) > 1
+        ):
+            raise ValueError(
+                "With pipeline parallelism every microbatch of a call must have the same shape, unless the "
+                "recipe sets model.variable_seq_lengths=True."
+            )
+        if self._runtime.topology.pp > 1 and self._runtime.topology.vpp is not None:
+            # Megatron's interleaved schedule runs the microbatches through each virtual stage in groups and
+            # refuses a count that leaves a pipeline stage idle inside a group.
+            count, stages = len(microbatches), self._runtime.topology.pp
+            group = get_model_config(self._model[0]).microbatch_group_size_per_vp_stage
+            valid = [n for n in range(group, count + group + stages + 1) if n % group == 0 or n % group >= stages]
+            if count not in valid:
+                fewer = [n for n in valid if n < count]
+                raise ValueError(
+                    f"With virtual pipeline stages a call needs, on every data-parallel replica, at least {group} "
+                    f"microbatches (model.microbatch_group_size_per_vp_stage), and a count whose remainder when "
+                    f"divided by {group} is 0 or at least {stages} (the pipeline size). This call has {count} "
+                    f"per replica on {self._runtime.pg_collection.dp.size()} replicas. Nearest valid counts per "
+                    f"replica: {f'{fewer[-1]} or ' if fewer else ''}{min(n for n in valid if n > count)}. Pass "
+                    f"Datums that pack into such a count; preprocess() returns the microbatches without running "
+                    f"the model."
+                )
         routed_shape = None
         if getattr(self._recipe, "router_replay", False) and self._router_replay.num_layers:
             routed_shape = (self._router_replay.num_layers, int(self._recipe.model.moe_router_topk))
@@ -708,6 +759,12 @@ class TrainingEngine:
         self._activate()
         if not self._window.is_open:
             raise RuntimeError("optim_step called without a preceding forward_backward.")
+        if self._runtime.topology.pp > 1:
+            # Only the last stage counted the window; every stage must divide by the same totals.
+            window = self._window
+            window.num_loss_tokens, window.num_samples, window.loss_sum = broadcast_from_last_stage(
+                (window.num_loss_tokens, window.num_samples, window.loss_sum), self._runtime.pg_collection.pp
+            )
         scale: float | None = None
         if normalize_gradients:
             denominator = self._window.denominator(self.normalization)

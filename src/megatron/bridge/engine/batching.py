@@ -25,6 +25,7 @@ from __future__ import annotations
 import dataclasses
 import math
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 
@@ -469,6 +470,19 @@ def all_gather_dp(entries: list[ScoredEntry], dp_group: torch.distributed.Proces
     gathered: list[list[ScoredEntry] | None] = [None] * dp_group.size()
     torch.distributed.all_gather_object(gathered, entries, group=dp_group)
     return [entry for shard in gathered if shard for entry in shard]
+
+
+def is_last_pipeline_stage(pp_group: torch.distributed.ProcessGroup | None) -> bool:
+    """Whether this rank holds the model's output layer (always true without pipeline parallelism)."""
+    return pp_group is None or pp_group.rank() == pp_group.size() - 1
+
+
+def broadcast_from_last_stage(value: Any, pp_group: torch.distributed.ProcessGroup) -> Any:
+    """Give every pipeline stage the last stage's ``value`` (any picklable object); other stages' is ignored."""
+    holder = [value]
+    last_stage_rank = torch.distributed.get_process_group_ranks(pp_group)[-1]
+    torch.distributed.broadcast_object_list(holder, src=last_stage_rank, group=pp_group)
+    return holder[0]
 
 
 # ---- default pipelines ---------------------------------------------------------------------------

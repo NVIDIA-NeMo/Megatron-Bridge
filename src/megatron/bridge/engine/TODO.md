@@ -24,8 +24,22 @@ sharing one runtime.
 
 ## Compute
 
-- **Pipeline parallelism** (`TODO(pp)`): `forward_only` and `forward_backward` raise for PP > 1, so
-  `broadcast_output` has no effect yet. Needs the output-stage loss and the summary broadcast.
+- **Pipeline parallelism** is supported for `forward_only`, `forward_backward`, `optim_step`,
+  `save_state`, `load_state`, `export`, `cpu()`/`cuda()` and router replay, with the value head and
+  with LoRA (scores and the loss summary come from the last stage; `broadcast_output` copies them to
+  the other stages, and `optim_step` shares the window totals). Content-sized packs
+  (`pad_to_max_length=False`) need `model.variable_seq_lengths=True` on the recipe, so stages can
+  exchange packs of different lengths. A value head and LoRA adapters are initialized differently than
+  without PP, because Megatron seeds each pipeline stage separately.
+- **Virtual pipeline stages** (`model.virtual_pipeline_model_parallel_size`) are supported for the same
+  calls. Megatron's interleaved schedule sets a rule for the microbatch count of a call, on every
+  data-parallel replica: at least `model.microbatch_group_size_per_vp_stage` (default: the pipeline
+  size), with a remainder of 0 or at least the pipeline size when divided by it. The engine does not
+  add packs to reach such a count; `forward_only` and `forward_backward` raise with the nearest valid
+  counts, and the caller passes Datums that pack into one (`preprocess` returns the microbatches
+  without running the model). Not run: `overlap_p2p_comm`, a group size other than the default, and
+  the checks of `examples/engine/router_replay_gate.py` that record the policy's own routing (they
+  need one pack per call; replaying a generation backend's routing is checked).
 - **Gradient-reduce overlap** (`TODO(overlap)`): `ddp.overlap_grad_reduce=True` is rejected in
   `forward_backward`. Bucket reductions have to be deferred across accumulation calls.
 - **Dense `bshd` layout** (`TODO(bshd)`): `batch_layout="bshd"` raises in packing and CP sharding; only
@@ -57,6 +71,36 @@ sharing one runtime.
   tokens, print the values at the worst token, compare the routing decisions of the two orders, and
   repeat in fp32 or on a small model. Until then, use `pad_to_max_length=False` for scoring that must
   not depend on batch composition.
+
+- **Two engines in one process do not get bit-identical Gated DeltaNet gradients.** Two trainable engines
+  built from the same recipe and checkpoint and given the same `forward_backward` calls (Qwen3.5 text
+  recipe, Triton 3.8.0, deterministic kernels) agree bit for bit on every gradient except those of three
+  Gated DeltaNet parameters: `conv1d.weight` (about 150 of 524,288 entries per layer), and single entries
+  of `A_log` and `dt_bias`. The differences are at rounding scale (about 1e-6 against gradients of about
+  5e-2), are there with one and with two pipeline stages, with and without the load-balancing loss, and
+  are the same before and after gradient finalization. Moving an engine with `cpu()`/`cuda()` does not
+  change them. Where such an entry has a near-zero gradient, one or two weights out of about 36 billion
+  take a different Adam update, and the next update then differs broadly (gradient norms apart by about
+  0.5%, a third of the weights updated differently). Since only these parameters' own gradients differ,
+  the forward pass and the gradients passed to earlier layers are identical; the variation is in how
+  these weight gradients are computed. Not settled: which kernel (the layer's convolution runs through
+  `F.conv1d` or a custom causal convolution, and cuDNN deterministic mode is not set), whether it is
+  random or depends on which engine was built second (the same weight difference has recurred across
+  jobs), and why one differing weight changes the next update that much. To do: repeat with
+  `torch.backends.cudnn.deterministic=True`, find which convolution branch runs, and compare the model's
+  bf16 weights of the two engines after the first update. `examples/engine/movement_gate.py` allows for
+  this: a looser gradient limit, and the second engine takes the first one's weights before the second
+  update. Comparisons between separate jobs (scoring, one update, resume) have reproduced exactly.
+- **Results are not repeatable on Triton 3.7.1.** The Gated DeltaNet kernel has a race on Triton 3.7.1
+  that changes results from call to call; Triton 3.8.0 does not show it. An environment whose Triton is
+  3.7.1 needs 3.8.0 ahead of it on the Python path.
+- **A job using the `ncclep` MoE dispatcher does not exit.** Scoring through the engine with
+  `model.moe_flex_dispatcher_backend="ncclep"` gives the same logprobs as `hybridep`, with and without
+  pipeline parallelism, but after `engine.close()` and `torch.distributed.destroy_process_group()` every
+  rank prints `NCCL WARN Error: corrupted comm object detected` / `NCCL error 4 at nccl_ep.cc` and the
+  process hangs with idle GPUs. Not settled: what still holds the NCCL expert-parallel handle after
+  `close()`, and whether the engine should release it or the caller must change its shutdown order.
+  `ncclep` training, checkpoints and export have not been run. `hybridep` jobs exit normally.
 
 ## Multimodal models
 

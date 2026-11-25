@@ -187,6 +187,27 @@ def check_supported(recipe: TrainingRecipe) -> None:
     # its setup is process-global while the engine builds a policy and a frozen model in one process.
     if is_gtp_remat_active(recipe.model):
         problems.append(GTP_NOT_SUPPORTED)
+    if (getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1) > 1:
+        # Megatron runs microbatch_group_size_per_vp_stage microbatches through a virtual stage at a time
+        # and needs at least one per pipeline stage in a group.
+        group_size = getattr(recipe.model, "microbatch_group_size_per_vp_stage", None)
+        if (
+            getattr(recipe.model, "virtual_pipeline_model_parallel_size", None) is not None
+            and group_size is not None
+            and group_size < recipe.model.pipeline_model_parallel_size
+        ):
+            problems.append(
+                f"model.microbatch_group_size_per_vp_stage ({group_size}) must be at least the pipeline size "
+                f"({recipe.model.pipeline_model_parallel_size})"
+            )
+        # Stages exchange each pack's hidden states. Megatron sizes the receiving buffers once per call
+        # from one pack length, unless model.variable_seq_lengths has every transfer announce its shape.
+        same_length = getattr(recipe, "batch_layout", "thd") != "thd" or getattr(recipe, "pad_to_max_length", False)
+        if not same_length and not getattr(recipe.model, "variable_seq_lengths", False):
+            problems.append(
+                "pipeline parallelism with content-sized packs needs model.variable_seq_lengths=True "
+                "(or pad_to_max_length=True)"
+            )
     if getattr(recipe.model, "vocab_size", None) is None:
         problems.append("model.vocab_size must be set (the engine does not build a tokenizer)")
     if getattr(recipe.model, "seq_length", None) is None:
@@ -231,6 +252,9 @@ def finalize_recipe(recipe: TrainingRecipe) -> None:
         recipe.comm_overlap.setup(model, recipe.optimizer, recipe.ddp)
 
     model.calculate_per_token_loss = True
+    if hasattr(model, "max_seq_length_per_sample") and model.max_seq_length_per_sample is None:
+        # As Megatron's launcher sets it from --seq-length: the NCCL EP dispatcher sizes its buffers from it.
+        model.max_seq_length_per_sample = model.seq_length
     recipe.ddp.average_in_collective = False
     if recipe.router_replay:
         model.moe_enable_routing_replay = True

@@ -122,6 +122,117 @@ def test_check_supported_rejects_each_violation(mutate, message):
         check_supported(recipe)
 
 
+def _pipeline_recipe_like() -> SimpleNamespace:
+    recipe = _recipe_like()
+    recipe.model.pipeline_model_parallel_size = 2
+    recipe.pad_to_max_length = True
+    return recipe
+
+
+def test_check_supported_accepts_pipeline_parallelism_with_padded_packs():
+    check_supported(_pipeline_recipe_like())
+
+
+def test_check_supported_accepts_virtual_pipeline_stages():
+    recipe = _pipeline_recipe_like()
+    recipe.model.virtual_pipeline_model_parallel_size = 2
+    check_supported(recipe)
+
+
+def test_check_supported_accepts_content_sized_packs_with_variable_transfers():
+    recipe = _pipeline_recipe_like()
+    recipe.pad_to_max_length = False
+    recipe.model.variable_seq_lengths = True
+    recipe.router_replay = True
+    recipe.model.num_moe_experts = 256
+    check_supported(recipe)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda r: setattr(r, "pad_to_max_length", False), "pad_to_max_length"),
+        (
+            lambda r: (
+                setattr(r.model, "virtual_pipeline_model_parallel_size", 2),
+                setattr(r.model, "microbatch_group_size_per_vp_stage", 1),
+            ),
+            "microbatch_group_size_per_vp_stage",
+        ),
+    ],
+)
+def test_check_supported_rejects_unsupported_pipeline_modes(mutate, message):
+    recipe = _pipeline_recipe_like()
+    recipe.model.num_moe_experts = 256
+    mutate(recipe)
+    with pytest.raises(ValueError, match=message):
+        check_supported(recipe)
+
+
+def _pipeline_engine(monkeypatch, *, last_stage: bool) -> TrainingEngine:
+    engine = _unbuilt_engine()
+    stage = SimpleNamespace(rank=lambda: 1 if last_stage else 0, size=lambda: 2)
+    engine._runtime = SimpleNamespace(
+        topology=Topology(16, 1, 2, None, 4, 8, None, False), pg_collection=SimpleNamespace(pp=stage)
+    )
+    engine._model = []
+    engine._recipe = SimpleNamespace(model=SimpleNamespace(), mtp_target_scope="primary")
+    engine.preprocess = lambda data, training: ["mb"]
+    engine.check_microbatches = lambda microbatches: None
+    engine.postprocess_forward_only = lambda mbs, scores, gather_output: "scores"
+    monkeypatch.setattr("megatron.bridge.engine.engine.run_forward_only", lambda model, mbs, **kwargs: [])
+    # Stand-in for the collective: the last stage's value arrives everywhere.
+    monkeypatch.setattr("megatron.bridge.engine.engine.broadcast_from_last_stage", lambda value, group: "scores")
+    return engine
+
+
+def test_forward_only_with_pipeline_stages_delivers_the_last_stages_scores(monkeypatch):
+    last = _pipeline_engine(monkeypatch, last_stage=True)
+    first = _pipeline_engine(monkeypatch, last_stage=False)
+    # Only the last stage has scores to postprocess; without the broadcast the others return None.
+    assert last.forward_only(_datums(), broadcast_output=False) == "scores"
+    assert first.forward_only(_datums(), broadcast_output=False) is None
+    assert first.forward_only(_datums()) == "scores"
+
+
+def test_training_with_pipeline_stages_counts_on_the_last_stage_and_shares_totals_at_optim_step(monkeypatch):
+    summary = ForwardBackwardOutput(loss_sum=6.0, num_loss_tokens=12, num_samples=3)
+    engines = {}
+    for last_stage in (True, False):
+        engine = engines[last_stage] = _pipeline_engine(monkeypatch, last_stage=last_stage)
+        engine._recipe.ddp = SimpleNamespace(overlap_grad_reduce=False)
+        engine._window = AccumulationWindow()
+        engine.postprocess_forward_backward = lambda mbs, loss_sum, tokens, metrics: summary
+    monkeypatch.setattr(
+        "megatron.bridge.engine.engine.run_forward_backward",
+        lambda model, mbs, loss_method, **kwargs: (torch.tensor(6.0), torch.tensor(12), {}),
+    )
+    # Stand-in for the collective: the last stage's value arrives everywhere.
+    monkeypatch.setattr("megatron.bridge.engine.engine.broadcast_from_last_stage", lambda value, group: summary)
+    last, first = engines[True], engines[False]
+    assert last.forward_backward(_datums(), broadcast_output=False) is summary
+    assert first.forward_backward(_datums(), broadcast_output=False) is None
+    assert first.forward_backward(_datums()) is summary
+    # The first stage's window is open but holds no counts until optim_step delivers the totals.
+    assert (last._window.num_loss_tokens, last._window.num_samples) == (12, 3)
+    assert first._window.is_open and first._window.num_loss_tokens == 0
+
+    first._model, first._optimizer, first._step, first._warned_unscaled_aux = [], None, 0, False
+    first._finalize_model_grads_func = None
+    first._recipe.model = SimpleNamespace()
+    scales = []
+    monkeypatch.setattr("megatron.bridge.engine.engine.broadcast_from_last_stage", lambda value, group: (12, 3, 6.0))
+    monkeypatch.setattr(
+        "megatron.bridge.engine.engine.finalize_and_step",
+        lambda model, optimizer, *, finalize_model_grads_func, scale, adam_params: (
+            scales.append(scale) or (True, 1.0, 0)
+        ),
+    )
+    monkeypatch.setattr("megatron.bridge.engine.engine.zero_gradients", lambda model, optimizer: None)
+    result = first.optim_step(AdamParams(1e-5))
+    assert scales == [1.0 / 12] and result["num_loss_tokens"] == 12.0 and result["loss_sum"] == 6.0
+
+
 def test_data_parallel_size_and_topology(monkeypatch):
     monkeypatch.setenv("WORLD_SIZE", "16")
     recipe = _recipe_like()
@@ -381,6 +492,28 @@ def test_check_microbatches_passes_the_replayable_shape(monkeypatch):
     assert seen["routed_shape"] == (40, 8)
     with pytest.raises(ValueError, match="no microbatches"):
         engine.check_microbatches([])
+
+
+@pytest.mark.parametrize(("count", "nearest"), [(1, "per replica: 2"), (3, "2 or 4"), (5, "4 or 6")])
+def test_check_microbatches_explains_the_count_virtual_pipeline_stages_need(monkeypatch, count, nearest):
+    # Two pipeline stages with two virtual stages each; Megatron groups the microbatches by two.
+    engine = _unbuilt_engine()
+    engine._runtime = SimpleNamespace(
+        topology=Topology(16, 1, 2, 2, 8, 8, None, False),
+        pg_collection=SimpleNamespace(dp=SimpleNamespace(size=lambda: 1)),
+    )
+    engine._recipe = SimpleNamespace(
+        batch_layout="thd", router_replay=False, model=SimpleNamespace(vocab_size=100, variable_seq_lengths=True)
+    )
+    engine._model = ["chunk", "chunk"]
+    monkeypatch.setattr(
+        "megatron.bridge.engine.engine.get_model_config",
+        lambda chunk: SimpleNamespace(microbatch_group_size_per_vp_stage=2),
+    )
+    monkeypatch.setattr("megatron.bridge.engine.engine.check_microbatches", lambda mbs, **kwargs: None)
+    with pytest.raises(ValueError, match=nearest):
+        engine.check_microbatches(["mb"] * count)
+    engine.check_microbatches(["mb"] * 4)
 
 
 def test_value_head_engine_defaults_to_value_loss_and_rejects_export(monkeypatch):
