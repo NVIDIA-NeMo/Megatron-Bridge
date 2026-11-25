@@ -32,7 +32,7 @@ def _group(rank, width=4):
     return SimpleNamespace(rank=lambda: rank, size=lambda: width)
 
 
-def _sample(lengths, rank, layout):
+def _sample(lengths, rank, layout, cp_size=4):
     samples = []
     starts = []
     end = 0
@@ -40,28 +40,30 @@ def _sample(lengths, rank, layout):
         ids = torch.arange(end, end + length)
         samples.append((ids, ids.clone()))
         starts.append(end)
-        end += (length + 7) // 8 * 8
-    group = _group(rank)
+        multiple = 2 * cp_size
+        end += (length + multiple - 1) // multiple * multiple
+    group = _group(rank, cp_size)
     batch = build_ernie55_thd_cp_batch(samples, pad_token_id=-1, cp_group=group, cp_partition_mode=layout)
     return batch, group, starts, end
 
 
 @pytest.mark.parametrize("lengths", [(33,), (16,) * 8, (2, 31, 7, 43, 5, 11, 25, 1, 17, 9, 6, 14)])
 @pytest.mark.parametrize("layout", ["zigzag", "contiguous"])
-def test_masked_physical_counts_for_packs(lengths, layout):
+@pytest.mark.parametrize("cp_size", [4, 16])
+def test_masked_physical_counts_for_packs(lengths, layout, cp_size):
     experts = 13
     shards = []
-    for rank in range(4):
-        batch, group, starts, end = _sample(lengths, rank, layout)
+    for rank in range(cp_size):
+        batch, group, starts, end = _sample(lengths, rank, layout, cp_size)
         ids = batch.tokens.flatten()
         valid = (ids >= 0) & (ids % 7 != 0)
         selected = torch.stack([ids % experts, (ids + 3) % experts], 1)
         shards.append(contiguous_owner_histogram(selected, ~valid, batch.packed_seq_params, group, experts))
-    expected = torch.zeros((4, experts), dtype=torch.int32)
+    expected = torch.zeros((cp_size, experts), dtype=torch.int32)
     for start, length in zip(starts, lengths):
         for token in range(start, start + length):
             if token % 7:
-                owner = token // (end // 4)
+                owner = token // (end // cp_size)
                 expected[owner, token % experts] += 1
                 expected[owner, (token + 3) % experts] += 1
     assert torch.equal(sum(shards), expected)
