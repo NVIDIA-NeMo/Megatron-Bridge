@@ -34,7 +34,7 @@ The historical 8,192-sample, 5,349-step image-SFT loss curve remains separate ev
 
 See the [VLM verification card](../../../examples/model_verification_cards/qwen3.8-flash-next/card.yaml)
 for exact source/container revisions and conversion/training limits, and the
-[training instructions](../../../examples/models/qwen/qwen4_exp/README.md) for
+[training instructions](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/qwen/qwen4_exp/README.md) for
 public commands and data preparation. Native VLM and text checkpoints have
 different namespaces and must be imported separately. Functional training does
 not establish cross-framework trajectory parity, resume or held-out quality.
