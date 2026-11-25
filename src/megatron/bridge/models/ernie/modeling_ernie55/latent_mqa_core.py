@@ -434,6 +434,7 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
         d_v: int,
         deterministic: bool,
         cuda_graph: bool = False,
+        backward_owners: context_parallel.ContiguousBackwardOwners | None = None,
     ) -> Tensor:
         """Run FlashMLA with the sink in the denominator; save tensors for backward."""
         pad = -topk_idxs.size(-1) % _DSA_FLASH_MLA_TOPK_ALIGNMENT
@@ -450,12 +451,18 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
         ctx.softmax_scale = softmax_scale
         ctx.deterministic = deterministic
         ctx.cuda_graph = cuda_graph
+        ctx.backward_owners = backward_owners
         return out
 
     @staticmethod
     def backward(ctx, grad_out: Tensor):
         """cuDNN sparse backward with ``lse_full`` and a disabled sink, plus analytic ``d_sink``."""
         q, kv, attn_sink, topk_idxs, topk_length, out, lse = ctx.saved_tensors
+        owners = ctx.backward_owners
+        if owners is not None:
+            q, topk_idxs, topk_length, out, lse, grad_out = (
+                owners.to_contiguous(t) for t in (q, topk_idxs, topk_length, out, lse, grad_out)
+            )
         grad_out = grad_out.contiguous()
         lse_full = lse_with_sink(lse, attn_sink=attn_sink).to(lse.dtype).contiguous()
         disabled_sink = torch.full_like(attn_sink, float("-inf"))
@@ -490,7 +497,9 @@ class _FlashMLASinkGradFallback(torch.autograd.Function):
             **backward_kwargs,
         )
         grad_sink = attention_sink_grad(attn_sink=attn_sink, lse=lse, out=out, d_out=grad_out).to(attn_sink.dtype)
-        return grad_q, grad_kv, grad_sink, None, None, None, None, None, None
+        if owners is not None:
+            grad_q = owners.to_zigzag(grad_q)
+        return grad_q, grad_kv, grad_sink, None, None, None, None, None, None, None
 
 
 @dataclass
@@ -632,6 +641,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         self._hooks_take_score_scale = getattr(config, "dsa_kernel_backend", None) == "cudnn"
         self.preserve_cp_key_slots = getattr(config, "ernie_dsa_preserve_cp_key_slots", False)
         self.native_sink_grad = bool(getattr(config, "ernie_native_sink_grad", True))
+        self.contiguous_backward = getattr(config, "ernie_dsa_contiguous_backward", False)
         # At CP > 1: the key gathers' backward gathers by the inverse permutation (off: index_select's backward).
         self.cp_key_gather_inverse_grad = bool(getattr(config, "ernie_cp_key_gather_inverse_grad", False))
         self.deterministic = bool(getattr(config, "deterministic_mode", False))
@@ -786,7 +796,12 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
 
         cp_group = getattr(self.pg_collection, "cp", None)
         geometry = None
+        backward_owners = None
         if get_pg_size(cp_group) > 1:
+            if self.contiguous_backward and self.use_fused and torch.is_grad_enabled():
+                backward_owners = context_parallel.ContiguousBackwardOwners.for_pack(
+                    packed_seq_params, cp_group, self.config
+                )
             geometry = context_parallel.zigzag_cp_geometry(
                 packed_seq_params,
                 cp_group=cp_group,
@@ -797,7 +812,11 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
             )
             # Every local row attends to keys anywhere before it in its document.
             key_mqa = context_parallel.gather_cp_rows(
-                key_mqa, geometry=geometry, cp_group=cp_group, inverse_grad=self.cp_key_gather_inverse_grad
+                key_mqa,
+                geometry=geometry,
+                cp_group=cp_group,
+                inverse_grad=self.cp_key_gather_inverse_grad,
+                backward_owners=backward_owners,
             )
             key_heads = key_mqa.unsqueeze(2)
         positions = geometry.query_positions if geometry is not None else None
@@ -828,7 +847,11 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         topk = mask_topk_beyond_end(topk, ends=ends)
 
         latent_out = self._sparse_attention(
-            query, key_mqa, torch.cat((topk, window), dim=-1), block_layout=geometry is None
+            query,
+            key_mqa,
+            torch.cat((topk, window), dim=-1),
+            block_layout=geometry is None,
+            backward_owners=backward_owners,
         )
         projected = torch.einsum("sbhc,hdc->sbhd", latent_out, up_v_weight.to(latent_out.dtype))
         projected = vha_postmix(
@@ -1249,7 +1272,13 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         return pad_topk(topk, self.index_topk), loss
 
     def _sparse_attention(
-        self, query: Tensor, key_mqa: Tensor, indices: Tensor, *, block_layout: bool = False
+        self,
+        query: Tensor,
+        key_mqa: Tensor,
+        indices: Tensor,
+        *,
+        block_layout: bool = False,
+        backward_owners: context_parallel.ContiguousBackwardOwners | None = None,
     ) -> Tensor:
         """Sparse latent MQA with the sink over per-sample ``indices [b, s, K + W]`` into ``key_mqa``.
 
@@ -1286,7 +1315,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
                 indices, batch_size=batch, compact=True
             )
         sink = self.attn_sink.float()
-        if self.native_sink_grad:
+        if self.native_sink_grad and backward_owners is None:
             out = fused_sparse_attention.csa_sparse_attn(
                 query,
                 key_mqa,
@@ -1308,6 +1337,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
             self.kv_lora_rank,
             self.deterministic,
             self._csa_sparse_attn_kwargs.get("cuda_graph", False),
+            backward_owners,
         )
         return out.reshape(seqlen, batch, num_heads, self.kv_lora_rank)
 

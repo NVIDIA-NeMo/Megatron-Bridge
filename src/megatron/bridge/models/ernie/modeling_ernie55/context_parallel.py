@@ -85,7 +85,10 @@ from typing import Any
 
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.tensor_parallel.mappings import gather_from_sequence_parallel_region
+from megatron.core.tensor_parallel.mappings import (
+    gather_from_sequence_parallel_region,
+    reduce_scatter_to_sequence_parallel_region,
+)
 from megatron.core.transformer.experimental_attention_variant import dsa_layout
 from megatron.core.transformer.transformer_config import TransformerConfig
 from torch import Tensor
@@ -595,12 +598,50 @@ class _PermuteRows(torch.autograd.Function):
         return grad.index_select(0, inverse), None, None
 
 
+@dataclass(frozen=True)
+class ContiguousBackwardOwners:
+    """CP redistributions over the packed micro-batch's existing host-planned THD routes."""
+
+    to_contiguous: Callable[[Tensor], Tensor]
+    to_zigzag: Callable[[Tensor], Tensor]
+
+    @classmethod
+    def for_pack(cls, packed_seq_params: PackedSeqParams, cp_group, config) -> ContiguousBackwardOwners:
+        from megatron.core.context_parallel_layout import CpPartitionModeConverter
+
+        def convert(source, target):
+            return CpPartitionModeConverter(
+                cp_group=cp_group,
+                packed_seq_params=packed_seq_params,
+                source_partition_mode=source,
+                target_partition_mode=target,
+                config=config,
+            ).convert
+
+        return cls(convert("zigzag", "contiguous"), convert("contiguous", "zigzag"))
+
+
+class _GatherWithContiguousKeyGradient(torch.autograd.Function):
+    """Keep the ordinary key gather forward and reduce its gradient at contiguous owners."""
+
+    @staticmethod
+    def forward(ctx, local, geometry, cp_group, owners):
+        ctx.cp_group, ctx.owners = cp_group, owners
+        return gather_cp_rows(local, geometry=geometry, cp_group=cp_group)
+
+    @staticmethod
+    def backward(ctx, grad):
+        contiguous = reduce_scatter_to_sequence_parallel_region(grad.contiguous(), group=ctx.cp_group)
+        return ctx.owners.to_zigzag(contiguous), None, None, None
+
+
 def gather_cp_rows(
     local: Tensor,
     *,
     geometry: ZigzagCpGeometry,
     cp_group: torch.distributed.ProcessGroup,
     inverse_grad: bool = False,
+    backward_owners: ContiguousBackwardOwners | None = None,
 ) -> Tensor:
     """All-gather a per-row tensor over the CP group and put its rows into global packed order.
 
@@ -616,6 +657,7 @@ def gather_cp_rows(
         cp_group: Context-parallel group.
         inverse_grad: Gather the gradient by the inverse permutation (``ernie_cp_key_gather_inverse_grad``);
             needs a geometry built ``with_inverse``.
+        backward_owners: Return the key gradient via a contiguous-owner reduce-scatter and a CP redistribution.
 
     Returns:
         ``[num_rows, ...]`` tensor of every packed row in global order.
@@ -623,6 +665,8 @@ def gather_cp_rows(
     Raises:
         ValueError: If ``inverse_grad`` is set and ``geometry`` has no inverse permutation.
     """
+    if backward_owners is not None:
+        return _GatherWithContiguousKeyGradient.apply(local, geometry, cp_group, backward_owners)
     if inverse_grad and geometry.key_reorder_inverse is None:
         raise ValueError(
             "gather_cp_rows(inverse_grad=True) needs the inverse key permutation: build the geometry with "

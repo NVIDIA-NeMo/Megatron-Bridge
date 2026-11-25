@@ -328,6 +328,16 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     the ``index_select`` backward, bitwise unchanged. No effect at ``context_parallel_size=1``. There is no Hugging
     Face key; on the command line, ``model.ernie_cp_key_gather_inverse_grad=true``."""
 
+    ernie_dsa_contiguous_backward: bool = False
+    """Use contiguous query and key owners for the fused D-attention backward at CP > 1.
+
+    The forward keeps its zigzag token layout. Backward exchanges query-side tensors across CP,
+    computes the analytic sink gradient and reduce-scatters the key cotangent in the activation
+    dtype to the original contiguous owners before returning it to zigzag. This matches the
+    reference trainer's local BF16 rounding and reduction order when the collective algorithm is
+    the same. The extra communication is opt-in and does not apply to the sparse indexer or H layers.
+    """
+
     ernie_reference_rmsnorm: bool = False
     """Build every RMSNorm of the model with the reference implementation's eager arithmetic
     (:class:`~megatron.bridge.models.ernie.modeling_ernie55.norm.Ernie55RMSNorm`) instead of Transformer Engine's
@@ -391,6 +401,10 @@ class Ernie55TransformerConfig(MLATransformerConfig):
         if not isinstance(self.ernie_cp_key_gather_inverse_grad, bool):
             raise ValueError(
                 f"ernie_cp_key_gather_inverse_grad must be a bool, got {self.ernie_cp_key_gather_inverse_grad!r}."
+            )
+        if not isinstance(self.ernie_dsa_contiguous_backward, bool):
+            raise ValueError(
+                f"ernie_dsa_contiguous_backward must be a bool, got {self.ernie_dsa_contiguous_backward!r}."
             )
         if not isinstance(self.ernie_reference_rmsnorm, bool):
             raise ValueError(f"ernie_reference_rmsnorm must be a bool, got {self.ernie_reference_rmsnorm!r}.")

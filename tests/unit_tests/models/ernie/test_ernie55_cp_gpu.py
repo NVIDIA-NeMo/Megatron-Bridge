@@ -1190,3 +1190,66 @@ def test_h_layer_cp4_zigzag_matches_contiguous_and_cp1(cp4, monkeypatch, rope):
         triton_launches=str(launches),
     )
     _assert_all_ranks(failures, f"H layer CP4 zigzag vs contiguous and CP1 ({rope} RoPE)")
+
+
+@pytest.mark.parametrize(("doc_lens", "padded_lens"), [((512,), (512,)), ((113, 381), (120, 392))])
+def test_d_contiguous_backward_owners(cp4, doc_lens, padded_lens):
+    """Compare real BF16 dQ/dKV/dSink with direct contiguous ownership on single and packed rows."""
+    from megatron.core.tensor_parallel.mappings import gather_from_sequence_parallel_region
+
+    from megatron.bridge.models.ernie.modeling_ernie55 import context_parallel, latent_mqa_core
+
+    group = cp4.cp.cp
+    params = _packed_seq_params(doc_lens, padded_lens=padded_lens, prebuild_group=group, mode="zigzag")
+    config = _config()
+    owners = context_parallel.ContiguousBackwardOwners.for_pack(params, group, config)
+    rows = sum(padded_lens)
+    local_rows = rows // group.size()
+    geometry = context_parallel.zigzag_cp_geometry(
+        params, cp_group=group, local_rows=local_rows, device=_device(), what="test"
+    )
+    contiguous = torch.arange(cp4.rank * local_rows, (cp4.rank + 1) * local_rows, device=_device())
+    zigzag = geometry.query_positions
+    assert torch.equal(owners.to_contiguous(zigzag), contiguous)
+    assert torch.equal(owners.to_zigzag(contiguous), zigzag)
+    rng = torch.Generator(device=_device()).manual_seed(187)
+    q = torch.randn(rows, 64, 576, device=_device(), generator=rng).to(torch.bfloat16)
+    kv = torch.randn(rows, 576, device=_device(), generator=rng).to(torch.bfloat16)
+    grad = torch.randn(rows, 64, 512, device=_device(), generator=rng).to(torch.bfloat16)
+    sink = torch.randn(64, device=_device(), generator=rng)
+    logical = torch.arange(rows, device=_device())
+    start = torch.empty_like(logical)
+    valid = torch.zeros(rows, device=_device(), dtype=torch.bool)
+    for begin, logical_length, padded in zip(itertools.accumulate((0, *padded_lens)), doc_lens, padded_lens):
+        start[begin : begin + padded] = begin
+        valid[begin : begin + logical_length] = True
+    grad[~valid] = 0
+    ids = logical[:, None] - torch.arange(64, device=_device())
+    ids = torch.where((ids >= start[:, None]) & valid[ids.clamp_min(0)], ids, -1).int()
+
+    def vjp(pos, physical_owners):
+        query = q[pos].detach().requires_grad_(True)
+        key = kv[pos].detach().requires_grad_(True)
+        head_sink = sink.detach().requires_grad_(True)
+        global_key = (
+            gather_from_sequence_parallel_region(key, group=group)
+            if physical_owners is None
+            else context_parallel.gather_cp_rows(
+                key, geometry=geometry, cp_group=group, backward_owners=physical_owners
+            )
+        )
+        assert torch.equal(global_key, kv)
+        topk_length = torch.full((local_rows,), 64, device=_device(), dtype=torch.int32)
+        out = latent_mqa_core._FlashMLASinkGradFallback.apply(
+            query, global_key, head_sink, ids[pos], topk_length, 576**-0.5, 512, False, False, physical_owners
+        )
+        return (out.detach(), *torch.autograd.grad(out, (query, key, head_sink), grad[pos]))
+
+    ref_out, ref_q, ref_k, ref_sink = vjp(contiguous, None)
+    out, dq, dk, dsink = vjp(zigzag, owners)
+    assert torch.equal(owners.to_contiguous(out), ref_out)
+    assert torch.equal(owners.to_contiguous(dq), ref_q)
+    assert torch.equal(dsink, ref_sink)
+    # cuDNN accumulates the local key gradient with FP32 atomics before emitting its BF16 partial.
+    root_key = owners.to_contiguous(dk).float()
+    assert (root_key - ref_k.float()).norm() / ref_k.float().norm() < 5e-4
