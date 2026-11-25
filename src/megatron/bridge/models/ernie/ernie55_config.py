@@ -160,6 +160,13 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     """Divide the top-k gate values by their sum (plus 1e-20) when ``moe_router_topk > 1``, before the
     per-expert scale (Hugging Face ``norm_topk_prob``)."""
 
+    ernie_router_bias_contiguous_cp_counts: bool = False
+    """Accumulate BF16 expert loads in contiguous physical CP stripes on a zigzag-packed training batch.
+
+    Requires the Megatron-Core BF16 count-based router bias mode. Expert selection, dispatch, and
+    the attention CP layout are unchanged. The owner-count exchange supports static CP and TP=1.
+    """
+
     ernie_router_force_balance: bool = False
     """BENCHMARK ONLY; changes the training math. Force a balanced expert load the way Megatron-Core's
     ``moe_router_force_load_balancing`` benchmark mode does. Every MoE router selects its top-k experts
@@ -425,6 +432,15 @@ class Ernie55TransformerConfig(MLATransformerConfig):
         for name in ("ernie_graph_d_layers", "ernie_graph_mtp_layers", "ernie_router_force_balance"):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be a bool, got {getattr(self, name)!r}.")
+        if not isinstance(self.ernie_router_bias_contiguous_cp_counts, bool):
+            raise ValueError("ernie_router_bias_contiguous_cp_counts must be a bool.")
+        if self.ernie_router_bias_contiguous_cp_counts:
+            if not getattr(self, "moe_router_bias_bf16_counts", False) or not self.moe_router_enable_expert_bias:
+                raise ValueError(
+                    "Contiguous CP router counts require count-based expert bias and moe_router_bias_bf16_counts=True."
+                )
+            if self.tensor_model_parallel_size != 1:
+                raise ValueError("Contiguous CP router counts currently require tensor_model_parallel_size=1.")
         batch = self.ernie_muon_ns_batch_size
         if isinstance(batch, bool) or not isinstance(batch, int) or batch < 1:
             raise ValueError(f"ernie_muon_ns_batch_size must be an int of at least 1, got {batch!r}.")
