@@ -54,6 +54,29 @@ conflicts raise, including overlaps detected when constructing actual parameter
 groups. There is no dictionary-order precedence. To change a standard WD rule,
 use replace mode and provide the intended complete mapping.
 
+For LSQ scale learning, use the callable `LSQOptimizerConfigOverrides`:
+
+```python
+from megatron.bridge.training.post_training.lsq import LSQOptimizerConfigOverrides
+
+cfg.optimizer_config_overrides = LSQOptimizerConfigOverrides(
+    scale_lr=3e-5, scale_min_lr=None, scale_wd_mult=0.0
+)
+```
+
+MLM's `get_lsq_config_overrides` owns the scale LR and weight-decay rules; the
+Bridge callable adds the ModelOpt scale-gradient check. With the default extend
+mode, the resulting parameter groups match the old LSQ provider. The old LSQ
+class delegates to the callable and remains loadable from existing configurations.
+The new callable's dataclass settings remain configurable through YAML and CLI overrides, such as
+`optimizer_config_overrides.scale_lr=3e-5`.
+
+The provider API is still used by downstream
+[NeMo RL draft optimizers](https://github.com/NVIDIA-NeMo/RL/blob/d93ba7ddb4b5978a27d7433fd028c42ef766a9bc/nemo_rl/models/megatron/draft/optimizer.py)
+and [BioNeMo Hyena recipes](https://github.com/NVIDIA-BioNeMo/bionemo-recipes/blob/2711f74b13aff333c26031725eae06eedf47ac0f/recipes/evo2_megatron/src/bionemo/evo2/models/evo2_provider.py).
+These integrations must migrate before the provider field and classes can be removed.
+New recipes should use `optimizer_config_overrides`.
+
 Existing `optimizer_config_override_provider` implementations remain supported
 as complete policies. Providers using `super().build_config_overrides()`,
 including LSQ, keep their standard rules; a custom provider returning `None` or

@@ -251,7 +251,7 @@ class OptimizerConfigOverrideProviderContext:
 
 @dataclass
 class OptimizerConfigOverrideProvider:
-    """Abstract base class for providing config overrides."""
+    """Compatibility interface for complete policies; new recipes use mappings or callables."""
 
     def build_config_overrides(
         self, context: OptimizerConfigOverrideProviderContext

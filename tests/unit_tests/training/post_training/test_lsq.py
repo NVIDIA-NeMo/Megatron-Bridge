@@ -27,9 +27,11 @@ from megatron.core.utils import WrappedTensor
 
 from megatron.bridge.peft.recompute import maybe_enable_recompute_inputs_grad
 from megatron.bridge.training.config import OptimizerConfigOverrideProvider, OptimizerConfigOverrideProviderContext
+from megatron.bridge.training.optim import _resolve_optimizer_config_overrides
 from megatron.bridge.training.post_training.lsq import (
     LSQ_SCALE_PARAM_PATTERNS,
     LSQOptimizerConfigOverrideProvider,
+    LSQOptimizerConfigOverrides,
     freeze_all_but_lsq_scales,
     propagate_expert_allreduce_to_lsq_params,
 )
@@ -256,24 +258,38 @@ class TestFreezeAllButLSQScales:
         assert model.decoder.forward(hidden_states=torch.ones(2, 16)).requires_grad
 
 
+@pytest.fixture(params=["callable", "legacy"])
+def lsq_overrides(request):
+    """Exercise the new contribution API and the serialized legacy provider contract."""
+
+    def build(context, **settings):
+        if request.param == "legacy":
+            return LSQOptimizerConfigOverrideProvider(**settings).build_config_overrides(context)
+        return _resolve_optimizer_config_overrides(context, None, LSQOptimizerConfigOverrides(**settings), "extend")
+
+    return build
+
+
 @pytest.mark.unit
-class TestLSQOptimizerConfigOverrideProvider:
-    def test_adds_scale_group_and_keeps_standard_overrides(self):
+class TestLSQOptimizerConfigOverrides:
+    def test_adds_scale_group_and_keeps_standard_overrides(self, lsq_overrides):
         context = _context(_ToyMoEModel(), lr=1e-5, min_lr=1e-6)
         standard = OptimizerConfigOverrideProvider().build_config_overrides(context)
 
-        overrides = LSQOptimizerConfigOverrideProvider(
-            scale_lr=1e-4, scale_min_lr=None, scale_wd_mult=0.0
-        ).build_config_overrides(context)
+        overrides = lsq_overrides(context, scale_lr=1e-4, scale_min_lr=None, scale_wd_mult=0.0)
 
         assert overrides[LSQ_KEY] == {"max_lr": 1e-4, "wd_mult": 0.0}
         for key, value in standard.items():
             assert overrides[key] == value
 
-    def test_rejects_modelopt_without_scale_gradients(self, modelopt_without_lsq_gradients):
-        provider = LSQOptimizerConfigOverrideProvider(scale_lr=1e-4, scale_min_lr=None, scale_wd_mult=0.0)
+    def test_rejects_modelopt_without_scale_gradients(self, modelopt_without_lsq_gradients, lsq_overrides):
         with pytest.raises(RuntimeError, match="Model-Optimizer#3069"):
-            provider.build_config_overrides(_context(_ToyMoEModel(), lr=1e-5, min_lr=1e-6))
+            lsq_overrides(
+                _context(_ToyMoEModel(), lr=1e-5, min_lr=1e-6),
+                scale_lr=1e-4,
+                scale_min_lr=None,
+                scale_wd_mult=0.0,
+            )
 
     @pytest.mark.parametrize(
         ("lr", "min_lr", "scale_lr", "scale_min_lr", "scale_wd_mult", "expected"),
@@ -283,18 +299,26 @@ class TestLSQOptimizerConfigOverrideProvider:
             (1e-5, 1e-6, 1e-5, 1e-6, 1.0, None),  # equal to the base: no scale group
         ],
     )
-    def test_overrides_only_differing_settings(self, lr, min_lr, scale_lr, scale_min_lr, scale_wd_mult, expected):
-        overrides = LSQOptimizerConfigOverrideProvider(
-            scale_lr=scale_lr, scale_min_lr=scale_min_lr, scale_wd_mult=scale_wd_mult
-        ).build_config_overrides(_context(_ToyMoEModel(), lr=lr, min_lr=min_lr))
+    def test_overrides_only_differing_settings(
+        self, lsq_overrides, lr, min_lr, scale_lr, scale_min_lr, scale_wd_mult, expected
+    ):
+        overrides = lsq_overrides(
+            _context(_ToyMoEModel(), lr=lr, min_lr=min_lr),
+            scale_lr=scale_lr,
+            scale_min_lr=scale_min_lr,
+            scale_wd_mult=scale_wd_mult,
+        )
 
         assert (overrides or {}).get(LSQ_KEY) == expected
 
-    def test_warns_without_scale_params(self):
+    def test_warns_without_scale_params(self, lsq_overrides):
         with patch("megatron.bridge.training.post_training.lsq.warn_rank_0") as mock_warn:
-            LSQOptimizerConfigOverrideProvider(
-                scale_lr=1e-4, scale_min_lr=None, scale_wd_mult=0.0
-            ).build_config_overrides(_context(_PlainModel(), lr=1e-5, min_lr=1e-6))
+            lsq_overrides(
+                _context(_PlainModel(), lr=1e-5, min_lr=1e-6),
+                scale_lr=1e-4,
+                scale_min_lr=None,
+                scale_wd_mult=0.0,
+            )
 
         mock_warn.assert_called_once()
 
@@ -310,6 +334,7 @@ class TestLSQOptimizerConfigOverrideProvider:
     def test_param_groups_have_unique_identifiers(
         self,
         single_rank_process_group,
+        lsq_overrides,
         lr,
         scale_lr,
         scale_wd_mult,
@@ -319,9 +344,7 @@ class TestLSQOptimizerConfigOverrideProvider:
         """Distinct groups must differ in the fields MCore uses to match groups on checkpoint load."""
         model = _ToyMoEModel()
         context = _context(model, lr=lr, min_lr=0.0)
-        overrides = LSQOptimizerConfigOverrideProvider(
-            scale_lr=scale_lr, scale_min_lr=None, scale_wd_mult=scale_wd_mult
-        ).build_config_overrides(context)
+        overrides = lsq_overrides(context, scale_lr=scale_lr, scale_min_lr=None, scale_wd_mult=scale_wd_mult)
 
         param_groups = _get_param_groups([model], context.optimizer_config, overrides)
 
@@ -334,13 +357,11 @@ class TestLSQOptimizerConfigOverrideProvider:
             assert group["max_lr"] == expected_scale_max_lr
             assert group["wd_mult"] == expected_scale_wd_mult
 
-    def test_one_dimensional_scales_combine_with_standard_overrides(self, single_rank_process_group):
+    def test_one_dimensional_scales_combine_with_standard_overrides(self, single_rank_process_group, lsq_overrides):
         """1-D scales also match the standard no-weight-decay key; the merged overrides must agree."""
         model = _QuantLinear(allreduce=True, pre=True, scale_shape=(4,))
         context = _context(model, lr=1e-5, min_lr=0.0)
-        overrides = LSQOptimizerConfigOverrideProvider(
-            scale_lr=1e-4, scale_min_lr=None, scale_wd_mult=0.0
-        ).build_config_overrides(context)
+        overrides = lsq_overrides(context, scale_lr=1e-4, scale_min_lr=None, scale_wd_mult=0.0)
 
         param_groups = _get_param_groups([model], context.optimizer_config, overrides)
 
@@ -349,3 +370,20 @@ class TestLSQOptimizerConfigOverrideProvider:
         assert {id(p) for p in scale_group["params"]} == scale_param_ids
         assert scale_group["max_lr"] == 1e-4
         assert scale_group["wd_mult"] == 0.0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mode,expected_bias_wd", [("extend", 0.0), ("replace", 1.0)])
+def test_callable_contributes_only_scales(single_rank_process_group, mode, expected_bias_wd):
+    model = _QuantLinear(allreduce=True)
+    context = _context(model, lr=1e-5, min_lr=1e-6)
+    policy = LSQOptimizerConfigOverrides(scale_lr=1e-4, scale_min_lr=1e-5, scale_wd_mult=0.0)
+    assert policy(optimizer_config=context.optimizer_config, model=[model]) == {
+        LSQ_KEY: {"max_lr": 1e-4, "min_lr": 1e-5, "wd_mult": 0.0}
+    }
+    overrides = _resolve_optimizer_config_overrides(context, None, policy, mode)
+    groups = _get_param_groups([model], context.optimizer_config, overrides)
+    by_param = {id(param): group for group in groups for param in group["params"]}
+    assert by_param[id(model.bias)]["wd_mult"] == expected_bias_wd
+    scale_group = by_param[id(model.weight_quantizer._amax_post)]
+    assert (scale_group["max_lr"], scale_group["min_lr"], scale_group["wd_mult"]) == (1e-4, 1e-5, 0.0)

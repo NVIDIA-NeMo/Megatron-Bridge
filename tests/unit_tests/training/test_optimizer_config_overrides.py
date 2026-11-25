@@ -24,7 +24,11 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.optim import _resolve_optimizer_config_overrides, setup_optimizer
-from megatron.bridge.training.post_training.lsq import LSQOptimizerConfigOverrideProvider
+from megatron.bridge.training.post_training.lsq import (
+    LSQOptimizerConfigOverrideProvider,
+    LSQOptimizerConfigOverrides,
+)
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
 pytestmark = pytest.mark.unit
@@ -153,17 +157,20 @@ def test_invalid_hook_fails_before_optimizer_creation(custom):
         _resolve_optimizer_config_overrides(_context(), None, {}, "last_wins")
 
 
-@pytest.mark.parametrize("kind", ["mapping", "callable", "function", "provider"])
+@pytest.mark.parametrize("kind", ["mapping", "callable", "function", "provider", "lsq", "lsq_provider"])
 @pytest.mark.parametrize("yaml_round_trip", [False, True])
 def test_policy_configuration_round_trip(tmp_path, kind, yaml_round_trip):
     cfg = _container()
     if kind == "provider":
         cfg.optimizer_config_override_provider = LoraProvider()
+    elif kind == "lsq_provider":
+        cfg.optimizer_config_override_provider = LSQOptimizerConfigOverrideProvider(0.008, 0.0008, 0.0)
     else:
         cfg.optimizer_config_overrides = {
             "mapping": {ParamKey(name=("weight", "*.weight")): {"max_lr": 0.004}},
             "callable": WeightLRHook(),
             "function": weight_lr_hook,
+            "lsq": LSQOptimizerConfigOverrides(0.008, 0.0008, 0.0),
         }[kind]
     if yaml_round_trip:
         path = tmp_path / "recipe.yaml"
@@ -172,19 +179,26 @@ def test_policy_configuration_round_trip(tmp_path, kind, yaml_round_trip):
     else:
         restored = ConfigContainer.from_dict(cfg.to_dict())
     context = _context()
-    actual = _resolve_optimizer_config_overrides(
-        context,
-        restored.optimizer_config_override_provider,
-        restored.optimizer_config_overrides,
-        restored.optimizer_config_overrides_mode,
-    )
-    expected = _resolve_optimizer_config_overrides(
-        context,
-        cfg.optimizer_config_override_provider,
-        cfg.optimizer_config_overrides,
-        cfg.optimizer_config_overrides_mode,
-    )
-    assert actual == expected
+    with patch("megatron.bridge.training.post_training.lsq._check_modelopt_lsq_gradients"):
+        actual = _resolve_optimizer_config_overrides(
+            context,
+            restored.optimizer_config_override_provider,
+            restored.optimizer_config_overrides,
+            restored.optimizer_config_overrides_mode,
+        )
+        expected = _resolve_optimizer_config_overrides(
+            context,
+            cfg.optimizer_config_override_provider,
+            cfg.optimizer_config_overrides,
+            cfg.optimizer_config_overrides_mode,
+        )
+        assert actual == expected
+    if kind.startswith("lsq"):
+        assert actual[ParamKey(name=("*_amax_pre", "*_amax_post"))] == {
+            "max_lr": 0.008,
+            "min_lr": 0.0008,
+            "wd_mult": 0.0,
+        }
 
 
 def test_setup_passes_actual_model_and_shared_mapping_to_core():
@@ -282,3 +296,47 @@ def test_new_mapping_preserves_lora_warmup_constraint(mode):
             optimizer_config_overrides_mode=mode,
         )
     factory.assert_not_called()
+
+
+def test_lsq_callable_matches_legacy_and_mlm_groups(single_rank_group):
+    context = _context()
+    policy = LSQOptimizerConfigOverrides(0.008, 0.0008, 0.0)
+    provider = LSQOptimizerConfigOverrideProvider(0.008, 0.0008, 0.0)
+    with patch("megatron.bridge.training.post_training.lsq._check_modelopt_lsq_gradients"):
+        legacy = _resolve_optimizer_config_overrides(context, provider, None, "extend")
+        bridge = _resolve_optimizer_config_overrides(context, None, policy, "extend")
+        mlm = build_optimizer_config_overrides(context.optimizer_config, context.model, policy)
+    actual = _policy_by_parameter(context, bridge)
+    assert actual == _policy_by_parameter(context, legacy) == _policy_by_parameter(context, mlm)
+    scale_group = actual[id(context.model[0].scale_amax_pre)]
+    assert (scale_group["max_lr"], scale_group["min_lr"], scale_group["wd_mult"]) == (0.008, 0.0008, 0.0)
+    assert actual[id(context.model[0].bias)]["wd_mult"] == 0.0
+
+
+@pytest.mark.parametrize("source", ["cli", "yaml"])
+def test_lsq_callable_settings_can_be_overridden(tmp_path, source):
+    cfg = _container()
+    cfg.optimizer_config_overrides = LSQOptimizerConfigOverrides(0.001, None, 1.0)
+    if source == "cli":
+        process_config_with_overrides(
+            cfg,
+            cli_overrides=[
+                "optimizer_config_overrides.scale_lr=0.008",
+                "optimizer_config_overrides.scale_min_lr=0.0008",
+                "optimizer_config_overrides.scale_wd_mult=0.0",
+            ],
+        )
+    else:
+        path = tmp_path / "overrides.yaml"
+        path.write_text(
+            "optimizer_config_overrides:\n  scale_lr: 0.008\n  scale_min_lr: 0.0008\n  scale_wd_mult: 0.0\n"
+        )
+        process_config_with_overrides(cfg, config_filepath=str(path))
+    context = _context()
+    with patch("megatron.bridge.training.post_training.lsq._check_modelopt_lsq_gradients"):
+        actual = _resolve_optimizer_config_overrides(context, None, cfg.optimizer_config_overrides, "extend")
+    assert actual[ParamKey(name=("*_amax_pre", "*_amax_post"))] == {
+        "max_lr": 0.008,
+        "min_lr": 0.0008,
+        "wd_mult": 0.0,
+    }

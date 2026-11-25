@@ -348,14 +348,20 @@ ModelOpt's learnable-scale algorithm (quantization algorithm `method: lsq`) make
 3. Optionally give the scales their own optimizer parameter group:
 
 ```python
-from megatron.bridge.training.post_training.lsq import LSQOptimizerConfigOverrideProvider
+from megatron.bridge.training.post_training.lsq import LSQOptimizerConfigOverrides
 
-cfg.optimizer_config_override_provider = LSQOptimizerConfigOverrideProvider(
+cfg.optimizer_config_overrides = LSQOptimizerConfigOverrides(
     scale_lr=3e-5,      # peak LR of the scales; follows the main LR schedule
     scale_min_lr=None,  # None uses optimizer.min_lr
     scale_wd_mult=0.0,  # no weight decay on the scales
 )
 ```
+
+The callable contributes only the scale settings; the default
+`optimizer_config_overrides_mode="extend"` retains standard parameter-group rules.
+It also checks that ModelOpt can compute gradients for trainable LSQ scales.
+The old `LSQOptimizerConfigOverrideProvider` remains a compatibility wrapper for
+existing Python recipes and serialized configurations.
 
 For scale-only training, register the freeze hook; the frozen weights take no gradient buffer or optimizer state:
 
