@@ -135,7 +135,7 @@ def install(dest: Path) -> Callable[[], None]:
 
 def compare(a: Path, b: Path) -> dict:
     """Require identical global coordinates, masks, tokens and targets; compare all valid rows."""
-    totals = {k: np.zeros(10, dtype="float64") for k in ("main", "mtp")}
+    totals = {k: np.zeros(14, dtype="float64") for k in ("main", "mtp")}
 
     def globally_ordered(path: Path):
         # Keep four replicas separate even when an example repeats the same row on all four.
@@ -183,11 +183,13 @@ def compare(a: Path, b: Path) -> dict:
             keep = valid[common]
             if not keep.any():
                 raise ValueError(f"No common valid sampled positions for {name} in DP{dp}.")
-            for i, field in enumerate(("logits", "dh")):
-                ref = x[name + "_" + field][ix[keep]].astype("float64")
-                cur = y[name + "_" + field][iy[keep]].astype("float64")
+            for i, (field, left, right) in enumerate(
+                (("logits", ix[keep], iy[keep]), ("dh", ix[keep], iy[keep]), ("ce", valid, valid))
+            ):
+                ref = x[f"{name}_{field}"][left].astype("float64")
+                cur = y[f"{name}_{field}"][right].astype("float64")
                 if ref.shape != cur.shape:
-                    raise ValueError(f"Different sampled {field} shapes for {name} in DP{dp}.")
+                    raise ValueError(f"Different {field} shapes for {name} in DP{dp}.")
                 diff = cur - ref
                 acc[2 + 4 * i] += np.square(diff).sum()
                 acc[3 + 4 * i] += np.square(ref).sum()
@@ -197,10 +199,12 @@ def compare(a: Path, b: Path) -> dict:
         raise ValueError("Missing data replicas on the candidate.")
     results = {}
     for name, z in totals.items():
-        if min(z[0], z[3], z[5], z[7], z[9]) <= 0 or not np.isfinite(z).all():
+        if min(z[0], z[3], z[5], z[7], z[9], z[11], z[13]) <= 0 or not np.isfinite(z).all():
             raise ValueError(f"Missing or nonfinite reference norm for {name}.")
         results[name] = dict(
             relative_mean_ce=abs(z[1] - z[0]) / z[0],
+            valid_ce_relative_l2=np.sqrt(z[10] / z[11]),
+            valid_ce_peak_relative=z[12] / z[13],
             sample_raw_logit_relative_l2=np.sqrt(z[2] / z[3]),
             sample_raw_logit_peak_relative=z[4] / z[5],
             sample_head_input_grad_relative_l2=np.sqrt(z[6] / z[7]),
@@ -213,5 +217,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("reference", type=Path)
     parser.add_argument("candidate", type=Path)
+    parser.add_argument("--check", action="store_true", help="Exit with a failure if a 256K BF16 head gate fails.")
     files = parser.parse_args()
-    sys.stdout.write(json.dumps(compare(files.reference, files.candidate), indent=2) + "\n")
+    results = compare(files.reference, files.candidate)
+    if files.check:
+        for metrics in results.values():
+            metrics["passed"] = bool(
+                metrics["relative_mean_ce"] <= 1e-5
+                and all(value <= 0.005 for key, value in metrics.items() if key.endswith("relative_l2"))
+                and all(value <= 0.01 for key, value in metrics.items() if key.endswith("peak_relative"))
+            )
+    sys.stdout.write(json.dumps(results, indent=2) + "\n")
+    if files.check and not all(metrics["passed"] for metrics in results.values()):
+        sys.exit(1)
