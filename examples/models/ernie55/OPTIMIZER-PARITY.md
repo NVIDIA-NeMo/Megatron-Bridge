@@ -169,3 +169,41 @@ A separate experiment captured all 8,388,608 FP32 coordinates of the shared FC2 
 | BF16 return, original contiguous CP owners | 0.04199% | 2.10345% | 37.6205% |
 
 All three full-matrix updates exceed both preset tolerances against independent Swift. With identical full gradients, optimizer inputs and clipping norms, the two container implementations of Muon produced elementwise-identical FP32 updates. Changing ownership reduced the observed FC2 gradient discrepancy under BF16 returns. Substantial update differences remain.
+
+### Shared output-weight rounding
+
+Run the same natural eight-document G2 optimizer comparison with one additional option. Keep the reference capture, weights and training environment used above. On each Bridge node, run:
+
+```bash
+git -C "$BRIDGE" fetch origin refs/pull/7000/head
+git -C "$BRIDGE" checkout --detach 25be9c87f028af2cef2e2a430aba43cc5401635a
+git -C "$MCORE" checkout --detach 3ba272c0e128d6e0b5147142363710fcbcaa2671
+export NCCL_ALGO=Ring
+capture_optimizer_bridge "$OPT/bridge-head-wgrad-g2" 2 ernie55-uniform-shared-head-wgrad \
+  model.moe_router_bias_bf16_counts=true model.ernie_router_bias_contiguous_cp_counts=true \
+  model.ernie_dsa_contiguous_backward=true model.ernie_mtp_strict_head_backward=true \
+  model.ernie_head_reference_wgrad=true
+```
+
+After all ranks have exited, score the two captures on one CPU host:
+
+```bash
+python "$EX/compare_optimizer_256k.py" "$OPT/swift-capture" "$OPT/bridge-head-wgrad-g2" \
+  --json "$OPT/optimizer-head-wgrad-g2.json"
+```
+
+A controlled two-update experiment first supplied the same observed original router bias to both trainers after the zero-LR update. At 807,229 output-weight coordinates, the second pre-clipping gradient error was 0.18961% relative L2 with the fused FP32 accumulation, 0.25945% with BF16 weight GEMMs on zigzag token owners, and 0.00439% with BF16 weight GEMMs on the original contiguous token owners. The largest error in the actual master-weight update fell from 7.26% of the reference peak to 0.375%. No sampled coordinate exceeded the 1% update peak gate with contiguous owners.
+
+On identical original-training hidden states and raw-logit gradients, replaying fused FP32 accumulation reproduced 0.18965% gradient error. The original BF16 per-head GEMMs followed by BF16 addition reproduced the gradient within 0.0000032% after global reduction. This accounts for the two distinct roundings at the shared weight.
+
+The ordinary public training recipe then ran two complete optimizer updates with all G2 strict options and the new head option. All 64 ranks used their own router counts and model gradients. The recorded inputs and pre-update weights matched the independent Swift run. The second optimizer learning rate was 2e−6.
+
+| Step-2 parameter | Preclip gradient L2 | Gradient peak | Actual update L2 | Actual update peak |
+|---|---:|---:|---:|---:|
+| LM output weight | 0.00170% | 0.00276% | 0.03947% | 0.37453% |
+| Token embedding | 0.58350% | 0.28696% | 0.61977% | 35.24053% |
+| BOS embedding row | 0.58350% | 0.28696% | 1.05725% | 35.24053% |
+| Non-BOS embedding | 0.41202% | 0.41182% | 0.40583% | 10.31305% |
+| Final shared-expert FC2 | 0.09039% | 0.09486% | 2.94596% | 16.80328% |
+
+All 807,229 sampled LM updates met the 1%-of-reference-peak limit. The LM update also met the 0.5% aggregate L2 limit. The token embedding and final shared-expert weight updates still exceed at least one limit. The independent full-model gradient norms were 80.470665 (Swift) and 80.551552 (Bridge). [Original Swift training](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/5txaup4e) · [Bridge with reference head weight gradients](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/lm8zjwea)
