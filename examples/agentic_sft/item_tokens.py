@@ -23,11 +23,18 @@ sequence per sample, or the sequences of one packed row with offline packing. Al
 ``compare_runs.py`` turns the file into runtime tokens per second for a run with ``dataloader_type="single"``, which
 reads items in this order.
 
-Example::
+With ``--mock-packing``, the items are those ``mock_data.py`` trains the recipe on instead; nothing is prepared, and
+``--num-items`` gives how many a run reads (``train.train_iters * train.global_batch_size``).
+
+Examples::
 
     python examples/agentic_sft/item_tokens.py \\
-        --recipe qwen35_text_35b_a3b_sft_long_context_8gpu_gb300_fp8mx_offline_dynamic_cp_config \\
-        --output offline_items.json --num-workers 64 "dataset.hf_dataset.split='SWE_Rebench[:4000]'"
+        --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config \\
+        --output items.json --num-workers 64 "dataset.hf_dataset.split='SWE_Rebench[:8000]'"
+
+    python examples/agentic_sft/item_tokens.py \\
+        --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config \\
+        --mock-packing online --num-items 6400 --output mock_online_items.json
 """
 
 from __future__ import annotations
@@ -42,8 +49,12 @@ import torch
 
 
 _RECIPE_RUNNER_DIR = Path(__file__).resolve().parents[2] / "scripts" / "training"
-if str(_RECIPE_RUNNER_DIR) not in sys.path:
-    sys.path.insert(0, str(_RECIPE_RUNNER_DIR))
+for _directory in (_RECIPE_RUNNER_DIR, Path(__file__).resolve().parent):
+    if str(_directory) not in sys.path:
+        sys.path.insert(0, str(_directory))
+
+from mock_data import PACKING_MODES, use_mock_data  # noqa: E402
+
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +113,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--output", type=Path, required=True, help="JSON file to write.")
     parser.add_argument("--num-items", type=int, help="Items to read; default: the whole training split.")
     parser.add_argument("--num-workers", type=int, default=8, help="Tokenizer and loader worker processes.")
+    parser.add_argument(
+        "--mock-packing", choices=PACKING_MODES, help="Count the items of a mock_data.py run with this --packing."
+    )
     parser.add_argument("overrides", nargs="*", help="Dotted config overrides, as for run_recipe.py.")
     args = parser.parse_args(argv)
+    if args.mock_packing is not None and args.num_items is None:
+        parser.error("--mock-packing needs --num-items: mock data has no fixed size")
 
     from recipe_runner import (
         apply_cli_overrides,
@@ -112,19 +128,27 @@ def main(argv: list[str] | None = None) -> None:
         sync_offline_packing_alignment,
     )
 
+    from megatron.bridge.data.base import DatasetBuildContext
     from megatron.bridge.data.builders import GPTSFTDatasetBuilder, GPTSFTDatasetConfig
+    from megatron.bridge.data.builders.mock_gpt_sft import MockGPTSFTDatasetBuilder
     from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
-    cfg = apply_cli_overrides(load_recipe(args.recipe), args.overrides)
+    cfg = load_recipe(args.recipe)
+    if args.mock_packing is not None:
+        cfg = use_mock_data(cfg, packing=args.mock_packing)
+    cfg = apply_cli_overrides(cfg, args.overrides)
     cfg = sync_model_dataset_sequence_length(sync_offline_packing_alignment(cfg))
     dataset_config = cfg.dataset
-    if not isinstance(dataset_config, GPTSFTDatasetConfig) or not dataset_config.enable_global_batch_packing:
-        parser.error(f"{args.recipe} does not read a GPTSFTDatasetConfig with enable_global_batch_packing.")
-    if dataset_config.enable_offline_packing and args.num_workers > 1:
-        dataset_config.offline_packing_specs.num_tokenizer_workers = args.num_workers
-
-    builder = GPTSFTDatasetBuilder(config=dataset_config, tokenizer=build_tokenizer(cfg.tokenizer))
-    train_dataset = builder.build()[0]
+    if args.mock_packing is not None:
+        context = DatasetBuildContext(train_samples=args.num_items, valid_samples=0, test_samples=0)
+        train_dataset = MockGPTSFTDatasetBuilder(dataset_config).build(context)[0]
+    else:
+        if not isinstance(dataset_config, GPTSFTDatasetConfig) or not dataset_config.enable_global_batch_packing:
+            parser.error(f"{args.recipe} does not read a GPTSFTDatasetConfig with enable_global_batch_packing.")
+        if dataset_config.enable_offline_packing and args.num_workers > 1:
+            dataset_config.offline_packing_specs.num_tokenizer_workers = args.num_workers
+        builder = GPTSFTDatasetBuilder(config=dataset_config, tokenizer=build_tokenizer(cfg.tokenizer))
+        train_dataset = builder.build()[0]
     items = item_sequence_tokens(train_dataset, num_items=args.num_items, num_workers=args.num_workers)
     args.output.write_text(json.dumps(items))
 
