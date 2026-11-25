@@ -49,6 +49,7 @@ import torch
 import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.models.backends import LocalSpecProvider
+from megatron.core.models.common.embeddings import rotary_pos_embedding
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.layers import ColumnParallelLinear, RowParallelLinear
@@ -144,6 +145,20 @@ def _sylvester_hadamard(x: torch.Tensor) -> torch.Tensor:
     return (x.double() @ hadamard * size**-0.5).to(x.dtype)
 
 
+class _CPURotaryTorch:
+    """Adapt the RoPE cache's explicit CUDA device constructor to this CPU fixture."""
+
+    def __getattr__(self, name):
+        return getattr(torch, name)
+
+    @staticmethod
+    def device(*args, **kwargs):
+        # The fixture returns "cpu" for direct allocations as well as the current-device index.
+        if args == ("cuda", "cpu") and not kwargs:
+            return torch.device("cpu")
+        return torch.device(*args, **kwargs)
+
+
 @pytest.fixture(scope="module")
 def pg_collection(tmp_path_factory):
     """Single-rank process groups plus the CPU stand-ins Megatron-Core needs on a CPU-only run."""
@@ -159,6 +174,7 @@ def pg_collection(tmp_path_factory):
             # RoPE tables and the DSA loss tracker are allocated on torch.cuda.current_device();
             # these tests run on CPU even when a GPU is present (torch's own callers still see the GPU).
             patch.setattr(torch.cuda, "current_device", cpu_current_device)
+            patch.setattr(rotary_pos_embedding, "torch", _CPURotaryTorch())
             # DSAIndexer's Hadamard rotation needs fast_hadamard_transform and bf16 CUDA input. Any
             # orthonormal transform leaves the indexer scores unchanged, so use an exact one.
             patch.setattr(dsa, "rotate_activation", _sylvester_hadamard)
