@@ -315,3 +315,24 @@ The optional `--next-heads` flag records the two optimizer updates above, then c
    ```
 
 Raw logits and head-input gradients are joined by their actual global token positions, including when the output projection temporarily changes CP owners. The comparison includes all valid cross-entropies on four dense replicas, sampled raw logits and head-input gradients. A head prediction and an applied parameter update have separate error measures.
+
+### Verified public capture on eight equal documents
+
+Both jobs used 64 GB300 GPUs, CP16, EP64, GBS32 and GA8. Original Swift loaded the recorder at `875ed8df3815bbf004238eec36910f2c8bf6414e`. Bridge used `2d88bee4a96060994fb4aaaf0d43857d1de8635a`, which attaches the delayed probe to the already constructed Bridge output layers. The Swift recorder and training path are identical in those two revisions. The comparator verified identical token IDs and main targets for each of the 32 rows on both optimizer steps, matching sampled pre-step master values and identical tokens, main targets and MTP targets on the following microbatch. Both trainers retained their own optimizer state, router biases and weights.
+
+| Head on microbatch 17 | Mean CE, Swift / Bridge | Relative mean CE difference | Valid CE L2 / peak | Raw logits L2 / peak | Head-input gradient L2 / peak | Head gate |
+|---|---:|---:|---:|---:|---:|---|
+| Main | 1.28177782 / 1.28177921 | 0.00011% | 1.8506% / 13.3437% | 2.0472% / 3.7500% | 3.0471% / 7.3052% | Fail |
+| MTP | 1.45026067 / 1.45031427 | 0.00370% | 2.3908% / 15.7615% | 6.6506% / 26.2868% | 4.8855% / 10.5159% | Fail |
+
+The CE comparison covers 1,048,320 valid main targets and 1,048,320 valid MTP targets over four dense replicas. The sampled tensors cover 1,056 valid main positions and 1,024 valid MTP positions, with 163 raw-logit columns and 4,096 incoming-gradient channels at each position. The head limits are 0.001% relative mean CE, 0.5% relative L2 and 1% relative peak.
+
+| Step-2 parameter | Sampled FP32 coordinates | Preclip gradient L2 / peak | True FP32 update L2 / peak | Update gate |
+|---|---:|---:|---:|---|
+| LM output weight | 807,229 | 0.0017% / 0.0028% | 0.0672% / 0.3745% | Pass |
+| Token embedding | 811,321 | 0.2952% / 0.1049% | 0.4568% / 14.7111% | Fail |
+| BOS embedding row | 4,096 | 0.2952% / 0.1049% | 0.5901% / 14.7111% | Fail |
+| Non-BOS embedding | 807,225 | 0.4294% / 0.4760% | 0.4086% / 14.6258% | Fail |
+| Final shared-expert FC2 | 8,217 | 0.0904% / 0.0947% | 2.9238% / 17.0765% | Fail |
+
+The native step-2 gradient norms were 80.515190 (Swift) and 80.408943 (Bridge). The optimizer threshold is 0.5% relative L2 and 1% relative peak. These results cover one repeated eight-document row and the first nonzero update. [Original Swift](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/mfoe2aft) · [Bridge](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/83k9gzii)
