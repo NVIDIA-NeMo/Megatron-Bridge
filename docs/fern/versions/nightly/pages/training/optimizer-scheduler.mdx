@@ -36,6 +36,10 @@ cfg.optimizer_config_overrides = {
 cfg.optimizer_config_overrides_mode = "extend"  # default
 ```
 
+For type annotations, import `OptimizerConfigOverrides` and
+`OptimizerConfigOverrideHook` from `megatron.training.config.optimizer_config`.
+This is the shared public import path for MLM and Bridge recipes.
+
 A callable is invoked as `hook(optimizer_config=..., model=...)` after model
 construction and must return a mapping, including an empty one. Use an importable
 function or configured dataclass callable for serialized recipes. Static selector

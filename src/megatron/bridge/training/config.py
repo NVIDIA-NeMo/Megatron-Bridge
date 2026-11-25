@@ -42,15 +42,7 @@ from megatron.training.config import RNGConfig, ValidationConfig
 from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
-from megatron.training.config.optimizer_config import (
-    OptimizerConfigOverrideHook as OptimizerConfigOverrideHook,
-)
-from megatron.training.config.optimizer_config import (
-    OptimizerConfigOverrides as OptimizerConfigOverrides,
-)
-from megatron.training.config.optimizer_config import (
-    serialize_optimizer_config_overrides,
-)
+from megatron.training.config import optimizer_config as optimizer_config_lib
 from megatron.training.determinism import apply_determinism_to_args
 
 from megatron.bridge.data.base import (
@@ -1063,7 +1055,9 @@ class ConfigContainer(Container):
     )
     """Compatibility API: providers return the complete standard/custom policy.
     Custom providers cannot be combined with the mapping/callable API below."""
-    optimizer_config_overrides: OptimizerConfigOverrides | OptimizerConfigOverrideHook | None = None
+    optimizer_config_overrides: (
+        optimizer_config_lib.OptimizerConfigOverrides | optimizer_config_lib.OptimizerConfigOverrideHook | None
+    ) = None
     """Core mapping or callable receiving optimizer_config and the constructed model.
     An empty mapping in extend mode retains standard weight-decay and decoupled-LR rules."""
     optimizer_config_overrides_mode: Literal["extend", "replace"] = "extend"
@@ -1101,7 +1095,7 @@ class ConfigContainer(Container):
         """Serialize optimizer selector mappings using the shared config targets."""
         result: dict[str, Any] = super().to_dict(**section_overrides)
         if isinstance(self.optimizer_config_overrides, dict) and self.optimizer_config_overrides:
-            result["optimizer_config_overrides"] = serialize_optimizer_config_overrides(
+            result["optimizer_config_overrides"] = optimizer_config_lib.serialize_optimizer_config_overrides(
                 self.optimizer_config_overrides
             )
         return result
