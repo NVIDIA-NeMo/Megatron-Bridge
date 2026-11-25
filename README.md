@@ -113,6 +113,11 @@ For development installation and additional details, please refer to our [Contri
 
 Megatron Bridge pins [Megatron-Core](https://github.com/NVIDIA/Megatron-LM) as a git submodule at `3rdparty/Megatron-LM`. The repository tracks two pinned commits — one from the upstream **main** branch (default) and one from **dev** — managed by `scripts/switch_mcore.sh`.
 
+Distributed optimizer setup requires a Core revision containing
+[NVIDIA/Megatron-LM#8837](https://github.com/NVIDIA/Megatron-LM/pull/8837), which
+provides native FP32 optimizer checkpoint-state loading. Older revisions fail
+with an actionable error; Bridge no longer patches the FP32 state loader.
+
 Before the first `uv sync` (or a manual MCore install/wheel build), run:
 
 ```bash

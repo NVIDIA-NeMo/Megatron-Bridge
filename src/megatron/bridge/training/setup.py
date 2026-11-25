@@ -70,7 +70,6 @@ from megatron.bridge.training.gtp import (
 )
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.bridge.training.optim import (
-    memory_efficient_fp32_optimizer_state_loading,
     setup_optimizer,
     sync_hybrid_device_optimizer_fp32_master_copies,
 )
@@ -446,17 +445,15 @@ def setup(
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        checkpoint_optimizer = optimizer if cfg.checkpoint.load_optim and not cfg.checkpoint.finetune else None
-        with memory_efficient_fp32_optimizer_state_loading(checkpoint_optimizer):
-            checkpoint_manager.load(
-                CheckpointLoadContext(
-                    state=state,
-                    model=model,
-                    optimizer=optimizer,
-                    opt_param_scheduler=scheduler,
-                    skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
-                )
+        checkpoint_manager.load(
+            CheckpointLoadContext(
+                state=state,
+                model=model,
+                optimizer=optimizer,
+                opt_param_scheduler=scheduler,
+                skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
             )
+        )
         # Refresh HDO working masters after model-only initialization, or rebind
         # saved FP32 masters/moments and restore CPU/GPU counters after full resume.
         # Core's reload_model_params() and distributed state loader do not cover
