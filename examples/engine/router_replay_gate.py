@@ -51,6 +51,7 @@ from megatron.bridge.utils.common_utils import print_rank_0
 
 
 def _gate_arguments(parser) -> None:
+    parser.add_argument("--overrides", default="{}", help="Recipe fields by dotted path, as JSON")
     parser.add_argument(
         "--aux-loss-coeff",
         type=float,
@@ -109,6 +110,12 @@ def record_native_routing(
                 mtp_target_scope=policy.recipe.mtp_target_scope,
             )
         recorded = torch.stack([router.recorded_topk_idx for router in state.routers], dim=1)  # [T_local, L, K]
+        pp_group = policy.process_groups.pp
+        if pp_group.size() > 1:
+            # Each pipeline stage recorded its own layers; the stages hold the layers in order.
+            stages: list[torch.Tensor | None] = [None] * pp_group.size()
+            torch.distributed.all_gather_object(stages, recorded.cpu(), group=pp_group)
+            recorded = torch.cat(stages, dim=1).to(recorded.device)
     finally:
         state.clear()
         for router in state.routers:
@@ -133,6 +140,7 @@ def main() -> None:
     if args.recipe is None:
         raise SystemExit("router_replay_gate.py needs --recipe; it edits the recipe before building the engines")
     recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
+    recipes.apply_recipe_overrides(recipe, json.loads(args.overrides))
     recipe.router_replay = True
     if args.aux_loss_coeff >= 0.0:
         recipe.model.moe_aux_loss_coeff = args.aux_loss_coeff

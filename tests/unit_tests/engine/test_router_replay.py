@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 import torch
 from megatron.core.transformer.moe.router_replay import RouterReplay, RouterReplayAction
@@ -82,6 +84,27 @@ def test_layer_indices_follow_megatron_layer_numbers():
     assert state.layer_indices == [0, 1, 3]
     with pytest.raises(RuntimeError, match="layer numbers are not set"):
         _build(1).layer_indices
+
+
+def test_a_pipeline_stage_replays_the_columns_of_its_own_layers(monkeypatch):
+    # The second of two stages: the model's MoE layers are numbered 2, 4, 6, 8 and this stage owns 6 and 8.
+    state = _build(2)
+    for router, number in zip(state.routers, (6, 8)):
+        router.layer_number = number
+
+    def all_gather_object(gathered, local, group):
+        gathered[:] = [[1, 3], local]
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", all_gather_object)
+    state.span_pipeline_stages(SimpleNamespace(size=lambda: 2))
+    assert state.layer_indices == [1, 3, 5, 7] and state.num_layers == 4
+
+    routed = torch.arange(4 * 4 * 3).view(1, 4, 4, 3)
+    state.arm_forward(_microbatch(routed))
+    assert torch.equal(state.routers[0].target_topk_idx, routed[0, :, 2])
+    assert torch.equal(state.routers[1].target_topk_idx, routed[0, :, 3])
+    with pytest.raises(ValueError, match="2 layers, the model has 4"):
+        state.arm_forward(_microbatch(routed[:, :, :2]))
 
 
 def test_arm_is_a_no_op_without_routing():

@@ -448,6 +448,8 @@ class TrainingEngine:
             replay_mark,
             sequence_parallel=runtime.topology.tp > 1 and bool(getattr(recipe.model, "sequence_parallel", False)),
         )
+        if runtime.topology.pp > 1 and recipe.router_replay:
+            self._router_replay.span_pipeline_stages(pg_collection.pp)
 
         if checkpoint_path is not None and output_head != "value" and peft is None:
             # The value-head and LoRA pre-wrap hooks load the checkpoint into the bare model instead.
@@ -695,9 +697,15 @@ class TrainingEngine:
         and equal microbatch counts across DP replicas. Always runs, for default and custom pipelines."""
         if not microbatches:
             raise ValueError("preprocess returned no microbatches; every DP replica must run at least one.")
-        if self._runtime.topology.pp > 1 and len({tuple(mb.input_ids.shape) for mb in microbatches}) > 1:
-            # TODO(pp-variable-length): stages receive hidden states into buffers of one shape per call.
-            raise ValueError("With pipeline parallelism every microbatch of a call must have the same shape.")
+        if (
+            self._runtime.topology.pp > 1
+            and not getattr(self._recipe.model, "variable_seq_lengths", False)
+            and len({tuple(mb.input_ids.shape) for mb in microbatches}) > 1
+        ):
+            raise ValueError(
+                "With pipeline parallelism every microbatch of a call must have the same shape, unless the "
+                "recipe sets model.variable_seq_lengths=True."
+            )
         routed_shape = None
         if getattr(self._recipe, "router_replay", False) and self._router_replay.num_layers:
             routed_shape = (self._router_replay.num_layers, int(self._recipe.model.moe_router_topk))

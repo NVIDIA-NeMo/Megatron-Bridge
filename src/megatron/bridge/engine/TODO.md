@@ -25,15 +25,12 @@ sharing one runtime.
 ## Compute
 
 - **Pipeline parallelism** is supported for `forward_only`, `forward_backward`, `optim_step`,
-  `save_state`, `load_state` and `export`, with the value head and with LoRA (scores and the loss
-  summary come from the last stage; `broadcast_output` copies them to the other stages, and
-  `optim_step` shares the window totals). A value head is initialized differently than without PP,
-  because Megatron seeds each pipeline stage separately. Still rejected with PP > 1:
-  - `cpu()` (`TODO(pp-offload)`): not run with stages yet.
-  - Router replay (`TODO(pp-replay)`, `recipes/base.py`): a stage holds only some MoE layers, so replay
-    needs each router's global layer index.
-  - Packs of different lengths (`TODO(pp-variable-length)`): the recipe must set
-    `pad_to_max_length=True`; content-sized packs need `model.variable_seq_lengths`.
+  `save_state`, `load_state`, `export`, `cpu()`/`cuda()` and router replay, with the value head and
+  with LoRA (scores and the loss summary come from the last stage; `broadcast_output` copies them to
+  the other stages, and `optim_step` shares the window totals). Content-sized packs
+  (`pad_to_max_length=False`) need `model.variable_seq_lengths=True` on the recipe, so stages can
+  exchange packs of different lengths. A value head and LoRA adapters are initialized differently than
+  without PP, because Megatron seeds each pipeline stage separately. Still rejected with PP > 1:
   - Virtual pipeline stages (`TODO(pp-vpp)`).
 - **Gradient-reduce overlap** (`TODO(overlap)`): `ddp.overlap_grad_reduce=True` is rejected in
   `forward_backward`. Bucket reductions have to be deferred across accumulation calls.
@@ -67,6 +64,28 @@ sharing one runtime.
   repeat in fp32 or on a small model. Until then, use `pad_to_max_length=False` for scoring that must
   not depend on batch composition.
 
+- **Two engines in one process do not get bit-identical Gated DeltaNet gradients.** Two trainable engines
+  built from the same recipe and checkpoint and given the same `forward_backward` calls (Qwen3.5 text
+  recipe, Triton 3.8.0, deterministic kernels) agree bit for bit on every gradient except those of three
+  Gated DeltaNet parameters: `conv1d.weight` (about 150 of 524,288 entries per layer), and single entries
+  of `A_log` and `dt_bias`. The differences are at rounding scale (about 1e-6 against gradients of about
+  5e-2), are there with one and with two pipeline stages, with and without the load-balancing loss, and
+  are the same before and after gradient finalization. Moving an engine with `cpu()`/`cuda()` does not
+  change them. Where such an entry has a near-zero gradient, one or two weights out of about 36 billion
+  take a different Adam update, and the next update then differs broadly (gradient norms apart by about
+  0.5%, a third of the weights updated differently). Since only these parameters' own gradients differ,
+  the forward pass and the gradients passed to earlier layers are identical; the variation is in how
+  these weight gradients are computed. Not settled: which kernel (the layer's convolution runs through
+  `F.conv1d` or a custom causal convolution, and cuDNN deterministic mode is not set), whether it is
+  random or depends on which engine was built second (the same weight difference has recurred across
+  jobs), and why one differing weight changes the next update that much. To do: repeat with
+  `torch.backends.cudnn.deterministic=True`, find which convolution branch runs, and compare the model's
+  bf16 weights of the two engines after the first update. `examples/engine/movement_gate.py` allows for
+  this: a looser gradient limit, and the second engine takes the first one's weights before the second
+  update. Comparisons between separate jobs (scoring, one update, resume) have reproduced exactly.
+- **Results are not repeatable on Triton 3.7.1.** The Gated DeltaNet kernel has a race on Triton 3.7.1
+  that changes results from call to call; Triton 3.8.0 does not show it. An environment whose Triton is
+  3.7.1 needs 3.8.0 ahead of it on the Python path.
 - **A job using the `ncclep` MoE dispatcher does not exit.** Scoring through the engine with
   `model.moe_flex_dispatcher_backend="ncclep"` gives the same logprobs as `hybridep`, with and without
   pipeline parallelism, but after `engine.close()` and `torch.distributed.destroy_process_group()` every

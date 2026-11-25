@@ -133,12 +133,20 @@ def test_check_supported_accepts_pipeline_parallelism_with_padded_packs():
     check_supported(_pipeline_recipe_like())
 
 
+def test_check_supported_accepts_content_sized_packs_with_variable_transfers():
+    recipe = _pipeline_recipe_like()
+    recipe.pad_to_max_length = False
+    recipe.model.variable_seq_lengths = True
+    recipe.router_replay = True
+    recipe.model.num_moe_experts = 256
+    check_supported(recipe)
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
         (lambda r: setattr(r, "pad_to_max_length", False), "pad_to_max_length"),
         (lambda r: setattr(r.model, "virtual_pipeline_model_parallel_size", 2), "virtual pipeline"),
-        (lambda r: setattr(r, "router_replay", True), "router_replay with pipeline"),
     ],
 )
 def test_check_supported_rejects_unsupported_pipeline_modes(mutate, message):
