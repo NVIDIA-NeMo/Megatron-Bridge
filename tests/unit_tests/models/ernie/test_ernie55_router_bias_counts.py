@@ -15,12 +15,13 @@
 """Reference the original contiguous CP owner using unique token IDs and native BF16 accumulation."""
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 import torch
 from torch import nn
 
-from megatron.bridge.models.ernie.ernie55_context_parallel import build_ernie55_thd_cp_batch
+from megatron.bridge.models.ernie import ernie55_context_parallel as batch_builder
 from megatron.bridge.models.ernie.modeling_ernie55.moe import Ernie55SplitFeatureRouter
 from megatron.bridge.models.ernie.modeling_ernie55.router_bias_counts import (
     contiguous_owner_histogram,
@@ -43,7 +44,15 @@ def _sample(lengths, rank, layout, cp_size=4):
         multiple = 2 * cp_size
         end += (length + multiple - 1) // multiple * multiple
     group = _group(rank, cp_size)
-    batch = build_ernie55_thd_cp_batch(samples, pad_token_id=-1, cp_group=group, cp_partition_mode=layout)
+    # Megatron's get_pg_size/get_pg_rank report a single rank when distributed is uninitialized.
+    # The builder only needs coordinates here; use the simulated group for this local layout oracle.
+    with (
+        patch.object(batch_builder, "get_pg_size", side_effect=lambda g: g.size()),
+        patch.object(batch_builder, "get_pg_rank", side_effect=lambda g: g.rank()),
+    ):
+        batch = batch_builder.build_ernie55_thd_cp_batch(
+            samples, pad_token_id=-1, cp_group=group, cp_partition_mode=layout
+        )
     return batch, group, starts, end
 
 
