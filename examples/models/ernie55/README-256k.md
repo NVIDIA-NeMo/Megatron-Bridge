@@ -35,6 +35,30 @@ python -c 'import torch, transformer_engine, flash_mla, deep_ep, mok; print(torc
 
 The installer builds and installs the native extension from the [public MoK commit](https://github.com/QiZhangNV/mixture-of-kittens/commit/ee7bdaba515fd3d557105d71809ec74cd523d5a1) and checks its SM103a cubin. Keep the checkout and its compiled head available on every worker. Installing a wheel on one node only suffices when the Python environment is shared.
 
+### Optional public container build
+
+If a compatible SM103 training environment is already installed, continue to step 2. For a source-built environment, the companion MCore checkout provides its [CI development Dockerfile](https://github.com/NVIDIA/Megatron-LM/blob/32efd940666ed3efd8fbbaeacc2a75d9d7caa3c9/docker/Dockerfile.ci.dev). The following uses the public NGC **26.09** base and the Dockerfile's locked GPU libraries. This is a source-reviewed build route. The historical throughput table used the **26.04** stack above. A complete build and 64-GPU training from the 26.09 image have not been validated for this benchmark.
+
+```bash
+# Build on a Linux arm64 host with a CUDA toolchain and Docker Buildx.
+cd "$MCORE"
+docker buildx build --platform linux/arm64 --target main --load -t ernie55-mcore:sm103 \
+  -f docker/Dockerfile.ci.dev --build-arg FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:26.09-py3 \
+  --build-arg IMAGE_TYPE=dev --build-arg 'NVTE_CUDA_ARCHS=100a;103a' \
+  --build-arg MOK_ARCH=SM103 --build-arg MOK_COMMIT=ee7bdaba515fd3d557105d71809ec74cd523d5a1 \
+  --build-arg DEEPEP_COMMIT=10d4dd7377d5bce900fbb4b80cce863764892b95 .
+```
+
+The Dockerfile builds MoK from source; skip the separate `install_mok.sh` in this route. Deploy the image using your site's multi-node container launcher and mount both checkouts and the shared workspace on all workers. Inside the container, install Bridge's dependencies and both editable checkouts in the active environment (the public Bridge checkout declares its own Transformers range), set the same environment paths, and compile the head there before launching.
+
+```bash
+uv pip install --python "$UV_PROJECT_ENVIRONMENT/bin/python" --no-build-isolation -e "$MCORE" -e "$BRIDGE"
+export ERNIE55_CUDA_HEAD_LIBRARY=$WORK/libernie55_multimax_sm103.so
+python "$BRIDGE/src/megatron/bridge/models/ernie/modeling_ernie55/cuda_head.py" \
+  --arch sm_103 --output "$ERNIE55_CUDA_HEAD_LIBRARY"
+python -c 'import megatron.core, megatron.bridge, torch, mok, deep_ep, flash_mla, transformer_engine; print(torch.__version__)'
+```
+
 ## 2. Download and convert the weights
 
 Use the pinned original HF directory as the weight source. Use the generated architecture directory as the trainer's model configuration. This keeps source FP8 scales available to the importer. Runtime and routed experts use BF16. A distributed checkpoint from the same weights can be reused. The source is approximately 288 GB and the distributed checkpoint approximately 561 GB, in decimal units.
