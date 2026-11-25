@@ -456,6 +456,27 @@ run_arm strict-two-updates true "${strict_args[@]}" model.recompute_num_layers=1
 
 To reproduce the parameter measurement in either trainer, record the FP32 master values immediately before and after each native optimizer step, and the reduced gradients passed to the gradient norm routine before clipping. Map each local shard to the global row-major index for its parameter. Select indices divisible by 1,021 and additionally keep all 4,096 entries of embedding row 1 (BOS). Deduplicate replicated coordinates, verify input IDs, labels, pre-step weights and optimizer-state continuity, then compute `delta = post.double() - pre.double()` on each selected coordinate. Divide the L2 norm of the update difference by the Swift update L2 norm, and its largest absolute component by the largest absolute Swift update. Ordinary training logs give the native gradient norm. The per-coordinate comparison requires optimizer instrumentation in each trainer.
 
+#### Match the original BF16 router-bias update under zigzag CP
+
+When training with count-based expert correction, the original uses BF16 counters for physical contiguous CP stripes. Rounding each rank's accumulated load before the global sum makes CP ownership observable. A zero optimizer learning rate still permits the correction bias to change. For the reference-arithmetic training command above, use a Megatron-Core checkout containing [the BF16 router-count option](https://github.com/jingqiny-99/Megatron-LM/commit/3ba272c0e128d6e0b5147142363710fcbcaa2671), set `NCCL_ALGO=Ring` as on the deterministic reference, and append both overrides.
+
+```bash
+model.moe_router_bias_bf16_counts=true \
+model.ernie_router_bias_contiguous_cp_counts=true
+```
+
+The Bridge option collects selected expert counts by physical token position within each packed training row. Before the optimizer update, one integer reduce-scatter on the CP group delivers each contiguous owner's counts for every local router and microbatch. Each router accumulates its own counts in BF16 in microbatch order. Megatron-Core then performs its ordinary count all-reduce and correction-bias update. The router uses its actual padding mask. The data, attention and expert computation keep their configured partition and logical routes. The option supports packed THD, static CP, TP=1 and eager router execution. Both overrides default to false.
+
+On 64 GB300s with CP16, EP64 and eight 32,768-token documents per row, the first GA8 update had 43 routed modules including MTP. Their 22,016 FP32 corrections matched independent Swift before and after the first update on every rank. Under the default integer/FP32 correction, 1,827 of the 22,016 entries on each rank differed after the update, even though the exact full-step global integer counts were equal. The first router then selected different experts for 172 of 262,144 tokens in one DP replica.
+
+The source-enabled two-update comparison used the reference-arithmetic recipe, one-symbol full recompute and the default MTP-head backward. Against original Swift, update 2 had native whole-model gradient norms of 80.2315 and 80.5387 respectively. FP32 update comparisons still exceed the 0.5% relative-L2 or 1% relative-peak gate.
+
+| Parameter | Step-2 preclip gradient relative L2 | Step-2 FP32 update relative L2 | Step-2 FP32 update relative peak |
+|---|---:|---:|---:|
+| LM head | 0.18961% | 0.20479% | 7.25655% |
+| Token embedding | 0.58638% | 0.60379% | 15.63181% |
+| Final shared expert FC2 | 0.09009% | 2.89354% | 16.48452% |
+
 #### Optional contiguous CP owners for D attention backward
 
 The opt-in setting `model.ernie_dsa_contiguous_backward=true` keeps the forward zigzag layout. In backward it moves query-side tensors to their contiguous CP owners, runs sparse attention backward there, reduce-scatters the BF16 key gradient to the contiguous owners, and returns the local gradients to zigzag. It adds CP communication to every D backward including MTP. The benchmark table above uses the default backward.
