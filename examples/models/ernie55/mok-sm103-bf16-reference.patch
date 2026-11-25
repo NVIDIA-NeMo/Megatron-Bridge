@@ -1,0 +1,702 @@
+diff --git a/Makefile b/Makefile
+index 1c8eb2ab838e1f1cb4d21e5de7a62883c0323c0c..220039312e23eee1c68ee0689e27f167a70a9ae1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -48,7 +48,10 @@ all: $(OUT)
+ test: $(OUT)
+ 	$(PYTHON) -m torch.distributed.run --standalone --nproc-per-node=4 -m pytest -s tests/
+ 
+-$(OUT): $(SRC) $(HEADERS)
++csrc/strict_situ_table.inc: scripts/make_strict_situ_table.py
++	$(PYTHON) $< $@
++
++$(OUT): $(SRC) $(HEADERS) csrc/strict_situ_table.inc
+ 	$(NVCC) $(SRC) $(NVCCFLAGS) -o $(OUT)
+ 
+ clean:
+diff --git a/csrc/bindings.cu b/csrc/bindings.cu
+index 0bf1e8b7927cba2ae64dffa21ec79be1825dd8a5..94739eb61170d88e8da86a31e912992129c5e52f 100644
+--- a/csrc/bindings.cu
++++ b/csrc/bindings.cu
+@@ -1,9 +1,11 @@
++#include "strict_situ.cuh"
+ #include "megakernel/entrypoints.cuh"
+ #include "mxfp8.cuh"
+ #include "scheduler.cuh"
+ #include "utils.cuh"
+ 
+ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
++    m.attr("strict_bf16_reference_situ") = true;
+     m.def("all_gather_top_experts", &utils::all_gather_top_experts::all_gather_top_experts_entrypoint, "",
+           pybind11::arg("top_experts"), pybind11::arg("all_gather_top_experts_buffer"),
+           pybind11::arg("all_gather_top_experts_buffer_multicast_ptr"), pybind11::arg("rank"), pybind11::arg("chunk_bytes"));
+@@ -120,7 +122,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+           pybind11::arg("w_routed_gate_storage_table") = pybind11::none(),
+           pybind11::arg("w_routed_up_storage_table") = pybind11::none(),
+           pybind11::arg("w_routed_down_storage_table") = pybind11::none(),
+-          pybind11::arg("situ_beta1") = 0.0f, pybind11::arg("situ_beta2") = 0.0f);
++          pybind11::arg("situ_beta1") = 0.0f, pybind11::arg("situ_beta2") = 0.0f,
++          pybind11::arg("reference_route_weights") = pybind11::none());
+     m.def("dispatch_mlp_swiglu_combine_bwd_bf16", &dispatch_mlp_swiglu_combine_bwd_bf16_entrypoint, "",
+           pybind11::arg("d_y_buffer"), pybind11::arg("d_y_buffer_ptrs"),
+           pybind11::arg("d_x_routed_buffer"), pybind11::arg("d_x_routed_buffer_ptrs"),
+@@ -151,7 +154,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+           pybind11::arg("main_grad_routed_up_storage_table") = pybind11::none(),
+           pybind11::arg("main_grad_routed_down_storage_table") = pybind11::none(),
+           pybind11::arg("shared_grad_output") = pybind11::none(),
+-          pybind11::arg("situ_beta1") = 0.0f, pybind11::arg("situ_beta2") = 0.0f);
++          pybind11::arg("situ_beta1") = 0.0f, pybind11::arg("situ_beta2") = 0.0f,
++          pybind11::arg("reference_route_weights") = pybind11::none());
+     m.def("fwd_epilogue", &utils::fwd_epilogue::fwd_epilogue_entrypoint, "",
+           pybind11::arg("y_shared"), pybind11::arg("combine_buffer"), pybind11::arg("topk_weights"), pybind11::arg("top_experts"),
+           pybind11::arg("shared_output_gate") = pybind11::none());
+diff --git a/csrc/megakernel/backward.cuh b/csrc/megakernel/backward.cuh
+index f237a88d8c038fa947dd7d54008aef83575824c8..cb1a11ee7a8e4f66802e97e06f24310b4deadc28 100644
+--- a/csrc/megakernel/backward.cuh
++++ b/csrc/megakernel/backward.cuh
+@@ -131,7 +131,7 @@ static __device__ __forceinline__ void dispatch_mlp_swiglu_combine_bwd_kernel(co
+         const int comm_cta_idx = cluster_idx * config::CLUSTER_SIZE + cta_rank;
+         auto reverse_combine = [&](int macrobatch_idx, int task_idx) {
+             dispatch_kernel<true>(g.d_y_buffer, g.d_y_fp8_routed, &g.d_y_sc_routed, &g.d_y_fp8_t_routed, &g.d_y_sc_t_routed,
+-                                     &g.router_weights, g.schedule_peer_rank, g.schedule_peer_token_idx,
++                                     g.reference_route_weights ? nullptr : &g.router_weights, g.schedule_peer_rank, g.schedule_peer_token_idx,
+                                      nullptr, nullptr, g.d_y_routed_ready,
+                                      dispatch_inputs_arrived, dispatch_bitfield,
+                                      num_tokens, macrobatch_size, g.minibatch_size, macrobatch_idx, task_idx, g.topk,
+@@ -337,7 +337,7 @@ static __device__ __forceinline__ void dispatch_mlp_swiglu_combine_bwd_kernel(co
+                                       swiglu_fwd_inputs_arrived, swiglu_fwd_bitfield,
+                                       num_tokens, g.swiglu_limit, g.situ_beta, macrobatch_size, g.minibatch_size,
+                                       macrobatch_idx, minibatch_idx,
+-                                      task_idx, cta_rank, 0, 0, smem_base_addr);
++                                      task_idx, cta_rank, 0, 0, smem_base_addr, g.reference_route_weights);
+                 }
+             } else {
+                 const int num_routed_tasks = macrobatch_num_minibatches * minibatch_routed_bwd_tasks;
+@@ -374,7 +374,7 @@ static __device__ __forceinline__ void dispatch_mlp_swiglu_combine_bwd_kernel(co
+                                       swiglu_bwd_inputs_arrived, swiglu_bwd_bitfield,
+                                       num_tokens, g.swiglu_limit, g.situ_beta, macrobatch_size, g.minibatch_size,
+                                       macrobatch_idx, minibatch_idx,
+-                                      task_idx, cta_rank, shared_dgrad_down_tasks, 0, shared_row_blocks, macrobatch_idx, smem_base_addr);
++                                      task_idx, cta_rank, shared_dgrad_down_tasks, 0, shared_row_blocks, macrobatch_idx, smem_base_addr, g.reference_route_weights != nullptr);
+                 } else if (routed_task_idx < num_routed_tasks) {
+                     // Dgrad gate+up: d_x_routed = d_gate @ w_routed_gate + d_up @ w_routed_up
+                     const int task_idx = minibatch_task_idx - minibatch_routed_dgrad_down_tasks - minibatch_routed_swiglu_bwd_tasks;
+@@ -975,9 +975,17 @@ dispatch_mlp_swiglu_combine_bwd_bf16(
+     const std::optional<at::Tensor> &main_grad_routed_down_storage_table = std::nullopt,
+     const std::optional<at::Tensor> &shared_grad_output = std::nullopt,
+     float situ_beta1 = 0.0f,
+-    float situ_beta2 = 0.0f
++    float situ_beta2 = 0.0f,
++    const std::optional<at::Tensor> &reference_route_weights = std::nullopt
+ ) {
+     validate_situ(swiglu_limit, situ_beta1, situ_beta2);
++    if (reference_route_weights) {
++        const auto &weights = *reference_route_weights;
++        TORCH_CHECK(!HAS_SHARED && situ_beta1 > 0.0f && weights.is_cuda() &&
++                    weights.device() == d_y_buffer.device() && weights.scalar_type() == at::kFloat &&
++                    weights.is_contiguous() && weights.sizes() == schedule_peer_rank.sizes(),
++                    "reference_route_weights must match the BF16 routed SiTU schedule");
++    }
+     static_assert(!USE_MXFP8);
+     const at::Tensor &d_y_shared = shared_grad_output.has_value() ? *shared_grad_output : d_y_buffer;
+     if (shared_grad_output.has_value()) {
+@@ -1224,6 +1232,7 @@ dispatch_mlp_swiglu_combine_bwd_bf16(
+         .d_w_routed_down = make_routed_d_weight_view(
+             d_w_routed_down, hidden_dim, intermediate_dim, 0, 0,
+             main_grad_routed_down_storage_table, num_local_experts),
++        .reference_route_weights = reference_route_weights ? reference_route_weights->data_ptr<float>() : nullptr,
+         .schedule_peer_rank = kittens::py::tensor_to_gl<index_gl>(schedule_peer_rank),
+         .schedule_peer_token_idx = kittens::py::tensor_to_gl<index_gl>(schedule_peer_token_idx),
+         .num_tokens = kittens::py::tensor_to_gl<index_gl>(num_tokens),
+diff --git a/csrc/megakernel/dispatch_combine.cuh b/csrc/megakernel/dispatch_combine.cuh
+index ab54dc985c46c0a0b46eada418abc0004deef3c1..8a259de200dec34c1d9e661c64c79c18b57cd9ec 100644
+--- a/csrc/megakernel/dispatch_combine.cuh
++++ b/csrc/megakernel/dispatch_combine.cuh
+@@ -68,7 +68,7 @@ static __device__ __forceinline__ void dispatch_kernel(
+     __syncthreads();
+ 
+     if constexpr (SCALE_ROWS) {
+-        if (is_worker) router_weights_smem[tid] = peer_rank >= 0 ? router_weights->raw_ptr[row_idx + tid] : 0.0f;
++        if (is_worker) router_weights_smem[tid] = peer_rank < 0 ? 0.0f : (router_weights ? router_weights->raw_ptr[row_idx + tid] : 1.0f);
+     }
+ 
+     if (peer_rank >= 0) {
+diff --git a/csrc/megakernel/entrypoints.cuh b/csrc/megakernel/entrypoints.cuh
+index 32326d2361c5c963f9cec1f51e92019a94a4e040..87a0768aa0b65402f7dff56f933b43714dee39a4 100644
+--- a/csrc/megakernel/entrypoints.cuh
++++ b/csrc/megakernel/entrypoints.cuh
+@@ -222,7 +222,8 @@ dispatch_mlp_swiglu_combine_fwd_bf16_entrypoint(
+     const std::optional<at::Tensor> &w_routed_up_storage_table = std::nullopt,
+     const std::optional<at::Tensor> &w_routed_down_storage_table = std::nullopt,
+     float situ_beta1 = 0.0f,
+-    float situ_beta2 = 0.0f
++    float situ_beta2 = 0.0f,
++    const std::optional<at::Tensor> &reference_route_weights = std::nullopt
+ ) {
+     const at::Tensor w_shared_gate = w_shared_gate_optional.value_or(at::Tensor{});
+     const at::Tensor w_shared_up = w_shared_up_optional.value_or(at::Tensor{});
+@@ -240,7 +241,7 @@ dispatch_mlp_swiglu_combine_fwd_bf16_entrypoint(
+                 schedule_peer_rank, schedule_peer_token_idx, num_tokens, tokens_per_expert,
+                 topk, swiglu_limit, num_comm_sms, macrobatch_size, minibatch_size,
+                 w_routed_gate_storage_table, w_routed_up_storage_table,
+-                w_routed_down_storage_table, situ_beta1, situ_beta2);
++                w_routed_down_storage_table, situ_beta1, situ_beta2, reference_route_weights);
+             });
+         case 4:
+             return dispatch_shared<4, RoutedPrecision::BF16>(w_shared_gate.defined(), [&]<typename Kernel>() {
+@@ -250,7 +251,7 @@ dispatch_mlp_swiglu_combine_fwd_bf16_entrypoint(
+                 schedule_peer_rank, schedule_peer_token_idx, num_tokens, tokens_per_expert,
+                 topk, swiglu_limit, num_comm_sms, macrobatch_size, minibatch_size,
+                 w_routed_gate_storage_table, w_routed_up_storage_table,
+-                w_routed_down_storage_table, situ_beta1, situ_beta2);
++                w_routed_down_storage_table, situ_beta1, situ_beta2, reference_route_weights);
+             });
+         case 8:
+             return dispatch_shared<8, RoutedPrecision::BF16>(w_shared_gate.defined(), [&]<typename Kernel>() {
+@@ -260,7 +261,7 @@ dispatch_mlp_swiglu_combine_fwd_bf16_entrypoint(
+                 schedule_peer_rank, schedule_peer_token_idx, num_tokens, tokens_per_expert,
+                 topk, swiglu_limit, num_comm_sms, macrobatch_size, minibatch_size,
+                 w_routed_gate_storage_table, w_routed_up_storage_table,
+-                w_routed_down_storage_table, situ_beta1, situ_beta2);
++                w_routed_down_storage_table, situ_beta1, situ_beta2, reference_route_weights);
+             });
+         case 16:
+             return dispatch_shared<16, RoutedPrecision::BF16>(w_shared_gate.defined(), [&]<typename Kernel>() {
+@@ -270,7 +271,7 @@ dispatch_mlp_swiglu_combine_fwd_bf16_entrypoint(
+                 schedule_peer_rank, schedule_peer_token_idx, num_tokens, tokens_per_expert,
+                 topk, swiglu_limit, num_comm_sms, macrobatch_size, minibatch_size,
+                 w_routed_gate_storage_table, w_routed_up_storage_table,
+-                w_routed_down_storage_table, situ_beta1, situ_beta2);
++                w_routed_down_storage_table, situ_beta1, situ_beta2, reference_route_weights);
+             });
+         case 32:
+             return dispatch_shared<32, RoutedPrecision::BF16>(w_shared_gate.defined(), [&]<typename Kernel>() {
+@@ -280,7 +281,7 @@ dispatch_mlp_swiglu_combine_fwd_bf16_entrypoint(
+                 schedule_peer_rank, schedule_peer_token_idx, num_tokens, tokens_per_expert,
+                 topk, swiglu_limit, num_comm_sms, macrobatch_size, minibatch_size,
+                 w_routed_gate_storage_table, w_routed_up_storage_table,
+-                w_routed_down_storage_table, situ_beta1, situ_beta2);
++                w_routed_down_storage_table, situ_beta1, situ_beta2, reference_route_weights);
+             });
+         case 64:
+             return dispatch_shared<64, RoutedPrecision::BF16>(w_shared_gate.defined(), [&]<typename Kernel>() {
+@@ -290,7 +291,7 @@ dispatch_mlp_swiglu_combine_fwd_bf16_entrypoint(
+                 schedule_peer_rank, schedule_peer_token_idx, num_tokens, tokens_per_expert,
+                 topk, swiglu_limit, num_comm_sms, macrobatch_size, minibatch_size,
+                 w_routed_gate_storage_table, w_routed_up_storage_table,
+-                w_routed_down_storage_table, situ_beta1, situ_beta2);
++                w_routed_down_storage_table, situ_beta1, situ_beta2, reference_route_weights);
+             });
+         default:
+             throw std::runtime_error("MoK: dispatch_mlp_swiglu_combine_fwd_bf16 unsupported num_devices=" +
+@@ -698,7 +699,8 @@ dispatch_mlp_swiglu_combine_bwd_bf16_entrypoint(
+     const std::optional<at::Tensor> &main_grad_routed_down_storage_table = std::nullopt,
+     const std::optional<at::Tensor> &shared_grad_output = std::nullopt,
+     float situ_beta1 = 0.0f,
+-    float situ_beta2 = 0.0f
++    float situ_beta2 = 0.0f,
++    const std::optional<at::Tensor> &reference_route_weights = std::nullopt
+ ) {
+     const at::Tensor w_shared_gate = w_shared_gate_optional.value_or(at::Tensor{});
+     const at::Tensor w_shared_up = w_shared_up_optional.value_or(at::Tensor{});
+@@ -734,7 +736,7 @@ dispatch_mlp_swiglu_combine_bwd_bf16_entrypoint(
+                     w_routed_down_storage_table,
+                     main_grad_routed_gate_storage_table,
+                     main_grad_routed_up_storage_table,
+-                    main_grad_routed_down_storage_table, shared_grad_output, situ_beta1, situ_beta2);
++                    main_grad_routed_down_storage_table, shared_grad_output, situ_beta1, situ_beta2, reference_route_weights);
+                 });
+             };
+             const at::ScalarType main_grad_dtype = main_grad_routed_gate->scalar_type();
+@@ -757,7 +759,7 @@ dispatch_mlp_swiglu_combine_bwd_bf16_entrypoint(
+             w_routed_down_storage_table,
+             main_grad_routed_gate_storage_table,
+             main_grad_routed_up_storage_table,
+-            main_grad_routed_down_storage_table, shared_grad_output, situ_beta1, situ_beta2);
++            main_grad_routed_down_storage_table, shared_grad_output, situ_beta1, situ_beta2, reference_route_weights);
+         });
+     };
+     switch (x_ptrs.size()) {
+diff --git a/csrc/megakernel/forward.cuh b/csrc/megakernel/forward.cuh
+index b3e5bd5ce4db16b84989619bdc183c357331b5a7..3d2cae0b25ee83dd5aaa97e603a3ac288440300e 100644
+--- a/csrc/megakernel/forward.cuh
++++ b/csrc/megakernel/forward.cuh
+@@ -245,7 +245,7 @@ static __device__ __forceinline__ void dispatch_mlp_swiglu_combine_fwd_kernel(co
+                                   swiglu_inputs_arrived, swiglu_bitfield,
+                                   num_tokens, g.swiglu_limit, g.situ_beta, macrobatch_size, g.minibatch_size,
+                                   macrobatch_idx, minibatch_idx, task_idx, cta_rank,
+-                                  shared_gate_up_tasks, shared_row_blocks, smem_base_addr);
++                                  shared_gate_up_tasks, shared_row_blocks, smem_base_addr, g.reference_route_weights);
+             } else {
+                 // Routed down
+                 const int task_idx = minibatch_task_idx - minibatch_routed_gate_up_tasks * 2 - minibatch_routed_swiglu_tasks;
+@@ -518,9 +518,17 @@ dispatch_mlp_swiglu_combine_fwd_bf16(
+     const std::optional<at::Tensor> &w_routed_up_storage_table = std::nullopt,
+     const std::optional<at::Tensor> &w_routed_down_storage_table = std::nullopt,
+     float situ_beta1 = 0.0f,
+-    float situ_beta2 = 0.0f
++    float situ_beta2 = 0.0f,
++    const std::optional<at::Tensor> &reference_route_weights = std::nullopt
+ ) {
+     validate_situ(swiglu_limit, situ_beta1, situ_beta2);
++    if (reference_route_weights) {
++        const auto &weights = *reference_route_weights;
++        TORCH_CHECK(!HAS_SHARED && situ_beta1 > 0.0f && weights.is_cuda() &&
++                    weights.device() == x.device() && weights.scalar_type() == at::kFloat &&
++                    weights.is_contiguous() && weights.sizes() == schedule_peer_rank.sizes(),
++                    "reference_route_weights must match the BF16 routed SiTU schedule");
++    }
+     static_assert(!USE_MXFP8);
+     const int num_local_tokens = x.size(0);
+     const int schedule_capacity = schedule_peer_rank.size(0);
+@@ -609,6 +617,7 @@ dispatch_mlp_swiglu_combine_fwd_bf16(
+             w_routed_down, hidden_dim, intermediate_dim, 0, 0,
+             w_routed_down_storage_table, num_local_experts),
+         .w_routed_down_sc = {},
++        .reference_route_weights = reference_route_weights ? reference_route_weights->data_ptr<float>() : nullptr,
+         .schedule_peer_rank = kittens::py::tensor_to_gl<index_gl>(schedule_peer_rank),
+         .schedule_peer_token_idx = kittens::py::tensor_to_gl<index_gl>(schedule_peer_token_idx),
+         .num_tokens = kittens::py::tensor_to_gl<index_gl>(num_tokens),
+diff --git a/csrc/megakernel/swiglu.cuh b/csrc/megakernel/swiglu.cuh
+index 8d05fd724617779a0143ee9eef70bda46a4cf8bd..83367c8643ad0177b3627a8c043eef7aa5db77cc 100644
+--- a/csrc/megakernel/swiglu.cuh
++++ b/csrc/megakernel/swiglu.cuh
+@@ -3,7 +3,9 @@ static __device__ __forceinline__ float situ_fwd(float gate, float up, float2 be
+            * (beta.y * tanhf(up / beta.y));
+ }
+ 
+-static __device__ __forceinline__ float2 situ_fwd_pair(float2 gate, float2 up, float2 beta) {
++static __device__ __forceinline__ float2 situ_fwd_pair(float2 gate, float2 up, float2 beta, bool reference = false) {
++    if (reference && beta.x == 4.0f && beta.y == 25.0f)
++        return {reference_situ::forward(gate.x, up.x), reference_situ::forward(gate.y, up.y)};
+     return {situ_fwd(gate.x, up.x, beta), situ_fwd(gate.y, up.y, beta)};
+ }
+ 
+@@ -26,12 +28,18 @@ static __device__ __forceinline__ float2 swiglu_bwd_pair(
+     const float limit,
+     const float2 situ_beta,
+     bf16_2 &d_gate,
+-    bf16_2 &d_up
++    bf16_2 &d_up,
++    bool reference = false
+ ) {
+     if constexpr (IS_SITU) {
+         float2 da, du, hidden;
+-        hidden.x = situ_bwd(gate.x, up.x, d_hidden.x, situ_beta, da.x, du.x);
+-        hidden.y = situ_bwd(gate.y, up.y, d_hidden.y, situ_beta, da.y, du.y);
++        if (reference && situ_beta.x == 4.0f && situ_beta.y == 25.0f) {
++            hidden.x = reference_situ::backward(gate.x, up.x, d_hidden.x, da.x, du.x);
++            hidden.y = reference_situ::backward(gate.y, up.y, d_hidden.y, da.y, du.y);
++        } else {
++            hidden.x = situ_bwd(gate.x, up.x, d_hidden.x, situ_beta, da.x, du.x);
++            hidden.y = situ_bwd(gate.y, up.y, d_hidden.y, situ_beta, da.y, du.y);
++        }
+         d_gate = __floats2bfloat162_rn(da.x, da.y);
+         d_up = __floats2bfloat162_rn(du.x, du.y);
+         return hidden;
+@@ -87,7 +95,8 @@ static __device__ __forceinline__ void swiglu_fwd_kernel(
+     const int cta_rank,
+     const int gate_up_tile_ready_base_index,
+     const int hidden_row_block_ready_base_index,
+-    const uint64_t smem_base_addr
++    const uint64_t smem_base_addr,
++    const float *reference_route_weights = nullptr
+ ) {
+     static constexpr bool USE_ROUTED_MXFP8 = !IS_SHARED && USE_MXFP8;
+     using input_bf16_tile = std::conditional_t<USE_ROUTED_MXFP8, quant_bf16_tile, swiglu_tile>;
+@@ -175,7 +184,7 @@ static __device__ __forceinline__ void swiglu_fwd_kernel(
+                             #pragma unroll
+                             for (int k = 0; k < gate.packed_per_tile; ++k)
+                                 gate.tiles[i][j].data[k] = situ_fwd_pair(
+-                                    gate.tiles[i][j].data[k], up.tiles[i][j].data[k], situ_beta);
++                                    gate.tiles[i][j].data[k], up.tiles[i][j].data[k], situ_beta, reference_route_weights != nullptr);
+                         }
+                     }
+                 } else {
+@@ -214,6 +223,23 @@ static __device__ __forceinline__ void swiglu_fwd_kernel(
+             }
+             __syncthreads();
+ 
++            if constexpr (!IS_SHARED && !USE_MXFP8 && IS_SITU) {
++                if (reference_route_weights != nullptr) {
++                    const uint32_t base = static_cast<uint32_t>(__cvta_generic_to_shared(&hidden_smem));
++                    for (int index = threadIdx.x; index < config::SWIGLU_Mb * config::SWIGLU_Nb;
++                         index += config::NUM_THREADS) {
++                        const int tile_row = index / config::SWIGLU_Nb;
++                        const int tile_col = index % config::SWIGLU_Nb;
++                        const uint32_t address = swiglu_tile::idx(base, {tile_row, tile_col});
++                        bf16 hidden;
++                        move<bf16>::lds(hidden, address);
++                        const float weight = reference_route_weights[row * config::SWIGLU_Mb + tile_row];
++                        const bf16 weighted = __float2bfloat16_rn(__bfloat162float(hidden) * weight);
++                        move<bf16>::sts(address, weighted);
++                    }
++                    __syncthreads();
++                }
++            }
+             if constexpr (USE_ROUTED_MXFP8) {
+                 auto &hidden_quant_smem = reinterpret_cast<quant_bf16_tile &>(hidden_smem);
+                 auto &hidden_fp8_smem = reinterpret_cast<quant_fp8_tile &>(gate_smem[stage]);
+@@ -290,7 +316,8 @@ static __device__ __forceinline__ void swiglu_bwd_kernel(
+     const int replayed_gate_up_tile_ready_base_index,
+     const int d_gate_up_row_block_ready_base_index,
+     const int buffer_done_index,
+-    const uint64_t smem_base_addr
++    const uint64_t smem_base_addr,
++    const bool reference_pre_fc2_gate = false
+ ) {
+     static constexpr bool USE_ROUTED_MXFP8 = !IS_SHARED && USE_MXFP8;
+     using gate_up_tile = std::conditional_t<USE_ROUTED_MXFP8, quant_fp8_tile, swiglu_tile>;
+@@ -568,8 +595,19 @@ static __device__ __forceinline__ void swiglu_bwd_kernel(
+                         const float2 gate = __bfloat1622float2(gate_pairs[j]);
+                         const float2 up = __bfloat1622float2(up_pairs[j]);
+                         const float2 d_hidden = __bfloat1622float2(d_hidden_pairs[j]);
+-                        const float2 hidden = swiglu_bwd_pair<IS_CLAMPED, IS_SITU>(gate, up, d_hidden, swiglu_limit, situ_beta, d_gate_pairs[j], d_up_pairs[j]);
+-                        router_grad_partial += d_hidden.x * inv_router_weight * hidden.x + d_hidden.y * inv_router_weight * hidden.y;
++                        float2 d_act = d_hidden;
++                        if (reference_pre_fc2_gate) {
++                            d_act = __bfloat1622float2(__floats2bfloat162_rn(
++                                d_hidden.x * router_weight, d_hidden.y * router_weight));
++                        }
++                        const float2 hidden = swiglu_bwd_pair<IS_CLAMPED, IS_SITU>(
++                            gate, up, d_act, swiglu_limit, situ_beta, d_gate_pairs[j], d_up_pairs[j], reference_pre_fc2_gate);
++                        if (reference_pre_fc2_gate) {
++                            const float2 rounded = __bfloat1622float2(__floats2bfloat162_rn(hidden.x, hidden.y));
++                            router_grad_partial += d_hidden.x * rounded.x + d_hidden.y * rounded.y;
++                        } else {
++                            router_grad_partial += d_hidden.x * inv_router_weight * hidden.x + d_hidden.y * inv_router_weight * hidden.y;
++                        }
+                     }
+                     const auto *d_gate_words = reinterpret_cast<const uint32_t *>(d_gate_pairs);
+                     const auto *d_up_words = reinterpret_cast<const uint32_t *>(d_up_pairs);
+diff --git a/csrc/megakernel/types.cuh b/csrc/megakernel/types.cuh
+index 677d1ae68fd0ab3a052f7c3bacbab5b4f6ce7e83..e9b54fe847cdc6fb3a950f6f542382c8686be0d9 100644
+--- a/csrc/megakernel/types.cuh
++++ b/csrc/megakernel/types.cuh
+@@ -381,6 +381,7 @@ struct globals_fwd {
+     routed_weight_gl w_routed_down;           // (num_local_experts, H, I)
+     routed_weight_sc_gl w_routed_down_sc;     // MXFP8 only: logical down view
+ 
++    const float *reference_route_weights = nullptr;  // global schedule order, BF16 opt-in only
+     index_gl schedule_peer_rank;              // (schedule_capacity,)
+     index_gl schedule_peer_token_idx;         // (schedule_capacity,)
+     index_gl num_tokens;                      // (1,)
+@@ -494,6 +495,7 @@ struct globals_bwd {
+     routed_d_weight_gl d_w_routed_down;                   // logical down view
+ 
+     // Schedules
++    const float *reference_route_weights = nullptr;  // mirrors the forward schedule
+     index_gl schedule_peer_rank;                          // (schedule_capacity,)
+     index_gl schedule_peer_token_idx;                     // (schedule_capacity,)
+     index_gl num_tokens;                                  // (1,)
+diff --git a/csrc/strict_situ.cuh b/csrc/strict_situ.cuh
+new file mode 100644
+index 0000000000000000000000000000000000000000..a3c0f685b896f73c0e712b7919886e80cad6111b
+--- /dev/null
++++ b/csrc/strict_situ.cuh
+@@ -0,0 +1,44 @@
++#pragma once
++#include <cuda_runtime.h>
++
++// ERNIE beta=(4,25). BF16 operands arrive as exactly widened FP32 values.
++// The table is global memory, not a 768-KiB allocation in the constant segment.
++namespace reference_situ {
++static __device__ unsigned int elementary_bits[3 * 65536] = {
++#include "strict_situ_table.inc"
++};
++
++struct Values {
++    float gate_tanh, up_tanh, sigmoid;
++};
++
++static __device__ __forceinline__ Values components(float gate, float up) {
++    unsigned g = __float_as_uint(gate) >> 16;
++    unsigned u = __float_as_uint(up) >> 16;
++    return {__uint_as_float(__ldg(elementary_bits + g)),
++            __uint_as_float(__ldg(elementary_bits + 65536 + u)),
++            __uint_as_float(__ldg(elementary_bits + 131072 + g))};
++}
++
++static __device__ __forceinline__ float forward(float gate, float up) {
++    Values v = components(gate, up);
++    return __fmul_rn(__fmul_rn(__fmul_rn(4.0f, v.gate_tanh), v.sigmoid),
++                     __fmul_rn(25.0f, v.up_tanh));
++}
++
++static __device__ __forceinline__ float backward(float gate, float up, float dy, float &d_gate, float &d_up) {
++    Values v = components(gate, up);
++    const float a = __fmul_rn(4.0f, v.gate_tanh);
++    const float b = __fmul_rn(25.0f, v.up_tanh);
++    const float g = __fmul_rn(a, v.sigmoid);
++    const float da = __fmul_rn(dy, b);
++    const float db = __fmul_rn(dy, g);
++    const float dt = __fmul_rn(__fmul_rn(da, v.sigmoid), 4.0f);
++    const float tanh_grad = __fmul_rn(__fmul_rn(dt, __fmaf_rn(-v.gate_tanh, v.gate_tanh, 1.0f)), 0.25f);
++    const float ds = __fmul_rn(da, a);
++    const float sigmoid_grad = __fmul_rn(__fmul_rn(ds, __fsub_rn(1.0f, v.sigmoid)), v.sigmoid);
++    d_gate = __fadd_rn(tanh_grad, sigmoid_grad);
++    d_up = __fmul_rn(__fmul_rn(__fmul_rn(db, 25.0f), __fmaf_rn(-v.up_tanh, v.up_tanh, 1.0f)), 0.04f);
++    return __fmul_rn(g, b);
++}
++}  // namespace reference_situ
+diff --git a/mok/_fake_impls.py b/mok/_fake_impls.py
+index 6bf3c82760fb435ed4a5e90be17fc23ca24bcf4d..feae9cd3a3eda059ac844ede30ef50874c72248a 100644
+--- a/mok/_fake_impls.py
++++ b/mok/_fake_impls.py
+@@ -148,6 +148,7 @@ def _dispatch_mlp_swiglu_combine_fwd_bf16_fake(
+     w_routed_down_storage_table: torch.Tensor | None = None,
+     situ_beta1: float = 0.0,
+     situ_beta2: float = 0.0,
++    reference_route_weights: torch.Tensor | None = None,
+ ) -> tuple[
+     torch.Tensor,
+     torch.Tensor | None, torch.Tensor,
+@@ -373,6 +374,7 @@ def _dispatch_mlp_swiglu_combine_bwd_bf16_fake(
+     shared_grad_output: torch.Tensor | None = None,
+     situ_beta1: float = 0.0,
+     situ_beta2: float = 0.0,
++    reference_route_weights: torch.Tensor | None = None,
+ ) -> tuple[
+     torch.Tensor | None, torch.Tensor,
+     torch.Tensor | None, torch.Tensor,
+diff --git a/mok/functional.py b/mok/functional.py
+index fce3dce6f3cacf8153059a70caa6c6854249bd0c..c5c9ec5fa71486fc90dd83b7559d3b04b550907d 100644
+--- a/mok/functional.py
++++ b/mok/functional.py
+@@ -32,6 +32,7 @@ class MoKConfig:
+     macrobatch_size: int = 131072
+     schedule_capacity_multiplier: float = 0.5
+     all_gather_top_experts_chunk_bytes: int = 2048
++    reference_pre_fc2_gate: bool = False
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+@@ -56,6 +57,7 @@ class MoKForwardContext:
+     shared_output: torch.Tensor | None = None
+     shared_output_gate: torch.Tensor | None = None
+     situ_beta: tuple[float, float] | None = None
++    reference_route_weights: torch.Tensor | None = None
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+@@ -695,6 +697,12 @@ def forward(
+                 torch.nn.functional.linear(x, shared_output_gate_weight)
+             )
+ 
++    reference_weights = None
++    if config.reference_pre_fc2_gate:
++        if routed_precision_is_mxfp8 or shared_gate_weights is not None or situ_beta is None:
++            raise ValueError("Reference pre-FC2 weighting requires routed-only BF16 SiTU.")
++        from .reference_gate import scheduled_weights
++        reference_weights = scheduled_weights(workspace, schedule, router_weights)
+     if routed_precision_is_mxfp8:
+         if split_weights:
+             if any(weight.scale_storage_table is None for weight in split_triplet):
+@@ -822,6 +830,7 @@ def forward(
+             config.macrobatch_size,
+             config.minibatch_size,
+             *routed_storage_tables,
++            reference_route_weights=reference_weights,
+             **activation_kwargs,
+         )
+         forward_context = MoKForwardContext(
+@@ -832,6 +841,7 @@ def forward(
+             up_routed=up_routed,
+             hidden_shared=hidden_shared,
+             hidden_routed=hidden_routed,
++            reference_route_weights=reference_weights,
+             shared_output=y_shared if shared_output_gate is not None else None,
+             shared_output_gate=shared_output_gate,
+             situ_beta=situ_beta,
+@@ -839,7 +849,10 @@ def forward(
+ 
+     barrier_all(workspace.barrier_buffer, workspace.barrier_buffer_ptrs,
+                 workspace.barrier_buffer_multicast_ptr, workspace.barrier_target)
+-    if shared_output_gate is None:
++    if reference_weights is not None:
++        from .reference_gate import ordered_sum
++        output = ordered_sum(workspace.combine_buffer, schedule.top_experts)
++    elif shared_output_gate is None:
+         output = fwd_epilogue(y_shared, workspace.combine_buffer,
+                               workspace.router_weight_buffer, schedule.top_experts)
+     else:
+@@ -1408,6 +1421,10 @@ def backward(
+         gate_routed = forward_context.gate_routed
+         up_routed = forward_context.up_routed
+         hidden_routed = forward_context.hidden_routed
++        if config.reference_pre_fc2_gate:
++            if forward_context.reference_route_weights is None:
++                raise ValueError("Reference backward requires the matching scheduled forward weights.")
++            kernel_kwargs["reference_route_weights"] = forward_context.reference_route_weights
+         bwd_args = (
+             workspace.d_y_buffer,
+             workspace.d_y_buffer_ptrs,
+@@ -1492,8 +1509,11 @@ def backward(
+ 
+     barrier_all(workspace.barrier_buffer, workspace.barrier_buffer_ptrs,
+                 workspace.barrier_buffer_multicast_ptr, workspace.barrier_target)
+-    d_x = bwd_epilogue(d_x_shared, workspace.d_x_routed_buffer,
+-                       schedule.top_experts)
++    if config.reference_pre_fc2_gate:
++        from .reference_gate import ordered_sum
++        d_x = ordered_sum(workspace.d_x_routed_buffer, schedule.top_experts)
++    else:
++        d_x = bwd_epilogue(d_x_shared, workspace.d_x_routed_buffer, schedule.top_experts)
+     d_w_output_gate = None
+     if gate is not None:
+         with torch.no_grad():
+diff --git a/mok/ops.py b/mok/ops.py
+index 6487580d8835a4696d734bd3ea91f6d8f924d07c..95aac6a72a789cd1fe1eeb741b29048ab80589ce 100644
+--- a/mok/ops.py
++++ b/mok/ops.py
+@@ -613,6 +613,7 @@ def dispatch_mlp_swiglu_combine_fwd_bf16(
+     w_routed_down_storage_table: torch.Tensor | None = None,
+     situ_beta1: float = 0.0,
+     situ_beta2: float = 0.0,
++    reference_route_weights: torch.Tensor | None = None,
+ ) -> tuple[
+     torch.Tensor,
+     torch.Tensor | None,
+@@ -789,7 +790,7 @@ def dispatch_mlp_swiglu_combine_fwd_bf16(
+         topk, swiglu_limit, num_comm_sms, macrobatch_size, minibatch_size,
+         w_routed_gate_storage_table, w_routed_up_storage_table,
+         w_routed_down_storage_table,
+-        situ_beta1=situ_beta1, situ_beta2=situ_beta2,
++        situ_beta1=situ_beta1, situ_beta2=situ_beta2, reference_route_weights=reference_route_weights,
+     )
+ 
+ 
+@@ -1581,6 +1582,7 @@ def dispatch_mlp_swiglu_combine_bwd_bf16(
+     shared_grad_output: torch.Tensor | None = None,
+     situ_beta1: float = 0.0,
+     situ_beta2: float = 0.0,
++    reference_route_weights: torch.Tensor | None = None,
+ ) -> tuple[
+     torch.Tensor | None,
+     torch.Tensor,
+@@ -1760,7 +1762,7 @@ def dispatch_mlp_swiglu_combine_bwd_bf16(
+         schedule_peer_rank, schedule_peer_token_idx, num_tokens, tokens_per_expert,
+         topk, swiglu_limit, num_comm_sms, macrobatch_size, minibatch_size,
+         shared_grad_output=shared_grad_output,
+-        situ_beta1=situ_beta1, situ_beta2=situ_beta2,
++        situ_beta1=situ_beta1, situ_beta2=situ_beta2, reference_route_weights=reference_route_weights,
+     )
+ 
+ 
+@@ -1787,6 +1789,7 @@ def dispatch_mlp_swiglu_combine_bwd_bf16_accum(
+     shared_grad_output: torch.Tensor | None = None,
+     situ_beta1: float = 0.0,
+     situ_beta2: float = 0.0,
++    reference_route_weights: torch.Tensor | None = None,
+ ) -> tuple[torch.Tensor, ...]:
+     """Runs BF16 backward and accumulates wgrad directly into FP32 or BF16 buffers.
+ 
+@@ -1830,7 +1833,7 @@ def dispatch_mlp_swiglu_combine_bwd_bf16_accum(
+     if weight_storage_tables is None:
+         outputs = _C.dispatch_mlp_swiglu_combine_bwd_bf16(
+             *args, *main_grads, shared_grad_output=shared_grad_output,
+-            situ_beta1=situ_beta1, situ_beta2=situ_beta2,
++            situ_beta1=situ_beta1, situ_beta2=situ_beta2, reference_route_weights=reference_route_weights,
+         )
+     else:
+         if len(weight_storage_tables) != 3 or len(main_grad_storage_tables) != 3:
+@@ -1840,7 +1843,7 @@ def dispatch_mlp_swiglu_combine_bwd_bf16_accum(
+         outputs = _C.dispatch_mlp_swiglu_combine_bwd_bf16(
+             *args, *main_grads, *weight_storage_tables, *main_grad_storage_tables,
+             shared_grad_output=shared_grad_output,
+-            situ_beta1=situ_beta1, situ_beta2=situ_beta2,
++            situ_beta1=situ_beta1, situ_beta2=situ_beta2, reference_route_weights=reference_route_weights,
+         )
+     return outputs[:9]
+ 
+diff --git a/mok/reference_gate.py b/mok/reference_gate.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..150e08d8d2fb2197cdc9802930e9d9e249341453
+--- /dev/null
++++ b/mok/reference_gate.py
+@@ -0,0 +1,44 @@
++"""Reference arithmetic for BF16 routed SiTU experts."""
++import torch
++from torch.distributed import _functional_collectives
++import triton
++import triton.language as tl
++
++
++def scheduled_weights(workspace, schedule, weights):
++    """Collect the ten logical weights and put them in the local expert's schedule order."""
++    gathered = _functional_collectives.all_gather_tensor(
++        weights.contiguous(), gather_dim=0, group=workspace.group_name
++    )
++    packed = _functional_collectives.wait_tensor(gathered).reshape(-1)
++    peer = schedule.peer_rank.long()
++    index = schedule.peer_token_idx.long()
++    valid = (
++        (torch.arange(peer.numel(), device=peer.device) < schedule.num_tokens.reshape(()))
++        & (peer >= 0) & (peer < workspace.ep_size)
++        & (index >= 0) & (index < weights.numel())
++    )
++    linear = torch.where(valid, peer * weights.numel() + index, 0)
++    return torch.where(valid, packed[linear], 0.0).contiguous()
++
++
++@triton.jit
++def _ordered_sum(values, routes, out, width: tl.constexpr, k: tl.constexpr, block: tl.constexpr):
++    row = tl.program_id(0)
++    channel = tl.program_id(1) * block + tl.arange(0, block)
++    accumulator = tl.full((block,), 0., tl.float32)
++    for slot in tl.static_range(k):
++        expert = tl.load(routes + row*k + slot)
++        branch = tl.load(values + (row*k+slot)*width + channel,
++                         mask=(channel < width) & (expert >= 0), other=0.)
++        accumulator = (accumulator + branch.to(tl.float32)).to(tl.bfloat16).to(tl.float32)
++    tl.store(out + row*width + channel, accumulator, mask=channel < width)
++
++
++def ordered_sum(values, routes):
++    """Merge preweighted BF16 contributions in the original logical selector's slot order."""
++    n, k = routes.shape
++    width = values.shape[-1]
++    out = torch.empty((n,width), dtype=values.dtype, device=values.device)
++    _ordered_sum[(n,triton.cdiv(width,256))](values, routes, out, width, k, 256)
++    return out
+diff --git a/scripts/make_strict_situ_table.py b/scripts/make_strict_situ_table.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..c624733f12b2596bc74e59716b7340decd81fa90
+--- /dev/null
++++ b/scripts/make_strict_situ_table.py
+@@ -0,0 +1,35 @@
++"""Embed the three FP32 elementary function values of ERNIE's BF16 SiTU on SM103."""
++from pathlib import Path
++import hashlib
++import sys
++
++import torch
++import triton
++import triton.language as tl
++from triton.language.extra.cuda import libdevice
++
++
++@triton.jit
++def materialize(out, BLOCK: tl.constexpr):
++    i = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
++    x = i.to(tl.uint16).to(tl.bfloat16, bitcast=True).to(tl.float32)
++    tl.store(out + i, libdevice.tanh(x * 0.25))
++    tl.store(out + 65536 + i, libdevice.tanh(x * 0.04))
++    tl.store(out + 131072 + i, libdevice.div_rn(1.0, 1.0 + libdevice.exp(-x)))
++
++
++def main():
++    dest = Path(sys.argv[1])
++    assert torch.cuda.get_device_capability() == (10, 3), "generate the oracle table on GB300"
++    table = torch.empty(3 * 65536, dtype=torch.float32, device="cuda")
++    materialize[(256,)](table, 256)
++    values = table.cpu().numpy().view("uint32")
++    assert values[0] == values[65536] == 0 and values[131072] == 0x3f000000
++    print("table-bytes", values.nbytes, "table-sha256", hashlib.sha256(values.tobytes()).hexdigest(), flush=True)
++    with dest.open("w") as out:
++        for start in range(0, len(values), 12):
++            out.write(", ".join(f"0x{x:08x}u" for x in values[start:start + 12]) + ",\n")
++
++
++if __name__ == "__main__":
++    main()
