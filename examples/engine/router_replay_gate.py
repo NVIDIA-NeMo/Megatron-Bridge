@@ -52,7 +52,6 @@ from megatron.bridge.utils.common_utils import print_rank_0
 
 
 def _gate_arguments(parser) -> None:
-    parser.add_argument("--overrides", default="{}", help="Recipe fields by dotted path, as JSON")
     parser.add_argument(
         "--aux-loss-coeff",
         type=float,

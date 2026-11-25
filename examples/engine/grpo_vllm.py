@@ -47,6 +47,7 @@ def parse_args(add_arguments=None, description: str = __doc__) -> argparse.Names
     parser.add_argument("--model", default=None, help="HF model ID or directory; resolves the recipe (not --recipe)")
     parser.add_argument("--seq-length", type=int, default=None, help="Packed tokens per microbatch, with --model")
     parser.add_argument("--hardware", default=None, help="GPU family for --model, e.g. GB300 (default: detect)")
+    parser.add_argument("--overrides", default="{}", help="Recipe fields by dotted path, as JSON")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--parquet", required=True, help="DAPO-Math-17k parquet")
     parser.add_argument("--rounds", type=int, default=3)
@@ -136,10 +137,11 @@ def build_engine(args: argparse.Namespace, *, checkpoint_path: str | None = None
             seq_length=args.seq_length,
             hardware=args.hardware,
             checkpoint_path=checkpoint_path,
-            overrides={"router_replay": args.router_replay},
+            overrides={"router_replay": args.router_replay, **json.loads(args.overrides)},
             **kwargs,
         )
     recipe = getattr(recipes, args.recipe)(**json.loads(args.recipe_kwargs))
+    recipes.apply_recipe_overrides(recipe, json.loads(args.overrides))
     recipe.router_replay = args.router_replay
     return TrainingEngine.from_recipe(recipe, checkpoint_path=checkpoint_path, **kwargs)
 
