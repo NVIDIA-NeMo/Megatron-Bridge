@@ -113,6 +113,8 @@ def _weight_gradient_hook_tensor(weight, dtype):
 
 
 class _StrictMtpTrainingLoss(_MultimaxTrainingLoss):
+    """Native CE rounding and BF16 projection VJP shared by either head when requested."""
+
     @staticmethod
     def backward(ctx, loss_grad, unused_predictions_grad):
         from .strict_mtp_head import accumulate_strict_mtp_gradients
@@ -166,11 +168,10 @@ def chunked_training_loss(
             hidden = owners.to_contiguous(hidden)
             labels = owners.to_contiguous(labels, seq_dim=1)
     seq, batch, width = hidden.shape
-    loss_function = (
-        _StrictMtpTrainingLoss
-        if head_kind == "mtp" and getattr(layer.config, "ernie_mtp_strict_head_backward", False)
-        else _MultimaxTrainingLoss
+    strict = (head_kind == "mtp" and getattr(layer.config, "ernie_mtp_strict_head_backward", False)) or (
+        head_kind == "main" and getattr(layer.config, "ernie_main_strict_head_backward", False)
     )
+    loss_function = _StrictMtpTrainingLoss if strict else _MultimaxTrainingLoss
     losses, predictions = loss_function.apply(
         hidden.reshape(-1, width),
         weight,

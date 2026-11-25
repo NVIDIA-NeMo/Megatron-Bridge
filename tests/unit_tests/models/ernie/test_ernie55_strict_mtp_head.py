@@ -1,16 +1,21 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 import torch.nn.functional as F
 
-from megatron.bridge.models.ernie.modeling_ernie55.chunked_head import _StrictMtpTrainingLoss
+from megatron.bridge.models.ernie.modeling_ernie55.chunked_head import (
+    chunked_training_loss,
+)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="BF16 CUDA training head")
 @pytest.mark.parametrize("save_projection", [True, False])
-def test_strict_mtp_head_matches_dense_vjp(save_projection):
+@pytest.mark.parametrize("kind", ["main", "mtp"])
+def test_strict_head_matches_dense_vjp(save_projection, kind):
     pytest.importorskip("fused_weight_gradient_mlp_cuda")
     torch.manual_seed(717)
     device = torch.device("cuda")
@@ -24,9 +29,26 @@ def test_strict_mtp_head_matches_dense_vjp(save_projection):
     labels[::7] = -100
     upstream = torch.randn(rows, device=device).masked_fill(labels < 0, 0)
 
-    loss, prediction = _StrictMtpTrainingLoss.apply(
-        x, weight, ranges, scales, labels, 768, save_projection, True, "triton"
+    cfg = SimpleNamespace(
+        ernie_chunked_head_backend="triton",
+        ernie_chunked_head_rows=768,
+        ernie_head_save_projection=save_projection,
+        ernie_main_strict_head_backward=kind == "main",
+        ernie_mtp_strict_head_backward=kind == "mtp",
     )
+    layer = SimpleNamespace(
+        training=True,
+        config=cfg,
+        weight=weight,
+        output_dtype=None,
+        sequence_parallel=False,
+        multimax_ranges=ranges,
+        multimax_ts=scales,
+    )
+    loss, prediction = chunked_training_loss(
+        layer, x.unsqueeze(1), labels[None], None, return_argmax=True, head_kind=kind
+    )
+    loss, prediction = loss.flatten(), prediction.flatten()
     actual = torch.autograd.grad(loss, (x, ranges, scales), upstream)
 
     # Project at the forward's original chunk geometry and mirror the native BF16
@@ -56,9 +78,9 @@ def test_strict_mtp_head_matches_dense_vjp(save_projection):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="BF16 CUDA training head")
-def test_only_mtp_selects_the_strict_backward(monkeypatch):
-    from types import SimpleNamespace
-
+@pytest.mark.parametrize("strict_main", [False, True])
+@pytest.mark.parametrize("strict_mtp", [False, True])
+def test_heads_select_their_own_backward(monkeypatch, strict_main, strict_mtp):
     from megatron.bridge.models.ernie.modeling_ernie55 import chunked_head
 
     x = torch.empty(3, 1, 16, device="cuda", dtype=torch.bfloat16)
@@ -68,7 +90,8 @@ def test_only_mtp_selects_the_strict_backward(monkeypatch):
         ernie_chunked_head_backend="triton",
         ernie_chunked_head_rows=16,
         ernie_head_save_projection=True,
-        ernie_mtp_strict_head_backward=True,
+        ernie_mtp_strict_head_backward=strict_mtp,
+        ernie_main_strict_head_backward=strict_main,
     )
     layer = SimpleNamespace(
         training=True,
@@ -93,6 +116,7 @@ def test_only_mtp_selects_the_strict_backward(monkeypatch):
     labels = torch.zeros(1, 3, dtype=torch.long, device="cuda")
     for kind in ("main", "mtp"):
         chunked_head.chunked_training_loss(layer, x, labels, None, head_kind=kind)
-    cfg.ernie_mtp_strict_head_backward = False
-    chunked_head.chunked_training_loss(layer, x, labels, None, head_kind="mtp")
-    assert calls == ["production", "strict", "production"]
+    assert calls == [
+        "strict" if strict_main else "production",
+        "strict" if strict_mtp else "production",
+    ]
