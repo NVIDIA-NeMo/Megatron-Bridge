@@ -170,6 +170,20 @@ A separate experiment captured all 8,388,608 FP32 coordinates of the shared FC2 
 
 All three full-matrix updates exceed both preset tolerances against independent Swift. With identical full gradients, optimizer inputs and clipping norms, the two container implementations of Muon produced elementwise-identical FP32 updates. Changing ownership reduced the observed FC2 gradient discrepancy under BF16 returns. Substantial update differences remain.
 
+An independent repeat of original Swift on the same inputs found 0.00088% relative L2 in the full step-2 gradient and 0.42574% relative L2 in the actual FP32 update. The relative update peak was 18.4519%, with 678 of 8,388,608 coordinates exceeding 1% of the original update peak. Read the peak metric alongside relative L2 and the number of affected weights. Both preset thresholds still apply.
+
+A separate diagnostic tested the natural G2 configuration with the reference head weight gradient described below. Bridge computed its own router bias. Across 64 ranks, every bias bit matched original Swift before step 1, before step 2, and at the final microbatch. Only the final shared-expert FC2 in the last trunk block and MTP used a diagnostic BF16-return backward with the original contiguous CP owners.
+
+| Step 2 versus the same original Swift update | FC2 coordinates | Reduced gradient relative L2 | Actual FP32 update relative L2 | Actual update relative peak |
+|---|---:|---:|---:|---:|
+| Public G2 with reference head weight gradient, default FC2 | 8,217 sampled | 0.09039% | 2.93746% | 17.0765% |
+| Same sampled coordinates, diagnostic FC2 ownership and BF16 return | 8,217 sampled | 0.04208% | 1.62520% | 14.7541% |
+| Diagnostic FC2 ownership and BF16 return, complete matrix | 8,388,608 | 0.04130% | 2.08444% | 37.8551% |
+
+On the full matrix, 30,147 update coordinates exceeded 1% of the original peak. The FC2 ownership change above is experimental. The commands below exercise the public head weight-gradient option with the default FC2.
+
+To locate the gradient difference, the diagnostic captured real operands for the first microbatch on one data replica, aligning all 262,144 physical tokens across CP. For both optimizer steps the FC2 input activations matched bitwise across 131 sampled channels at both call sites. The incoming output gradients at MTP also matched across all 133 sampled channels. At the last trunk call on step 2, they differed at 4,170,710 of 34,865,152 values, with 0.02357% relative L2. Substituting only that incoming gradient reproduced all differences in the sampled FP64 weight-gradient contraction, totaling 0.00841% relative L2 after adding the two call sites. The full native optimizer comparison above includes all microbatches, data replicas and the trainer’s reductions.
+
 ### Shared output-weight rounding
 
 Run the same natural eight-document G2 optimizer comparison with one additional option. Keep the reference capture, weights and training environment used above. On each Bridge node, run:
