@@ -372,8 +372,8 @@ def main():
     if int(os.environ.get("WORLD_SIZE", 0)) != 64:
         parser.error("Use torchrun on all 64 GPUs.")
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-    install(args.role, args.output)
     if args.role == "bridge":
+        install(args.role, args.output)
         source = Path(__file__).resolve().parents[3] / "scripts/training/run_recipe.py"
         sys.path.insert(0, str(source.parent))
         from run_recipe import main as run_recipe
@@ -393,6 +393,9 @@ def main():
     else:
         from megatron.core.distributed import DistributedDataParallel
         from swift.megatron import megatron_sft_main
+
+        # Load the original pipeline and its argument definitions before importing trainer adapters.
+        install(args.role, args.output)
 
         torch.use_deterministic_algorithms(True)
         # Release allocator cache once before the original synchronization on this 288 GB setup.
