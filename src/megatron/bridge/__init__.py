@@ -13,10 +13,18 @@
 # limitations under the License.
 """Megatron Bridge - A component of the Megatron ecosystem."""
 
+import os
+
+
+_triton_cache_autotuning = os.environ.get("TRITON_CACHE_AUTOTUNING")
 try:
     import modelopt.torch  # noqa: F401
 except ImportError:
     pass
+# modelopt can import vllm, which sets TRITON_CACHE_AUTOTUNING=1 at import time; keep the caller's environment.
+if _triton_cache_autotuning is None:
+    os.environ.pop("TRITON_CACHE_AUTOTUNING", None)
+del _triton_cache_autotuning
 
 import megatron.bridge.diffusion.models  # noqa: F401 — registers diffusion bridges
 import megatron.bridge.models  # noqa: F401 — triggers all bridge and HF Auto class registrations

@@ -14,10 +14,17 @@ summary: >
   Nemotron 3.5 Lightning support verification covers conversion, inference,
   and training on H100 and GB200. Recipe names, work paths, and this
   verification-card path use the public Lightning name. The conversion and
-  inference evidence used the 26.08 release-candidate software stack; every
-  verified training leaf was measured in the public 26.08 base container at
-  the card's default bridge_commit, with the H100 long-context SFT leaf on
-  four eight-GPU nodes.
+  inference evidence used the 26.08 release-candidate software stack. The H100
+  training leaves and the GB200 FSDP and performance leaves were measured in
+  the public 26.08 base container at the card's default bridge_commit, with
+  the H100 long-context SFT leaf on four eight-GPU nodes; the GB200
+  long-context SFT leaf was measured in that container at its own
+  bridge_commit. The GB200 pretrain, sft, sft_export_inference, peft, and
+  checkpoint_resume leaves were re-measured in the public
+  NeMo 26.10.01 release container at that same leaf-level
+  bridge_commit, with pretrain and checkpoint_resume in the same runtime,
+  because the default bridge_commit cannot load distributed checkpoints with
+  PyTorch 2.15 and later.
 verification_index:
   model_level:
     verified:
@@ -199,6 +206,7 @@ items:
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: a5abd32c092f989eef3bd633e6274fd2240d353f  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -216,27 +224,28 @@ items:
         --save_dir work/model-verification/nemotron-3.5-lightning-gb200/pretrain-reference
         logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
-      last_verified: 2026-10-09
+      last_verified: 2026-11-21
       metrics:
-        initial_loss: 12.171970
-        final_loss: 5.785674
-        last_10_steps_step_time_ms_avg: 21296.790
+        initial_loss: 12.17234
+        final_loss: 5.780638
+        last_10_steps_step_time_ms_avg: 21348.290
         # Real RP2 convergence-verification run, not a mock-data benchmark.
-        last_10_steps_model_tflops_per_gpu_avg: 692.930
-        last_10_steps_tokens_per_second_per_gpu_avg: 24618.170
-        peak_allocated_memory_gib: 162.430
-        peak_reserved_memory_gib: 166.630
+        last_10_steps_model_tflops_per_gpu_avg: 691.370
+        last_10_steps_tokens_per_second_per_gpu_avg: 24558.782
+        peak_allocated_memory_gib: 158.940
+        peak_reserved_memory_gib: 167.800
       expected_result: >
         On two complete four-GPU GB200 nodes in one segment-2 NVLink domain,
         the sequence-length-8,192, GBS/MBS 512/2 real-data RP2
         convergence-verification run completes exactly 100 finite-loss
         optimizer steps with natural routing, Transformer Engine fused cross
         entropy, CUDA graphs disabled, finite LM/MTP-1/MTP-2 losses, and no
-        skipped or NaN iterations. LM loss is 12.171970 -> 5.785674;
-        real-data steps 91-100 average 21,296.790 ms / 692.930 TFLOP/s/GPU
-        with 162.430 GiB peak allocated and 166.630 GiB peak reserved memory.
+        skipped or NaN iterations. LM loss is 12.17234 -> 5.780638;
+        real-data steps 91-100 average 21,348.290 ms / 691.370 TFLOP/s/GPU
+        with 158.940 GiB peak allocated and 167.800 GiB peak reserved memory.
         Complete 15-file, 430-GiB checkpoints with distributed metadata are
-        written at steps 50 and 100.
+        written at steps 50 and 100. Measured in the public
+        NeMo 26.10.01 release container at this item's Bridge commit.
 
   pretrain_fsdp:
     GB200:
@@ -351,6 +360,7 @@ items:
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: a5abd32c092f989eef3bd633e6274fd2240d353f  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         moe_dispatcher: hybridep
@@ -361,24 +371,27 @@ items:
         --mode sft --max_steps 100
         --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000
         --save_dir work/model-verification/nemotron-3.5-lightning-gb200/sft-checkpoints
-      last_verified: 2026-10-09
+      last_verified: 2026-11-21
       metrics:
-        initial_loss: 0.4407797
-        final_loss: 0.2761015
-        last_10_steps_step_time_ms_avg: 9533.730
-        last_10_steps_model_tflops_per_gpu_avg: 183.250
-        last_10_steps_tokens_per_second_per_gpu_avg: 6874.120
-        peak_allocated_memory_gib: 101.510
-        peak_reserved_memory_gib: 103.910
+        initial_loss: 0.4408245
+        final_loss: 0.2758881
+        last_10_steps_step_time_ms_avg: 7855.790
+        last_10_steps_model_tflops_per_gpu_avg: 222.340
+        last_10_steps_tokens_per_second_per_gpu_avg: 8342.382
+        peak_allocated_memory_gib: 101.420
+        peak_reserved_memory_gib: 105.010
       expected_result: >
         On two complete four-GPU GB200 nodes in one segment-2 NVLink domain,
         packed OpenMathInstruct-2 full SFT completes exactly 100 finite-loss
-        optimizer steps with active MTP gradients. LM loss is 0.4407797 ->
-        0.2761015, MTP-1 loss is 0.7373838 -> 0.4145924, and MTP-2 loss is
-        0.8092746 -> 0.4743617. Steps 91-100 average 9,533.730 ms / 183.250
-        TFLOP/s/GPU with 101.510 GiB peak allocated and 103.910 GiB peak
+        optimizer steps with active MTP gradients. LM loss is 0.4408245 ->
+        0.2758881, MTP-1 loss is 0.5187955 -> 0.3258408, and MTP-2 loss is
+        0.6007083 -> 0.3771348. Steps 91-100 average 7,855.790 ms / 222.340
+        TFLOP/s/GPU with 101.420 GiB peak allocated and 105.010 GiB peak
         reserved memory. No iteration is skipped or NaN, and the complete
         12-file reloadable full-model checkpoint is written at step 100.
+        Measured in the public NeMo 26.10.01 release container at
+        this item's Bridge commit; MTP losses cover completion tokens only
+        (SFT loss mask), as in the GB200 long-context SFT leaf.
 
   sft_export_inference:
     H100:
@@ -406,6 +419,7 @@ items:
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: a5abd32c092f989eef3bd633e6274fd2240d353f  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
@@ -422,8 +436,8 @@ items:
           --hf-model work/model-verification/nemotron-3.5-lightning-gb200/sft-hf-export
           --prompt "Solve briefly: If 3x + 5 = 20, what is x?"
           --max-new-tokens 45 --chat-template --disable-thinking
-      last_verified: 2026-10-09
-      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format with architecture NemotronHForCausalLM. The deterministic verifier reloads the export with Hugging Face Transformers, failing on any missing, unexpected, or mismatched weight, and one greedy generation produces exactly 45 new tokens. The literal completion is: \"To solve for \u0024x\u0024, follow these steps:\n\n1. Subtract 5 from both sides of the equation:\n\\[ 3x + 5 - 5 = 20 - 5 \\Rightarrow 3x\"."
+      last_verified: 2026-11-21
+      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format with architecture NemotronHForCausalLM. The deterministic verifier reloads the export with Hugging Face Transformers, failing on any missing, unexpected, or mismatched weight, and one greedy generation produces exactly 45 new tokens. The literal completion is: \"To solve for \u0024x\u0024, follow these steps:\n\n1. Subtract 5 from both sides of the equation:\n\\[ 3x + 5 - 5 = 20 - 5 \\Rightarrow 3x\". Measured in the public NeMo 26.10.01 release container at this item's Bridge commit."
 
   sft_long_context:
     H100:
@@ -476,49 +490,44 @@ items:
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: a5abd32c092f989eef3bd633e6274fd2240d353f  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 2
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
-        --recipe nemotron_3_5_lightning_sft_config
-        --mode sft --dataset openmathinstruct2 --max_steps 100 --seq_length 32768
+        --recipe nemotron_3_5_lightning_sft_32k_config
+        --mode sft --dataset openmathinstruct2 --max_steps 100
         --lr 5e-6 --min_lr 0 --warmup_iters 10
-        --context_parallel_size 2 --expert_tensor_parallel_size 1
-        --expert_model_parallel_size 8
         --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000
-        model.moe_flex_dispatcher_backend=hybridep
         'dataset.hf_dataset.load_kwargs={revision:"469216e3f46f4dacf476b382e192485ea51a143e"}'
         dataset.enable_offline_packing=true
         'dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}'
-        model.cp_comm_type=a2a model.cross_entropy_loss_fusion=false
-        model.calculate_per_token_loss=true model.recompute_granularity=selective
-        'model.recompute_modules=[moe,layernorm,core_attn,mlp]'
-        model.recompute_method=null model.recompute_num_layers=null
-        model.moe_router_force_load_balancing=false ddp.average_in_collective=false
-        ddp.overlap_param_gather=false optimizer.overlap_param_gather=false
         scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0
         checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false
         checkpoint.async_save=false
         --save_dir work/model-verification/nemotron-3.5-lightning-gb200/long-sft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-10-12
+      last_verified: 2026-11-06
       metrics:
-        initial_loss: 0.4268849
-        final_loss: 0.2653473
-        last_10_steps_step_time_ms_avg: 41101.830
-        last_10_steps_model_tflops_per_gpu_avg: 420.700
-        last_10_steps_tokens_per_second_per_gpu_avg: 12755.831
+        initial_loss: 0.4268937
+        final_loss: 0.2648948
+        last_10_steps_step_time_ms_avg: 31931.380
+        last_10_steps_model_tflops_per_gpu_avg: 437.850
+        last_10_steps_tokens_per_second_per_gpu_avg: 16419.209
       expected_result: >
         Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K
-        steps with LM loss 0.4268849 -> 0.2653473 and MTP-1 loss 0.7321853 ->
-        0.4469699. All 100 steps have finite LM/MTP losses and no skipped or
-        NaN iterations. Steps 91-100 average 41,101.830 ms / 420.700
+        steps with LM loss 0.4268937 -> 0.2648948 and MTP-1 loss 0.5040868 ->
+        0.3120846. All 100 steps have finite LM/MTP losses and no skipped or
+        NaN iterations. Steps 91-100 average 31,931.380 ms / 437.850
         TFLOP/s/GPU. The complete step-100 checkpoint has distributed metadata,
         saved run configuration and training state, 12 files, and a latest
-        marker of 100.
+        marker of 100. This leaf's MTP losses cover completion tokens only (SFT
+        loss mask); the H100 long-context leaf's default bridge_commit predates
+        that masking and computes MTP loss over every token, so the two leaves
+        have different MTP objectives and are not convergence-comparable.
 
   peft:
     H100:
@@ -564,6 +573,7 @@ items:
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: a5abd32c092f989eef3bd633e6274fd2240d353f  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         moe_dispatcher: hybridep
@@ -586,21 +596,23 @@ items:
         --save_dir work/model-verification/nemotron-3.5-lightning-gb200/peft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-10-09
+      last_verified: 2026-11-21
       metrics:
-        initial_loss: 0.4406565
-        final_loss: 0.2857773
-        last_10_steps_step_time_ms_avg: 21602.620
-        last_10_steps_model_tflops_per_gpu_avg: 80.940
-        last_10_steps_tokens_per_second_per_gpu_avg: 3033.706
+        initial_loss: 0.440778
+        final_loss: 0.2893645
+        last_10_steps_step_time_ms_avg: 21336.240
+        last_10_steps_model_tflops_per_gpu_avg: 82.010
+        last_10_steps_tokens_per_second_per_gpu_avg: 3071.581
       expected_result: >
         Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss
-        steps with 48 rank-local adapter attachment records covering MTP
-        attention, expert, and shared-expert layers, LM loss 0.4406565 ->
-        0.2857773, finite MTP-1 loss 0.7370399 -> 0.4370756, and no skipped or
-        NaN iterations. Steps 91-100 average 21,602.620 ms / 80.940
-        TFLOP/s/GPU, and the complete 12-file adapter checkpoint is written at
-        step 100 with a latest marker of 100.
+        steps with adapters attached to MTP attention, expert, and
+        shared-expert layers, LM loss 0.440778 -> 0.2893645, finite MTP-1
+        loss 0.5188039 -> 0.3485382, and no skipped or NaN iterations. Steps
+        91-100 average 21,336.240 ms / 82.010 TFLOP/s/GPU, and the complete
+        12-file adapter checkpoint is written at step 100 with a latest marker
+        of 100. Measured in the public NeMo 26.10.01
+        release container at this item's Bridge commit; MTP losses cover completion
+        tokens only (SFT loss mask), as in the GB200 long-context SFT leaf.
 
   checkpoint_resume:
     H100:
@@ -648,6 +660,7 @@ items:
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: a5abd32c092f989eef3bd633e6274fd2240d353f  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
@@ -665,13 +678,13 @@ items:
         --save_dir work/model-verification/nemotron-3.5-lightning-gb200/pretrain-resumed
         logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
-      last_verified: 2026-10-09
+      last_verified: 2026-11-21
       metrics:
-        initial_loss: 6.165206
-        final_loss: 5.788184
-        last_10_steps_step_time_ms_avg: 23340.290
-        last_10_steps_model_tflops_per_gpu_avg: 632.260
-        last_10_steps_tokens_per_second_per_gpu_avg: 22462.789
+        initial_loss: 6.170808
+        final_loss: 5.780383
+        last_10_steps_step_time_ms_avg: 20062.690
+        last_10_steps_model_tflops_per_gpu_avg: 735.700
+        last_10_steps_tokens_per_second_per_gpu_avg: 26132.488
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -682,10 +695,13 @@ items:
         The continuation restores optimizer, scheduler, data-order, and RNG
         state from the matched 8K step-50 reference, begins at step 51, and
         finishes at step 100 in a distinct output root. Resumed losses
-        6.165206 and 5.788184 match uninterrupted losses 6.165206 and 5.785674
+        6.170808 and 5.780383 match uninterrupted losses 6.170808 and 5.780638
         at steps 51 and 100. All 150 shared LM/MTP-1/MTP-2 values pass with a
-        maximum relative difference of 0.163026%, no iteration is skipped or
+        maximum relative difference of 0.069209%, no iteration is skipped or
         NaN, and the 15-file, 430-GiB step-100 checkpoint is complete.
+        Measured in the public NeMo 26.10.01 release container at this item's
+        Bridge commit, resuming the pretrain reference written in that same
+        container at the same commit.
 
   pretrain_performance:
     H100:

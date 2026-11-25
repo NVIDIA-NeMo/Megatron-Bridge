@@ -64,6 +64,10 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("gpt-oss-20b", "sft", "H100"): (2048, 128, 8),
     ("gpt-oss-20b", "peft", "H100"): (2048, 128, 1),
     ("gpt-oss-20b", "checkpoint_resume", "H100"): (4096, 512, 16),
+    ("inkling-2-small", "pretrain", "GB200"): (4096, 1024, 128),
+    ("inkling-2-small", "sft", "GB200"): (8192, 8, 128),
+    ("inkling-2-small", "sft_long_context", "GB200"): (32768, 8, 128),
+    ("inkling-2-small", "peft", "GB200"): (8192, 8, 32),
     ("moonlight-16b-a3b", "pretrain", "H100"): (4096, 1024, 16),
     ("moonlight-16b-a3b", "sft", "H100"): (8192, 8, 8),
     ("moonlight-16b-a3b", "sft_long_context", "H100"): (8192, 128, 8),
@@ -89,10 +93,14 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("nemotron-3-nano-omni-30b-a3b-reasoning", "sft_long_context", "H100"): (8192, 64, 8),
     ("nemotron-3-nano-omni-30b-a3b-reasoning", "peft", "H100"): (4096, 64, 8),
     ("nemotron-3-super-120b-a12b", "pretrain", "H100"): (4096, 1280, 64),
+    ("nemotron-3-super-120b-a12b", "pretrain", "GB200"): (4096, 1280, 64),
+    ("nemotron-3-super-120b-a12b", "sft", "GB200"): (8192, 32, 16),
     ("nemotron-3-super-120b-a12b", "sft_long_context", "H100"): (32768, 2, 16),
     ("nemotron-3-super-120b-a12b", "peft", "GB200"): (8192, 16, 16),
+    ("nemotron-3-super-120b-a12b", "checkpoint_resume", "H100"): (4096, 1280, 64),
+    ("nemotron-3-super-120b-a12b", "checkpoint_resume", "GB200"): (4096, 1280, 64),
     ("nemotron-3-super-120b-a12b", "pretrain_performance", "H100"): (4096, 1280, 64),
-    ("nemotron-3-super-120b-a12b", "pretrain_performance", "GB200"): (4096, 512, 64),
+    ("nemotron-3-super-120b-a12b", "pretrain_performance", "GB200"): (8192, 512, 64),
     ("nemotron-3-ultra-550b-a55b", "pretrain", "GB200"): (8192, 256, 256),
     ("nemotron-3-ultra-550b-a55b", "pretrain_performance", "GB200"): (8192, 256, 256),
     ("nemotron-3-ultra-550b-a55b", "pretrain_performance", "GB300"): (8192, 256, 256),
@@ -146,11 +154,17 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("qwen3.6-35b-a3b", "pretrain", "GB200"): (4096, 512, 8),
     ("qwen3.6-35b-a3b", "sft", "H100"): (4096, 32, 16),
     ("qwen3.6-35b-a3b", "sft", "GB200"): (4096, 32, 8),
+    ("qwen3.6-35b-a3b", "sft", "GB300"): (4096, 32, 8),
     ("qwen3.6-35b-a3b", "sft_long_context", "H100"): (8192, 512, 32),
+    ("qwen3.6-35b-a3b", "sft_long_context", "GB300"): (8192, 512, 8),
     ("qwen3.6-35b-a3b", "peft", "H100"): (4096, 32, 16),
     ("qwen3.6-35b-a3b", "peft", "GB200"): (4096, 32, 8),
+    ("qwen3.6-35b-a3b", "peft", "GB300"): (4096, 32, 8),
+    ("qwen3.8-flash-next", "sft", "GB200"): (4096, 16, 64),
+    ("qwen3.8-flash-next-text-only", "pretrain", "GB200"): (4096, 32, 32),
     ("qwen3.8-27b", "pretrain", "GB200"): (4096, 32, 16),
     ("qwen3.8-27b", "sft", "GB200"): (4096, 32, 16),
+    ("qwen3.8-27b", "sft", "H100"): (4096, 32, 16),
     ("qwen3.8-27b", "sft_long_context", "GB200"): (8192, 32, 16),
     ("qwen3.8-27b", "peft", "GB200"): (4096, 32, 4),
     ("qwen3.8-27b", "checkpoint_resume", "GB200"): (4096, 32, 16),
@@ -766,6 +780,51 @@ def test_sft_export_inference_accepts_hf_inference_launcher():
     )
 
     assert errors == []
+
+
+@pytest.mark.parametrize(
+    ("resume_override", "expected_errors"),
+    [
+        ("checkpoint.stage_precision_aware_optimizer_state_on_cpu=true", []),
+        ("train.empty_unused_memory_level=2", []),
+        (
+            "model.recompute_granularity=full",
+            [
+                "/items/checkpoint_resume/H100/command: reference and resume launch settings must match; "
+                "differences found in model.recompute_granularity"
+            ],
+        ),
+    ],
+)
+def test_resume_allows_execution_only_overrides(resume_override, expected_errors):
+    validator = _load_validator()
+    errors = []
+    common_command = (
+        "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 "
+        "--recipe llm_pretrain --mode pretrain --dataset megatron-indexed --max_steps 100"
+    )
+
+    validator._validate_resume_against_pretrain(
+        {
+            "status": "verified",
+            "bridge_commit": "commit",
+            "command": (
+                f"{common_command} {resume_override} "
+                "--load_dir work/reference --save_dir work/resume checkpoint.ckpt_step=50"
+            ),
+        },
+        {
+            "status": "verified",
+            "bridge_commit": "commit",
+            "command": f"{common_command} --save_dir work/reference checkpoint.load=null",
+        },
+        resume_path=("items", "checkpoint_resume", "H100"),
+        pretrain_path=("items", "pretrain", "H100"),
+        default_bridge_commit=None,
+        errors=errors,
+    )
+
+    assert errors == expected_errors
 
 
 @pytest.mark.parametrize(

@@ -168,6 +168,36 @@ class TestFinalize:
         config.finalize()
         assert config.hybrid_layer_pattern == "H-|DEHEDE/DE"
 
+    def test_pipeline_parallel_exchanges_tensor_shapes(self):
+        # Rows are packed THD rows of data-dependent length, so PP stages must exchange shapes before each
+        # transfer; with static buffers the first micro-batch hangs in recv_forward.
+        config = _config(pipeline_model_parallel_size=2, pipeline_dtype=torch.float32)
+        config.finalize()
+        assert config.transformer.variable_seq_lengths is True
+
+        # The setting follows from the row format, so a preset False is overridden at PP > 1 as well.
+        preset = _config(pipeline_model_parallel_size=2, pipeline_dtype=torch.float32)
+        preset.transformer.variable_seq_lengths = False
+        preset.finalize()
+        assert preset.transformer.variable_seq_lengths is True
+
+        single_stage = _config()
+        single_stage.finalize()
+        assert single_stage.transformer.variable_seq_lengths is False
+
+    def test_pipeline_parallel_rejects_allgather_dispatcher(self):
+        # Megatron-Core cannot combine the allgather dispatcher with variable sequence lengths; the ERNIE config
+        # says so itself (Megatron-Core's own check would fire later with a message that names no cause).
+        config = _config(pipeline_model_parallel_size=2, pipeline_dtype=torch.float32)
+        config.transformer.moe_token_dispatcher_type = "allgather"
+        with pytest.raises(ValueError, match="ERNIE 5.5 pipeline stages exchange rows .* 'allgather'"):
+            config.finalize()
+
+        single_stage = _config()
+        single_stage.transformer.moe_token_dispatcher_type = "allgather"
+        single_stage.finalize()
+        assert single_stage.transformer.variable_seq_lengths is False
+
     @pytest.mark.skipif(context_parallel.load_cp_layout_api() is None, reason="no CP partition converter (MCore main)")
     def test_context_parallel_stack_is_contiguous(self):
         with pytest.raises(ValueError, match="contiguous"):

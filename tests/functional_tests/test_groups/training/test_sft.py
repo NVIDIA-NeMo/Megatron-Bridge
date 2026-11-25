@@ -78,6 +78,7 @@ class Llama3TinyModelProvider(GPTModelProvider):
     vocab_size: int | None = None
 
 
+@pytest.mark.usefixtures("reset_distributed")
 class TestSupervisedFinetuning:
     """
     Test end to end supervised finetuning: pretrain -> save checkpoint -> finetune using pretrained checkpoint.

@@ -14,6 +14,7 @@ performance-summary-archive.md
 :caption: Guides
 :hidden:
 
+unified-megatron.md
 parallelisms.md
 performance-guide.md
 recipe-usage.md
@@ -47,6 +48,7 @@ models/gemma/index.md
 models/glm/index.md
 models/gpt_oss/index.md
 models/hy_v3/hy-v3.md
+models/inkling/inkling2.md
 models/kimi/index.md
 models/llama/index.md
 models/minicpmo/minicpmo-4.5.md

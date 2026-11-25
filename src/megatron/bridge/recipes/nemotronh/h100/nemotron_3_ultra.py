@@ -220,7 +220,6 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     cfg.model.mlp_chunks_for_training = 64
     cfg.model.mamba_chunk_size = 256
 
-    cfg.dist.use_megatron_fsdp = True
     cfg.ddp.use_megatron_fsdp = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.keep_fp8_transpose_cache = False
@@ -301,10 +300,10 @@ def nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config() -> C
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.use_te_rng_tracker = True
-    # Selective recompute fits the 48-node layout. The standalone pre-MLP norms are not
-    # recomputed: on Transformer Engine 2.18 and later, a recomputed TE norm that is a pipeline
-    # stage's first backward operation fails with "invalid device context" on GPU 0, and most
-    # stages of this layout end with an MoE layer.
+    # Selective recompute fits the 48-node layout, which was validated without recomputing the
+    # standalone pre-MLP norms. That choice worked around a Transformer Engine 2.18+ failure
+    # ("invalid device context" in a recomputed TE norm that starts a pipeline stage's backward on
+    # GPU 0) that Bridge's initialization now prevents.
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
@@ -366,8 +365,8 @@ def nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config() -> C
         **COMMON_RECIPE_ENV_VARS,
         # One hardware queue, as Megatron-Core expects for TP>1 with sequence parallelism on Hopper.
         "CUDA_DEVICE_MAX_CONNECTIONS": 1,
-        # cuDNN normalization kernels bypass TE's NVRTC norm path, which fails with "invalid device
-        # context" when a norm is the first backward operation on GPU 0 (TE 2.18 and later).
+        # cuDNN normalization kernels, as validated for the 48-node layout. They were adopted to avoid the
+        # same Transformer Engine 2.18+ "invalid device context" failure, which Bridge now prevents.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # HybridEP topology for this recipe.
@@ -473,6 +472,12 @@ def nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config(
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.use_distributed_optimizer = True
+
+    # As in the SFT recipe, the first step compiles kernels stage by stage through the pipeline.
+    # With empty kernel caches, iteration 1 takes about 9.5 minutes on 32 H100s and stage 0 waits
+    # about 6 of them for its first backward, about 4 minutes short of the 10-minute default
+    # timeout. slurm_peft.sh passes the same 90 minutes.
+    cfg.dist.distributed_timeout_minutes = 90
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {

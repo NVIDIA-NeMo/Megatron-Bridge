@@ -154,6 +154,9 @@ def process_config_with_overrides(
     """
     # Convert config to OmegaConf, tracking excluded callable fields
     omega_conf, excluded_fields = create_omegaconf_dict_config(config)
+    # Normalize mirrored defaults before merging so only a user-supplied flat
+    # YAML key can take precedence over its nested spelling.
+    _nest_flat_builder_fields(omega_conf)
 
     # Merge YAML config file if provided
     if config_filepath:
@@ -235,9 +238,10 @@ def _nested_transformer(cfg: DictConfig, section_name: str) -> DictConfig | None
 def _nest_flat_builder_fields(cfg: DictConfig) -> None:
     """Move flat keys of builder-backed model sections to where the config declares them.
 
-    No builder config declares a field both on itself and on its transformer
-    config, or declares the provider's HF source fields, so such a key is a
-    flat override, for example from a merged YAML file. The flat value wins.
+    A key present at both levels is a flat override, for example from a
+    merged YAML file. The flat value wins. Mirrored builder fields are
+    synchronized back to the outer config when overrides are applied.
+    Provider HF source fields belong in checkpoint metadata.
     """
     for section_name in list(cfg.keys()):
         transformer = _nested_transformer(cfg, section_name)
@@ -285,6 +289,28 @@ def _route_flat_builder_override(cfg: DictConfig, override: str) -> str:
         prefix = "~" if prefix.startswith("~") else "++"
         return f"{prefix}{section_name}.{_METADATA_KEY}.{field_path}{separator}{value}"
     return override
+
+
+def _is_hf_config(val: Any) -> bool:
+    """Check if a value is a Hugging Face ``PretrainedConfig`` or ``GenerationConfig``.
+
+    The OmegaConf conversion stores these as ``_target_`` dicts that override application
+    instantiates again, so they are leaves rather than dataclasses to walk field by field.
+    Walking their fields would also fail for heterogeneous configs (Transformers 5.20+), whose
+    per-layer attributes raise when read for the whole model.
+
+    Args:
+        val: The value to check
+
+    Returns:
+        True if the value is a Hugging Face config, False otherwise (or without transformers)
+    """
+    try:
+        from transformers import GenerationConfig, PretrainedConfig  # type: ignore
+    except ModuleNotFoundError:
+        # transformers is optional
+        return False
+    return isinstance(val, (GenerationConfig, PretrainedConfig))
 
 
 def _is_omegaconf_problematic(val: Any) -> bool:
@@ -340,21 +366,15 @@ def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:
 
     # Handle Hugging Face GenerationConfig / PretrainedConfig by converting to a callable dict
     # compatible with our YAML representer logic
-    try:
-        from transformers import GenerationConfig, PretrainedConfig  # type: ignore
-
-        if isinstance(val_to_convert, (GenerationConfig, PretrainedConfig)):
-            cfg_class = val_to_convert.__class__
-            target = f"{inspect.getmodule(cfg_class).__name__}.{cfg_class.__qualname__}.from_dict"
-            logger.debug(f"Converting {cfg_class.__qualname__} at {current_path} to callable dict")
-            return {
-                "_target_": target,
-                "_call_": True,
-                "config_dict": val_to_convert.to_dict(),
-            }
-    except ModuleNotFoundError:
-        # transformers is optional; if unavailable, fall through to other handlers
-        pass
+    if _is_hf_config(val_to_convert):
+        cfg_class = val_to_convert.__class__
+        target = f"{inspect.getmodule(cfg_class).__name__}.{cfg_class.__qualname__}.from_dict"
+        logger.debug(f"Converting {cfg_class.__qualname__} at {current_path} to callable dict")
+        return {
+            "_target_": target,
+            "_call_": True,
+            "config_dict": val_to_convert.to_dict(),
+        }
 
     # Explicitly handle torch.dtype - convert to string
     if isinstance(val_to_convert, torch.dtype):
@@ -395,6 +415,11 @@ def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:
                 logger.warning(f"Error processing field {field_path}: {e}")
                 continue
 
+        from megatron.bridge.models.transformer_config import TransformerConfig
+
+        if isinstance(val_to_convert, TransformerConfig):
+            # Reapply original inputs, not inferred defaults that look like explicit overrides.
+            res.update(val_to_convert._inferred_cp_inputs())
         return res
 
     # Handle lists
@@ -470,7 +495,7 @@ def _track_excluded_fields(obj: Any, path: str = "") -> Dict[str, Any]:
                 else:
                     excluded_fields[field_path] = field_value
                     logger.debug(f"Tracking excluded callable: {field_path}")
-            elif dataclasses.is_dataclass(field_value):
+            elif dataclasses.is_dataclass(field_value) and not _is_hf_config(field_value):
                 nested_excluded = _track_excluded_fields(field_value, field_path)
                 excluded_fields.update(nested_excluded)
             elif isinstance(field_value, dict):
@@ -630,3 +655,14 @@ def _apply_overrides(config_obj: DataclassInstance, overrides_dict: Dict[str, An
                 logger.warning(
                     f"Could not set attribute {type(config_obj).__name__}.{key} to value '{value}'. Error: {e}"
                 )
+
+    # Routing collapses mirrored builder fields into transformer overrides so
+    # flat and nested CLI spellings retain their normal precedence. Apply the
+    # resolved value through the builder setter to keep both owners consistent.
+    transformer_overrides = overrides_dict.get(_TRANSFORMER_KEY)
+    if isinstance(transformer_overrides, dict):
+        for name in getattr(type(config_obj), "_mirrored_transformer_fields", ()):
+            if name in overrides_dict:
+                setattr(config_obj, name, overrides_dict[name])
+            elif name in transformer_overrides:
+                setattr(config_obj, name, getattr(config_obj.transformer, name))

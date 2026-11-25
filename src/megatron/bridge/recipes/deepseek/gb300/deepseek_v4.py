@@ -59,6 +59,7 @@ def deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
+    cfg.model.mhc_norm_eps_inside_sqrt = not cfg.model.use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -137,6 +138,7 @@ def deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
+    cfg.model.mhc_norm_eps_inside_sqrt = not cfg.model.use_fused_mhc  # fused mHC only supports eps outside the sqrt
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.moe_token_dispatcher_type = "alltoall"

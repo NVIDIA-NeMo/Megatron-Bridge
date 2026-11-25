@@ -18,16 +18,33 @@ import pkgutil
 from collections.abc import Callable
 
 import pytest
+from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
     llama3_8b_pretrain_8gpu_gb200_nvfp4_config,
     llama3_70b_pretrain_64gpu_gb200_nvfp4_config,
 )
+from megatron.bridge.perf_recipes.llama.gb300.llama3 import (
+    llama3_8b_pretrain_8gpu_gb300_fp8mx_config,
+    llama3_8b_pretrain_8gpu_gb300_nvfp4_config,
+    llama3_70b_pretrain_64gpu_gb300_fp8mx_config,
+    llama3_70b_pretrain_64gpu_gb300_nvfp4_config,
+)
 from megatron.bridge.perf_recipes.llama.h100.llama3 import (
     llama3_70b_pretrain_64gpu_h100_fp8cs_config,
 )
+from megatron.bridge.perf_recipes.llama.vrnvl72.llama3 import (
+    llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config,
+    llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config,
+    llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config,
+    llama3_70b_pretrain_64gpu_vrnvl72_nvfp4_config,
+)
+from megatron.bridge.recipes.llama.llama3 import llama3_70b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import (
+    _OfflineAutoBridge,
+    _OfflineModelProvider,
     patch_recipe_construction_dependencies,
     patch_recipe_module_global,
 )
@@ -114,6 +131,64 @@ def test_llama3_70b_h100_fp8cs_sets_explicit_pipeline_layout(monkeypatch: pytest
     assert cfg.train.micro_batch_size == 1
 
 
+class _OfflineLlama3_70BBridge(_OfflineAutoBridge):
+    """Offline bridge with Llama 3 70B's 80 layers; the shared offline provider defaults to 32."""
+
+    def to_megatron_provider(self, *args: object, **kwargs: object) -> _OfflineModelProvider:
+        provider = super().to_megatron_provider(*args, **kwargs)
+        provider.num_layers = 80
+        return provider
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("vrnvl72_factory", "gb300_factory"),
+    (
+        (llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config, llama3_70b_pretrain_64gpu_gb300_fp8mx_config),
+        (llama3_70b_pretrain_64gpu_vrnvl72_nvfp4_config, llama3_70b_pretrain_64gpu_gb300_nvfp4_config),
+    ),
+    ids=lambda value: value.__name__,
+)
+def test_llama3_70b_vrnvl72_sets_explicit_pipeline_layout(
+    monkeypatch: pytest.MonkeyPatch,
+    vrnvl72_factory: Callable[[], ConfigContainer],
+    gb300_factory: Callable[[], ConfigContainer],
+) -> None:
+    """The 64-GPU VRNVL72 MXFP8 and NVFP4 recipes move layers off the stage that holds the output layer and loss.
+
+    The last PP rank keeps 18 transformer layers and the two middle ranks take one more each
+    (20/21/21/18); its last virtual stage holds 2 layers plus the output layer and loss. The
+    parallelism and batch sizes stay those of the GB300 recipe.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+    patch_recipe_module_global(monkeypatch, llama3_70b_pretrain_config, "AutoBridge", _OfflineLlama3_70BBridge)
+
+    cfg = vrnvl72_factory()
+    gb300_cfg = gb300_factory()
+
+    assert cfg.model.pipeline_model_parallel_layout == "Et*4|t*5|t*5|t*4|(t*4|)*15,ttL"
+
+    pp_size = cfg.model.pipeline_model_parallel_size
+    layout = PipelineParallelLayerLayout(cfg.model.pipeline_model_parallel_layout, pp_size).layout
+    assert len(layout[0]) == cfg.model.virtual_pipeline_model_parallel_size
+    assert [sum(stage.count(LayerType.decoder) for stage in rank) for rank in layout] == [20, 21, 21, 18]
+    assert sum(stage.count(LayerType.decoder) for rank in layout for stage in rank) == cfg.model.num_layers
+    assert layout[0][0][0] == LayerType.embedding
+    assert layout[-1][-1] == [LayerType.decoder, LayerType.decoder, LayerType.loss]
+
+    # The layout is only valid for this parallelism; pin it to the GB300 recipe's.
+    for name in (
+        "tensor_model_parallel_size",
+        "pipeline_model_parallel_size",
+        "virtual_pipeline_model_parallel_size",
+        "context_parallel_size",
+        "num_layers",
+    ):
+        assert getattr(cfg.model, name) == getattr(gb300_cfg.model, name), name
+    assert cfg.train.global_batch_size == gb300_cfg.train.global_batch_size
+    assert cfg.train.micro_batch_size == gb300_cfg.train.micro_batch_size
+
+
 @pytest.mark.unit
 def test_llama3_70b_gb200_nvfp4_captures_whole_transformer_layer(monkeypatch: pytest.MonkeyPatch) -> None:
     """The 64-GPU GB200 NVFP4 recipe captures the whole Transformer layer per graph.
@@ -165,3 +240,94 @@ def test_llama3_8b_gb200_nvfp4_runs_dpa_in_fp8_current_scaling(monkeypatch: pyte
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.train.global_batch_size == 128
     assert cfg.train.micro_batch_size == 4
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("vrnvl72_factory", "gb300_factory"),
+    (
+        (llama3_8b_pretrain_8gpu_vrnvl72_fp8mx_config, llama3_8b_pretrain_8gpu_gb300_fp8mx_config),
+        (llama3_70b_pretrain_64gpu_vrnvl72_fp8mx_config, llama3_70b_pretrain_64gpu_gb300_fp8mx_config),
+    ),
+    ids=lambda value: value.__name__,
+)
+def test_llama3_vrnvl72_fp8mx_perf_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    vrnvl72_factory: Callable[[], ConfigContainer],
+    gb300_factory: Callable[[], ConfigContainer],
+) -> None:
+    """The VRNVL72 MXFP8 recipes add FP8 attention, fused QKV+RoPE, TE SwiGLU and no attention mask to GB300.
+
+    Apart from those settings, the mixed-precision settings and the parallelism match GB300.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    vrnvl72_cfg = vrnvl72_factory()
+    gb300_cfg = gb300_factory()
+
+    assert vrnvl72_cfg.mixed_precision.fp8_dot_product_attention is True
+    assert gb300_cfg.mixed_precision.fp8_dot_product_attention is False
+    vrnvl72_cfg.mixed_precision.fp8_dot_product_attention = False
+    assert vrnvl72_cfg.mixed_precision == gb300_cfg.mixed_precision
+
+    assert vrnvl72_cfg.model.fused_single_qkv_rope is True
+    assert vrnvl72_cfg.model.use_te_activation_func is True
+    assert vrnvl72_cfg.model.bias_activation_fusion is False
+    assert vrnvl72_cfg.dataset.create_attention_mask is False
+
+    for name in (
+        "tensor_model_parallel_size",
+        "pipeline_model_parallel_size",
+        "virtual_pipeline_model_parallel_size",
+        "context_parallel_size",
+        "cuda_graph_impl",
+    ):
+        assert getattr(vrnvl72_cfg.model, name) == getattr(gb300_cfg.model, name), name
+    assert vrnvl72_cfg.train.global_batch_size == gb300_cfg.train.global_batch_size
+    assert vrnvl72_cfg.train.micro_batch_size == gb300_cfg.train.micro_batch_size
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("vrnvl72_factory", "gb300_factory"),
+    (
+        (llama3_8b_pretrain_8gpu_vrnvl72_nvfp4_config, llama3_8b_pretrain_8gpu_gb300_nvfp4_config),
+        (llama3_70b_pretrain_64gpu_vrnvl72_nvfp4_config, llama3_70b_pretrain_64gpu_gb300_nvfp4_config),
+    ),
+    ids=lambda value: value.__name__,
+)
+def test_llama3_vrnvl72_nvfp4_perf_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    vrnvl72_factory: Callable[[], ConfigContainer],
+    gb300_factory: Callable[[], ConfigContainer],
+) -> None:
+    """The VRNVL72 NVFP4 recipes add MXFP8 attention, fused QKV+RoPE, TE SwiGLU and no attention mask to GB300.
+
+    ``NVTE_DPA_FP8_RECIPE`` selects block-scaled MXFP8 for that attention path. Apart from the FP8 attention
+    flag, the mixed-precision settings and the parallel layout match GB300.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    vrnvl72_cfg = vrnvl72_factory()
+    gb300_cfg = gb300_factory()
+
+    assert vrnvl72_cfg.model.fused_single_qkv_rope is True
+    assert vrnvl72_cfg.model.use_te_activation_func is True
+    assert vrnvl72_cfg.model.bias_activation_fusion is False
+    assert vrnvl72_cfg.dataset.create_attention_mask is False
+
+    assert vrnvl72_cfg.mixed_precision.fp8_dot_product_attention is True
+    assert gb300_cfg.mixed_precision.fp8_dot_product_attention is False
+    assert vrnvl72_cfg.env_vars["NVTE_DPA_FP8_RECIPE"] == "MXFP8BlockScaling"
+    vrnvl72_cfg.mixed_precision.fp8_dot_product_attention = False
+    assert vrnvl72_cfg.mixed_precision == gb300_cfg.mixed_precision
+    for name in (
+        "tensor_model_parallel_size",
+        "pipeline_model_parallel_size",
+        "virtual_pipeline_model_parallel_size",
+        "context_parallel_size",
+        "cuda_graph_impl",
+    ):
+        assert getattr(vrnvl72_cfg.model, name) == getattr(gb300_cfg.model, name), name
+    assert vrnvl72_cfg.train.global_batch_size == gb300_cfg.train.global_batch_size
+    assert vrnvl72_cfg.train.micro_batch_size == gb300_cfg.train.micro_batch_size

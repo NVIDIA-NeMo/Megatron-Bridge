@@ -33,11 +33,12 @@ Layout. Hugging Face layer ``i`` (``model.layers.{i}``) is two hybrid layers:
 
 MTP depth ``k`` is Hugging Face layer ``num_hidden_layers + k``. ERNIE 5.5's MTP shares its body with
 the decoder's last two hybrid layers (``mtp_shared_last_layer``; SD-MTP): the body's Parameters are the
-decoder's, so ``named_parameters()`` and this registry see them once, under their decoder names, and
-the checkpoint needs no body tensors (the released checkpoints carry a copy, which the import skips:
-:func:`ernie55_mtp_body_copy_keys`). The MTP router's ``expert_bias`` is a buffer, owned by the MTP
-layer (Hugging Face ``block_sparse_moe.e_score_correction_bias``). A non-shared MTP has no checkpoint
-to validate its key layout against and is rejected.
+decoder's, so ``named_parameters()`` and this registry see them once, under their decoder names. The
+released checkpoints also store the body under every MTP layer (:func:`ernie55_mtp_body_copy_names`): the
+import skips those copies, and the export writes the ones its source checkpoint holds, because inference
+engines read their MTP draft layer for speculative decoding from them. The MTP router's ``expert_bias`` is
+a buffer, owned by the MTP layer (Hugging Face ``block_sparse_moe.e_score_correction_bias``). A non-shared
+MTP has no checkpoint to validate its key layout against and is rejected.
 
 Every hybrid layer is wrapped in a hyper-connection module, so its weights live under
 ``.inner_layer.`` and its mHC weights under ``.hyper_connection.`` (Hugging Face
@@ -90,12 +91,13 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, ClassVar
 
 import torch
 from torch import nn
 from torch.distributed._tensor import DTensor
 
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.gtp import _is_gtp_param
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
@@ -122,6 +124,7 @@ __all__ = [
     "ernie55_hf_param_dtypes",
     "ernie55_mapping_registry",
     "ernie55_mtp_body_copy_keys",
+    "ernie55_mtp_body_copy_names",
     "ernie55_param_mappings",
     "join_kv_b_proj",
     "rope_row_permutation",
@@ -957,29 +960,119 @@ def ernie55_hf_param_dtypes(hf_config: Any) -> dict[str, torch.dtype]:
     return dict(sorted(dtypes.items()))
 
 
-def ernie55_mtp_body_copy_keys(hf_config: Any, hf_keys: Iterable[str] | None = None) -> set[str]:
-    """Names of the MTP body copies a checkpoint may hold besides :func:`ernie55_hf_param_dtypes`.
+_FP8_SCALE_SUFFIX = "_scale_inv"
 
-    Every MTP depth shares the decoder's last layer (``mtp_shared_last_layer``), so the registry reads that body
-    once, under the last layer's names. A checkpoint that also stores it under the MTP layer, as the released ones
-    do, holds a copy of those tensors; these are the copies' names. The released checkpoints name the copied
-    hyper-connections ``transformer_layer.{self_attention,mlp}_hyper_connection.*``.
+
+def ernie55_fp8_block_size(hf_config: Any) -> int | None:
+    """The block size of a checkpoint's FP8 block-scaled weights, or ``None`` for an unquantized checkpoint.
+
+    The released FP8 checkpoints (``quantization_config`` with ``quant_method`` ``fp8`` and ``weight_block_size``
+    ``[128, 128]``) store their linear projections (attention, dense MLP, experts, latent and MTP projections) as
+    e4m3 with one power-of-two inverse scale per block under ``<name>_scale_inv``; the router, the norms, the
+    hyper-connections and the other tensors keep their dtypes. The import dequantizes such a checkpoint tensor
+    by tensor (:meth:`Ernie55WeightConversionMixin.maybe_modify_loaded_hf_weight`).
+
+    Args:
+        hf_config: The checkpoint's Hugging Face config (a ``PretrainedConfig`` or a dict).
+
+    Raises:
+        NotImplementedError: For a quantization other than blockwise FP8 with square blocks.
+    """
+    quantization = _hf_get(hf_config, "quantization_config")
+    if quantization is None:
+        return None
+    if not isinstance(quantization, Mapping):  # transformers may wrap the dict in a config object
+        quantization = quantization.to_dict() if hasattr(quantization, "to_dict") else vars(quantization)
+    method, block = quantization.get("quant_method"), quantization.get("weight_block_size")
+    square_blocks = (
+        method == "fp8"
+        and isinstance(block, (list, tuple))
+        and len(block) == 2
+        and all(isinstance(size, int) and not isinstance(size, bool) and size > 0 for size in block)
+        and block[0] == block[1]
+    )
+    if not square_blocks:
+        raise NotImplementedError(
+            "ERNIE 5.5 conversion: only blockwise FP8 weights with square blocks (quantization_config with "
+            f"quant_method 'fp8' and weight_block_size [n, n]) can be imported, got {dict(quantization)!r}."
+        )
+    return int(block[0])
+
+
+def _dequantize_fp8(
+    weight: torch.Tensor, name: str, hf_state_dict: Mapping[str, torch.Tensor], block_size: int, dtype: torch.dtype
+) -> torch.Tensor:
+    """An FP8 checkpoint tensor times its blockwise inverse scales, in ``dtype``; any other tensor unchanged.
+
+    Raises:
+        ValueError: If ``weight`` is FP8 but not 2D, or ``<name>_scale_inv`` is missing or does not hold one
+            scale per ``block_size`` x ``block_size`` block. A plain cast would silently load the weight
+            without its scales.
+    """
+    if not quantization_utils.is_fp8_tensor(weight):
+        return weight
+    scale_inv = hf_state_dict.get(f"{name}{_FP8_SCALE_SUFFIX}")
+    blocks = tuple(-(-size // block_size) for size in weight.shape) if weight.ndim == 2 else None
+    if blocks is None or scale_inv is None or tuple(scale_inv.shape) != blocks:
+        raise ValueError(
+            f"ERNIE 5.5 conversion: {name} is {weight.dtype} {tuple(weight.shape)} in the checkpoint, which needs "
+            f"{name}{_FP8_SCALE_SUFFIX} with one inverse scale per {block_size}x{block_size} block, shape "
+            f"{blocks}; got {None if scale_inv is None else tuple(scale_inv.shape)}."
+        )
+    return quantization_utils.dequantize_fp8_blockwise(weight, scale_inv.float(), block_size=block_size, dtype=dtype)
+
+
+def ernie55_mtp_body_copy_names(hf_config: Any, hf_keys: Iterable[str] | None = None) -> dict[str, tuple[str, ...]]:
+    """For every tensor of the shared MTP body, the names a checkpoint may also store it under.
+
+    Every MTP depth shares the decoder's last layer (``mtp_shared_last_layer``), so the registry reads and writes
+    that body once, under the last layer's names. A checkpoint that also stores it under the MTP layer, as the
+    released ones do, holds a copy of those tensors; this maps each last-layer name to its copies' names. The
+    released checkpoints name the copied hyper-connections
+    ``transformer_layer.{self_attention,mlp}_hyper_connection.*``; both spellings are listed. A name the MTP
+    layer owns (its router's ``e_score_correction_bias``) is never a copy.
 
     Args:
         hf_config: The checkpoint's Hugging Face config (a ``PretrainedConfig`` or a dict).
         hf_keys: :func:`ernie55_hf_param_dtypes` of ``hf_config``, when the caller already has it.
+
+    Returns:
+        The copies' names by last-layer tensor name; a tensor without copies has no entry.
     """
     layout = Ernie55HFLayout.from_hf_config(hf_config)
     expected = set(ernie55_hf_param_dtypes(hf_config) if hf_keys is None else hf_keys)
     last = f"model.layers.{layout.num_hidden_layers - 1}."
-    bodies = [name[len(last) :] for name in expected if name.startswith(last)]
-    bodies += [f"transformer_layer.{body}" for body in bodies if "_hyper_connection." in body]
-    copies = {
-        f"model.layers.{layout.num_hidden_layers + depth}.{body}"
-        for depth in range(layout.num_mtp_layers)
-        for body in bodies
-    }
-    return copies - expected
+    names: dict[str, tuple[str, ...]] = {}
+    for name in sorted(expected):
+        if not name.startswith(last):
+            continue
+        body = name[len(last) :]
+        bodies = [body, f"transformer_layer.{body}"] if "_hyper_connection." in body else [body]
+        copies = tuple(
+            copy
+            for depth in range(layout.num_mtp_layers)
+            for copy in (f"model.layers.{layout.num_hidden_layers + depth}.{spelling}" for spelling in bodies)
+            if copy not in expected
+        )
+        if copies:
+            names[name] = copies
+    return names
+
+
+def ernie55_mtp_body_copy_keys(hf_config: Any, hf_keys: Iterable[str] | None = None) -> set[str]:
+    """Names of the MTP body copies a checkpoint may hold besides :func:`ernie55_hf_param_dtypes`.
+
+    The union of :func:`ernie55_mtp_body_copy_names`. The import skips these tensors, and the export writes the
+    ones its source checkpoint holds (:meth:`Ernie55WeightConversionMixin.maybe_modify_converted_hf_weight`).
+
+    Args:
+        hf_config: The checkpoint's Hugging Face config (a ``PretrainedConfig`` or a dict).
+        hf_keys: :func:`ernie55_hf_param_dtypes` of ``hf_config``, when the caller already has it.
+
+    Returns:
+        The copies' names.
+    """
+    return {copy for copies in ernie55_mtp_body_copy_names(hf_config, hf_keys).values() for copy in copies}
 
 
 def check_ernie55_checkpoint_keys(hf_config: Any, hf_keys: Iterable[str]) -> None:
@@ -989,7 +1082,8 @@ def check_ernie55_checkpoint_keys(hf_config: Any, hf_keys: Iterable[str]) -> Non
     that no mapping reads, which would drop weights silently: for example the shared experts of a config
     without ``n_shared_experts``. The one exception is :func:`ernie55_mtp_body_copy_keys`: the released
     checkpoints also store the shared MTP body under every MTP layer, a copy of the decoder's last layer that
-    the import does not read.
+    the import does not read. An FP8 checkpoint (:func:`ernie55_fp8_block_size`) also holds the inverse scales
+    of its weights, ``<name>_scale_inv``, which the import consumes together with the weights.
 
     Args:
         hf_config: The checkpoint's Hugging Face config (a ``PretrainedConfig`` or a dict).
@@ -1003,7 +1097,16 @@ def check_ernie55_checkpoint_keys(hf_config: Any, hf_keys: Iterable[str]) -> Non
     expected = set(ernie55_hf_param_dtypes(hf_config))
     keys = set(hf_keys)
     missing = sorted(expected - keys)
-    unexpected = sorted(keys - expected - ernie55_mtp_body_copy_keys(hf_config, expected))
+    read = expected | ernie55_mtp_body_copy_keys(hf_config, expected)
+    unexpected = keys - read
+    if ernie55_fp8_block_size(hf_config) is not None:
+        # the inverse scales of the FP8 weights, consumed with their weights
+        unexpected = {
+            name
+            for name in unexpected
+            if not (name.endswith(_FP8_SCALE_SUFFIX) and name[: -len(_FP8_SCALE_SUFFIX)] in read)
+        }
+    unexpected = sorted(unexpected)
     if missing or unexpected:
         raise ValueError(
             "ERNIE 5.5 conversion: the checkpoint does not hold exactly the tensors its config describes: "
@@ -1018,6 +1121,11 @@ def _check_checkpoint_of(hf_pretrained: Any) -> None:
         check_ernie55_checkpoint_keys(hf_pretrained.config, source.get_all_keys())
 
 
+def _exports_an_mtp_layer(tasks: Iterable[Any]) -> bool:
+    """Whether ``tasks`` convert a parameter an MTP layer owns, which a model built without MTP does not have."""
+    return any(task is not None and task.global_param_name.startswith("mtp.") for task in tasks)
+
+
 class Ernie55WeightConversionMixin:
     """ERNIE 5.5 weight conversion for a ``MegatronModelBridge`` subclass, listed before it among the bases.
 
@@ -1025,6 +1133,10 @@ class Ernie55WeightConversionMixin:
     * Loading a checkpoint first checks that it holds exactly the tensors the registry reads
       (:func:`check_ernie55_checkpoint_keys`). A weight source with no checkpoint behind it (an external
       state dict, a config-only wrapper) is not checked.
+    * Export also writes the shared MTP body under the MTP layers, for every copy the source checkpoint holds
+      (:meth:`maybe_modify_converted_hf_weight`), so the export has the source checkpoint's tensor names.
+    * An FP8 checkpoint's weights are dequantized as they are loaded, with the inverse scales stored next to
+      them (:func:`ernie55_fp8_block_size`); a strict export does not expect those scales in the source shards.
 
     Example::
 
@@ -1032,6 +1144,10 @@ class Ernie55WeightConversionMixin:
         class Ernie55Bridge(Ernie55WeightConversionMixin, MegatronModelBridge):
             ...
     """
+
+    # The inverse scales of an FP8 checkpoint's weights: the import consumes them with their weights
+    # (:meth:`maybe_modify_loaded_hf_weight`), and a strict export does not expect them in the source shards.
+    DEQUANTIZED_SOURCE_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = (_FP8_SCALE_SUFFIX,)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """The ERNIE 5.5 mapping registry of ``self.hf_config``.
@@ -1061,3 +1177,114 @@ class Ernie55WeightConversionMixin:
         if kwargs.get("hf_state_dict") is None:
             _check_checkpoint_of(hf_pretrained)
         return super().stream_weights_hf_to_megatron(hf_pretrained, megatron_model, *args, **kwargs)
+
+    def build_conversion_tasks(self, hf_pretrained: Any, megatron_model: Any, *args: Any, **kwargs: Any) -> Any:
+        """Build the conversion tasks as ``MegatronModelBridge`` does, and note whether the model has an MTP layer.
+
+        The copies of the shared MTP body belong to the MTP layer: :meth:`maybe_modify_converted_hf_weight`
+        writes them only when the export writes that layer's own tensors too. A model built without MTP exports
+        no MTP layer, and a strict save of it leaves that layer out of the expected tensors.
+
+        Returns:
+            The conversion tasks.
+        """
+        tasks = super().build_conversion_tasks(hf_pretrained, megatron_model, *args, **kwargs)
+        self._ernie55_export_writes_mtp = _exports_an_mtp_layer(tasks)
+        return tasks
+
+    def _stream_weight_events_megatron_to_hf(
+        self,
+        megatron_model: Any,
+        hf_pretrained: Any,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: Any = None,
+        merge_adapter_weights: bool = True,
+        weight_dtype: torch.dtype | None = None,
+        with_megatron_names: bool = False,
+        current_pp_stage_only: bool = False,
+    ) -> Iterable[Any]:
+        """Export as ``MegatronModelBridge`` does, and note from caller-supplied tasks whether the model has MTP.
+
+        Tasks the export builds itself go through :meth:`build_conversion_tasks` on this bridge. Supplied tasks
+        do not, and ``AutoBridge`` resolves a new bridge for every call, so the tasks of
+        ``AutoBridge.get_conversion_tasks`` reach the export on a bridge that never built any. The decision of
+        :meth:`maybe_modify_converted_hf_weight` is therefore taken here from the tasks this export runs, before
+        any pipeline-stage filtering, and not from an earlier call.
+        """
+        if conversion_tasks is not None:
+            self._ernie55_export_writes_mtp = _exports_an_mtp_layer(conversion_tasks)
+        yield from super()._stream_weight_events_megatron_to_hf(
+            megatron_model,
+            hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
+            with_megatron_names=with_megatron_names,
+            current_pp_stage_only=current_pp_stage_only,
+        )
+
+    def maybe_modify_converted_hf_weight(
+        self,
+        task: Any,
+        converted_weights_dict: dict[str, torch.Tensor],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
+        """Also write the shared MTP body under the MTP layers, for every copy the source checkpoint holds.
+
+        The registry writes the body once, under the decoder's last layer. The released checkpoints store it a
+        second time under every MTP layer (:func:`ernie55_mtp_body_copy_names`), and inference engines build
+        their MTP draft layer for speculative decoding from those names. Every copy the source checkpoint holds
+        is written with the exported tensor, so the export has the source checkpoint's tensor names and a strict
+        save completes the shards that hold the copies. Nothing is added for a source checkpoint without copies
+        (one written by an export that left them out, or a config-only wrapper), nor for a model built without
+        MTP (:meth:`build_conversion_tasks`, :meth:`_stream_weight_events_megatron_to_hf`).
+
+        Args:
+            task: The conversion task of the exported tensors.
+            converted_weights_dict: The tensors the task's mapping exported, by Hugging Face name.
+            hf_state_dict: The source checkpoint's state, for its tensor names.
+
+        Returns:
+            ``converted_weights_dict``, with the copies of its tensors added.
+        """
+        converted_weights_dict = super().maybe_modify_converted_hf_weight(task, converted_weights_dict, hf_state_dict)
+        if not converted_weights_dict or not hf_state_dict or not getattr(self, "_ernie55_export_writes_mtp", True):
+            return converted_weights_dict
+        hf_config = getattr(self, "hf_config", None)
+        cached = getattr(self, "_ernie55_mtp_body_copy_names", None)
+        if cached is None or cached[0] is not hf_config:
+            cached = (hf_config, ernie55_mtp_body_copy_names(hf_config))
+            self._ernie55_mtp_body_copy_names = cached
+        # Clone: a checkpoint holds the two names as two tensors, and safetensors refuses two names on one storage.
+        copies = {
+            copy: tensor.clone()
+            for name, tensor in converted_weights_dict.items()
+            for copy in cached[1].get(name, ())
+            if copy in hf_state_dict
+        }
+        return {**converted_weights_dict, **copies} if copies else converted_weights_dict
+
+    def maybe_modify_loaded_hf_weight(
+        self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
+        """Load ``hf_param``'s tensor(s); an FP8 checkpoint's weights come back dequantized in the checkpoint dtype.
+
+        Raises:
+            ValueError: If an FP8 tensor has no ``<name>_scale_inv`` with one inverse scale per block.
+            NotImplementedError: For a quantization other than blockwise FP8 with square blocks.
+        """
+        hf_weights = super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+        hf_config = getattr(self, "hf_config", None)
+        block_size = ernie55_fp8_block_size(hf_config)
+        if block_size is None:
+            return hf_weights
+        dtype = _hf_checkpoint_dtype(hf_config)
+        if isinstance(hf_weights, dict):
+            return {
+                part: _dequantize_fp8(tensor, hf_param[part], hf_state_dict, block_size, dtype)
+                for part, tensor in hf_weights.items()
+            }
+        return _dequantize_fp8(hf_weights, hf_param, hf_state_dict, block_size, dtype)

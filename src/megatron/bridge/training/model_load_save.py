@@ -24,7 +24,7 @@ from megatron.core import parallel_state
 from megatron.core.optimizer import OptimizerConfig
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule, TransformerConfig
-from megatron.core.utils import get_model_config
+from megatron.core.utils import get_model_config, unwrap_model
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin, build_distributed_models
@@ -647,9 +647,11 @@ def save_megatron_model(
 
     # Builder-backed models retain their complete outer ModelConfig for
     # checkpoint reconstruction. Legacy provider models expose their provider
-    # through ``config`` as before.
+    # through ``config`` as before, or as ``model_config`` when they build through a builder.
     model_config = getattr(model[0], "model_config", None)
     if not isinstance(model_config, ModelConfig):
+        model_config = getattr(unwrap_model(model[0]), "model_config", None)
+    if not isinstance(model_config, (ModelConfig, ModelProviderMixin)):
         model_config = get_model_config(model[0])
 
     if not isinstance(model_config, (ModelConfig, ModelProviderMixin)):

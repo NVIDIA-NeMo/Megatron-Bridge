@@ -550,6 +550,39 @@ def test_deepseek_v4_recipes_disable_blackwell_only_fusions_when_unavailable(
     assert cfg.model.use_fused_mhc is False
 
 
+@pytest.mark.parametrize("fused_mhc_supported", [True, False])
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "deepseek_v4_flash_pretrain_config",
+        "deepseek_v4_flash_pretrain_mxfp8_config",
+        "deepseek_v4_flash_pretrain_muon_config",
+        "deepseek_v4_flash_sft_config",
+        "deepseek_v4_flash_no_mtp_sft_config",
+        "deepseek_v4_flash_sft_openmath_thinking_packed_config",
+        "deepseek_v4_pro_pretrain_config",
+        "deepseek_v4_pro_pretrain_mxfp8_config",
+        "deepseek_v4_flash_pretrain_gb200_config",
+        "deepseek_v4_flash_pretrain_mxfp8_gb200_config",
+        "deepseek_v4_flash_pretrain_muon_gb200_config",
+    ],
+)
+def test_deepseek_v4_recipes_pair_fused_mhc_with_mhc_norm_placement(
+    recipe_name: str, fused_mhc_supported: bool, monkeypatch: pytest.MonkeyPatch
+):
+    mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v4")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", DeepSeekV4BuilderOnlyBridge)
+    patch_recipe_module_global(
+        monkeypatch, mod, "deepseek_v4_supports_blackwell_fused_kernels", lambda: fused_mhc_supported
+    )
+
+    cfg = getattr(mod, recipe_name)()
+
+    # Fused mHC rejects mhc_norm_eps_inside_sqrt; the unfused path keeps DeepSeek-V4's mHC normalization.
+    assert cfg.model.use_fused_mhc is fused_mhc_supported
+    assert cfg.model.mhc_norm_eps_inside_sqrt is not fused_mhc_supported
+
+
 def test_deepseek_v4_flash_sft_recipe_uses_fused_mhc(monkeypatch: pytest.MonkeyPatch):
     cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_sft_config", monkeypatch)
 

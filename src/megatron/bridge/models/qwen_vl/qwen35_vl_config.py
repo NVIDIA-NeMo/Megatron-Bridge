@@ -15,7 +15,7 @@
 """Builder-backed model config for Qwen3.5 and Qwen3.6 vision-language models.
 
 The language half is the Qwen3.5 hybrid Gated DeltaNet + Gated Attention decoder, configured
-with the same fields as the text bridges' ``BridgeGPTModelConfig``. The vision-language settings
+with the same Hybrid positions as the text bridges' ``Qwen35HybridModelConfig``. The vision-language settings
 live on the outer config; ``Qwen35VLModelBuilder`` combines the decoder with the Qwen3-VL vision
 encoder.
 """
@@ -23,7 +23,7 @@ encoder.
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.qwen.modeling_qwen35.model_config import Qwen35HybridModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 
@@ -45,12 +45,13 @@ class Qwen35VLTransformerConfig(TransformerConfig):
 
 
 @dataclass(kw_only=True)
-class Qwen35VLModelConfig(BridgeGPTModelConfig):
+class Qwen35VLModelConfig(Qwen35HybridModelConfig):
     """Builder config for Qwen3.5 and Qwen3.6 vision-language models, dense and MoE.
 
     ``vision_config`` holds the Hugging Face vision config, as on the providers. The token IDs,
     vision geometry and vision-encoder execution settings are the provider fields of the same
-    names.
+    names. Language layer counts and pipeline layouts use Hybrid positions: two positions
+    per HF block, with stage boundaries between complete mixer/feed-forward pairs.
     """
 
     builder: ClassVar[str] = "megatron.bridge.models.qwen_vl.qwen35_vl_builder.Qwen35VLModelBuilder"
@@ -59,6 +60,7 @@ class Qwen35VLModelConfig(BridgeGPTModelConfig):
 
     position_embedding_type: Literal["learned_absolute", "rope", "mrope", "yarn", "none"] = "mrope"
     scatter_embedding_sequence_parallel: bool = False
+    transformer_layer_spec: Any = None
 
     vision_config: Any = None
     """Hugging Face ``Qwen3_5VisionConfig`` or ``Qwen3_5MoeVisionConfig``."""

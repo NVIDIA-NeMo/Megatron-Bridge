@@ -446,7 +446,11 @@ class Ernie55ModelConfig(BridgeHybridModelConfig):
       dev f78809f6d or later), and at context_parallel_size > 1 the stack is contiguous
       (``cp_partition_mode="contiguous"``), the DSv4 layout;
     * with pipeline parallelism and no ``|`` in the pattern, the pattern is split at ERNIE-layer boundaries
-      (:func:`ernie55_pipeline_layer_pattern`).
+      (:func:`ernie55_pipeline_layer_pattern`); with pipeline parallelism ``variable_seq_lengths`` is turned on,
+      because the ERNIE 5.5 SFT data path emits one packed THD row per micro-batch whose length is data-dependent
+      (``ernie55_step`` pads its documents to multiples of ``2 * CP`` at CP > 1), so the stages exchange tensor
+      shapes before each transfer instead of posting static receive buffers sized from ``seq_length``; the
+      ``allgather`` MoE token dispatcher, which cannot take variable sequence lengths, is rejected there.
 
     The builder always uses :func:`~megatron.bridge.models.ernie.modeling_ernie55.ernie55_hybrid_stack_spec`
     unless ``hybrid_stack_spec`` names another ERNIE 5.5 stack spec, and never pads the vocabulary (the
@@ -524,6 +528,26 @@ class Ernie55ModelConfig(BridgeHybridModelConfig):
             and transformer.num_layers_in_last_pipeline_stage is None
         ):
             self.hybrid_layer_pattern = ernie55_pipeline_layer_pattern(self.hybrid_layer_pattern, num_stages)
+        if (transformer.pipeline_model_parallel_size or 1) > 1:
+            # Without ``variable_seq_lengths`` the pipeline schedules post static receive buffers sized from
+            # ``seq_length`` (per rank, after CP / sequence-parallel splits and the hyper-connection streams), and a
+            # receive only completes when the sent activation has that shape. The ERNIE 5.5 SFT data path
+            # (``collate_ernie55_rows``, consumed by ``ernie55_step``) emits one packed THD row per micro-batch whose
+            # length is data-dependent (``ernie55_step`` pads its documents to multiples of ``2 * CP`` at CP > 1), so
+            # the sent shape varies between micro-batches and a mismatch leaves the receiving stage waiting until
+            # the NCCL watchdog fires (at CP1 with micro-batch size 1 the row goes out at its collated length, at
+            # most ``seq_length``).
+            # Exchanging the shapes before each transfer is what Bridge arranges for its own packed and paired
+            # datasets (``_enable_in_batch_packing``, DPO); it is a model-level default here, so callers that feed
+            # fixed-length rows pay the exchange too. Megatron-Core's packed fixed-shape mode is unaffected: it
+            # requires ``variable_seq_lengths`` together with ``pipeline_p2p_fixed_shape``.
+            if transformer.num_moe_experts and transformer.moe_token_dispatcher_type == "allgather":
+                raise ValueError(
+                    "ERNIE 5.5 pipeline stages exchange rows of data-dependent length (variable_seq_lengths), which "
+                    "the 'allgather' MoE token dispatcher does not support; use moe_token_dispatcher_type='alltoall' "
+                    "(the ERNIE 5.5 default)."
+                )
+            transformer.variable_seq_lengths = True
 
         expected_ratios = ernie55_csa_compress_ratios(self.hybrid_layer_pattern)
         if transformer.csa_compress_ratios is None:

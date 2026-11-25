@@ -43,6 +43,11 @@ RL_INTEGRATION_DOCS = (
     REPO_ROOT / "docs" / "fern" / "versions" / "0.4.2" / "pages" / "bridge-rl-integration.mdx",
 )
 MODEL_PROVIDER = REPO_ROOT / "src" / "megatron" / "bridge" / "models" / "model_provider.py"
+AUTO_BRIDGE = REPO_ROOT / "src" / "megatron" / "bridge" / "models" / "conversion" / "auto_bridge.py"
+MODELOPT_QUANTIZATION_DOCS = (
+    REPO_ROOT / "docs" / "modelopt" / "quantization.md",
+    REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "modelopt" / "quantization.mdx",
+)
 GEMMA3_VL_README = REPO_ROOT / "examples" / "models" / "gemma" / "gemma3_vl" / "README.md"
 GEMMA3_VL_RECIPES = RECIPES_DIR / "gemma3_vl" / "gemma3_vl.py"
 GEMMA3_DOCS = REPO_ROOT / "docs" / "models" / "gemma" / "gemma3.md"
@@ -577,7 +582,12 @@ def _normalize_model_guide_format(text: str) -> str:
             f"{{/* {boundary} GENERATED VERIFIED CONFIGURATIONS */}}",
             f"<!-- {boundary} GENERATED VERIFIED CONFIGURATIONS -->",
         )
-    text = re.sub(r"<p>(.*?)</p>", lambda match: "<p>" + " ".join(match[1].split()) + "</p>", text, flags=re.DOTALL)
+    text = re.sub(
+        r"<p>(.*?)</p>",
+        lambda match: "<p>" + " ".join(match[1].split()).replace("&#123;", "{").replace("&#125;", "}") + "</p>",
+        text,
+        flags=re.DOTALL,
+    )
     return re.sub(
         r'(<code class="language-bash">)(.*?)(</code>)',
         lambda match: match[1] + match[2].replace("&#123;", "{").replace("&#125;", "}") + match[3],
@@ -590,19 +600,24 @@ def test_model_guide_format_normalization_preserves_content() -> None:
     """Format parity must still detect changed prose, commands, and code spacing."""
     sphinx = (
         "<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->\n"
-        "<p>Expected result\n</p>\n"
+        "<p>Expected result {&quot;loss&quot;: 0.5} from ${MODEL}\n</p>\n"
         '<code class="language-bash">echo ${MODEL}\n  --flag</code>\n'
         "<!-- END GENERATED VERIFIED CONFIGURATIONS -->\n"
     )
     fern = (
         "{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}\n"
-        "<p>Expected result</p>\n"
+        "<p>Expected result &#123;&quot;loss&quot;: 0.5&#125; from $&#123;MODEL&#125;</p>\n"
         '<code class="language-bash">echo $&#123;MODEL&#125;\n  --flag</code>\n'
         "{/* END GENERATED VERIFIED CONFIGURATIONS */}\n"
     )
     expected = _normalize_model_guide_format(sphinx)
     assert expected == _normalize_model_guide_format(fern)
-    for old, new in (("Expected result", "Different result"), ("MODEL", "OTHER"), ("  --flag", " --flag")):
+    for old, new in (
+        ("Expected result", "Different result"),
+        ("0.5", "0.6"),
+        ("MODEL", "OTHER"),
+        ("  --flag", " --flag"),
+    ):
         assert expected != _normalize_model_guide_format(fern.replace(old, new))
     assert _normalize_model_guide_format("Prose &#123;value&#125;") == "Prose &#123;value&#125;"
 
@@ -711,6 +726,41 @@ def test_megatron_bert_readme_saves_a_bert_tokenizer():
     assert all(re.fullmatch(r"BertTokenizer(Fast)?", name) for name in loaders), (
         f"non-BERT tokenizer loaders: {loaders}"
     )
+
+
+def test_modelopt_export_examples_use_accepted_keywords():
+    """Quantization docs must call export_hf_weights_modelopt only with keywords its signature accepts."""
+    tree = ast.parse(_read(AUTO_BRIDGE), filename=str(AUTO_BRIDGE))
+    export_def = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "export_hf_weights_modelopt"
+    )
+    accepted = {arg.arg for arg in (*export_def.args.args, *export_def.args.kwonlyargs)} - {"self"}
+
+    invalid: dict[str, list[tuple[int, list[str]]]] = {}
+    for path in MODELOPT_QUANTIZATION_DOCS:
+        text = _read(path)
+        calls = 0
+        for match in re.finditer(r"```python\n(?P<code>.*?)```", text, re.DOTALL):
+            code = match.group("code")
+            if "export_hf_weights_modelopt(" not in code:
+                continue
+            for node in ast.walk(ast.parse(code, filename=str(path))):
+                if not isinstance(node, ast.Call) or getattr(node.func, "attr", None) != "export_hf_weights_modelopt":
+                    continue
+                calls += 1
+                unknown = sorted({keyword.arg for keyword in node.keywords if keyword.arg} - accepted)
+                if unknown:
+                    source_line = text.count("\n", 0, match.start("code")) + node.lineno
+                    invalid.setdefault(str(path.relative_to(REPO_ROOT)), []).append((source_line, unknown))
+        assert calls, f"no export_hf_weights_modelopt example found in {path}"
+
+    assert not invalid, f"export_hf_weights_modelopt examples pass unsupported keywords: {invalid}"
+    stale = [
+        str(path.relative_to(REPO_ROOT)) for path in MODELOPT_QUANTIZATION_DOCS if "ignore_patterns" in _read(path)
+    ]
+    assert not stale, f"docs still describe the removed ignore_patterns argument: {stale}"
 
 
 if __name__ == "__main__":

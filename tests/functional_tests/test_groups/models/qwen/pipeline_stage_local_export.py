@@ -110,7 +110,7 @@ def main(hf_model_id: str, tp: int, pp: int, ep: int, etp: int) -> None:
         trust_remote_code=is_safe_repo(trust_remote_code=False, hf_path=hf_model_id),
         torch_dtype=torch.bfloat16,
     )
-    provider = bridge.to_megatron_provider(load_weights=True)
+    provider = bridge.get_model_config()
     provider.tensor_model_parallel_size = tp
     provider.pipeline_model_parallel_size = pp
     provider.pipeline_dtype = torch.bfloat16
@@ -118,8 +118,7 @@ def main(hf_model_id: str, tp: int, pp: int, ep: int, etp: int) -> None:
     provider.expert_model_parallel_size = ep
     provider.expert_tensor_parallel_size = etp
     provider.finalize()
-    provider.initialize_model_parallel(seed=0)
-    megatron_model = provider.provide_distributed_model(wrap_with_ddp=False)
+    megatron_model = bridge.get_model(provider, load_weights=True, wrap_with_ddp=False)
     baseline = {
         name: _signature(weight) for name, weight in bridge.export_hf_weights(megatron_model, show_progress=False)
     }

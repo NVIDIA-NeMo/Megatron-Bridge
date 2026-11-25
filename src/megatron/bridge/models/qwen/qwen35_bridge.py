@@ -15,10 +15,7 @@
 from typing import Any
 
 import torch
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    get_transformer_block_with_experimental_attention_variant_spec,
-)
-from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.models.hybrid.hybrid_model import HybridModel
 from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -37,7 +34,12 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
 )
 from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.qwen.modeling_qwen35.hybrid import (
+    configure_qwen35_hybrid,
+    qwen35_hf_layer_config,
+    qwen35_hybrid_mappings,
+)
+from megatron.bridge.models.qwen.modeling_qwen35.model_config import Qwen35HybridModelConfig
 
 
 def _qwen35_common_config_kwargs(text_config) -> dict[str, Any]:
@@ -137,7 +139,7 @@ def _moe_routed_expert_mappings(hf_prefix, megatron_prefix, experts_packed, tran
     ]
 
 
-@MegatronModelBridge.register_bridge(source="Qwen3_5MoeForCausalLM", target=GPTModel, model_type="qwen3_5_moe_text")
+@MegatronModelBridge.register_bridge(source="Qwen3_5MoeForCausalLM", target=HybridModel, model_type="qwen3_5_moe_text")
 class Qwen35MoEBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3.5 Language Model (MoE variant).
@@ -167,7 +169,7 @@ class Qwen35MoEBridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    MODEL_CONFIG_CLASS = Qwen35HybridModelConfig
     USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     @staticmethod
@@ -409,6 +411,17 @@ class Qwen35MoEBridge(MegatronModelBridge):
 
         return mapping_list
 
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Reject the removed provider path instead of constructing an inconsistent model."""
+        raise NotImplementedError("Qwen3.5 uses Hybrid builders; use AutoBridge.get_model_config() or get_model().")
+
+    @classmethod
+    def megatron_to_hf_config(cls, model_config) -> dict:
+        """Restore HF block coordinates and attention order on export."""
+        config = super().megatron_to_hf_config(model_config)
+        config.update(qwen35_hf_layer_config(model_config.hybrid_layer_pattern))
+        return config
+
     def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Convert a Hugging Face Qwen3.5 MoE text config to builder config kwargs."""
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
@@ -433,15 +446,8 @@ class Qwen35MoEBridge(MegatronModelBridge):
         # --- MTP (Multi-Token Prediction) ---
         if config_kwargs.get("mtp_num_layers"):
             config_kwargs["mtp_loss_scaling_factor"] = 0.1
+        configure_qwen35_hybrid(config_kwargs, hf_config)
         return config_kwargs
-
-    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
-        """Adapt the canonical builder mapping to the deprecated provider path."""
-        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
-        # The builder's default layer spec builds the hybrid GDN block from
-        # experimental_attention_variant; the provider's builds homogeneous layers.
-        provider_kwargs["transformer_layer_spec"] = get_transformer_block_with_experimental_attention_variant_spec
-        return provider_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
@@ -476,10 +482,12 @@ class Qwen35MoEBridge(MegatronModelBridge):
 
         mapping_list.extend(self._get_moe_lm_mappings(megatron_prefix="", experts_packed=experts_packed))
         mapping_list.extend(self._get_moe_mtp_mappings(megatron_prefix="", mtp_experts_packed=mtp_experts_packed))
-        return MegatronMappingRegistry(*mapping_list)
+        return MegatronMappingRegistry(
+            *qwen35_hybrid_mappings(mapping_list, num_layers=self.hf_config.num_hidden_layers)
+        )
 
 
-@MegatronModelBridge.register_bridge(source="Qwen3_5ForCausalLM", target=GPTModel, model_type="qwen3_5_text")
+@MegatronModelBridge.register_bridge(source="Qwen3_5ForCausalLM", target=HybridModel, model_type="qwen3_5_text")
 class Qwen35Bridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3.5 Dense Language Model.
@@ -509,7 +517,7 @@ class Qwen35Bridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    MODEL_CONFIG_CLASS = Qwen35HybridModelConfig
     USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     @staticmethod
@@ -662,6 +670,17 @@ class Qwen35Bridge(MegatronModelBridge):
 
         return mapping_list
 
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Reject the removed provider path instead of constructing an inconsistent model."""
+        raise NotImplementedError("Qwen3.5 uses Hybrid builders; use AutoBridge.get_model_config() or get_model().")
+
+    @classmethod
+    def megatron_to_hf_config(cls, model_config) -> dict:
+        """Restore HF block coordinates and attention order on export."""
+        config = super().megatron_to_hf_config(model_config)
+        config.update(qwen35_hf_layer_config(model_config.hybrid_layer_pattern))
+        return config
+
     def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Convert a Hugging Face Qwen3.5 dense text config to builder config kwargs."""
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
@@ -685,15 +704,8 @@ class Qwen35Bridge(MegatronModelBridge):
         # --- MTP (Multi-Token Prediction) ---
         if config_kwargs.get("mtp_num_layers"):
             config_kwargs["mtp_loss_scaling_factor"] = 0.1
+        configure_qwen35_hybrid(config_kwargs, hf_config)
         return config_kwargs
-
-    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
-        """Adapt the canonical builder mapping to the deprecated provider path."""
-        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
-        # The builder's default layer spec builds the hybrid GDN block from
-        # experimental_attention_variant; the provider's builds homogeneous layers.
-        provider_kwargs["transformer_layer_spec"] = get_transformer_block_with_experimental_attention_variant_spec
-        return provider_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
@@ -708,4 +720,6 @@ class Qwen35Bridge(MegatronModelBridge):
 
         mapping_list.extend(self._get_dense_lm_mappings(megatron_prefix=""))
         mapping_list.extend(self._get_dense_mtp_mappings(megatron_prefix=""))
-        return MegatronMappingRegistry(*mapping_list)
+        return MegatronMappingRegistry(
+            *qwen35_hybrid_mappings(mapping_list, num_layers=self.hf_config.num_hidden_layers)
+        )

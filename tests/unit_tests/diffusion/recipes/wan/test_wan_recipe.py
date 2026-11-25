@@ -231,7 +231,6 @@ class TestWan14BPerfRecipes:
         assert cfg.model.recompute_granularity == "full"
         assert cfg.model.recompute_method == "block"
         assert cfg.model.recompute_num_layers == 1
-        assert cfg.dist.use_megatron_fsdp is True
         assert cfg.ddp.use_megatron_fsdp is True
         assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
         assert cfg.checkpoint.ckpt_format == "fsdp_dtensor"
@@ -265,7 +264,6 @@ class TestWan14BPerfRecipes:
         assert cfg.model.recompute_granularity is None
         assert cfg.model.recompute_method is None
         assert cfg.model.recompute_num_layers is None
-        assert cfg.dist.use_megatron_fsdp is False
         assert cfg.ddp.use_megatron_fsdp is False
         assert cfg.optimizer.lr == 5e-6
         assert cfg.optimizer.min_lr == 5e-6

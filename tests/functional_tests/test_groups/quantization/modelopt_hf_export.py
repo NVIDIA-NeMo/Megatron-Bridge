@@ -15,8 +15,8 @@
 """Save a ModelOpt-quantized toy model as a quantized Hugging Face checkpoint (run with torch.distributed.run).
 
 Weight ranges come from max calibration of the weights, which ModelOpt syncs across tensor parallelism,
-and every input range is pinned to :func:`input_amax` of its global layer and kind, so exports at any
-parallelism describe the same quantized model and can be compared bit for bit.
+and every input and KV-cache range is pinned to :func:`input_amax` of its global layer and kind, so exports
+at any parallelism describe the same quantized model and can be compared bit for bit.
 """
 
 import argparse
@@ -34,6 +34,7 @@ from megatron.bridge.models.decorators import torchrun_main
 
 NVFP4 = {"num_bits": (2, 1), "block_sizes": {-1: 16, "type": "dynamic", "scale_bits": (4, 3)}, "axis": None}
 FP8 = {"num_bits": (4, 3), "axis": None}
+MXFP4 = {"num_bits": (2, 1), "block_sizes": {-1: 32, "type": "dynamic", "scale_bits": (8, 0)}}
 DISABLED = [
     {"quantizer_name": "*", "enable": False},
 ]
@@ -41,6 +42,14 @@ UNQUANTIZED = [
     {"quantizer_name": "*router*", "enable": False},
     {"quantizer_name": "*output_layer*", "enable": False},
     {"quantizer_name": "*conv1d*", "enable": False},
+    # Kept in BF16 by deployments (vision towers, DSA indexers, DeepSeek-V4 compressors), or not
+    # linear layers in HF (hyper-connection mixers) or router-like (Kimi-K3 attention residuals).
+    {"quantizer_name": "*vision_model*", "enable": False},
+    {"quantizer_name": "*visual*", "enable": False},
+    {"quantizer_name": "*indexer*", "enable": False},
+    {"quantizer_name": "*compressor*", "enable": False},
+    {"quantizer_name": "*hyper_connection*", "enable": False},
+    {"quantizer_name": "*res_proj*", "enable": False},
 ]
 CONFIGS = {
     "nvfp4": [
@@ -50,16 +59,54 @@ CONFIGS = {
     "fp8": [
         {"quantizer_name": "*weight_quantizer", "cfg": FP8},
         {"quantizer_name": "*input_quantizer", "cfg": FP8},
+        {"quantizer_name": "*[kv]_bmm_quantizer", "cfg": FP8},
     ],
-    # NVFP4 MLP and FP8 attention, as in mixed-precision recipes.
+    # NVFP4 MLP, FP8 attention and FP8 KV cache, as in mixed-precision recipes.
     "mixed": [
         {"quantizer_name": "*mlp*weight_quantizer", "cfg": NVFP4},
         {"quantizer_name": "*mlp*input_quantizer", "cfg": NVFP4},
         {"quantizer_name": "*self_attention*weight_quantizer", "cfg": FP8},
         {"quantizer_name": "*self_attention*input_quantizer", "cfg": FP8},
+        {"quantizer_name": "*[kv]_bmm_quantizer", "cfg": FP8},
+    ],
+    # Weight-only MXFP4 experts, as GPT-OSS ships.
+    "mxfp4_experts": [
+        {"quantizer_name": "*experts*weight_quantizer", "cfg": MXFP4},
     ],
 }
-KIND_IDS = {"linear_qkv": 1, "linear_proj": 2, "linear_fc1": 3, "linear_fc2": 4, "in_proj": 5, "out_proj": 6}
+# Projections deployments fuse into one GEMM read the same input; ModelOpt calibrates them to one weight range.
+MLA_DOWN_PROJECTIONS = (
+    "linear_q_down_proj",
+    "linear_kv_down_proj",
+    "linear_kv_proj",
+    "q_a_proj",
+    "kv_a_proj_with_mqa",
+)
+KIND_IDS = {
+    "linear_qkv": 1,
+    "linear_proj": 2,
+    "linear_fc1": 3,
+    "linear_fc2": 4,
+    "in_proj": 5,
+    "out_proj": 6,
+    **dict.fromkeys((*MLA_DOWN_PROJECTIONS, "g_proj"), 7),  # With Kimi-K3's MLA gate.
+    **dict.fromkeys(("q_proj", "k_proj", "v_proj"), 8),
+    "linear_q_up_proj": 9,
+    "linear_kv_up_proj": 10,
+    "q_b_proj": 12,
+    "kv_b_proj": 13,
+    "o_proj": 14,
+    "b_proj": 16,
+    "beta_proj": 17,
+    "f_a_proj": 18,
+    "f_b_proj": 19,
+    "g_a_proj": 20,
+    "g_b_proj": 21,
+    "fc1_latent_proj": 22,
+    "fc2_latent_proj": 23,
+    "k_bmm": 24,
+    "v_bmm": 25,
+}
 
 
 def input_amax(layer: int, kind: str) -> float:
@@ -69,28 +116,38 @@ def input_amax(layer: int, kind: str) -> float:
 
 def _pin_input_ranges(chunk: torch.nn.Module) -> None:
     for name, quantizer in chunk.named_modules():
-        if not (isinstance(quantizer, TensorQuantizer) and quantizer.is_enabled and name.endswith("input_quantizer")):
+        kind = re.search(r"(\w+)\.input_quantizer$|([kv]_bmm)_quantizer$", name)
+        if not (isinstance(quantizer, TensorQuantizer) and quantizer.is_enabled and kind):
             continue
-        layer_prefix = re.match(r"^.*?decoder\.layers\.\d+", name).group(0)
-        layer = chunk.get_submodule(layer_prefix).layer_number - 1
-        kind = re.search(r"(\w+)\.input_quantizer", name).group(1)
-        quantizer.amax = torch.tensor(input_amax(layer, kind), device="cuda")
+        layer = chunk.get_submodule(re.match(r"^.*?decoder\.layers\.\d+", name).group(0))
+        # Hyper-connection layers wrap the numbered layer.
+        layer = getattr(layer, "layer_number", None) or layer.inner_layer.layer_number
+        layer -= 1
+        amax = input_amax(layer, kind.group(1) or kind.group(2))
+        # Exporters raise FP8 KV-cache scales (amax / 448) to at least one.
+        amax *= 448 if kind.group(2) else 1
+        quantizer.amax = torch.tensor(amax, device="cuda")
 
 
 @torchrun_main
 def main(
     hf_model_path: str, out: str, config: str, tp: int, pp: int, ep: int, etp: int, offline_out: str | None
 ) -> None:
-    bridge = AutoBridge.from_hf_pretrained(hf_model_path, torch_dtype=torch.bfloat16)
+    # Kimi-K3's config class ships with the checkpoint.
+    bridge = AutoBridge.from_hf_pretrained(hf_model_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
     provider = bridge.to_megatron_provider(load_weights=True)
-    provider.tensor_model_parallel_size = tp
-    provider.pipeline_model_parallel_size = pp
-    provider.expert_model_parallel_size = ep
-    provider.expert_tensor_parallel_size = etp
-    provider.moe_grouped_gemm = False
-    provider.gradient_accumulation_fusion = False
-    provider.pipeline_dtype = torch.bfloat16
-    provider.finalize()
+    # Also sets bridge-specific pipeline layouts, e.g. for DeepSeek-V4's hash-routed MoE layers.
+    provider.apply_overrides_and_finalize(
+        overrides={
+            "tensor_model_parallel_size": tp,
+            "pipeline_model_parallel_size": pp,
+            "expert_model_parallel_size": ep,
+            "expert_tensor_parallel_size": etp,
+            "moe_grouped_gemm": False,
+            "gradient_accumulation_fusion": False,
+            "pipeline_dtype": torch.bfloat16,
+        }
+    )
     provider.initialize_model_parallel(seed=0)
     model = provider.provide_distributed_model(wrap_with_ddp=False)
 

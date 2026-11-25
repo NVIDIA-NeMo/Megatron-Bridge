@@ -201,6 +201,10 @@ class Gemma4MoERouter(nn.Module):
         self.scale = nn.Parameter(torch.ones(hidden_size))
         self.proj = nn.Linear(hidden_size, num_experts, bias=False)
         self.per_expert_scale = nn.Parameter(torch.ones(num_experts))
+        # Replicated on every TP rank and applied to the sequence-parallel shard of the hidden states.
+        _mark_sequence_parallel_parameter(self.scale, config)
+        _mark_sequence_parallel_parameter(self.proj.weight, config)
+        _mark_sequence_parallel_parameter(self.per_expert_scale, config)
 
     def forward(self, hidden_states: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
         h = self.norm(hidden_states)
@@ -230,6 +234,9 @@ class Gemma4MoEExperts(nn.Module):
         self.down_proj = nn.Parameter(torch.empty(num_experts, hidden_size, moe_intermediate_size))
         nn.init.normal_(self.gate_up_proj, std=0.02)
         nn.init.normal_(self.down_proj, std=0.02)
+        # Every TP rank runs all experts on its own sequence-parallel shard of the tokens.
+        _mark_sequence_parallel_parameter(self.gate_up_proj, config)
+        _mark_sequence_parallel_parameter(self.down_proj, config)
 
     def forward(
         self,
@@ -289,6 +296,27 @@ def _is_gemma4_sliding_layer(config: TransformerConfig, layer_number: int) -> bo
 # ---------------------------------------------------------------------------
 # Gemma4DenseSelfAttention: v_norm + shared KV + k_eq_v
 # ---------------------------------------------------------------------------
+
+
+class _AttachZeroGradients(torch.autograd.Function):
+    """Return ``tensor`` unchanged and give each extra parameter an all-zero gradient in backward.
+
+    MCore DDP with ``overlap_grad_reduce`` waits for a gradient from every parameter in a bucket,
+    so a parameter that the forward pass leaves unused must still report one.
+    """
+
+    @staticmethod
+    def forward(ctx, tensor: Tensor, *params: nn.Parameter) -> Tensor:
+        ctx.param_specs = [(param.shape, param.dtype, param.device) for param in params]
+        return tensor
+
+    @staticmethod
+    def backward(ctx, grad_output: Tensor) -> tuple[Tensor | None, ...]:
+        zero_grads = [
+            torch.zeros(shape, dtype=dtype, device=device) if needs_grad else None
+            for (shape, dtype, device), needs_grad in zip(ctx.param_specs, ctx.needs_input_grad[1:])
+        ]
+        return (grad_output, *zero_grads)
 
 
 class Gemma4DenseSelfAttention(SelfAttention):
@@ -460,16 +488,31 @@ class Gemma4DenseSelfAttention(SelfAttention):
         key_value_states=None,
         output_gate: bool = False,
         split_qkv: bool = True,
+        *,
+        head_wise_gate: bool = False,
     ):
+        if head_wise_gate:
+            raise ValueError("Gemma4 dense attention does not support head-wise gating.")
         if self.is_kv_shared_layer:
             if not split_qkv or output_gate:
-                return super().get_query_key_value_tensors(hidden_states, key_value_states, output_gate, split_qkv)
-            query, _k, _v = super().get_query_key_value_tensors(hidden_states, key_value_states, False, True)
+                return super().get_query_key_value_tensors(
+                    hidden_states, key_value_states, output_gate=output_gate, split_qkv=split_qkv
+                )
+            query, _k, _v = super().get_query_key_value_tensors(
+                hidden_states, key_value_states, output_gate=False, split_qkv=True
+            )
             kv_source = self._kv_source_ref() if self._kv_source_ref is not None else None
             if kv_source is not None and kv_source._stored_kv is not None:
                 key, value = kv_source._stored_kv
                 key = key.to(query.device)
                 value = value.to(query.device)
+                # This layer's own K never reaches the loss, so neither does its k_layernorm (kept for HF
+                # checkpoint round trips). Give it an explicit zero gradient instead of none; freezing it
+                # would change the optimizer state layout and leave holes in its layer-stacked checkpoint keys.
+                if self.k_layernorm is not None:
+                    unused_params = [param for param in self.k_layernorm.parameters() if param.requires_grad]
+                    if unused_params:
+                        query = _AttachZeroGradients.apply(query, *unused_params)
             else:
                 key, value = _k, _v
                 value = self._v_norm(value)
@@ -481,7 +524,9 @@ class Gemma4DenseSelfAttention(SelfAttention):
                 key_value_states,
             )
         else:
-            result = super().get_query_key_value_tensors(hidden_states, key_value_states, output_gate, split_qkv)
+            result = super().get_query_key_value_tensors(
+                hidden_states, key_value_states, output_gate=output_gate, split_qkv=split_qkv
+            )
             if not split_qkv:
                 return result
             if output_gate:
@@ -628,6 +673,10 @@ class Gemma4DenseTransformerLayer(TransformerLayer):
         if _ple_dim > 0:
             self.per_layer_input_gate = nn.Linear(config.hidden_size, _ple_dim, bias=False, dtype=params_dtype)
             self.per_layer_projection = nn.Linear(_ple_dim, config.hidden_size, bias=False, dtype=params_dtype)
+            # Each TP rank holds a full copy of both projections, but under sequence parallelism it applies
+            # them only to its own sequence shard, so their gradients must be summed across TP.
+            _mark_sequence_parallel_parameter(self.per_layer_input_gate.weight, config)
+            _mark_sequence_parallel_parameter(self.per_layer_projection.weight, config)
             self.post_per_layer_input_norm = submodules.post_per_layer_input_norm(
                 config=self.config,
                 hidden_size=self.config.hidden_size,
@@ -1169,7 +1218,6 @@ def _gemma4_checkpointed_forward(
                     inner_quantization_context = nullcontext()
 
                 layer_kwargs = dict(
-                    hidden_states=hidden_states,
                     attention_mask=attention_mask,
                     context=context,
                     context_mask=context_mask,
@@ -1188,11 +1236,11 @@ def _gemma4_checkpointed_forward(
                     layer_kwargs["input_ids"] = input_ids
                 with inner_quantization_context:
                     if isinstance(layer, TransformerLayer):
-                        hidden_states, context = layer(**layer_kwargs)
+                        hidden_states, context = layer(hidden_states, **layer_kwargs)
                     else:
                         for k in ("context", "context_mask", "attention_bias", "padding_mask", "per_layer_input"):
                             layer_kwargs.pop(k, None)
-                        hidden_states = layer(**layer_kwargs)
+                        hidden_states = layer(hidden_states, **layer_kwargs)
                         context = None
 
                 if isinstance(hidden_states, tuple):

@@ -88,13 +88,10 @@ def thinker_config():
 class TestQwen3ASRModel:
     """Test suite for Qwen3-ASR Model."""
 
-    _owns_process_group: bool = False
-
-    @classmethod
-    def setup_class(cls):
-        """Setup distributed process group once for all tests in this class."""
-        cls._owns_process_group = False
-        if not dist.is_initialized():
+    def setup_method(self):
+        """Create a process group per test so subgroups do not accumulate across tests."""
+        self._owns_process_group = not dist.is_initialized()
+        if self._owns_process_group:
             os.environ["MASTER_ADDR"] = "127.0.0.1"
             os.environ["MASTER_PORT"] = "29501"
             os.environ["RANK"] = "0"
@@ -111,14 +108,6 @@ class TestQwen3ASRModel:
                 rank=0,
                 timeout=datetime.timedelta(minutes=30),
             )
-            cls._owns_process_group = True
-
-    @classmethod
-    def teardown_class(cls):
-        """Teardown distributed process group once after all tests in this class."""
-        if dist.is_initialized() and cls._owns_process_group:
-            dist.destroy_process_group()
-            cls._owns_process_group = False
 
     def _setup_parallel_state(self, tp_size=1, pp_size=1, cp_size=1):
         """Setup Megatron parallel state."""
@@ -135,8 +124,12 @@ class TestQwen3ASRModel:
         model_parallel_cuda_manual_seed(123)
 
     def teardown_method(self):
-        """Teardown Megatron parallel state after each test method."""
-        parallel_state.destroy_model_parallel()
+        """Release this test's parallel state and owned process groups."""
+        try:
+            parallel_state.destroy_model_parallel()
+        finally:
+            if self._owns_process_group and dist.is_initialized():
+                dist.destroy_process_group()
 
     @staticmethod
     def _make_language_config(thinker_config):

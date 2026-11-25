@@ -53,6 +53,11 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.quant_mapping import AmaxMapping
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge
+from megatron.bridge.models.gpt_oss.gpt_oss_bridge import (
+    GPTOSSBridge,
+    GPTOSSMLPDownProjMapping,
+    GPTOSSMLPGateUpProjMapping,
+)
 from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_bridge import MiMoV2FlashQKVMapping
 
 
@@ -511,9 +516,8 @@ def test_source_dtype_skips_checkpoint_requantization_and_keeps_key_fixes(monkey
     ]
     tasks = [replace(task, weight_dtype=weight_dtype) for task in tasks]
     plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[quantized])
-    native_key = "layers.0.indexer.scorer.weights_proj.weight"
-    legacy_key = "layers.0.indexer.weights_proj.weight"
-    hf_source = {legacy_key: torch.ones(4, 4)}
+    synthesized_bias = "layers.0.ffn.gate.bias"
+    hf_source = {}
     for task in tasks:
         hf_source[task.mapping.hf_param] = task.param_weight.to(torch.float8_e4m3fn)
         hf_source[task.mapping.hf_param.removesuffix(".weight") + ".weight_scale_inv"] = torch.ones(1)
@@ -527,10 +531,10 @@ def test_source_dtype_skips_checkpoint_requantization_and_keeps_key_fixes(monkey
         assert task.weight_dtype == (weight_dtype or task.param_weight.dtype)
         hf_name = task.mapping.hf_param
         result = bridge.maybe_modify_converted_hf_weight(
-            task, {hf_name: task.param_weight, native_key: hf_source[legacy_key]}, hf_source
+            task, {hf_name: task.param_weight, synthesized_bias: torch.zeros(4)}, hf_source
         )
         assert result[hf_name] is task.param_weight
-        assert native_key not in result and legacy_key in result
+        assert synthesized_bias not in result
         assert not any(name.endswith("weight_scale_inv") for name in result)
 
 
@@ -550,19 +554,16 @@ def test_source_dtype_reaches_non_owning_pp_task(monkeypatch):
 def test_legacy_renamed_weight_fails_closed_only_when_quantized(quantized):
     module = _fp8_linear() if quantized else torch.nn.Linear(4, 4, bias=False)
     dense = _fp8_linear()
-    native_key = "layers.0.attn.indexer.scorer.weights_proj.weight"
-    legacy_key = "layers.0.attn.indexer.weights_proj.weight"
+    native_key = "layers.0.attn.native_name.weight"
+    legacy_key = "layers.0.attn.legacy_name.weight"
     task = _task(ColumnParallelMapping("scorer.weight", native_key), module)
     plan = modelopt_utils.build_modelopt_export_plan(
         [task, _task(ColumnParallelMapping("dense.weight", "dense.weight"), dense, global_name="dense.weight")],
         model=[dense],
     )
     prepared = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
-    bridge = object.__new__(DeepSeekV4Bridge)
-    result = bridge.maybe_modify_converted_hf_weight(
-        prepared, {native_key: module.weight}, {legacy_key: module.weight}
-    )
-    output = HFWeightTuple(legacy_key, result[legacy_key]).iter_finalized(cpu=True, export_hook=prepared.export_hook)
+    # A bridge renaming the converted weight, as maybe_modify_converted_hf_weight may.
+    output = HFWeightTuple(legacy_key, module.weight).iter_finalized(cpu=True, export_hook=prepared.export_hook)
 
     if quantized:
         with pytest.raises(RuntimeError, match=f"Missing ModelOpt export state for {legacy_key}"):
@@ -1325,6 +1326,156 @@ def test_unquantized_grouped_transpose_mapping_keeps_offline_export_path():
     assert plan.conversion_tasks[0].export_hook is None
 
 
+@pytest.mark.unit
+def test_quantized_weight_must_map_to_hf_weight_tensor():
+    # E.g. DeepSeek-V4's hyper-connection mixer, an nn.Linear in Megatron but a bare parameter in HF.
+    module = _fp8_linear()
+    mapping = ColumnParallelMapping("decoder.layers.0.attn_hc.mapping_proj.weight", "layers.0.hc_attn_fn")
+
+    with pytest.raises(RuntimeError, match=r"map to HF '\.weight' tensors, not \['layers\.0\.hc_attn_fn'\]"):
+        modelopt_utils.build_modelopt_export_plan(
+            [_task(mapping, module, global_name=mapping.megatron_param)], model=[module]
+        )
+
+
+def _mxfp4_weight_only_linear(out_features, in_features):
+    from modelopt.torch.quantization.config import QuantizerAttributeConfig
+    from modelopt.torch.quantization.nn import TensorQuantizer
+
+    module = torch.nn.Linear(in_features, out_features, bias=False)
+    module.weight_quantizer = TensorQuantizer(
+        QuantizerAttributeConfig(num_bits=(2, 1), block_sizes={-1: 32, "type": "dynamic", "scale_bits": (8, 0)})
+    )
+    module.input_quantizer = TensorQuantizer()
+    module.input_quantizer.disable()
+    return module
+
+
+_GPT_OSS_PROJECTIONS = {
+    # HF name: mapping, Megatron name, (out, in) of each expert's Megatron weight
+    "gate_up_proj": (GPTOSSMLPGateUpProjMapping, "linear_fc1", (64, 96)),
+    "down_proj": (GPTOSSMLPDownProjMapping, "linear_fc2", (96, 32)),
+}
+
+
+def _gpt_oss_expert_tasks(projection, factory):
+    mapping_type, megatron_name, shape = _GPT_OSS_PROJECTIONS[projection]
+    module = _GroupedWeights(lambda: factory(*shape))
+    module.tensor_model_parallel = True
+    module.partition_dim = 1 if projection == "down_proj" else 0
+    tasks = []
+    for expert in range(module.num_gemms):
+        mapping = mapping_type(
+            f"decoder.layers.0.mlp.experts.{megatron_name}.weight{expert}", f"model.layers.0.mlp.experts.{projection}"
+        )
+        tasks.append(_task(mapping, module, global_name=mapping.megatron_param, weight_name=f"weight{expert}"))
+    return module, tasks
+
+
+@pytest.mark.parametrize("projection", _GPT_OSS_PROJECTIONS)
+def test_gpt_oss_experts_export_openai_mxfp4_blocks(projection):
+    from modelopt.torch.quantization.qtensor import MXFP4QTensor
+
+    module, tasks = _gpt_oss_expert_tasks(projection, _mxfp4_weight_only_linear)
+    dense = torch.nn.Linear(4, 4, bias=False)
+    dense_mapping = ColumnParallelMapping(
+        "decoder.layers.0.self_attention.linear_proj.weight", "model.layers.0.self_attn.o_proj.weight"
+    )
+    tasks.append(_task(dense_mapping, dense, global_name=dense_mapping.megatron_param))
+
+    plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
+    export_tasks = modelopt_utils.prepare_modelopt_export_tasks(plan)
+    hf_name = f"model.layers.0.mlp.experts.{projection}"
+    # The grouped export stacks each expert's HF view, then hands the stack to the last expert's hook.
+    merged = torch.stack(
+        [task.mapping.megatron_to_hf(task.param_weight.detach(), module)[hf_name] for task in export_tasks[:-1]]
+    )
+    exported = dict(export_tasks[-2].export_hook(hf_name, merged))
+
+    assert plan.quantization_config == {
+        "quant_method": "mxfp4",
+        "modules_to_not_convert": ["model.layers.0.self_attn.o_proj"],
+    }
+    assert export_tasks[-1].export_hook is None
+    # What ModelOpt's examples/gpt-oss/convert_oai_mxfp4_weight_only.py writes for the same weights.
+    packed, scales = MXFP4QTensor.quantize(merged.transpose(-1, -2).contiguous(), block_size=32)
+    num_experts, rows, cols = merged.transpose(-1, -2).shape
+    assert exported.keys() == {f"{hf_name}_blocks", f"{hf_name}_scales"}
+    torch.testing.assert_close(exported[f"{hf_name}_blocks"], packed._quantized_data.view(num_experts, rows, -1, 16))
+    torch.testing.assert_close(exported[f"{hf_name}_scales"], scales.view(num_experts, rows, -1))
+    # The bridge's own import reads them back.
+    loaded = object.__new__(GPTOSSBridge).maybe_modify_loaded_hf_weight(hf_name, exported)
+    expected = packed.dequantize(dtype=torch.bfloat16, scale=scales, block_sizes={-1: 32})
+    torch.testing.assert_close(loaded, expected.to(loaded.dtype), rtol=0, atol=0)
+
+
+def test_gpt_oss_openai_mxfp4_export_rejects_other_quantized_layers():
+    module, tasks = _gpt_oss_expert_tasks("down_proj", _mxfp4_weight_only_linear)
+    dense = _fp8_linear()
+    dense_mapping = ColumnParallelMapping(
+        "decoder.layers.0.self_attention.linear_proj.weight", "model.layers.0.self_attn.o_proj.weight"
+    )
+    tasks.append(_task(dense_mapping, dense, global_name=dense_mapping.megatron_param))
+
+    with pytest.raises(NotImplementedError, match="keeps every layer but the experts in BF16"):
+        modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
+
+
+@pytest.mark.parametrize("kv_format", ["FP8", "NVFP4"])
+def test_gpt_oss_openai_mxfp4_export_rejects_kv_quantization(kv_format):
+    from modelopt.torch.quantization.config import QuantizerAttributeConfig
+    from modelopt.torch.quantization.nn import TensorQuantizer
+
+    experts, tasks = _gpt_oss_expert_tasks("down_proj", _mxfp4_weight_only_linear)
+    model = torch.nn.Module()
+    model.experts = experts
+    model.self_attention = torch.nn.Module()
+    attention = torch.nn.Module()
+    model.self_attention.core_attention = attention
+    for axis in ("k", "v"):
+        config = {"num_bits": (4, 3), "axis": None}
+        if kv_format == "NVFP4":
+            config.update(num_bits=(2, 1), block_sizes={-1: 16, "type": "dynamic", "scale_bits": (4, 3)})
+        quantizer = TensorQuantizer(QuantizerAttributeConfig(**config))
+        quantizer.amax = 448.0
+        setattr(attention, f"{axis}_bmm_quantizer", quantizer)
+    linear = torch.nn.Linear(4, 8, bias=False)
+    model.self_attention.linear_qkv = linear
+    mapping = QKVMapping(
+        "decoder.layers.0.self_attention.linear_qkv.weight",
+        "model.layers.0.self_attn.q_proj.weight",
+        "model.layers.0.self_attn.k_proj.weight",
+        "model.layers.0.self_attn.v_proj.weight",
+    )
+    tasks.append(
+        replace(
+            _task(mapping, linear, global_name=mapping.megatron_param), param_name="self_attention.linear_qkv.weight"
+        )
+    )
+
+    with pytest.raises(NotImplementedError, match="native MXFP4 format does not support KV-cache"):
+        modelopt_utils.build_modelopt_export_plan(tasks, model=[model])
+
+
+@pytest.mark.parametrize("expert", [0, -1])
+def test_gpt_oss_openai_mxfp4_export_rejects_unquantized_experts(expert):
+    # The last expert's hook packs the whole projection, so cover it and another one.
+    module, tasks = _gpt_oss_expert_tasks("down_proj", _mxfp4_weight_only_linear)
+    module.weight_quantizer[expert].disable()
+
+    with pytest.raises(RuntimeError, match="quantizes every expert"):
+        modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
+
+
+def test_gpt_oss_experts_reject_formats_besides_weight_only_mxfp4():
+    module, tasks = _gpt_oss_expert_tasks(
+        "down_proj", lambda out_features, in_features: _fp8_linear(out_features, in_features)
+    )
+
+    with pytest.raises(RuntimeError, match="OpenAI's MXFP4 layout, which holds weight-only MXFP4"):
+        modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
+
+
 def test_custom_quantized_expert_mapping_is_rejected_before_ep_gather():
     class CustomExpertMapping(ColumnParallelMapping):
         pass
@@ -1588,7 +1739,7 @@ def test_four_rank_capture_failure_topologies(tmp_path):
 
 
 def test_auto_bridge_can_reuse_a_prepared_plan():
-    task = SimpleNamespace(name="task", global_param_name="model.weight")
+    task = SimpleNamespace(name="task", global_param_name="model.weight", export_hook=None)
     plan = modelopt_utils.ModelOptExportPlan([task], {"quantized_layers": {}}, frozenset(), {})
 
     class FakeBridge:
@@ -1709,10 +1860,14 @@ def test_shard_writer_accepts_tensors_the_source_lacks(tmp_path, max_shard_size)
     from safetensors.torch import load_file
 
     (tmp_path / "model.safetensors").write_bytes(b"stale")
+    fused, scale = torch.arange(8, dtype=torch.uint8), torch.tensor(0.5)
     tensors = {
-        "model.weight": torch.arange(4, dtype=torch.uint8),
-        "model.weight_scale": torch.ones(2, dtype=torch.float8_e4m3fn),
-        "model.input_scale": torch.tensor(0.5),
+        # Views of one tensor, as CPU exports of fused projections give.
+        "model.q_proj.weight": fused[:4],
+        "model.k_proj.weight": fused[4:],
+        "model.q_proj.weight_scale": torch.ones(2, dtype=torch.float8_e4m3fn),
+        "model.q_proj.input_scale": scale,
+        "model.k_proj.input_scale": scale,
     }
 
     saved = modelopt_utils.save_safetensors_shards(iter(tensors.items()), tmp_path, max_shard_size=max_shard_size)
@@ -1728,7 +1883,7 @@ def test_shard_writer_accepts_tensors_the_source_lacks(tmp_path, max_shard_size)
         assert set(index["weight_map"]) == tensors.keys() and set(index["weight_map"].values()) == saved - {
             "model.safetensors.index.json"
         }
-        assert len(saved) == 4
+        assert len(saved) == len(tensors) + 1
     else:
         assert saved == {"model.safetensors"}
     assert not list(tmp_path.glob(".*.tmp"))
@@ -1749,6 +1904,8 @@ def test_shard_writer_rejects_duplicate_names(tmp_path):
         (("q_proj", "k_proj", "v_proj"), "input_scale", False),
         (("gate_proj", "up_proj"), "weight_scale_2", False),
         (("q_a_proj", "kv_a_proj_with_mqa"), "input_scale", False),
+        (("g_proj", "q_a_proj", "kv_a_proj_with_mqa"), "weight_scale_2", False),
+        (("wq_a", "wkv"), "input_scale", False),
         (("q_proj", "o_proj"), "input_scale", True),  # Not fused: different scales are fine.
     ],
 )
@@ -1777,13 +1934,15 @@ def test_export_rejects_enabled_quantizers_it_would_drop():
     model.attention.k_bmm_quantizer.disable()
     modelopt_utils.check_exportable_quantizers([model])
 
+    # KV-cache quantizers are exported as k_scale / v_scale.
     model.attention.k_bmm_quantizer.enable()
+    modelopt_utils.check_exportable_quantizers([model])
+
     model.projection.output_quantizer.enable()
-    with pytest.raises(RuntimeError, match=r"attention\.k_bmm_quantizer.*projection\.output_quantizer"):
+    with pytest.raises(RuntimeError, match=r"\['projection\.output_quantizer'\]"):
         modelopt_utils.check_exportable_quantizers([model])
 
     # An activation-only layer would be exported unquantized.
-    model.attention.k_bmm_quantizer.disable()
     model.projection.output_quantizer.disable()
     model.projection.weight_quantizer.disable()
     with pytest.raises(RuntimeError, match=r"\['projection\.input_quantizer'\]"):
@@ -1826,7 +1985,7 @@ def _save_failure_worker(rank, world_size, init_file, out_dir, case):
             _StreamingBridge(case).save_hf_pretrained_modelopt(
                 [torch.nn.Linear(2, 2)],
                 out_dir,
-                export_plan=SimpleNamespace(quantization_config={"quant_method": "modelopt"}),
+                export_plan=modelopt_utils.ModelOptExportPlan([], {"quant_method": "modelopt"}, frozenset(), {}),
                 show_progress=False,
             )
 

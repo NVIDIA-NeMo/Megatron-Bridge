@@ -110,6 +110,7 @@ do_switch() {
     local target_commit="$2"
 
     check_submodule
+    bash "$SCRIPT_DIR/prepare_mcore.sh"
 
     local current
     current=$(get_current_commit)

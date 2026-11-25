@@ -463,6 +463,19 @@ def reduce_max_stat_across_model_parallel_group(
         return stat.item()
 
 
+def _coerce_log_scalar(
+    value: float | int | torch.Tensor | None,
+    *,
+    as_int: bool = False,
+) -> float | int | None:
+    """Convert optimizer stats to Python scalars for logging."""
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        value = value.item()
+    return int(value) if as_int else float(value)
+
+
 def logical_and_across_model_parallel_group(input: bool, mp_group: "TorchProcessGroup") -> bool:
     """Performs a logical AND operation across the model parallel group.
 
@@ -644,7 +657,10 @@ def _get_num_moe_layers(model_config: Any) -> int:
     mtp_num_layers = getattr(model_config, "mtp_num_layers", None) or 0
     repeated_mtp = getattr(model_config, "mtp_use_repeated_layer", False)
 
-    if getattr(model_config, "is_hybrid_model", False) or getattr(model_config, "hybrid_layer_pattern", None):
+    is_hybrid = getattr(model_config, "is_hybrid_model", False) or getattr(model_config, "hybrid_layer_pattern", None)
+    # Full-block hybrid symbols include their MLP, so their MoE placement is
+    # defined by moe_layer_freq rather than separate E symbols in the pattern.
+    if is_hybrid and not getattr(model_config, "hybrid_attention_layers_include_mlp", False):
         pattern = parse_hybrid_pattern(getattr(model_config, "hybrid_layer_pattern", None))
         main_moe_layers = (pattern.main_pattern or "").count(Symbols.MOE)
         mtp_moe_layers = (pattern.mtp_pattern or "").count(Symbols.MOE)
@@ -663,7 +679,7 @@ def _get_num_moe_layers(model_config: Any) -> int:
         else:
             raise ValueError(f"Invalid moe_layer_freq: {moe_layer_freq}")
 
-        # Non-hybrid MTP copies the final main layer's dense/MoE layout.
+        # Transformer and full-block hybrid MTP copy the final main layer's layout.
         mtp_moe_layers = int(last_layer_is_moe and mtp_num_layers > 0)
         mtp_depth = mtp_num_layers
 
@@ -851,6 +867,11 @@ def training_log(
     logger_config = config.logger
     train_config = config.train
     pg_collection = pg_collection or get_pg_collection(model)
+
+    grad_norm = _coerce_log_scalar(grad_norm)
+    params_norm = _coerce_log_scalar(params_norm)
+    num_zeros_in_grad = _coerce_log_scalar(num_zeros_in_grad, as_int=True)
+    log_max_attention_logit = _coerce_log_scalar(log_max_attention_logit)
 
     loggers_exist = (
         writer is not None or wandb_writer is not None or mlflow_logger is not None or comet_logger is not None

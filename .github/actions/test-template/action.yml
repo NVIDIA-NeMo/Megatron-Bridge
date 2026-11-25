@@ -32,13 +32,13 @@ inputs:
     default: "false"
   azure-client-id:
     description: "Azure Client ID"
-    required: true
+    required: false
   azure-tenant-id:
     description: "Azure Tenant ID"
-    required: true
+    required: false
   azure-subscription-id:
     description: "Azure Subscription ID"
-    required: true
+    required: false
   has-azure-credentials:
     description: "Has Azure credentials"
     required: false

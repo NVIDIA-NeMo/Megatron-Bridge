@@ -214,7 +214,7 @@ def get_batch(  # pragma: no cover
             raise ValueError("DSv4 context parallelism requires packed THD metadata; use a packed dataset.")
         batch = _partition_packed_batch_contiguous(batch, cp_size, pg_collection.cp.rank())
     elif not has_packed:
-        batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
+        batch = get_batch_on_this_cp_rank(batch, dynamic_cp=False, cp_group=pg_collection.cp)
 
     return (
         batch["tokens"],

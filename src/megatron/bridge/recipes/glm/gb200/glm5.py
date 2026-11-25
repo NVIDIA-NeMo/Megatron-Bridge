@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig
-from megatron.bridge.models.glm_moe_dsa.glm5_provider import split_glm_pattern
+from megatron.bridge.models.glm_moe_dsa.glm5_provider import glm_hybrid_pattern, split_glm_pattern
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config, default_tulu3_config
@@ -125,6 +125,99 @@ def _glm_pretrain_config(*, model_id: str, revision: str) -> ConfigContainer:
     return cfg
 
 
+def glm52_proxy_pretrain_16gpu_gb200_bf16_config() -> ConfigContainer:
+    """GLM-5.2 eight-layer proxy pretraining on 16 GB200 GPUs.
+
+    The proxy keeps GLM-5.2's layer widths, its 256-expert top-8 routing, DSA index sharing and the MTP layer, but only
+    the first 8 of its 78 decoder layers: 3 dense and 5 MoE. DSA computes top-k indices in layers 0, 1, 2 and 6, and
+    layers 3 to 5 and 7 reuse them, as in the full model. Warm-start it through ``checkpoint.pretrained_checkpoint``
+    from the same cut of the pinned checkpoint: decoder layers 0 to 7, the MTP layer renumbered as layer 8, the
+    embedding and the output head, with ``num_hidden_layers`` set to 8. Every kept layer then sees the hidden states
+    it was trained on.
+    """
+    cfg = _pretrain_common()
+
+    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).get_model_config()
+    cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
+    # Keep the checkpoint's 154,880 embedding rows for the warm start.
+    cfg.tokenizer.use_tokenizer_vocab_size = False
+
+    cfg.model.seq_length = 4096
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
+    cfg.model.account_for_embedding_in_pipeline_split = False
+    cfg.model.account_for_loss_in_pipeline_split = False
+    cfg.model.microbatch_group_size_per_vp_stage = None
+
+    cfg.model.dsa_kernel_backend = "cudnn"
+    cfg.model.mtp_num_layers = 1
+    cfg.model.calculate_per_token_loss = True
+    cfg.model.cross_entropy_loss_fusion = False
+    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.gradient_accumulation_fusion = True
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = None
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.persist_layer_norm = True
+    cfg.model.bias_dropout_fusion = True
+    cfg.model.bias_activation_fusion = True
+    cfg.model.apply_rope_fusion = False
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.train.micro_batch_size = 1
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 10
+    cfg.train.train_iters = 100
+    cfg.train.global_batch_size = 128
+    cfg.validation.eval_iters = 0
+    cfg.validation.eval_interval = 0
+    cfg.logger.log_interval = 1
+
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.num_workers = 8
+    cfg.dataset.random_seed = 1234
+    cfg.rng.seed = 1234
+    # The warm start's output head first adapts to layer-7 hidden states: a 3e-4 peak drives the loss above 30 within
+    # 10 steps, while 3e-5 settles after a short rise during warmup.
+    cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=10,
+        max_lr=3e-5,
+        min_lr=3e-6,
+    )
+    cfg.scheduler.lr_decay_iters = 100
+    cfg.optimizer.use_precision_aware_optimizer = True
+    # A convergence check: one save of the 62B-parameter proxy with its optimizer state would write about 0.9 TB.
+    cfg.checkpoint.save = None
+    cfg.checkpoint.load = None
+    # [6, 2] decoder layers: the second stage starts on layer 6, which computes its own DSA top-k indices, and also
+    # hosts the MTP layer and both loss heads.
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(
+        glm_hybrid_pattern(num_layers=8, first_k_dense_replace=3), [6, 2]
+    )
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    return cfg
+
+
 def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     """GLM-5.2 bounded full SFT on 192 GB200 GPUs."""
     return _glm_sft_config(model_id=_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION, data_slug="glm5-2")
@@ -164,7 +257,12 @@ def _glm_sft_config(*, model_id: str, revision: str, data_slug: str) -> ConfigCo
     cfg.model.cross_entropy_fusion_impl = "native"
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # NCCL EP sizes its dispatch buffers once; packed (THD) batches take their per-rank bound from the pack length.
+    cfg.model.max_seq_length_per_sample = cfg.model.seq_length
+    # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
+    # which NCCL EP's faster dispatch exposes as a CPU stall.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.moe_permute_fusion = True
@@ -230,13 +328,11 @@ def _glm_sft_config(*, model_id: str, revision: str, data_slug: str) -> ConfigCo
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         "NCCL_GRAPH_REGISTER": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
+        # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        "USE_MNNVL": 1,
     }
     return cfg
 
@@ -280,7 +376,12 @@ def _glm_sft_128k_config(*, model_id: str, revision: str, data_slug: str) -> Con
     cfg.model.cross_entropy_fusion_impl = "native"
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    # NCCL EP sizes its dispatch buffers once; packed (THD) batches take their per-rank bound from the pack length.
+    cfg.model.max_seq_length_per_sample = cfg.model.seq_length
+    # Device-side expert token counts: the legacy grouped MLP syncs them to the host every layer,
+    # which NCCL EP's faster dispatch exposes as a CPU stall.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.moe_permute_fusion = True
@@ -344,13 +445,11 @@ def _glm_sft_128k_config(*, model_id: str, revision: str, data_slug: str) -> Con
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         "NCCL_GRAPH_REGISTER": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
+        # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        "USE_MNNVL": 1,
     }
     return cfg
 
@@ -484,6 +583,7 @@ __all__ = [
     "glm52_gb200_sft_config",
     "glm52_peft_192gpu_gb200_bf16_config",
     "glm52_pretrain_192gpu_gb200_bf16_config",
+    "glm52_proxy_pretrain_16gpu_gb200_bf16_config",
     "glm52_sft_192gpu_gb200_bf16_128k_config",
     "glm52_sft_192gpu_gb200_bf16_config",
 ]

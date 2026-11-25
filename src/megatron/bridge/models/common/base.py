@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from dataclasses import InitVar, dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
 from typing import Any, ClassVar
@@ -91,6 +92,7 @@ class ModelConfigOverrideMixin:
     """
 
     transformer_config_class: ClassVar[type[TransformerConfig]]
+    _mirrored_transformer_fields: ClassVar[frozenset[str]] = frozenset()
 
     def __setattr__(self, name: str, value: Any, /) -> None:
         """Assign a declared outer or nested field and reject phantom fields."""
@@ -106,6 +108,8 @@ class ModelConfigOverrideMixin:
 
         if name == "transformer" or name in model_fields:
             object.__setattr__(self, name, value)
+            if name in self._mirrored_transformer_fields and name in transformer_fields:
+                setattr(transformer, name, value)
         elif name in transformer_fields:
             setattr(transformer, name, value)
         elif name == "builder" or name.startswith("_") or hasattr(descriptor, "__set__"):
@@ -114,6 +118,20 @@ class ModelConfigOverrideMixin:
             raise AttributeError(
                 f"Neither {type(self).__name__} nor {type(transformer).__name__} declares a field named {name!r}."
             )
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Any:
+        """Deep-copy the outer config together with its nested transformer config.
+
+        Megatron Core's builder configs forward attribute lookups they cannot resolve to the nested
+        transformer config, and ``copy.deepcopy`` looks ``__deepcopy__`` up on the instance. Without this
+        method it would find the transformer config's own and return a copy of the nested config alone,
+        dropping the outer fields (``seq_length``, ``vocab_size``, hooks and builder settings).
+        """
+        result = type(self).__new__(type(self))
+        memo[id(self)] = result
+        for name, value in vars(self).items():
+            object.__setattr__(result, name, copy.deepcopy(value, memo))
+        return result
 
 
 class _TransformerOwnedField:
@@ -178,6 +196,22 @@ class MLAModelConfigMixin:
 
 class ModelConfig(_MegatronModelConfig):
     """Bridge compatibility wrapper for Megatron-LM model configs."""
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize nested configs without turning inferred CP defaults into overrides."""
+        data = super().as_dict()
+
+        def restore_cp_inputs(config: Any, serialized: Any) -> None:
+            if not is_dataclass(config) or not isinstance(serialized, dict):
+                return
+            if isinstance(config, TransformerConfig):
+                serialized.update(config._inferred_cp_inputs())
+            for f in dataclass_fields(config):
+                if f.name in serialized:
+                    restore_cp_inputs(getattr(config, f.name), serialized[f.name])
+
+        restore_cp_inputs(self, data)
+        return data
 
     def get_builder_cls(self) -> type:
         """Get the appropriate builder type for this config."""
