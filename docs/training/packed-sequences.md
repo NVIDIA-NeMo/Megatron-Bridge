@@ -301,8 +301,6 @@ also requires:
 - an explicit `model.max_seqlen_per_dp_cp_rank` whose product with
   `context_parallel_size` covers the longest sample;
 - no virtual pipeline parallelism or Megatron FSDP;
-- among hybrid models, only stacks of Gated DeltaNet, attention, MLP and MoE layers, such as Qwen3.5: packed
-  boundaries are not propagated to other layer types, such as Mamba;
 - no in-batch or Energon packing on the same dataset (offline packing combines with it; see
   [Offline Packed Rows](#offline-packed-rows));
 - a dataset config that declares `yields_unpacked_samples`.

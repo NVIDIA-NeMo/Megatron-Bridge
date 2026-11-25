@@ -1025,11 +1025,6 @@ class InProcessRestartConfig:
     """Directory for monitor process log files. If None, monitor process logging is disabled."""
 
 
-_GLOBAL_BATCH_PACKING_HYBRID_SYMBOLS = frozenset("G*-E|/")
-"""``hybrid_layer_pattern`` symbols global-batch packing runs on: Gated DeltaNet, attention, MLP and MoE
-positions, plus the pipeline-stage and MTP separators."""
-
-
 # ---------------- Container config (standalone top-level config) ----------------
 @dataclass(kw_only=True)
 class ConfigContainer(Container):
@@ -1342,17 +1337,6 @@ class ConfigContainer(Container):
             )
         if getattr(model, "virtual_pipeline_model_parallel_size", None) not in (None, 1):
             raise ValueError(f"{feature} does not yet support virtual pipeline parallelism.")
-        if getattr(model, "is_hybrid_model", False):
-            # Megatron-Core's hybrid stack propagates packed boundaries and the runtime CP group through its
-            # Gated DeltaNet, attention, MLP and MoE positions (Qwen3.5), not through Mamba or other mixers.
-            pattern = getattr(model, "hybrid_layer_pattern", None) or ""
-            unsupported = sorted(set(pattern) - _GLOBAL_BATCH_PACKING_HYBRID_SYMBOLS)
-            if not pattern or unsupported:
-                raise ValueError(
-                    f"{feature} supports hybrid models built only from Gated DeltaNet, attention, MLP and MoE "
-                    f"layers (hybrid_layer_pattern symbols G, *, - and E); got symbols {unsupported or pattern!r}. "
-                    "Packed boundaries are not propagated to other layer types, such as Mamba."
-                )
         if getattr(self.ddp, "use_megatron_fsdp", False):
             raise ValueError(f"{feature} is not supported with Megatron FSDP.")
         if getattr(model, "max_seqlen_per_dp_cp_rank", None) is None:

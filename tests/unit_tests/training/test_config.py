@@ -5938,9 +5938,9 @@ class TestGlobalBatchPackingValidation:
         # Rows are split into sequences re-padded to the runtime multiple, 2 x (dp 4 x cp 2), not the offline 4.
         assert dataset_cfg.global_batch_packing_pad_to_multiple_of == 16
 
-    @pytest.mark.parametrize("pattern", ["GE*E", "G-*-", "GEGE|GE*E/*E"])
-    def test_hybrid_stack_of_gdn_attention_and_mlp_layers_is_supported(self, pattern):
-        """Qwen3.5 is a hybrid model: Gated DeltaNet and attention positions, each followed by an MLP or MoE."""
+    @pytest.mark.parametrize("pattern", ["GE*E", "GEGE|GE*E/*E", "M-M-", None])
+    def test_hybrid_model_is_supported(self, pattern):
+        """Hybrid models, such as Qwen3.5 (Gated DeltaNet and attention positions), pass validation."""
         model_cfg = _HybridStackModelProvider(
             num_layers=1,
             hidden_size=128,
@@ -5965,33 +5965,6 @@ class TestGlobalBatchPackingValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
         assert container.model.sequence_packing_scheduler == "dp_balanced"
-
-    @pytest.mark.parametrize("pattern", ["ME*E", "M-M-", None])
-    def test_hybrid_model_with_other_layer_types_is_rejected(self, pattern):
-        """Packed boundaries do not reach Mamba layers, and a hybrid model without a pattern cannot be checked."""
-        model_cfg = _HybridStackModelProvider(
-            num_layers=1,
-            hidden_size=128,
-            num_attention_heads=4,
-            seq_length=512,
-            apply_rope_fusion=False,
-            context_parallel_size=2,
-            calculate_per_token_loss=True,
-            max_seqlen_per_dp_cp_rank=256,
-            is_hybrid_model=True,
-            hybrid_layer_pattern=pattern,
-        )
-        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
-        dataset_cfg = self._gpt_sft_unpacked_dataset(512)
-        container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=8, model_config=model_cfg, train_config=train_cfg, dataset_config_override=dataset_cfg
-        )
-        container.ddp.average_in_collective = False
-        try:
-            with pytest.raises(ValueError, match="Gated DeltaNet, attention, MLP and MoE"):
-                container._validate_global_batch_packing()
-        finally:
-            restore_get_world_size_safe(og_ws, cfg_mod)
 
     @pytest.mark.skipif(
         not hasattr(GPTModelProvider, "dynamic_context_parallel"),
