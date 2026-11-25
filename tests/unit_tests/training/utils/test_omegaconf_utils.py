@@ -25,8 +25,13 @@ import pytest
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from megatron.bridge.models.common import ModelConfigOverrideMixin
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hybrid import BridgeHybridModelConfig
+from megatron.bridge.models.muse_glimmer.muse_glimmer_config import (
+    MuseGlimmerModelConfig,
+    MuseGlimmerTransformerConfig,
+)
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.utils.omegaconf_utils import (
     OverridesError,
@@ -987,13 +992,105 @@ class TestBuilderTransformerOverrides:
 
         assert result.model.tensor_model_parallel_size == 2
 
-    @pytest.mark.parametrize("config_cls", [BridgeGPTModelConfig, BridgeHybridModelConfig])
+    def test_hybrid_pattern_stays_consistent_through_overrides_and_restore(self):
+        transformer = TransformerConfig(num_layers=2, hidden_size=128, num_attention_heads=4)
+        config = BridgeHybridModelConfig(transformer=transformer, hybrid_layer_pattern="**", vocab_size=128)
+        has_nested_pattern = "hybrid_layer_pattern" in type(transformer).__dataclass_fields__
+        for pattern in ("**", "*-", "--"):
+            config.hybrid_layer_pattern = pattern
+            config.finalize()
+            restored = BridgeHybridModelConfig.from_dict(config.as_dict())
+            assert config.hybrid_layer_pattern == restored.hybrid_layer_pattern == pattern
+            if has_nested_pattern:
+                assert config.transformer.hybrid_layer_pattern == pattern
+                assert restored.transformer.hybrid_layer_pattern == pattern
+            else:
+                assert not hasattr(config.transformer, "hybrid_layer_pattern")
+                assert not hasattr(restored.transformer, "hybrid_layer_pattern")
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "cli",
+            "yaml",
+            "yaml_nested",
+            "yaml_both_spellings",
+            "yaml_then_cli",
+            "cli_flat_then_nested",
+            "cli_nested_then_flat",
+        ],
+    )
+    def test_hybrid_pattern_cli_and_yaml_overrides(self, tmp_path, source):
+        config = ConfigWithBuilderModel()
+        config.model = BridgeHybridModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=128, num_attention_heads=4),
+            hybrid_layer_pattern="**",
+            vocab_size=128,
+        )
+        has_nested_pattern = "hybrid_layer_pattern" in type(config.model.transformer).__dataclass_fields__
+        if ("nested" in source or source == "yaml_both_spellings") and not has_nested_pattern:
+            pytest.skip("This MCore version only declares the pattern on the builder")
+        kwargs = {}
+        expected = "*-"
+        if source.startswith("yaml"):
+            config_file = tmp_path / "hybrid.yaml"
+            if source == "yaml_nested":
+                config_file.write_text('model:\n  transformer:\n    hybrid_layer_pattern: "*-"\n')
+            elif source == "yaml_both_spellings":
+                config_file.write_text(
+                    'model:\n  hybrid_layer_pattern: "*-"\n  transformer:\n    hybrid_layer_pattern: "--"\n'
+                )
+            else:
+                config_file.write_text('model:\n  hybrid_layer_pattern: "*-"\n')
+            kwargs["config_filepath"] = str(config_file)
+        if source == "cli":
+            kwargs["cli_overrides"] = ["model.hybrid_layer_pattern=*-"]
+        elif source == "yaml_then_cli":
+            kwargs["cli_overrides"] = ["model.hybrid_layer_pattern=--"]
+            expected = "--"
+        elif source == "cli_flat_then_nested":
+            kwargs["cli_overrides"] = ["model.hybrid_layer_pattern=--", "model.transformer.hybrid_layer_pattern=*-"]
+        elif source == "cli_nested_then_flat":
+            kwargs["cli_overrides"] = ["model.transformer.hybrid_layer_pattern=--", "model.hybrid_layer_pattern=*-"]
+        process_config_with_overrides(config, **kwargs)
+        config.model.finalize()
+        assert config.model.hybrid_layer_pattern == expected
+        if has_nested_pattern:
+            assert config.model.transformer.hybrid_layer_pattern == expected
+        else:
+            assert not hasattr(config.model.transformer, "hybrid_layer_pattern")
+
+    @pytest.mark.parametrize("source", ["cli", "yaml"])
+    def test_muse_glimmer_pattern_overrides_reach_the_model_config(self, tmp_path, source):
+        config = ConfigWithBuilderModel()
+        config.model = MuseGlimmerModelConfig(
+            transformer=MuseGlimmerTransformerConfig(num_layers=4, hidden_size=64, num_attention_heads=4),
+            hybrid_layer_pattern="****",
+        )
+        has_nested_pattern = "hybrid_layer_pattern" in type(config.model.transformer).__dataclass_fields__
+        if has_nested_pattern:
+            assert config.model.transformer.hybrid_layer_pattern == "****"
+        if source == "cli":
+            process_config_with_overrides(config, cli_overrides=["model.hybrid_layer_pattern=**|**"])
+        else:
+            config_file = tmp_path / "muse.yaml"
+            config_file.write_text('model:\n  hybrid_layer_pattern: "**|**"\n')
+            process_config_with_overrides(config, config_filepath=str(config_file))
+        # MuseGlimmerModel reads the outer field when constructing its Hybrid model.
+        assert config.model.hybrid_layer_pattern == "**|**"
+        if has_nested_pattern:
+            assert config.model.transformer.hybrid_layer_pattern == "**|**"
+        else:
+            assert not hasattr(config.model.transformer, "hybrid_layer_pattern")
+
+    @pytest.mark.parametrize("config_cls", ModelConfigOverrideMixin.__subclasses__())
     def test_builder_configs_declare_each_field_once(self, config_cls):
         """Routing treats a key on both levels, or an HF source field, as a flat override."""
         outer = {field.name for field in dataclasses.fields(config_cls)}
         nested = {field.name for field in dataclasses.fields(config_cls.transformer_config_class)}
 
-        assert outer.isdisjoint(nested)
+        # Dev's AttnRes validation needs the builder-owned pattern mirrored into TransformerConfig.
+        assert outer & nested == config_cls._mirrored_transformer_fields & nested
         assert outer.isdisjoint({"hf_model_id", "hf_model_revision"})
 
 

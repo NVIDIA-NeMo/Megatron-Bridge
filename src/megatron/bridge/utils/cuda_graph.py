@@ -162,3 +162,29 @@ def uses_local_cuda_graph_manager(config: Any) -> bool:
     """Return whether Bridge should create a local MCore CudaGraphManager."""
 
     return getattr(config, "cuda_graph_impl", "none") == "local" and not is_full_iteration_cuda_graph(config)
+
+
+def enable_hybrid_cuda_graph_pairs(config: Any) -> bool:
+    """Capture each Hybrid mixer position and the feed-forward position after it as one TE CUDA graph.
+
+    Hybrid models such as Qwen3.5 run each decoder block as two positions, the mixer (attention or Gated DeltaNet)
+    and its MoE or MLP, so per-layer Transformer Engine graphs launch two forward and two backward graphs per block.
+    Megatron-Core's ``TransformerConfig.cuda_graph_pair_hybrid_layers`` captures each such pair as one graph, which
+    halves the graph launches of the decoder blocks; Megatron-Core decides which adjacent positions it can pair. The
+    same field also graphs the layers of Hybrid MTP blocks, which per-layer graphs leave eager, except with
+    ``keep_mtp_in_bf16`` in FP8/FP4 training or ``mtp_use_repeated_layer`` over more than one MTP depth. Losses and
+    gradients stay bitwise identical. On a Megatron-Core without the field this changes nothing: depending on the
+    config class, assigning an unknown field would raise or leave an unused attribute, so the assignment is guarded,
+    as in ``_select_gdn_kernel_backend``.
+
+    Args:
+        config: Model config or provider to update. A Hybrid model config forwards the field to its transformer
+            config.
+
+    Returns:
+        Whether Megatron-Core has the field and it was set.
+    """
+    if hasattr(type(config), "cuda_graph_pair_hybrid_layers") or hasattr(config, "cuda_graph_pair_hybrid_layers"):
+        config.cuda_graph_pair_hybrid_layers = True
+        return True
+    return False

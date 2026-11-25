@@ -61,7 +61,7 @@ image encoder stays frozen on text data.
 
 | Recipe | Workload | Nodes | Layout | Recompute |
 | --- | --- | ---: | --- | --- |
-| `inkling2_small_pretrain_128gpu_gb200_bf16_config` | Text pretraining, GBS 1024, sequence length 4096 | 32 | TP1/PP4/EP32, 13/13/12/10 blocks per stage | Full |
+| `inkling2_small_pretrain_128gpu_gb200_bf16_config` | Text pretraining, GBS 1024, sequence length 4096 | 32 | TP1/PP2/EP32, 26/22 blocks per stage | Full |
 | `inkling2_small_sft_128gpu_gb200_bf16_config` | Full SFT on 10K Tulu 3 conversations packed to 8K, GBS 8 | 32 | TP4/PP4/EP32 | None |
 | `inkling2_small_sft_96gpu_gb200_bf16_config` | The same full SFT run on fewer GPUs | 24 | TP4/PP3/EP32 | First 20 of 32 layers per stage |
 | `inkling2_small_sft_128gpu_gb200_bf16_long_context_config` | Full SFT on packed 32K Tulu 3, GBS 8 | 32 | TP4/PP4/EP32/CP4 | First 20 of 24 layers per stage |
@@ -81,7 +81,9 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 HybridEP needs every expert-parallel group inside one NVL72 domain, and each group is a run
 of consecutive nodes: 8 for EP32 and 4 for EP16. On a cluster with Slurm's block topology,
 `segment=8` places every 8 consecutive nodes in one NVL72 rack; use `segment=4` for the
-4-node LoRA recipe.
+4-node LoRA recipe. Launch the pretraining recipe with `segment=16`: each of its pipeline
+stages is 16 consecutive nodes whose two EP32 groups also reduce their expert gradients
+between each other, and the larger segment keeps that reduction inside one rack.
 
 Launch every recipe with expandable segments set as above. The recipes declare the same
 allocator setting, but `run_recipe.py` applies recipe environment variables only after
@@ -90,10 +92,13 @@ once, when CUDA initializes. Without expandable segments the caching allocator f
 GPUs: a 16-GPU LoRA run with all-to-all dispatch reserved 183 GB for a 130 GB peak, and NCCL
 ran out of memory creating a communicator after the first step.
 
-The pretraining recipe splits the 48 decoder blocks unevenly over its four pipeline
-stages. A block's cost grows with depth, as the AttnRes state it reads grows, and the last
-stage also computes the output layer and loss, so with 12 blocks per stage the last stage
-sets the pace and the step is about 11% slower.
+The pretraining recipe splits the 48 decoder blocks unevenly over its two pipeline stages,
+26 and 22. A block's cost grows with depth, as the AttnRes state it reads grows, and the
+last stage also computes the output layer and loss. Two stages leave a smaller pipeline
+bubble than four and split the blocks more evenly, so the step is about 6% faster than on
+four stages of 13, 13, 12, and 10 blocks. In exchange each GPU holds twice the expert
+weights and gradients, and the first stage peaks near 145 GB. EP64 on the same two stages
+is over 20% slower.
 
 The packed SFT and LoRA recipes train GBS 8 on eight data-parallel replicas, one pack
 each, so a step is a single pass through the 48 decoder blocks: more pipeline stages add

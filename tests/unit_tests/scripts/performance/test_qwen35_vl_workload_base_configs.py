@@ -802,3 +802,77 @@ def test_qwen35_vl_perf_recipe_discovery_covers_the_cudnn_gdn_recipes() -> None:
     platforms = {factory.__module__.split(".")[-2] for factory in discovered}
     assert {"b200", "b300", "gb200", "gb300", "h100", "vrnvl72"} <= platforms
     assert any("122b" in factory.__name__ for factory in discovered)
+
+
+# Benchmarks that restore a library recipe's execution policy keep that recipe's RoPE setting.
+_LIBRARY_EXECUTION_POLICY_RECIPES = frozenset({"qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config"})
+
+
+@pytest.mark.parametrize("recipe_fn", _QWEN35_VL_PERF_RECIPES, ids=recipe_factory_id)
+def test_qwen35_vl_perf_recipes_fuse_rope(recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The benchmarks keep _benchmark_common's RoPE fusion: MRoPE and the vision 2D RoPE use the fused kernel."""
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = recipe_fn()
+
+    assert config.model.apply_rope_fusion is (recipe_fn.__name__ not in _LIBRARY_EXECUTION_POLICY_RECIPES)
+
+
+# Benchmarks whose language-model graphs come from _enable_partial_cuda_graphs: the GB300 35B/397B recipes and the
+# VRNVL72 recipes built on them.
+_HYBRID_GRAPH_PAIR_RECIPES = (
+    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
+)
+
+
+@pytest.fixture
+def megatron_core_with_cuda_graph_pairs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the offline provider Megatron-Core's cuda_graph_pair_hybrid_layers field, with its default."""
+    monkeypatch.setattr(_OfflineModelProvider, "cuda_graph_pair_hybrid_layers", False, raising=False)
+
+
+@pytest.mark.usefixtures("megatron_core_with_cuda_graph_pairs")
+@pytest.mark.parametrize("recipe_fn", _QWEN35_VL_PERF_RECIPES, ids=recipe_factory_id)
+def test_qwen35_vl_perf_recipes_pair_hybrid_graphs(recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Benchmarks that graph attention per layer capture each Hybrid block once when Megatron-Core can pair them.
+
+    Asserted on the FINAL config, as the precision variants rebuild on the BF16 bases. The other benchmarks either
+    graph no attention or restore a library recipe's execution policy, and keep one graph per position.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = recipe_fn()
+
+    paired = recipe_fn in _HYBRID_GRAPH_PAIR_RECIPES
+    assert config.model.cuda_graph_pair_hybrid_layers is paired
+    if paired:
+        assert config.model.cuda_graph_impl == "transformer_engine"
+        assert set(cuda_graph_module_names(config.model)) == {"attn", "moe_router", "moe_preprocess"}
+
+
+@pytest.mark.parametrize("recipe_fn", _HYBRID_GRAPH_PAIR_RECIPES, ids=recipe_factory_id)
+def test_qwen35_vl_hybrid_graph_pairs_not_invented_on_older_core(
+    recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without the Megatron-Core field the recipes must not create it: it would be silently unused."""
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = recipe_fn()
+
+    assert not hasattr(config.model, "cuda_graph_pair_hybrid_layers")
+
+
+def test_qwen35_vl_perf_recipe_discovery_covers_the_graph_pair_recipes() -> None:
+    """The recipe matrix must keep finding every recipe the graph-pairing tests reason about."""
+    assert set(_HYBRID_GRAPH_PAIR_RECIPES) <= set(_QWEN35_VL_PERF_RECIPES)

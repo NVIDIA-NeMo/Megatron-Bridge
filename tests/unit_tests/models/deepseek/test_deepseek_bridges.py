@@ -21,12 +21,13 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers import GenerationConfig
+from transformers import DeepseekV3Config, GenerationConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.conversion.utils import carry_rope_into_rope_parameters, conform_config_to_reference
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
-from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge, _dequant_fp8_blockwise
+from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
@@ -178,6 +179,54 @@ class TestDeepSeekV3Bridge:
         assert "q_lora_rank" in hf_config
         assert hf_config["q_lora_rank"] is None
 
+    @pytest.mark.parametrize(
+        ("rope_scaling", "expected"),
+        [
+            (
+                {
+                    "type": "yarn",
+                    "factor": 8.0,
+                    "original_max_position_embeddings": 20480,
+                    "beta_fast": 16.0,
+                    "beta_slow": 2.0,
+                    "mscale": 0.5,
+                    "mscale_all_dim": 0.75,
+                },
+                {
+                    "rope_type": "yarn",
+                    "factor": 8.0,
+                    "original_max_position_embeddings": 20480,
+                    "beta_fast": 16.0,
+                    "beta_slow": 2.0,
+                    "mscale": 0.5,
+                    "mscale_all_dim": 0.75,
+                },
+            ),
+            (None, {"rope_type": "default"}),
+        ],
+        ids=["other_yarn_factor", "unscaled"],
+    )
+    def test_config_export_keeps_the_model_mla_rope_scaling(
+        self, ds_v3_config, mock_pretrained_v3, rope_scaling, expected
+    ):
+        """A config export conformed to the factor-40 YaRN reference keeps the model's own RoPE scaling."""
+        reference = DeepseekV3Config(**ds_v3_config)
+        mock_pretrained_v3.config.rope_scaling = rope_scaling
+        bridge = DeepSeekV3Bridge()
+        provider = bridge.provider_bridge(mock_pretrained_v3)
+
+        exported = bridge.megatron_to_hf_config(provider)
+        conformed = carry_rope_into_rope_parameters(
+            exported, conform_config_to_reference(exported, reference.to_dict())
+        )
+        rope_parameters = DeepseekV3Config(**conformed).rope_parameters
+
+        assert exported["rope_scaling"] == expected
+        assert {key: rope_parameters[key] for key in expected} == expected
+        assert rope_parameters["rope_theta"] == ds_v3_config["rope_theta"]
+        if rope_scaling is None:
+            assert rope_parameters == {"rope_type": "default", "rope_theta": ds_v3_config["rope_theta"]}
+
     def test_export_does_not_synthesize_inv_freq_from_another_layer(self, mock_pretrained_v3):
         bridge = DeepSeekV3Bridge()
         bridge.hf_config = mock_pretrained_v3.config
@@ -243,102 +292,71 @@ class TestDeepSeekV3Bridge:
         assert inv_key not in result
 
 
-class TestDeepSeekV3DequantFP8Blockwise:
-    """Unit tests for the standalone _dequant_fp8_blockwise helper."""
+def _block_scaled(scale_inv, rows, cols, shape):
+    """Expand a per-block scale grid to a weight of ``shape``, clipping partial edge blocks."""
+    return scale_inv.repeat_interleave(rows, dim=0).repeat_interleave(cols, dim=1)[: shape[0], : shape[1]]
 
-    def test_identity_scale_inv(self):
-        """With scale_inv=1 the output equals the input cast to bfloat16."""
+
+class TestDeepSeekV3LoadHFWeights:
+    """FP8 dequantization on import, which DeepSeek-V3 leaves to the base ``_load_hf_weights``."""
+
+    @staticmethod
+    def _bridge(weight_block_size=None):
+        bridge = DeepSeekV3Bridge()
+        quantization_config = {"activation_scheme": "dynamic", "fmt": "e4m3", "quant_method": "fp8"}
+        if weight_block_size is not None:
+            quantization_config["weight_block_size"] = weight_block_size
+        bridge.hf_config = SimpleNamespace(quantization_config=quantization_config)
+        return bridge
+
+    def test_has_no_fp8_hook_of_its_own(self):
+        """A bridge hook would dequantize before the base loader could apply the declared block size."""
+        assert "maybe_modify_loaded_hf_weight" not in DeepSeekV3Bridge.__dict__
+
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
+    def test_unquantized_weights_pass_through(self, dtype):
+        weight = torch.randn(4, 4, dtype=dtype)
+
+        assert self._bridge([128, 128])._load_hf_weights("layer.weight", {"layer.weight": weight}) is weight
+
+    def test_dequantizes_with_the_declared_weight_block_size(self):
+        """With 64x64 blocks, each quadrant of a 128x128 weight takes its own scale."""
         weight = torch.ones(128, 128, dtype=torch.float8_e4m3fn)
-        scale_inv = torch.ones(1, 1)
-        result = _dequant_fp8_blockwise(weight, scale_inv)
-
-        assert result.dtype == torch.bfloat16
-        assert result.shape == (128, 128)
-        assert torch.all(result == 1.0)
-
-    def test_scale_inv_applied_per_block(self):
-        """scale_inv value is multiplied block-wise across all 128x128 blocks."""
-        weight = torch.ones(256, 256, dtype=torch.float8_e4m3fn)
-        scale_inv = torch.full((2, 2), 2.0)
-        result = _dequant_fp8_blockwise(weight, scale_inv)
-
-        assert result.dtype == torch.bfloat16
-        assert torch.all(result == 2.0)
-
-    def test_distinct_scale_per_block(self):
-        """Each 128x128 block uses its own scale value."""
-        weight = torch.ones(256, 256, dtype=torch.float8_e4m3fn)
         scale_inv = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
-        result = _dequant_fp8_blockwise(weight, scale_inv).float()
+        state = {"layer.weight": weight, "layer.weight_scale_inv": scale_inv}
 
-        assert torch.all(result[:128, :128] == 1.0)
-        assert torch.all(result[:128, 128:] == 2.0)
-        assert torch.all(result[128:, :128] == 3.0)
-        assert torch.all(result[128:, 128:] == 4.0)
+        result = self._bridge([64, 64])._load_hf_weights("layer.weight", state)
 
-    def test_non_multiple_dim(self):
-        """Trailing partial block (dim not divisible by 128) is handled."""
-        weight = torch.zeros(100, 70, dtype=torch.float8_e4m3fn)
-        scale_inv = torch.ones(1, 1)
-        result = _dequant_fp8_blockwise(weight, scale_inv)
+        torch.testing.assert_close(result, _block_scaled(scale_inv, 64, 64, (128, 128)), rtol=0, atol=0)
 
-        assert result.shape == (100, 70)
-        assert result.dtype == torch.bfloat16
+    @pytest.mark.parametrize("weight_block_size", [[128, 128], None], ids=["declared", "undeclared"])
+    def test_dequantizes_partial_edge_blocks_with_128x128_blocks(self, weight_block_size):
+        """DeepSeek-V3 declares 128x128 blocks, which are also the default when a config declares none."""
+        weight = torch.ones(200, 160, dtype=torch.float8_e4m3fn)
+        scale_inv = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        state = {"layer.weight": weight, "layer.weight_scale_inv": scale_inv}
 
+        result = self._bridge(weight_block_size)._load_hf_weights("layer.weight", state)
 
-class TestDeepSeekV3MaybeModifyLoadedHFWeight:
-    """Unit tests for DeepSeekV3Bridge.maybe_modify_loaded_hf_weight (FP8 dequant on import)."""
+        torch.testing.assert_close(result, _block_scaled(scale_inv, 128, 128, (200, 160)), rtol=0, atol=0)
 
-    def test_passthrough_bfloat16(self):
-        """Non-FP8 weights are returned unchanged."""
-        bridge = DeepSeekV3Bridge()
-        w = torch.randn(4, 4, dtype=torch.bfloat16)
-        state = {"layer.weight": w}
-        result = bridge.maybe_modify_loaded_hf_weight("layer.weight", state)
-        assert result is w
+    def test_fp8_without_scale_inv_is_left_for_the_mapping(self):
+        """Without a ``*_scale_inv`` companion there is nothing to apply; the mapping casts the codes."""
+        weight = torch.ones(4, 4, dtype=torch.float8_e4m3fn)
 
-    def test_passthrough_float32(self):
-        """Non-FP8 (float32) weights pass through unchanged."""
-        bridge = DeepSeekV3Bridge()
-        w = torch.randn(4, 4, dtype=torch.float32)
-        state = {"layer.weight": w}
-        result = bridge.maybe_modify_loaded_hf_weight("layer.weight", state)
-        assert result is w
+        assert self._bridge([128, 128])._load_hf_weights("layer.weight", {"layer.weight": weight}) is weight
 
-    def test_dequants_fp8_when_scale_inv_present(self):
-        """FP8 weight with a ``*_scale_inv`` key is block-wise dequantized."""
-        bridge = DeepSeekV3Bridge()
-        w = torch.ones(128, 128, dtype=torch.float8_e4m3fn)
-        sinv = torch.full((1, 1), 3.0)
-        state = {"layer.weight": w, "layer.weight_scale_inv": sinv}
-        result = bridge.maybe_modify_loaded_hf_weight("layer.weight", state)
+    def test_dict_hf_param_dequantizes_each_fp8_entry(self):
+        """Compound (dict) params dequantize every FP8 entry with its own scales."""
+        gate = torch.ones(128, 128, dtype=torch.float8_e4m3fn)
+        up = torch.ones(64, 64, dtype=torch.bfloat16)
+        state = {"key1": gate, "key1_scale_inv": torch.full((2, 2), 2.0), "key2": up}
 
-        assert result.dtype == torch.bfloat16
-        assert torch.all(result == 3.0)
+        result = self._bridge([64, 64])._load_hf_weights({"gate": "key1", "up": "key2"}, state)
 
-    def test_fp8_without_scale_inv_cast_to_bfloat16(self):
-        """FP8 weight without ``*_scale_inv`` falls back to a plain float cast."""
-        bridge = DeepSeekV3Bridge()
-        w = torch.ones(4, 4, dtype=torch.float8_e4m3fn)
-        state = {"layer.weight": w}
-        result = bridge.maybe_modify_loaded_hf_weight("layer.weight", state)
-
-        assert result.dtype == torch.bfloat16
-
-    def test_dict_hf_param_each_key_processed(self):
-        """Compound (dict) hf_param dequantizes every sub-key independently."""
-        bridge = DeepSeekV3Bridge()
-        w1 = torch.ones(128, 128, dtype=torch.float8_e4m3fn)
-        w2 = torch.ones(64, 64, dtype=torch.bfloat16)
-        sinv = torch.full((1, 1), 2.0)
-        state = {"key1": w1, "key1_scale_inv": sinv, "key2": w2}
-        result = bridge.maybe_modify_loaded_hf_weight({"gate": "key1", "up": "key2"}, state)
-
-        assert isinstance(result, dict)
-        assert result["gate"].dtype == torch.bfloat16
-        assert torch.all(result["gate"] == 2.0)
-        # Non-FP8 entries pass through unchanged.
-        assert result["up"] is w2
+        assert result.keys() == {"gate", "up"}
+        torch.testing.assert_close(result["gate"], torch.full((128, 128), 2.0), rtol=0, atol=0)
+        assert result["up"] is up
 
 
 class TestDeepSeekV3MaybeModifyConvertedHFWeight:

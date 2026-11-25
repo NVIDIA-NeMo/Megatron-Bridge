@@ -91,11 +91,13 @@ Output:
 """
 
 import argparse
+import contextlib
 import gc
 import importlib
 import io
 import os
 import sys
+from collections.abc import Iterator
 from typing import Optional
 
 import torch
@@ -627,6 +629,30 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     return None
 
 
+@contextlib.contextmanager
+def _torch_kernel_fallbacks() -> Iterator[None]:
+    """Make transformers' kernel-backed model helpers run their PyTorch references.
+
+    transformers 5.15+ wraps helpers such as NemotronH's ``causal_conv1d_fn`` with
+    ``use_kernel_func_from_hub_with_fallback``, which binds an installed package (``causal_conv1d``,
+    ``mamba_ssm``, ``fla``) once at import without checking the tensor device. Those kernels are
+    CUDA-only, so a CPU forward fails with "Expected x.is_cuda() to be true". Since 5.17 the wrapper
+    calls its PyTorch reference while ``torch.export`` runs; inside this context it always does.
+    """
+    from transformers.integrations import hub_kernels
+
+    is_exporting = getattr(hub_kernels, "is_torchdynamo_exporting", None)
+    if is_exporting is None:
+        yield
+        return
+    print_rank_0("CPU HF reference: kernel-backed transformers helpers, if any, use their PyTorch implementations.")
+    try:
+        hub_kernels.is_torchdynamo_exporting = lambda: True
+        yield
+    finally:
+        hub_kernels.is_torchdynamo_exporting = is_exporting
+
+
 def _get_hf_forward_model(hf_model, pixel_values, pixel_values_videos=None):
     """Select a composite model's language backbone for text-only comparison."""
     language_model = getattr(hf_model, "language_model", None)
@@ -696,7 +722,9 @@ def _run_hf_inference(
         if mm_token_type_ids is not None:
             hf_inputs["mm_token_type_ids"] = mm_token_type_ids.to(hf_device)
 
-        hf_output = hf_forward_model(**hf_inputs)
+        on_cpu = torch.device(hf_device).type == "cpu"
+        with _torch_kernel_fallbacks() if on_cpu else contextlib.nullcontext():
+            hf_output = hf_forward_model(**hf_inputs)
 
         # Debug: Check output type
         print_rank_0(f"HF output type: {type(hf_output)}")
@@ -1271,7 +1299,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hf-device",
         default="cuda",
-        help="CUDA device used by the rank-0 Hugging Face reference model (for example, cuda:2).",
+        help="Device used by the rank-0 Hugging Face reference model (for example, cuda:2 or cpu).",
     )
     parser.add_argument(
         "--model_class",
@@ -1305,12 +1333,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-if __name__ == "__main__":
-    args = build_parser().parse_args()
+def main(argv: list[str] | None = None) -> None:
+    """Run the comparison and tear down the process group once it has succeeded.
+
+    An error can be raised on one rank only, for example when rank 0 rejects an HF
+    reference produced from other input IDs, while the other ranks wait in a collective.
+    Destroying the process group on that rank can then wait for those ranks forever, as
+    ProcessGroupNCCL2 does, so the error is left to end the process instead, and torchrun
+    then stops the remaining ranks.
+
+    Args:
+        argv: Command-line arguments. Defaults to ``sys.argv[1:]``.
+    """
+    args = build_parser().parse_args(argv)
 
     maybe_initialize_distributed()
-    try:
-        compare_models_one_step(args)
-    finally:
-        if torch.distributed.is_initialized():
-            torch.distributed.destroy_process_group()
+    compare_models_one_step(args)
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
+
+
+if __name__ == "__main__":
+    main()

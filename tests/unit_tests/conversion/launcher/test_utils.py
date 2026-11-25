@@ -17,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 
 pytestmark = pytest.mark.unit
@@ -29,6 +30,8 @@ spec.loader.exec_module(conversion_utils)
 prepare_output_directory = conversion_utils.prepare_output_directory
 resolve_hf_commit_revision = conversion_utils.resolve_hf_commit_revision
 resolve_hf_model_revision = conversion_utils.resolve_hf_model_revision
+_configure_model_config = conversion_utils._configure_model_config
+_configure_model_provider = conversion_utils._configure_model_provider
 
 
 def test_resolve_hf_model_revision_downloads_exact_snapshot(monkeypatch):
@@ -106,3 +109,32 @@ def test_prepare_output_directory_rejects_source_overlap(tmp_path, relationship)
         prepare_output_directory(str(destination), overwrite=True, source_paths=[str(source)])
 
     assert source_marker.read_text() == "checkpoint"
+
+
+@pytest.mark.parametrize(
+    ("vocab_size", "tp", "padded"),
+    [(127, 2, True), (151936, 3, True), (128, 2, False), (32000, 8, False), (50257, 1, False)],
+)
+def test_configure_model_provider_pads_only_a_vocabulary_tp_does_not_divide(vocab_size, tp, padded):
+    provider = SimpleNamespace(vocab_size=vocab_size, should_pad_vocab=False)
+
+    _configure_model_provider(provider, tp=tp, pp=1, ep=1, etp=1, dtype=torch.bfloat16)
+
+    assert provider.should_pad_vocab is padded
+
+
+def test_configure_model_provider_keeps_requested_padding():
+    provider = SimpleNamespace(vocab_size=128, should_pad_vocab=True)
+
+    _configure_model_provider(provider, tp=2, pp=1, ep=1, etp=1, dtype=torch.bfloat16)
+
+    assert provider.should_pad_vocab is True
+
+
+def test_configure_model_config_pads_the_builder_vocabulary():
+    model_config = SimpleNamespace(vocab_size=127, should_pad_vocab=False, transformer=SimpleNamespace())
+
+    _configure_model_config(model_config, tp=2, pp=1, ep=1, etp=1, dtype=torch.bfloat16)
+
+    assert model_config.should_pad_vocab is True
+    assert model_config.transformer.tensor_model_parallel_size == 2

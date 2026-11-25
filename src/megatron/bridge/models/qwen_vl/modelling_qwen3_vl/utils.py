@@ -148,7 +148,7 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
             tp_group=self.tp_group,
         )
 
-        self.activation_func = self.config.activation_func
+        self.activation_func = nn.functional.gelu
 
         self.linear_fc2 = build_module(
             submodules.linear_fc2,

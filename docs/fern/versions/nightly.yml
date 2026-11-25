@@ -13,6 +13,9 @@ navigation:
     path: ./nightly/pages/performance-summary-archive.mdx
 - section: Guides
   contents:
+  - page: Unified Megatron-LM
+    path: ./nightly/unified-megatron.mdx
+    slug: unified-megatron
   - page: Parallelisms Guide
     path: ./nightly/pages/parallelisms.mdx
   - page: Performance Tuning Guide
