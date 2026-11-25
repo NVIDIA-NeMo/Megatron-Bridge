@@ -79,7 +79,8 @@ def architecture(args: argparse.Namespace) -> None:
     )
     del cfg["quantization_config"]
     args.output.mkdir(parents=True)
-    (args.output / "config.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    # Preserve the serialized bytes used by the pinned 256K checkpoint and runtime fixture.
+    (args.output / "config.json").write_text(json.dumps(cfg, indent=2))
 
 
 def convert(args: argparse.Namespace) -> None:
