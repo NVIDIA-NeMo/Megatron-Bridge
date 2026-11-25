@@ -49,6 +49,7 @@ __all__ = [
     "DYNAMIC_CP_SCHEDULERS",
     "dynamic_context_parallel_enabled",
     "finalize_packed_seq_params",
+    "fixed_thd_dsv4_packing_enabled",
     "get_batch_for_global_batch_packing",
     "global_batch_packing_enabled",
     "probe_global_batch_packing_support",
@@ -64,13 +65,37 @@ _DEV_PIN_HINT = (
 )
 
 
+def fixed_thd_dsv4_packing_enabled(model_config: Any) -> bool:
+    """Identify the DSv4 contract that consumes fixed, prepacked THD batches.
+
+    This path retains ``dp_balanced`` for Megatron-Core's static-shape checks but
+    does not run its online scheduler. ``ConfigContainer.validate`` requires a
+    matching offline-packed dataset and rejects an explicit online-packing request.
+    """
+    metadata_capacity = getattr(model_config, "cuda_graph_thd_max_packed_sequences", None)
+    return (
+        getattr(model_config, "experimental_attention_variant", None) == "dsv4_hybrid"
+        and getattr(model_config, "sequence_packing_scheduler", None) == "dp_balanced"
+        # Padding needs one real-document slot and one dummy-document slot.
+        and isinstance(metadata_capacity, int)
+        and not isinstance(metadata_capacity, bool)
+        and metadata_capacity >= 2
+        and getattr(model_config, "attention_cp_layout", None) == "contiguous"
+        and getattr(model_config, "linear_cp_layout", None) == "contiguous"
+        and getattr(model_config, "pad_packed_seq_alignment", None) == "max"
+        and not dynamic_context_parallel_enabled(model_config)
+    )
+
+
 def global_batch_packing_enabled(model_config: Any) -> bool:
     """Return whether a Megatron-Core online packing scheduler is configured on the model.
 
     Checks for a scheduler name rather than any non-``None`` value so that stand-in configs
     (mocks, partial namespaces) do not route a step through the packing scheduler.
     """
-    return isinstance(getattr(model_config, "sequence_packing_scheduler", None), str)
+    return isinstance(
+        getattr(model_config, "sequence_packing_scheduler", None), str
+    ) and not fixed_thd_dsv4_packing_enabled(model_config)
 
 
 def dynamic_context_parallel_enabled(model_config: Any) -> bool:

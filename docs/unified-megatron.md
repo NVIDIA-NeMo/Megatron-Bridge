@@ -90,13 +90,25 @@ Existing users, such as [verl](https://github.com/verl-project/verl/blob/1252cc7
 
 ## Timeline
 
+The [consolidation timeline announcement](https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/6888) covers the contributor transition and NeMo container releases.
+
+### November 30, 2026: contributor transition
+
+* Contributions to Megatron-Bridge remain welcome until the November 30 cutoff while Megatron-LM is prepared to host model bridges, training recipes, and LoRA.
+* On **November 30, 2026**, [NVIDIA-NeMo/Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge) stops accepting new contributions and becomes a public archive. The code remains available for reference.
+* After the cutoff, contribute new models and features directly to [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM). PRs not merged before the cutoff need to be migrated there by their authors.
+* If a PR needs to merge before November 30, ping `@cuichenx` in the [announcement issue](https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/6888#issuecomment-7149568083).
+
 ### December 2026 (Megatron-Core 0.21.0 release)
 
-* Training loop will be fully unified in Megatron-LM’s `megatron/training`
+* Training loop will be fully unified in Megatron-LM’s `megatron/training`.
+* **NeMo 26.12** (`nvcr.io/nvidia/nemo:26.12`), planned for mid-December 2026, will include **Megatron-Bridge v0.8**, the last standalone release, alongside **Megatron Core 0.21**.
+* We aim to move all existing models to Megatron-LM by the end of 2026. This is the model migration target; the first unified NeMo container follows in February.
 
 ### February 2027 (Megatron-Core 0.22.0 release)
 
-* Megatron-Bridge will be fully migrated to Megatron-LM, most of the files will be found under `megatron/bridge`
+* Megatron-Bridge will be fully migrated to Megatron-LM, with most files under `megatron/bridge`.
+* **NeMo 27.02** (`nvcr.io/nvidia/nemo:27.02`), planned for mid-February 2027, will be the first container with Megatron-Bridge and Megatron Core released together from Megatron-LM.
 
 PR Tracker: [https://github.com/NVIDIA/Megatron-LM/issues/9363](https://github.com/NVIDIA/Megatron-LM/issues/9363)
 
