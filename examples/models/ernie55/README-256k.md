@@ -347,7 +347,7 @@ The commands above were exercised on the same 64 GB300s for both implementations
 
 Both heads passed every stated threshold on all three fixtures. A separate single-document test saved the main and MTP head inputs produced by original Swift and by true routed MoK + MoonEP. Projecting those inputs through the released head weights gave exactly equal BF16 values for all 52,745,957,376 valid-position logits per head on one dense replica. Projected Swift logits also matched the raw columns sampled directly by its trainer. The largest absolute differences from the native Swift per-token CE were 1.91e-6 for the main head and 2.38e-6 for MTP.
 
-The complete single-document decoder backward still exceeds the fixed thresholds. At the inputs to blocks 1, 22 and 43, the full four-stream gradient relative L2 differences against Swift were 2.26123%, 0.98234%, 0.36896%, respectively. Two fresh runs of original Swift on the same 64 physical GPUs and the same rank assignments differed by 2.30726%, 1.16300%, 0.05733% at the same points. Each comparison covers all 262,144 tokens on one replica. The unreduced CE gradient coefficients agreed at every token in both heads. These measurements cover the first microbatch. Parameter-gradient and multi-update optimizer agreement with Swift remain open.
+The complete single-document decoder backward still exceeds the fixed thresholds. At the inputs to blocks 1, 22 and 43, the full four-stream gradient relative L2 differences against Swift were 2.26123%, 0.98234%, 0.36896%, respectively. Two fresh runs of original Swift on the same 64 physical GPUs and the same rank assignments differed by 2.30726%, 1.16300%, 0.05733% at the same points. Each comparison covers all 262,144 tokens on one replica. The unreduced CE gradient coefficients agreed at every token in both heads. These measurements cover the first microbatch. The eight-document optimizer comparison below covers three parameter matrices. Other parameter gradients and the longer training trajectory require separate checks.
 
 #### Eight-document throughput and precision
 
@@ -361,6 +361,20 @@ Both unprofiled arms used the same 64 GB300s, released weights, eight 32,768-tok
 The reference-arithmetic arm includes score-ordered stable D top-k and preserved physical key slots, reference routed BF16 arithmetic and RMSNorm, eager mHC and VHA, and one-symbol recompute. The measured difference includes all these choices.
 
 The native throughput arm exceeded at least one of the fixed Swift head gates when tested separately with the public four-replica capture. Its sampled raw logit relative L2 was 1.605553% for main and 8.014075% for MTP. A third accuracy arm retained reference arithmetic and changed only recompute grouping to two symbols. It passed the same gates.
+
+#### First GA8 parameter gradients on eight equal documents
+
+The two trainers accumulated the same eight microbatches on each of four dense replicas, checked the input tokens and main labels at every physical position, and ran their native distributed optimizer reduction. All 1,656,750,080 initial FP32 master-weight values in the three matrices below matched bitwise. The LM and embedding weights are independent. The last shared-expert FC2 is shared with MTP. The comparison reconstructs weights by logical coordinates across the two optimizer shard layouts, and reads the FP32 gradient before clipping.
+
+| Native reduced gradient | Elements | Relative L2 difference | Max error / Swift peak | Gate |
+|---|---:|---:|---:|---|
+| LM output weight | 824,180,736 | 0.177565% | 0.155163% | Pass |
+| Last shared-expert FC2 | 8,388,608 | 0.087456% | 0.102957% | Pass |
+| Token embedding, all rows | 824,180,736 | 0.516128% | 0.305729% | Fail |
+| Embedding, BOS row (token 1) | 4,096 | 0.516128% | 0.305729% | Fail |
+| Embedding, remaining rows | 824,176,640 | 0.463432% | 0.682193% | Pass |
+
+The native whole-model gradient norms were 110.937294 for Swift and 110.546158 for Bridge. Both loss scales were 1. The measured warmup step used a zero learning rate for these parameter groups. Its gradient comparison is valid, and the unchanged weights provide no test of a nonzero optimizer update. Swift needed a one-time allocator cache release before its native distributed gradient synchronization to complete on this allocation. Live allocated bytes on all ranks were identical immediately before and after that cache release.
 
 #### Optional contiguous CP owners for D attention backward
 
