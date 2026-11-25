@@ -20,6 +20,7 @@ import pytest
 from scripts.common.benchmark_parallelism import data_parallel_size, topology_from_config
 
 from megatron.bridge.perf_recipes import deepseek
+from megatron.bridge.perf_recipes.deepseek.h100 import deepseek_v3 as deepseek_h100
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
@@ -49,15 +50,35 @@ def test_deepseek_v3_64gpu_h100_proxy_fits_64_gpus(precision: str) -> None:
 
 
 @pytest.mark.parametrize("precision", ["bf16", "fp8cs"])
-def test_deepseek_v3_64gpu_h100_proxy_keeps_parent_settings(precision: str) -> None:
-    """The proxies change only depth and pipeline layout relative to their 64-GPU parents."""
+def test_deepseek_v3_64gpu_h100_proxy_keeps_1024gpu_settings(precision: str) -> None:
+    """The proxies change only batch size, depth and pipeline layout relative to the 1024-GPU recipes."""
     proxy = getattr(deepseek, f"deepseek_v3_pretrain_64gpu_h100_{precision}_proxy_config")()
-    parent = getattr(deepseek, f"deepseek_v3_pretrain_64gpu_h100_{precision}_config")()
+    parent = getattr(deepseek, f"deepseek_v3_pretrain_1024gpu_h100_{precision}_config")()
 
     assert proxy.mixed_precision == parent.mixed_precision
     assert proxy.env_vars == parent.env_vars
     assert proxy.model.recompute_modules == parent.model.recompute_modules
     assert proxy.model.mtp_num_layers == parent.model.mtp_num_layers == 1
+
+
+@pytest.mark.parametrize("precision", ["bf16", "fp8cs"])
+def test_deepseek_v3_64gpu_h100_full_depth_recipes_are_retired(precision: str) -> None:
+    """Only the proxies are exported for 64 H100 GPUs; the full-depth 1024-GPU layout cannot run there."""
+    name = f"deepseek_v3_pretrain_64gpu_h100_{precision}_config"
+
+    assert not hasattr(deepseek, name)
+    assert not hasattr(deepseek_h100, name)
+
+
+@pytest.mark.parametrize("compute_dtype", ["bf16", "fp8_cs"])
+def test_deepseek_v3_64gpu_h100_default_variant_is_not_selectable(
+    monkeypatch: pytest.MonkeyPatch, compute_dtype: str
+) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / "scripts" / "performance"))
+    from utils.utils import PerfRecipeNotFoundError, get_perf_recipe_by_name
+
+    with pytest.raises(PerfRecipeNotFoundError):
+        get_perf_recipe_by_name("deepseek_v3", "pretrain", 64, "h100", compute_dtype)
 
 
 @pytest.mark.parametrize("compute_dtype", ["bf16", "fp8_cs"])
