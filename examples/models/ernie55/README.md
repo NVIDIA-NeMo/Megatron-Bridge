@@ -9,6 +9,8 @@ checkpoint with Megatron Bridge, covering data preparation, training, and export
 recipe runs on 16 nodes with four GB300 GPUs per node.
 A second recipe runs the same fine-tuning on 16 nodes with four GB200 GPUs per node.
 
+For the 64-GB300 packed 256K MoK/MoonEP BF16 benchmark, follow the [step-by-step reproduction](README-256k.md).
+
 ## Requirements
 
 * **Megatron-Core**: Use Megatron-Core from the `dev` branch at commit `f78809f6d` or later. Prepend the
