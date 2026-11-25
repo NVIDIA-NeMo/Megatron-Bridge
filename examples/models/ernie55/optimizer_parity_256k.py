@@ -94,6 +94,7 @@ def track_batches(role, batches):
             return original(*args, **kwargs)
 
         Ernie5_5GPTModel.forward = forward
+        return Ernie5_5GPTModel, "forward", original
     else:
         from megatron.bridge.models.ernie import ernie55_step
 
@@ -106,6 +107,7 @@ def track_batches(role, batches):
             return batch
 
         ernie55_step.get_batch = get_batch
+        return ernie55_step, "get_batch", original
 
 
 def optimizer_nodes(optimizer):
@@ -227,7 +229,7 @@ class Recorder:
             raise ValueError("Expected 64 GPUs and CP16.")
         self.output.mkdir(exist_ok=True, parents=True)
         write_new(self.output / f"initial-{self.rank:02}.json", {"rank": self.rank, "role": role})
-        track_batches(role, self.batches)
+        self.hooks = [track_batches(role, self.batches)]
         # Observe the same FP32 gradient tensors the trainer sends to its native norm calculation.
         for node in optimizer_nodes(optimizer):
             original = node.get_grads_for_grad_norm
@@ -238,6 +240,7 @@ class Recorder:
                 self.capture(grads)
                 return grads
 
+            self.hooks.append((node, "get_grads_for_grad_norm", original))
             node.get_grads_for_grad_norm = observe
         original_step = optimizer.step
 
@@ -292,7 +295,14 @@ class Recorder:
             self.observed.clear()
             return result
 
+        self.hooks.append((optimizer, "step", original_step))
         optimizer.step = step
+
+    def close(self):
+        """Restore training methods before running the next microbatch with updated weights."""
+        for owner, name, previous in reversed(self.hooks):
+            setattr(owner, name, previous)
+        self.hooks.clear()
 
     def states(self):
         return {
@@ -319,7 +329,7 @@ class Recorder:
                 break
 
 
-def install(role, output):
+def install(role, output, next_heads=False):
     """Attach to the native training step and retain its optimizer across both updates."""
     if role == "swift":
         from swift.megatron.trainers.base import BaseMegatronTrainer
@@ -331,10 +341,13 @@ def install(role, output):
     signature = inspect.signature(original)
     recorded_optimizer = None
     audit = None
+    save_heads = None
 
     @functools.wraps(original)
     def train_step(*args, **kwargs):
-        nonlocal recorded_optimizer, audit
+        nonlocal recorded_optimizer, audit, save_heads
+        if save_heads is not None:
+            return original(*args, **kwargs)
         if role == "swift":
             trainer = args[0]
             optimizer, models = trainer.optimizer, trainer.wrapped_models
@@ -350,11 +363,32 @@ def install(role, output):
         result = original(*args, **kwargs)
         if audit.step != count + 1:
             raise RuntimeError("Native optimizer did not take exactly one update.")
-        if role == "swift" and audit.step == 2:
-            raise RecordedSwiftUpdates
+        if audit.step == 2:
+            if next_heads:
+                audit.close()
+                if role == "swift":
+                    from swift_head_parity_256k import HeadCapture
+
+                    capture = HeadCapture(output / "heads")
+                    capture.install()
+                    save_heads = capture.save
+                else:
+                    from head_parity_256k import install as record_heads
+
+                    save_heads = record_heads(output / "heads")
+            elif role == "swift":
+                raise RecordedSwiftUpdates
         return result
 
     owner.train_step = train_step
+
+    def finish():
+        if next_heads:
+            if save_heads is None:
+                raise RuntimeError("The trainer ended before its second optimizer update.")
+            save_heads()
+
+    return finish
 
 
 class RecordedSwiftUpdates(BaseException):
@@ -364,6 +398,11 @@ class RecordedSwiftUpdates(BaseException):
 def main():
     """Run a bounded original Swift or public Bridge optimizer capture."""
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--next-heads",
+        action="store_true",
+        help="Capture both heads on the first microbatch after the two optimizer updates. Set train_iters to 3.",
+    )
     parser.add_argument("role", choices=("bridge", "swift"))
     parser.add_argument("output", type=Path)
     parser.add_argument("training_args", nargs=argparse.REMAINDER)
@@ -373,7 +412,7 @@ def main():
         parser.error("Use torchrun on all 64 GPUs.")
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     if args.role == "bridge":
-        install(args.role, args.output)
+        finish_capture = install(args.role, args.output, args.next_heads)
         source = Path(__file__).resolve().parents[3] / "scripts/training/run_recipe.py"
         sys.path.insert(0, str(source.parent))
         from run_recipe import main as run_recipe
@@ -390,12 +429,14 @@ def main():
             ],
             bootstrap_entrypoint=(Path(__file__).resolve(), sys.argv[1:]),
         )
+        finish_capture()
     else:
         from megatron.core.distributed import DistributedDataParallel
         from swift.megatron import megatron_sft_main
+        from swift_head_parity_256k import CaptureComplete
 
         # Load the original pipeline and its argument definitions before importing trainer adapters.
-        install(args.role, args.output)
+        finish_capture = install(args.role, args.output, args.next_heads)
 
         torch.use_deterministic_algorithms(True)
         # Release allocator cache once before the original synchronization on this 288 GB setup.
@@ -415,7 +456,8 @@ def main():
             sys.argv[1:] = tail
             megatron_sft_main()
             raise RuntimeError("Original Swift returned before both optimizer updates were recorded.")
-        except RecordedSwiftUpdates:
+        except (RecordedSwiftUpdates, CaptureComplete):
+            finish_capture()
             dist.barrier()
             dist.destroy_process_group()
 
