@@ -523,8 +523,8 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
     return args, cli_overrides
 
 
-def main(argv: list[str] | None = None) -> None:
-    """Load, configure, and execute one library or benchmark recipe."""
+def main(argv: list[str] | None = None, *, bootstrap_entrypoint: tuple[Path, list[str]] | None = None) -> None:
+    """Run a recipe. Wrappers can provide their own script and arguments for environment re-execution."""
     # NeMo-Run executes container tasks from its private /nemo_run/code
     # directory. Resolve user-facing relative dataset, checkpoint, cache, and
     # logger paths from the mounted Bridge checkout instead.
@@ -580,11 +580,11 @@ def main(argv: list[str] | None = None) -> None:
         )
     configuration_mode = _train_mode(args.mode)
     if benchmark_metadata is not None or _requires_recipe_environment_bootstrap(recipe):
-        recipe = bootstrap_recipe_environment(
-            recipe,
-            script_path=str(Path(__file__).resolve()),
-            argv=list(argv) if argv is not None else sys.argv[1:],
+        script, restart_args = bootstrap_entrypoint or (
+            Path(__file__).resolve(),
+            argv if argv is not None else sys.argv[1:],
         )
+        recipe = bootstrap_recipe_environment(recipe, script_path=str(script), argv=restart_args)
     else:
         recipe = apply_runtime_environment(recipe)
 

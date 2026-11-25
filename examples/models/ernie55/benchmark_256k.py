@@ -24,7 +24,6 @@ import logging
 import os
 import random
 import re
-import runpy
 import sys
 from contextlib import nullcontext
 from pathlib import Path
@@ -134,8 +133,9 @@ def train(args: list[str]) -> None:
     atexit.register(memory)
     script = Path(__file__).resolve().parents[3] / "scripts/training/run_recipe.py"
     sys.path.insert(0, str(script.parent))
-    sys.argv = [
-        str(script),
+    from run_recipe import main as run_recipe
+
+    recipe_args = [
         "--recipe",
         "ernie55_pretrain_256k_64gpu_gb300_bf16_config",
         "--mode",
@@ -144,7 +144,9 @@ def train(args: list[str]) -> None:
         "ernie55_step",
         *args,
     ]
-    runpy.run_path(str(script), run_name="__main__")
+    # Recipe env vars may require exec before training. Re-enter through this wrapper so
+    # both the peak reporter and the optional head probe are installed in the new interpreter.
+    run_recipe(recipe_args, bootstrap_entrypoint=(Path(__file__).resolve(), ["train", *args]))
 
 
 def summarize(args: argparse.Namespace) -> None:

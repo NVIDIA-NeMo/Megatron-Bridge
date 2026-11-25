@@ -330,6 +330,23 @@ def test_library_recipe_infers_modality_step(recipe_name, mode, step_name):
     )
 
 
+def test_bootstrap_reexecutes_wrapping_launcher_with_its_own_arguments(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.delenv("PYTORCH_ALLOC_CONF", raising=False)
+    config = SimpleNamespace(env_vars={"PYTORCH_ALLOC_CONF": "expandable_segments:True"})
+    handles.recipe_runner.load_recipe.return_value = config
+    script = Path("/examples/measurement.py")
+    wrapper_args = ["train", "--max_steps", "12"]
+    module.main(
+        ["--recipe", "deepseek_v4_flash_pretrain_config", "--max_steps", "12"],
+        bootstrap_entrypoint=(script, wrapper_args),
+    )
+
+    handles.recipe_runner.bootstrap_recipe_environment.assert_called_once_with(
+        config, script_path=str(script), argv=wrapper_args
+    )
+
+
 def test_full_recipe_auto_detects_benchmark_recipe(monkeypatch):
     module, handles = _load_module()
     monkeypatch.setenv("WORLD_SIZE", "16")
