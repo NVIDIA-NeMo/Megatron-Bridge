@@ -8,7 +8,7 @@ GLM-5.3-Flash is a GLM vision-language model. Megatron Bridge registers its Hugg
 - Every decoder layer is wrapped in mHC multi-stream hyper-connections.
 - MoE layers use sigmoid routing with expert bias and an always-on shared expert.
 - Multi-token prediction (MTP) layers in the checkpoint map to a repeated DSA + MoE MTP block.
-- The Hugging Face `Glm5NextVisionModel` vision tower is loaded replicated on the stages that own the embeddings. Image and video features are inserted into the language-model embeddings; without `pixel_values` the model runs text-only.
+- The Hugging Face `Glm5NextVisionModel` vision tower is loaded replicated on the stages that own the embeddings. Image and video features are inserted into the language-model embeddings; when both `pixel_values` and `pixel_values_videos` are absent, the model runs text-only.
 - Block-scaled FP8 checkpoint weights are dequantized on import. Exported checkpoints contain plain weights without the `_scale_inv` tensors.
 - `GLM53FlashModelProvider` exposes `freeze_language_model`, `freeze_vision_model`, and `freeze_vision_projection` for parameter-efficient training.
 - The Hugging Face model classes come from Transformers; use the repository's supported dependency versions.
