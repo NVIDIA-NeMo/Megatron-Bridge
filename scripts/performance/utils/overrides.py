@@ -225,6 +225,8 @@ def apply_one_gpu_per_rank_device_mapping(recipe: ConfigContainer) -> ConfigCont
     """
     if getattr(recipe.model, "moe_flex_dispatcher_backend", None) != "ncclep":
         return recipe
+    if getattr(recipe.model, "moe_megakernel_backend", None) is not None:
+        return recipe
     visible_devices = [device for device in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if device]
     if len(visible_devices) == 1:
         recipe.dist.external_gpu_device_mapping = True

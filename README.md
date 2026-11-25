@@ -267,9 +267,9 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | **Ernie** | [Ernie 4.5 MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie), [Ernie 4.5 VL MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie_vl), [Ernie 5.5](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/ernie55) |
 | [**EXAONE**](docs/models/exaone/exaone.md) | EXAONE 4.0, EXAONE 4.5 VL, K-EXAONE MoE |
 | [**Falcon**](docs/models/falcon/index.md) | Falcon H1 |
-| [**Gemma**](docs/models/gemma/index.md) | Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE) |
+| [**Gemma**](docs/models/gemma/index.md) | Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE), DiffusionGemma (26B-A4B) |
 | [**GLM**](docs/models/glm/index.md) | GLM-4.5 / GLM-4.7 / GLM-4.7-Flash, GLM-4.5V, GLM-5 / GLM-5.1 / GLM-5.2 / [GLM-5.3](docs/models/glm/glm5-2.md) |
-| [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-oss |
+| [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-OSS 20B, GPT-OSS 120B |
 | [**HY V3**](https://huggingface.co/tencent/Hy3-preview-Base) | Hy3 preview-Base (HF → Megatron checkpoint conversion) |
 | [**Inkling**](docs/models/inkling/inkling2.md) | Inkling 2 Small |
 | [**Kimi**](docs/models/kimi/index.md) | Kimi K2, Kimi-K2.5-VL, Kimi K3 |
