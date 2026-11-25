@@ -2867,10 +2867,6 @@ class TestLoadCheckpoint:
                 side_effect=partial(load_context, "hybrid"),
             ),
             patch(
-                "megatron.bridge.training.checkpointing.memory_efficient_precision_aware_optimizer_state_checkpointing",
-                side_effect=partial(load_context, "staging"),
-            ),
-            patch(
                 "megatron.bridge.training.checkpointing.sync_hybrid_device_optimizer_fp32_master_copies",
                 side_effect=lambda _optimizer: events.append("sync optimizer"),
             ) as sync_optimizer,
@@ -2891,12 +2887,12 @@ class TestLoadCheckpoint:
                     load_checkpoint_fixtures["mock_scheduler"],
                 )
 
-        assert events[:5] == ["enter hybrid", "enter staging", "load optimizer", "exit staging", "exit hybrid"]
+        assert events[:3] == ["enter hybrid", "load optimizer", "exit hybrid"]
         if optimizer_load_error:
-            assert len(events) == 5
+            assert len(events) == 3
             sync_optimizer.assert_not_called()
             return
-        assert events[5:] == ["sync optimizer"]
+        assert events[3:] == ["sync optimizer"]
         sync_optimizer.assert_called_once_with(optimizer)
 
         # Idle shards are still requested for strict loading, but must not restore
@@ -4620,7 +4616,6 @@ class TestMegatronLMCompatibility:
         mock_cfg.checkpoint.load_optim = True
         mock_cfg.checkpoint.load_rng = False  # Skip RNG loading for this test
         mock_cfg.checkpoint.ckpt_format = "torch_dist"  # Set format explicitly
-        mock_cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu = True
         mock_cfg.model = Mock()
         mock_cfg.model.fp16 = False
         mock_cfg.model.bf16 = False
@@ -4649,15 +4644,12 @@ class TestMegatronLMCompatibility:
         mock_scheduler.load_state_dict = Mock()
 
         # Call load_checkpoint
-        with patch(
-            "megatron.bridge.training.checkpointing.memory_efficient_precision_aware_optimizer_state_checkpointing"
-        ) as mock_cpu_staging:
-            result = load_checkpoint(
-                mock_state,
-                [mock_model],  # model
-                mock_optimizer,  # optimizer
-                mock_scheduler,  # scheduler
-            )
+        result = load_checkpoint(
+            mock_state,
+            [mock_model],  # model
+            mock_optimizer,  # optimizer
+            mock_scheduler,  # scheduler
+        )
 
         # Verify the results
         iteration, flops = result
@@ -4677,7 +4669,6 @@ class TestMegatronLMCompatibility:
 
         # Verify checkpoint version was set
         mock_set_version.assert_called_with(3.0)
-        mock_cpu_staging.assert_called_once_with(mock_optimizer, enabled=True)
 
 
 class TestGetTrainStateFromStateDict:
@@ -5451,25 +5442,48 @@ class TestFSDPDTensorFunctionality:
             save_rng=False,
             stage_precision_aware_optimizer_state_on_cpu=cpu_staging,
         )
-        with patch(
-            "megatron.bridge.training.checkpointing.memory_efficient_precision_aware_optimizer_state_checkpointing"
-        ) as mock_cpu_staging:
-            result = generate_state_dict(
-                ckpt_cfg=ckpt_cfg,
-                model=[mock_model],
-                optimizer=mock_optimizer,
-                opt_param_scheduler=mock_scheduler,
-                rng_state=None,
-                optim_sd_kwargs={
-                    "is_loading": True,
-                    "metadata": {"distrib_optim_sharding_type": "dp_zero_gather_scatter"},
-                },
-            )
+        metadata = {"distrib_optim_sharding_type": "dp_reshardable"}
+        result = generate_state_dict(
+            ckpt_cfg=ckpt_cfg,
+            model=[mock_model],
+            optimizer=mock_optimizer,
+            opt_param_scheduler=mock_scheduler,
+            rng_state=None,
+            optim_sd_kwargs={"is_loading": True, "metadata": metadata},
+        )
 
         assert result["optimizer"] == {"optimizer": {"param_groups": []}}
         assert result["opt_param_scheduler"] == {"scheduler": "state"}
-        mock_cpu_staging.assert_called_once_with(mock_optimizer, enabled=cpu_staging)
         mock_optimizer.sharded_state_dict.assert_called_once()
+        optim_kwargs = mock_optimizer.sharded_state_dict.call_args.kwargs
+        assert optim_kwargs["is_loading"] is True
+        expected_metadata = {"distrib_optim_sharding_type": "dp_reshardable"}
+        if cpu_staging:
+            expected_metadata["distrib_optim_stage_precision_aware_state_on_cpu"] = True
+        assert optim_kwargs["metadata"] == expected_metadata
+        # The caller's metadata is also persisted as checkpoint content metadata.
+        assert metadata == {"distrib_optim_sharding_type": "dp_reshardable"}
+
+    def test_generate_state_dict_does_not_add_cpu_staging_to_missing_metadata(self):
+        """Without metadata the optimizer keeps its legacy defaults, so no staging key is added."""
+        from megatron.bridge.training.checkpointing import generate_state_dict
+
+        mock_model = Mock()
+        mock_model.sharded_state_dict.return_value = {}
+        mock_optimizer = Mock()
+        mock_optimizer.is_stub_optimizer = False
+        ckpt_cfg = CheckpointConfig(ckpt_format="torch_dist", stage_precision_aware_optimizer_state_on_cpu=True)
+
+        generate_state_dict(
+            ckpt_cfg=ckpt_cfg,
+            model=[mock_model],
+            optimizer=mock_optimizer,
+            opt_param_scheduler=None,
+            rng_state=None,
+            optim_sd_kwargs={"is_loading": True},
+        )
+
+        assert mock_optimizer.sharded_state_dict.call_args.kwargs == {"is_loading": True}
 
     @pytest.mark.parametrize("ckpt_format", ["torch_dist", "fsdp_dtensor"])
     @pytest.mark.parametrize(

@@ -86,7 +86,6 @@ from megatron.bridge.training.gtp import (
 )
 from megatron.bridge.training.optim import (
     hybrid_optimizer_state_loading,
-    memory_efficient_precision_aware_optimizer_state_checkpointing,
     sync_hybrid_device_optimizer_fp32_master_copies,
 )
 from megatron.bridge.training.state import GlobalState, TrainState
@@ -2206,6 +2205,24 @@ def _generate_model_state_dict(
     return state_dict
 
 
+def _torch_dist_optimizer_sd_kwargs(
+    ckpt_cfg: CheckpointConfig, optim_sd_kwargs: Optional[dict[str, Any]]
+) -> dict[str, Any]:
+    """Adds the optimizer ``sharded_state_dict`` options that describe this run, not the content.
+
+    They go into a copy of the metadata, which callers also persist as checkpoint content metadata,
+    so a load follows the loading run's configuration rather than the one of the saving run.
+    """
+    optim_sd_kwargs = optim_sd_kwargs or {}
+    metadata = optim_sd_kwargs.get("metadata")
+    if metadata is None or not ckpt_cfg.stage_precision_aware_optimizer_state_on_cpu:
+        return optim_sd_kwargs
+    return {
+        **optim_sd_kwargs,
+        "metadata": {**metadata, "distrib_optim_stage_precision_aware_state_on_cpu": True},
+    }
+
+
 def generate_state_dict(
     ckpt_cfg: CheckpointConfig,
     model: list[MegatronModule],
@@ -2251,21 +2268,19 @@ def generate_state_dict(
     include_optimizer_state = ckpt_cfg.save_optim or is_loading
     if include_optimizer_state:
         if optimizer is not None and not getattr(optimizer, "is_stub_optimizer", False):
-            with memory_efficient_precision_aware_optimizer_state_checkpointing(
-                optimizer,
-                enabled=ckpt_cfg.stage_precision_aware_optimizer_state_on_cpu,
-            ):
-                if ckpt_cfg.ckpt_format == "torch_dist":
-                    state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **(optim_sd_kwargs or {}))
-                elif ckpt_cfg.ckpt_format == "fsdp_dtensor":
-                    if optim_sd_kwargs is None:
-                        optim_sd_kwargs = {}
-                    if "metadata" not in optim_sd_kwargs:
-                        optim_sd_kwargs["metadata"] = {}
-                    # Use the metadata that was passed in (should include FSDP-specific metadata)
-                    state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **optim_sd_kwargs)
-                else:
-                    state_dict["optimizer"] = optimizer.state_dict()
+            if ckpt_cfg.ckpt_format == "torch_dist":
+                state_dict["optimizer"] = optimizer.sharded_state_dict(
+                    state_dict, **_torch_dist_optimizer_sd_kwargs(ckpt_cfg, optim_sd_kwargs)
+                )
+            elif ckpt_cfg.ckpt_format == "fsdp_dtensor":
+                if optim_sd_kwargs is None:
+                    optim_sd_kwargs = {}
+                if "metadata" not in optim_sd_kwargs:
+                    optim_sd_kwargs["metadata"] = {}
+                # Use the metadata that was passed in (should include FSDP-specific metadata)
+                state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **optim_sd_kwargs)
+            else:
+                state_dict["optimizer"] = optimizer.state_dict()
         if opt_param_scheduler is not None:
             state_dict["opt_param_scheduler"] = opt_param_scheduler.state_dict()
 
@@ -3414,14 +3429,7 @@ def _load_checkpoint_from_path(
                     # DistributedOptimizer copies loaded tensors into main
                     # params via .copy_(), which fails on leaf Variables that
                     # require grad without this context.
-                    with (
-                        torch.no_grad(),
-                        hybrid_optimizer_state_loading(optimizer),
-                        memory_efficient_precision_aware_optimizer_state_checkpointing(
-                            optimizer,
-                            enabled=cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu,
-                        ),
-                    ):
+                    with torch.no_grad(), hybrid_optimizer_state_loading(optimizer):
                         optimizer.load_state_dict(state_dict["optimizer"])
                     # Direct checkpoint callers also need HDO's loaded working
                     # copies and advancing CPU/GPU step counters synchronized.
