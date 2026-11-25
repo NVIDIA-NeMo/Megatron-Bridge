@@ -43,9 +43,14 @@ def _lazy_nccl_pg_options() -> "ProcessGroupNCCL.Options | None":
     if device is None or nccl2_backend is None:
         return None
     try:
-        if not isinstance(default_group._get_backend(device), nccl2_backend):
-            return None
+        backend = default_group._get_backend(device)
     except RuntimeError:
+        return None
+    # TORCH_DISTRIBUTED_DEBUG=DETAIL wraps backends for collective checks; look through it as PyTorch's split does.
+    debug_wrapper = getattr(getattr(dist, "distributed_c10d", None), "_ProcessGroupWrapper", None)
+    while debug_wrapper is not None and isinstance(backend, debug_wrapper):
+        backend = backend.wrapped_pg
+    if not isinstance(backend, nccl2_backend):
         return None
     options = dist.ProcessGroupNCCL.Options()
     if not hasattr(options, "lazy_init"):

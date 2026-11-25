@@ -40,6 +40,13 @@ class _LegacyNcclBackend:
     """Stand-in for the legacy ProcessGroupNCCL backend class."""
 
 
+class _DebugWrapper:
+    """Stand-in for the wrapper TORCH_DISTRIBUTED_DEBUG=DETAIL puts around backends."""
+
+    def __init__(self, wrapped_pg):
+        self.wrapped_pg = wrapped_pg
+
+
 class _DefaultGroup:
     """Stand-in for the default process group."""
 
@@ -70,6 +77,7 @@ def _fake_dist(
             WORLD=_DefaultGroup(bound_device_id, _Nccl2Backend() if default_backend is None else default_backend)
         ),
         ProcessGroupNCCL=SimpleNamespace(Options=options_cls),
+        distributed_c10d=SimpleNamespace(_ProcessGroupWrapper=_DebugWrapper),
     )
     if has_nccl2:
         fake.ProcessGroupNCCL2 = _Nccl2Backend
@@ -89,6 +97,15 @@ class TestLazyNcclPgOptions:
         assert first.lazy_init is True
         assert second.lazy_init is True
         assert second is not first
+
+    def test_debug_wrapped_nccl2_default_group_gets_lazy_options(self):
+        """TORCH_DISTRIBUTED_DEBUG=DETAIL wrappers around the NCCL2 backend do not turn lazy init off."""
+        fake_dist = _fake_dist(default_backend=_DebugWrapper(_DebugWrapper(_Nccl2Backend())))
+        with patch.object(megatron_mimo_builder, "dist", fake_dist):
+            options = _lazy_nccl_pg_options()
+
+        assert options is not None
+        assert options.lazy_init is True
 
     @pytest.mark.parametrize(
         "fake_dist",
@@ -115,6 +132,14 @@ class TestLazyNcclPgOptions:
             assert _lazy_nccl_pg_options() is None
 
 
+def _unwrap_debug_wrapper(backend):
+    """Return the backend inside any TORCH_DISTRIBUTED_DEBUG=DETAIL wrappers."""
+    debug_wrapper = getattr(dist.distributed_c10d, "_ProcessGroupWrapper", None)
+    while debug_wrapper is not None and isinstance(backend, debug_wrapper):
+        backend = backend.wrapped_pg
+    return backend
+
+
 @pytest.mark.run_only_on("GPU")
 def test_mimo_groups_use_lazy_nccl2_communicators(tmp_path):
     """With a real ProcessGroupNCCL2 default group, every MIMO group is created lazily and works on first use."""
@@ -126,8 +151,15 @@ def test_mimo_groups_use_lazy_nccl2_communicators(tmp_path):
         "nccl", init_method=(tmp_path / "rendezvous").as_uri(), rank=0, world_size=1, device_id=device
     )
     try:
-        if _lazy_nccl_pg_options() is None:
-            pytest.skip("default group is not a device-bound ProcessGroupNCCL2 group with lazy_init support")
+        nccl2_backend = getattr(dist, "ProcessGroupNCCL2", None)
+        default_backend = _unwrap_debug_wrapper(dist.group.WORLD._get_backend(device))
+        if (
+            nccl2_backend is None
+            or not isinstance(default_backend, nccl2_backend)
+            or not hasattr(dist.ProcessGroupNCCL.Options(), "lazy_init")
+        ):
+            pytest.skip("default group is not a ProcessGroupNCCL2 group with lazy_init support")
+        assert _lazy_nccl_pg_options() is not None
         grid = build_hypercomm_grids(
             MegatronMIMOParallelismConfig(
                 module_parallelisms={"language": ModuleParallelismConfig(data_parallel_size=1)}
@@ -137,7 +169,7 @@ def test_mimo_groups_use_lazy_nccl2_communicators(tmp_path):
         groups += [grid.get_pg(dims, view=EXPERT_VIEW_NAME) for dims in (["ep"], ["expt_tp", "ep", "pp"])]
         groups += list(populate_embedding_and_position_groups(grid.get_rank_enum(["pp"])))
 
-        assert all(group._get_backend(device).options.lazy_init for group in groups)
+        assert all(_unwrap_debug_wrapper(group._get_backend(device)).options.lazy_init for group in groups)
 
         tensor = torch.full((4,), 3.0, device=device)
         dist.all_reduce(tensor, group=grid.get_pg(["dp"]))
