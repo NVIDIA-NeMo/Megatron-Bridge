@@ -15,6 +15,7 @@
 
 import datetime
 import os
+import re
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -54,6 +55,7 @@ _IGNORE_PRECISION_PARAMS = (
     "moe.gate.weight",
 )
 _FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
+_WEIGHT_QUANTIZER = re.compile(r"weight_quantizer(?:\.\d+)?$")
 _ROUNDTRIP_ATOL = 1e-1
 _ROUNDTRIP_RTOL = 1e-5
 _CONSOLE = Console()
@@ -159,6 +161,21 @@ def _maybe_restore_pipeline_layout(
                 model_provider.pipeline_model_parallel_layout = _rebalance_pipeline_layout(saved_layout, pp)
             return
     _maybe_generate_pipeline_layout(bridge, model_provider, pp)
+
+
+def _has_enabled_weight_quantizers(megatron_model: list[torch.nn.Module]) -> bool:
+    """Whether any rank holds an enabled ModelOpt weight quantizer, i.e. quantized weights not folded to BF16."""
+    from modelopt.torch.quantization.nn import TensorQuantizer
+
+    found = any(
+        isinstance(module, TensorQuantizer) and module.is_enabled and _WEIGHT_QUANTIZER.search(name)
+        for chunk in megatron_model
+        for name, module in chunk.named_modules()
+    )
+    device = "cpu" if torch.distributed.get_backend() == "gloo" else torch.cuda.current_device()
+    found = torch.tensor(int(found), device=device)
+    torch.distributed.all_reduce(found, op=torch.distributed.ReduceOp.MAX)
+    return bool(found.item())
 
 
 def _roundtrip_weights_match(name: str, exported: torch.Tensor, original: torch.Tensor) -> tuple[bool, bool]:
@@ -338,6 +355,7 @@ def export_checkpoint(
     distributed_timeout_minutes: int | None,
     export_weight_dtype: str | None,
     overwrite: bool,
+    quantized_export: bool | None = None,
     use_cpu: bool = False,
 ) -> None:
     """Export a distributed Megatron checkpoint to Hugging Face format.
@@ -360,6 +378,8 @@ def export_checkpoint(
         distributed_timeout_minutes: Process-group timeout in minutes.
         export_weight_dtype: Optional dtype for exported weights.
         overwrite: Delete a non-empty destination before conversion.
+        quantized_export: Save a ModelOpt-quantized checkpoint (packed weights and scales) instead of BF16
+            weights with quantizer sidecars; ``None`` does so when the model has enabled weight quantizers.
         use_cpu: Use Gloo and CPU model initialization instead of NCCL/CUDA.
     """
     if use_cpu:
@@ -439,15 +459,27 @@ def export_checkpoint(
         mp_overrides=model_parallel_overrides,
         wrap_with_ddp=False,
     )
-    bridge.save_hf_pretrained(
-        megatron_model,
-        hf_path,
-        show_progress=show_progress,
-        strict=strict,
-        distributed_save=distributed_save,
-        save_every_n_ranks=save_every_n_ranks,
-        weight_dtype=parse_dtype(export_weight_dtype) if export_weight_dtype else None,
-    )
+    has_weight_quantizers = _has_enabled_weight_quantizers(megatron_model)
+    if quantized_export and not has_weight_quantizers:
+        raise ValueError("--quantized-export needs a checkpoint with enabled ModelOpt weight quantizers.")
+    if has_weight_quantizers and quantized_export is not False:
+        if export_weight_dtype is not None:
+            raise ValueError(
+                "--export-weight-dtype does not apply to a quantized export; pass --no-quantized-export to cast "
+                "BF16 weights instead."
+            )
+        print_rank_0("Saving a ModelOpt-quantized checkpoint (packed weights and scales)")
+        bridge.save_hf_pretrained_modelopt(megatron_model, hf_path, show_progress=show_progress)
+    else:
+        bridge.save_hf_pretrained(
+            megatron_model,
+            hf_path,
+            show_progress=show_progress,
+            strict=strict,
+            distributed_save=distributed_save,
+            save_every_n_ranks=save_every_n_ranks,
+            weight_dtype=parse_dtype(export_weight_dtype) if export_weight_dtype else None,
+        )
     print_rank_0(f"Distributed {device_label} export complete: {hf_path}")
 
 

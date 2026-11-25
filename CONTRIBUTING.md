@@ -14,6 +14,7 @@ First, set up the third-party modules of this repository so they can be copied i
 
 ```bash
 git submodule update --init --recursive
+bash scripts/prepare_mcore.sh
 ```
 
 Build the container:

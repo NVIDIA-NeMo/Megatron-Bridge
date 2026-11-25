@@ -16,8 +16,9 @@
 from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
     _deepseek_v4_pro_pretrain_256gpu_bf16_common,
-    _deepseek_v4_pro_pretrain_256gpu_gb300_common,
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
+    deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config,
+    deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
@@ -55,6 +56,89 @@ def deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+def _use_rubin_mok_comm_sms(cfg: ConfigContainer) -> ConfigContainer:
+    """Replace GB300's 28/28 MoK communication SMs with the Rubin reference's 40/40."""
+    cfg.model.moe_megakernel_backend_config = {
+        **cfg.model.moe_megakernel_backend_config,
+        "fwd_num_comm_sms": 40,
+        "bwd_num_comm_sms": 40,
+    }
+    return cfg
+
+
+def deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V4 Pro pretrain: 256× VRNVL72, MXFP8, 61 blocks + MTP, 65K sequence.
+
+    The GB300 recipe with the Rubin proxy's communication SM allocation. MCore has a
+    Rubin reference run for the proxy only, so the pipeline split and SM counts here are
+    carried over rather than matched to a full-model log.
+    """
+    cfg = _use_rubin_mok_comm_sms(deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config())
+
+    # Keep the VRNVL72 launch environment explicit instead of inheriting it from GB300.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_IN_FLIGHT_S2G_DISPATCH_API": 8,
+        "NUM_OF_STAGES_DISPATCH_API": 10,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FUSED_ATTN": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+        # Legacy NCCL backend; see the GB300 recipe.
+        "TORCH_DIST_USE_NCCL2": 0,
+    }
+    return cfg
+
+
+def deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
+    """DeepSeek V4 Pro proxy: the first 16 blocks + MTP on 64× VRNVL72, PP1.
+
+    The GB300 proxy with the Rubin reference's communication SM allocation. Needs a MoK
+    build with Rubin kernels.
+    """
+    cfg = _use_rubin_mok_comm_sms(deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config())
+
+    # Keep the VRNVL72 launch environment explicit instead of inheriting it from GB300.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_IN_FLIGHT_S2G_DISPATCH_API": 8,
+        "NUM_OF_STAGES_DISPATCH_API": 10,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FUSED_ATTN": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+        # Legacy NCCL backend; see the GB300 recipe.
+        "TORCH_DIST_USE_NCCL2": 0,
+    }
+    return cfg
+
+
 def deepseek_v4_pro_pretrain_256gpu_vrnvl72_bf16_config() -> ConfigContainer:
     """DeepSeek V4 Pro pretrain: 256× VR NVL72, BF16, eager PP4/VPP4/EP64.
 
@@ -80,37 +164,5 @@ def deepseek_v4_pro_pretrain_256gpu_vrnvl72_bf16_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-    }
-    return cfg
-
-
-def deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Pro pretrain: 256× VR NVL72, MXFP8, full-iteration graphs.
-
-    Preserves the GB300 benchmark and HybridEP. Allocate four NVLink domains
-    with 64 ranks in each domain. Requires MCore support for mHC recompute
-    with graphs and activation offload. Fused grouped MLP backward allows
-    nondeterministic router-probability gradients on Rubin.
-    """
-    cfg = _deepseek_v4_pro_pretrain_256gpu_gb300_common()
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
-        "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_CPU_OFFLOAD_V1": 1,
-        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_NORM_BWD_USE_CUDNN": 1,
-        "NVTE_NORM_FWD_USE_CUDNN": 1,
-        # Rubin's fused clamped GLU backward has no deterministic dprob kernel.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
     return cfg

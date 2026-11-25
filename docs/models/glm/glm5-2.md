@@ -60,6 +60,8 @@ conversion, forward correlation, inference, and GB200 training/resume results,
 including MTP and packed CP, are recorded below. Historical GPT results do not
 verify Hybrid.
 
+For the example scripts, see the [GLM-5 family examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/glm/glm5/README.md).
+
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
 ## Verified configurations
