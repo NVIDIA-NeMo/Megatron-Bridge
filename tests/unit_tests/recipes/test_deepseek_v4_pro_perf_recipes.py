@@ -30,6 +30,7 @@ from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
+    deepseek_v4_pro_pretrain_256gpu_vrnvl72_bf16_config,
     deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config,
 )
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
@@ -365,9 +366,16 @@ def _offline_recipe_construction(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(module, "AutoBridge", DeepSeekV4BuilderOnlyBridge)
 
 
+@pytest.fixture(
+    params=[deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config, deepseek_v4_pro_pretrain_256gpu_vrnvl72_bf16_config]
+)
+def bf16_recipe(request):
+    return request.param
+
+
 @pytest.mark.usefixtures("_offline_recipe_construction")
-def test_bf16_preserves_full_pro_workload_and_optimizer() -> None:
-    bf16 = deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config()
+def test_bf16_preserves_full_pro_workload_and_optimizer(bf16_recipe) -> None:
+    bf16 = bf16_recipe()
     mxfp8 = _deepseek_v4_pro_pretrain_256gpu_gb300_common()
 
     assert isinstance(bf16.model, DeepSeekV4ModelConfig)
@@ -394,8 +402,8 @@ def test_bf16_preserves_full_pro_workload_and_optimizer() -> None:
 
 
 @pytest.mark.usefixtures("_offline_recipe_construction")
-def test_bf16_effective_precision_disables_quantized_compute_and_gather() -> None:
-    cfg = deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config()
+def test_bf16_effective_precision_disables_quantized_compute_and_gather(bf16_recipe) -> None:
+    cfg = bf16_recipe()
     # Exercise precision propagation on the strict builder-backed recipe config,
     # including clearing pre-existing FP8 settings.
     model = cfg.model
@@ -420,8 +428,8 @@ def test_bf16_effective_precision_disables_quantized_compute_and_gather() -> Non
 
 
 @pytest.mark.usefixtures("_offline_recipe_construction")
-def test_bf16_uses_supported_eager_recompute_combination() -> None:
-    cfg = deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config()
+def test_bf16_uses_supported_eager_recompute_combination(bf16_recipe) -> None:
+    cfg = bf16_recipe()
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["mla_up_proj", "mhc", "moe"]
     assert cfg.model.cuda_graph_impl == "none"

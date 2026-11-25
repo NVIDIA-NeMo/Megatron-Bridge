@@ -60,6 +60,7 @@ _VRNVL72_CUDNN_LAYERNORM_RECIPES = {
     "deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config",
     "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config",
     "deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config",
+    "deepseek_v4_pro_pretrain_256gpu_vrnvl72_bf16_config",
     "deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
     "deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config",
     "gpt_oss_20b_pretrain_8gpu_vrnvl72_fp8mx_config",
