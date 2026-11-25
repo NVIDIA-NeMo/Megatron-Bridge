@@ -15,9 +15,10 @@
 """Serializable config and runtime builder for synthetic variable-length text SFT samples.
 
 The samples exercise global-batch packing and dynamic context parallelism without a dataset or tokenizer. Each sample
-is random token IDs whose length is drawn from three buckets defined by the context-parallel capacity it needs: at most
-``seq_length // 4`` tokens (fits one rank of a CP4 group), at most ``seq_length // 2`` (CP2), or up to ``seq_length``
-(CP4). Lengths are uniform within each bucket, and only the final ``completion_fraction`` of each sample is supervised.
+is random token IDs whose length is drawn from buckets defined by the context-parallel capacity it needs. With the
+default three buckets: at most ``seq_length // 4`` tokens (fits one rank of a CP4 group), at most ``seq_length // 2``
+(CP2), or up to ``seq_length`` (CP4); four buckets start at ``seq_length // 8`` for a CP8 group. Lengths are uniform
+within each bucket, and only the final ``completion_fraction`` of each sample is supervised.
 
 Lengths are drawn in blocks of ``LENGTH_BLOCK_SIZE`` samples, each with the exact bucket split and its own seed, so a
 sample's length and tokens depend only on its index, not on how many samples a run requests.
@@ -56,8 +57,10 @@ class MockGPTSFTDatasetConfig(DataloaderConfig):
     Args:
         seq_length: Maximum training length of one sample, in tokens after the next-token shift.
         vocab_size: Token IDs are drawn from ``[1, vocab_size)``.
-        length_bucket_fractions: Fractions of samples whose length needs at most CP1, CP2, and CP4 capacity of a
-            ``seq_length`` budget split over four ranks (``seq_length // 4`` and ``seq_length // 2`` boundaries).
+        length_bucket_fractions: Fractions of samples whose length needs at most CP1, CP2, CP4, ... capacity of a
+            ``seq_length`` budget split over ``2 ** (n - 1)`` ranks, for ``n`` fractions: each bucket's upper bound
+            is twice the previous one's, and the last one's is ``seq_length``. Three fractions give the
+            ``seq_length // 4`` and ``seq_length // 2`` boundaries of a CP4 group.
         completion_fraction: Share of each sample's final tokens that is supervised.
         random_seed: Seed for lengths and token IDs; each split derives its own stream.
         enable_global_batch_packing: Must be ``True``; samples are yielded unpacked for the global-batch scheduler.
@@ -73,7 +76,7 @@ class MockGPTSFTDatasetConfig(DataloaderConfig):
 
     seq_length: int
     vocab_size: int
-    length_bucket_fractions: tuple[float, float, float] = (0.5, 0.3, 0.2)
+    length_bucket_fractions: tuple[float, ...] = (0.5, 0.3, 0.2)
     completion_fraction: float = 0.2
     random_seed: int = 1234
     enable_global_batch_packing: bool = True
@@ -90,17 +93,15 @@ class MockGPTSFTDatasetConfig(DataloaderConfig):
 
     def validate(self) -> None:
         """Validate synthetic data settings."""
-        if self.seq_length < 4:
-            raise ValueError("seq_length must be at least 4.")
+        fractions = tuple(self.length_bucket_fractions)
+        if not fractions or self.seq_length < 2 ** (len(fractions) - 1):
+            raise ValueError("seq_length must hold at least one token per rank of the largest length bucket's group.")
         if self.vocab_size < 2:
             raise ValueError("vocab_size must be at least 2.")
-        fractions = tuple(self.length_bucket_fractions)
-        if (
-            len(fractions) != 3
-            or any(not math.isfinite(value) or value < 0 for value in fractions)
-            or not math.isclose(sum(fractions), 1.0, abs_tol=1e-8)
+        if any(not math.isfinite(value) or value < 0 for value in fractions) or not math.isclose(
+            sum(fractions), 1.0, abs_tol=1e-8
         ):
-            raise ValueError("length_bucket_fractions must be three non-negative values summing to 1.")
+            raise ValueError("length_bucket_fractions must be non-negative values summing to 1.")
         if not 0 < self.completion_fraction <= 1:
             raise ValueError("completion_fraction must be in (0, 1].")
         if not self.enable_global_batch_packing:
@@ -124,10 +125,13 @@ class MockGPTSFTDatasetConfig(DataloaderConfig):
         self.validate()
 
 
-def length_bucket_bounds(seq_length: int) -> list[tuple[int, int]]:
-    """Return the inclusive length range of each bucket: CP1, CP2, and CP4 capacity of ``seq_length``."""
-    quarter, half = seq_length // 4, seq_length // 2
-    return [(1, quarter), (quarter + 1, half), (half + 1, seq_length)]
+def length_bucket_bounds(seq_length: int, num_buckets: int = 3) -> list[tuple[int, int]]:
+    """Return the inclusive length range of each bucket: CP1, CP2, CP4, ... capacity of ``seq_length``.
+
+    The last bucket ends at ``seq_length`` and each earlier one at half the next one's end.
+    """
+    ends = [seq_length >> (num_buckets - 1 - bucket) for bucket in range(num_buckets)]
+    return [(1 if bucket == 0 else ends[bucket - 1] + 1, end) for bucket, end in enumerate(ends)]
 
 
 def length_bucket_counts(num_samples: int, fractions: Sequence[float]) -> list[int]:
@@ -147,7 +151,7 @@ def _length_block(config: MockGPTSFTDatasetConfig, split: str, block: int) -> np
     lengths = np.concatenate(
         [
             rng.integers(low, high + 1, size=count)
-            for (low, high), count in zip(length_bucket_bounds(config.seq_length), counts)
+            for (low, high), count in zip(length_bucket_bounds(config.seq_length, len(counts)), counts)
         ]
     ).astype(np.int64)
     rng.shuffle(lengths)

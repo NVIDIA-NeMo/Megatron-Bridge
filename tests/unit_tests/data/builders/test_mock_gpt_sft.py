@@ -44,6 +44,17 @@ def _config(**overrides) -> MockGPTSFTDatasetConfig:
 
 def test_bucket_bounds_follow_cp_capacity():
     assert length_bucket_bounds(65536) == [(1, 16384), (16385, 32768), (32769, 65536)]
+    # Four buckets: CP1, CP2, CP4 and CP8 capacity of a 128K context at 16K tokens per rank.
+    assert length_bucket_bounds(131072, 4) == [(1, 16384), (16385, 32768), (32769, 65536), (65537, 131072)]
+
+
+def test_four_buckets_split_a_cp8_context():
+    config = _config(seq_length=131072, length_bucket_fractions=(0.4, 0.3, 0.2, 0.1))
+    lengths = mock_sft_sequence_lengths(config, LENGTH_BLOCK_SIZE)
+
+    counts = [int(((lengths >= low) & (lengths <= high)).sum()) for low, high in length_bucket_bounds(131072, 4)]
+    assert counts == length_bucket_counts(LENGTH_BLOCK_SIZE, (0.4, 0.3, 0.2, 0.1))
+    assert lengths.max() <= 131072
 
 
 def test_bucket_counts_are_exact():
@@ -89,6 +100,8 @@ def test_lengths_do_not_depend_on_how_many_samples_are_requested():
         ({"vocab_size": 1}, "vocab_size"),
         ({"length_bucket_fractions": (0.5, 0.2, 0.2)}, "length_bucket_fractions"),
         ({"length_bucket_fractions": (1.2, -0.2, 0.0)}, "length_bucket_fractions"),
+        ({"length_bucket_fractions": ()}, "seq_length"),
+        ({"seq_length": 4, "length_bucket_fractions": (0.4, 0.3, 0.2, 0.1)}, "seq_length"),
         ({"completion_fraction": 0.0}, "completion_fraction"),
         ({"enable_global_batch_packing": False}, "enable_global_batch_packing"),
         ({"global_batch_packing_pad_to_multiple_of": 0}, "global_batch_packing_pad_to_multiple_of"),
