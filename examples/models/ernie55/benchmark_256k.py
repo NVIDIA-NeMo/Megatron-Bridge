@@ -16,7 +16,6 @@
 """Prepare, run and summarize the ERNIE 5.5 256K benchmark. See README-256k.md."""
 
 import argparse
-import atexit
 import datetime
 import hashlib
 import json
@@ -114,23 +113,17 @@ def train(args: list[str]) -> None:
     """Launch the ordinary Bridge training CLI and record the local allocator peaks at exit."""
     import torch
 
+    save_heads = None
     if dest := os.getenv("ERNIE55_COMPARE_HEADS"):
         from head_parity_256k import install
 
-        install(Path(dest))
+        save_heads = install(Path(dest))
     rank = int(os.environ["RANK"])
     if int(os.environ["WORLD_SIZE"]) != 64:
         raise ValueError("This benchmark expects 64 GPUs.")
     # torchrun exposes every local GPU. Save the rank's device explicitly for the exit report.
     local_rank = int(os.environ["LOCAL_RANK"])
 
-    def memory() -> None:
-        if torch.cuda.is_initialized():
-            allocated = torch.cuda.max_memory_allocated(local_rank)
-            reserved = torch.cuda.max_memory_reserved(local_rank)
-            logger.warning("ERNIE256K_PEAK rank=%d allocated=%d reserved=%d", rank, allocated, reserved)
-
-    atexit.register(memory)
     script = Path(__file__).resolve().parents[3] / "scripts/training/run_recipe.py"
     sys.path.insert(0, str(script.parent))
     from run_recipe import main as run_recipe
@@ -147,6 +140,14 @@ def train(args: list[str]) -> None:
     # Recipe env vars may require exec before training. Re-enter through this wrapper so
     # both the peak reporter and the optional head probe are installed in the new interpreter.
     run_recipe(recipe_args, bootstrap_entrypoint=(Path(__file__).resolve(), ["train", *args]))
+    if torch.cuda.is_initialized():
+        allocated = torch.cuda.max_memory_allocated(local_rank)
+        reserved = torch.cuda.max_memory_reserved(local_rank)
+        # The training recipe filters warning loggers. This record is a machine-readable result.
+        sys.stdout.write(f"ERNIE256K_PEAK rank={rank} allocated={allocated} reserved={reserved}\n")
+        sys.stdout.flush()
+    if save_heads is not None:
+        save_heads()
 
 
 def summarize(args: argparse.Namespace) -> None:

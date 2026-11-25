@@ -16,16 +16,16 @@
 """Observe and compare the first, pre-update microbatch's main and MTP head values."""
 
 import argparse
-import atexit
 import json
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
 
 
-def install(dest: Path) -> None:
+def install(dest: Path) -> Callable[[], None]:
     """Record real CE, sampled logits and head-input gradients at global packed coordinates."""
     import torch
     import torch.distributed as dist
@@ -121,12 +121,16 @@ def install(dest: Path) -> None:
     chunked_head.chunked_training_loss = head
 
     def save():
+        required = {"dp", "bounds", "pos", "tokens", "sample"}
+        required.update(f"{kind}_{field}" for kind in ("main", "mtp") for field in ("labels", "ce", "logits", "dh"))
+        if missing := required.difference(data):
+            raise RuntimeError(f"Incomplete head capture on rank {rank}: {sorted(missing)}")
         dest.mkdir(parents=True, exist_ok=True)
         path = dest / f"rank{rank:02}.npz"
         with path.open("xb") as stream:
             np.savez_compressed(stream, **data)
 
-    atexit.register(save)
+    return save
 
 
 def compare(a: Path, b: Path) -> dict:
