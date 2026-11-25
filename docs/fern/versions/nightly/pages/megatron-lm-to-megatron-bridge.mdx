@@ -50,6 +50,14 @@ uv run python scripts/translate_mlm_to_bridge.py --reverse \
 
 ### Key mappings
 
+For a constant weight-decay schedule with explicit equal bounds, reverse translation
+sets MLM's `--weight-decay` to that effective scheduler value. For example, Bridge's
+optimizer value `0.1` with scheduler bounds `0.033` translates to `0.033` for all
+three fields. This preserves effective regularization and satisfies MLM validation.
+Nonconstant schedules retain their separate bounds. Unequal or incomplete explicit
+constant bounds are rejected; provide a resolved configuration. Per-group decay
+multipliers still need the corresponding optimizer mapping policy.
+
 | MLM flag | Bridge override | Notes |
 |---|---|---|
 | `--num-layers N` | `model.num_layers=N` | |
