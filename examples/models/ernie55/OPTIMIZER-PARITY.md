@@ -106,3 +106,17 @@ The output reports fractions. Multiply by 100 for the percentages in the benchma
 | Last shared-expert FC2 | 8,217 |
 
 The sample is every 1,021st row-major coordinate of each parameter, plus all 4,096 features of embedding row 1. The comparator also reports the BOS and non-BOS embedding subsets. Each rank records only the optimizer shards it owns. Replicated ranges are represented once per tensor when scoring.
+
+### Measured two-update reproduction
+
+The original Swift trainer and the public strict G1 Bridge recipe each finished both GA8 optimizer steps on 64 GB300s. One fixed row of eight documents was repeated across the four dense replicas and eight microbatches on each step. The comparator verified all 32 GA/DP inputs on each step and identical starting samples for all three FP32 master weights. Both sides retained their own optimizer state through the zero-LR warmup. This comparison uses the default integer accounting for Bridge expert-bias updates. The run links identify this pair. Swift's W&B entry records completion. [Swift run](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/5txaup4e) · [Bridge run](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/riwhky4w)
+
+| Step-2 parameter | Preclip gradient relative L2 | Preclip gradient peak-relative | True master-update relative L2 | True master-update peak-relative |
+| --- | ---: | ---: | ---: | ---: |
+| LM output weight | 4.1035% | 2.5220% | 6.2543% | 69.5693% |
+| Token embedding | 50.9742% | 43.0957% | 38.8382% | 170.9043% |
+| Embedding BOS row | 50.9742% | 43.0957% | 35.9677% | 170.9043% |
+| Sampled non-BOS embedding | 27.2516% | 23.3006% | 39.6564% | 165.0557% |
+| Last shared-expert FC2 | 1.5226% | 1.4401% | 6.4816% | 27.2769% |
+
+All three parameter updates exceeded at least one fixed gate. Comparing the Bridge capture with itself returned zero for every gradient and update error. A separate CPU reduction over the two native traces reproduced every number in the table. The comparison covers these sampled coordinates, this repeated packing and this first nonzero update.
