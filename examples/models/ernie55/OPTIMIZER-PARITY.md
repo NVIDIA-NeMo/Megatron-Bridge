@@ -365,3 +365,18 @@ At global position 15,359 in the first document, the original Swift A assigned t
 On the fourth original start, all 64 ranks completed and recorded both native optimizer updates, all GA8 input shards, and the next forward and backward for both heads. The scheduler then reached its 15-minute wall limit during shutdown. Its recorded allocation status is TIMEOUT. The CPU comparator verified all completion records, input IDs and labels before scoring.
 
 [Original A](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/tktbc9jm) · [Original B](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/mmm0sqjj) · [Original C](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/mfoe2aft) · [Original D](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/4latrcz4) · [G2](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/e6vx6x3l) · [Reference weight gradient, first start](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/83k9gzii) · [Reference weight gradient, second start](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/q6nsinez)
+
+### Replaying the observed output projection on the updated weights
+
+A separate matched capture used the fourth original Swift run and an additional G2 run with the reference output-weight gradient. On microbatch 17, both recorded the actual outer head inputs at each sampled global position in all four replicas and the BF16 projection weights for vocabulary IDs `0, 1237, …`. All 163 vocabulary rows × 4,096 hidden channels (667,648 weights) matched **bitwise** across the two trainers and both heads. Each rank's weight hash matched the copy used for replay.
+
+For each head, join the BF16 hidden rows by the outer layer’s physical token position. Reorder the recorded output logit rows by their own physical positions after the G2 projection changes CP owners. Convert the two operands to FP64, compute `hidden @ weight.T` on a CPU and round to BF16. The last two columns give the replay’s relative L2 error against the native GPU logits in the respective trainer.
+
+| Head | Hidden input difference L2 | Native raw-logit difference L2 | Weight contribution | Swift replay error | G2 replay error |
+|---|---:|---:|---:|---:|---:|
+| Main | 2.641% | 1.417% | 0% | 0.0081% | 0.0081% |
+| MTP | 7.329% | 6.260% | 0% | 0.0131% | 0.0102% |
+
+The largest sampled MTP error in this pair moved to position **84,991**, at offset 19,455 in the third document. It accounts for **90.95%** of the sampled squared raw-logit error. At that position, the input to the MTP projection differed by 273.51% relative L2. Multiplying each trainer's hidden row by the identical sampled weights and rounding to BF16 reproduced all 163 native logits exactly on both sides. The mean over those logits moved from −3.4304 to 2.5365. The actual full-vocabulary target probabilities were 99.8553% and 99.3517%, respectively.
+
+At position 15,359, the two trainers instead differed by 3.56% raw-logit L2 in this pair, accounting for 0.08% of the total sampled squared error. They selected the same ten MTP experts there. The MTP incoming token embedding was identical. The input to the hidden branch norm already differed by 2.27%, and the input and output at the final MTP norm differed by 12.26% and 4.55%, respectively. These observations locate the measured logit discrepancy in the hidden activations arriving at the shared output projection. Intermediate norm and router data in this capture cover position 15,359 and three preselected positions in the sixth document. [Original Swift with operand capture](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/4latrcz4) · [G2 with operand capture](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/unz0sfjv)
