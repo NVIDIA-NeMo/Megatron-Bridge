@@ -16,7 +16,19 @@ _LOGGER = logging.getLogger(__name__)
 
 class _MultimaxTrainingLoss(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, hidden, weight, ranges, scales, labels, rows, save_projection, return_argmax, backend):
+    def forward(
+        ctx,
+        hidden,
+        weight,
+        ranges,
+        scales,
+        labels,
+        rows,
+        save_projection,
+        return_argmax,
+        backend,
+        reference_wgrad=False,
+    ):
         if backend == "cuda":
             from .cuda_head import forward as head_forward
         else:
@@ -43,6 +55,7 @@ class _MultimaxTrainingLoss(torch.autograd.Function):
             )
             del logits
         ctx.save_for_backward(hidden, weight, ranges, scales, labels, max_logits, denominators, raw)
+        ctx.reference_wgrad = reference_wgrad
         ctx.rows = rows
         ctx.save_projection = save_projection
         ctx.mark_non_differentiable(predictions)
@@ -58,6 +71,7 @@ class _MultimaxTrainingLoss(torch.autograd.Function):
         dx = torch.empty_like(hidden)
         rt = torch.cat((ranges, scales)).float()
         grad_rt = torch.zeros_like(rt)
+        full_dlogits = hidden.new_empty((hidden.size(0), weight.size(0))) if ctx.reference_wgrad else None
         for start in range(0, hidden.size(0), ctx.rows):
             group = slice(start, min(start + ctx.rows, hidden.size(0)))
             logits = raw[group] if ctx.save_projection else hidden[group] @ weight.T
@@ -71,19 +85,20 @@ class _MultimaxTrainingLoss(torch.autograd.Function):
             )
             grad_rt.add_(partial)
             dx[group] = dlogits @ weight
-            fused_weight_gradient_mlp_cuda.wgrad_gemm_accum_fp32(hidden[group], dlogits, weight.main_grad)
+            if full_dlogits is None:
+                fused_weight_gradient_mlp_cuda.wgrad_gemm_accum_fp32(hidden[group], dlogits, weight.main_grad)
+            else:
+                full_dlogits[group].copy_(dlogits)
             del dlogits, logits
-        # Mirror MCore's gradient-accumulation-fusion contract for the DDP parameter hook.
+        dw = (
+            full_dlogits.T @ hidden if full_dlogits is not None else _weight_gradient_hook_tensor(weight, hidden.dtype)
+        )
         return (
             dx,
-            _weight_gradient_hook_tensor(weight, hidden.dtype),
+            dw,
             grad_rt[:4].to(ranges.dtype),
             grad_rt[4:].to(scales.dtype),
-            None,
-            None,
-            None,
-            None,
-            None,
+            *(None,) * (len(ctx.needs_input_grad) - 4),
         )
 
 
@@ -102,9 +117,13 @@ class _StrictMtpTrainingLoss(_MultimaxTrainingLoss):
     def backward(ctx, loss_grad, unused_predictions_grad):
         from .strict_mtp_head import accumulate_strict_mtp_gradients
 
-        dx, d_ranges, d_scales = accumulate_strict_mtp_gradients(ctx, loss_grad)
         hidden, weight = ctx.saved_tensors[:2]
-        return dx, _weight_gradient_hook_tensor(weight, hidden.dtype), d_ranges, d_scales, None, None, None, None, None
+        full_dlogits = hidden.new_empty((hidden.size(0), weight.size(0))) if ctx.reference_wgrad else None
+        dx, d_ranges, d_scales = accumulate_strict_mtp_gradients(ctx, loss_grad, full_dlogits=full_dlogits)
+        dw = (
+            full_dlogits.T @ hidden if full_dlogits is not None else _weight_gradient_hook_tensor(weight, hidden.dtype)
+        )
+        return dx, dw, d_ranges, d_scales, *(None,) * (len(ctx.needs_input_grad) - 4)
 
 
 def chunked_training_loss(
@@ -137,6 +156,15 @@ def chunked_training_loss(
                 "BF16 logits, a trainable projection with an FP32 main_grad, and sequence_parallel=False."
             )
         return None
+    reference_wgrad = getattr(layer.config, "ernie_head_reference_wgrad", False)
+    owners = None
+    if reference_wgrad and layer.config.context_parallel_size > 1:
+        from .head_owners import reference_head_owners
+
+        owners = reference_head_owners(layer.config)
+        if owners is not None:
+            hidden = owners.to_contiguous(hidden)
+            labels = owners.to_contiguous(labels, seq_dim=1)
     seq, batch, width = hidden.shape
     loss_function = (
         _StrictMtpTrainingLoss
@@ -153,6 +181,7 @@ def chunked_training_loss(
         layer.config.ernie_head_save_projection,
         return_argmax,
         backend,
+        reference_wgrad,
     )
     if backend == "cuda":
         seen = getattr(layer, "_ernie_cuda_head_seen", None)
@@ -171,4 +200,9 @@ def chunked_training_loss(
                 layer.config.ernie_chunked_head_rows,
                 return_argmax,
             )
-    return losses.view(seq, batch).T.contiguous(), predictions.view(seq, batch) if return_argmax else None
+    losses = losses.view(seq, batch).T.contiguous()
+    predictions = predictions.view(seq, batch) if return_argmax else None
+    if owners is not None:
+        losses = owners.to_zigzag(losses, seq_dim=1)
+        predictions = owners.to_zigzag(predictions)
+    return losses, predictions

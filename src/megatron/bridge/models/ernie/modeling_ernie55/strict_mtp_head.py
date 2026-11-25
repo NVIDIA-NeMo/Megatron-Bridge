@@ -39,8 +39,8 @@ def _corrected_logits_gradient(corrected, labels, loss_grad):
     return _scale_ce_gradient(probabilities, labels, loss_grad).view_as(corrected)
 
 
-def accumulate_strict_mtp_gradients(ctx, loss_grad):
-    """Compute dHidden, dRanges, dScales and accumulate the projection's fp32 main_grad."""
+def accumulate_strict_mtp_gradients(ctx, loss_grad, *, full_dlogits=None):
+    """Compute the MTP VJP, optionally writing the full BF16 raw-logit gradient for its weight GEMM."""
     import fused_weight_gradient_mlp_cuda
 
     hidden, weight, ranges, scales, labels, _, _, raw = ctx.saved_tensors
@@ -72,6 +72,9 @@ def accumulate_strict_mtp_gradients(ctx, loss_grad):
                 del x, corrected, gradient, draw
             d_raw = buffer[: end - start]
             torch.mm(d_raw, weight, out=dx[start:end])
-            fused_weight_gradient_mlp_cuda.wgrad_gemm_accum_fp32(hidden[start:end], d_raw, weight.main_grad)
+            if full_dlogits is None:
+                fused_weight_gradient_mlp_cuda.wgrad_gemm_accum_fp32(hidden[start:end], d_raw, weight.main_grad)
+            else:
+                full_dlogits[start:end].copy_(d_raw)
         del logits
     return dx, d_ranges.to(ranges.dtype), d_scales.to(scales.dtype)

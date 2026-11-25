@@ -120,6 +120,14 @@ class Ernie55HybridModel(HybridModel):
         (Megatron-Core builds without the grouped MTP roll keep their own loss, which is the same at CP = 1; the
         config validation rejects per-row MTP at CP > 1 on them).
         """
+        if getattr(self.config, "ernie_head_reference_wgrad", False) and self.training:
+            from .head_owners import reference_head_pack
+
+            with reference_head_pack(kwargs.get("packed_seq_params"), self.pg_collection.cp):
+                return self._forward_with_mtp_loss(*args, **kwargs)
+        return self._forward_with_mtp_loss(*args, **kwargs)
+
+    def _forward_with_mtp_loss(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         if (
             PER_ROW_MTP_LOSS_SUPPORTED
             and getattr(self.config, "ernie_per_row_loss", False)

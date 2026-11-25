@@ -275,6 +275,9 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     ernie_head_save_projection: bool = True
     """Retain pre-multimax BF16 logits for backward when running the chunked training head."""
 
+    ernie_head_reference_wgrad: bool = False
+    """Use contiguous CP token owners and return one BF16 output-weight gradient per head."""
+
     ernie_mtp_strict_head_backward: bool = False
     """Use the reference CE rounding and 1,024-row dHidden contraction for the TP1 chunked MTP head."""
 
@@ -388,6 +391,12 @@ class Ernie55TransformerConfig(MLATransformerConfig):
             raise ValueError("ernie_chunked_head_backend must be 'triton' or 'cuda'")
         if self.ernie_chunked_head_backend == "cuda" and not self.ernie_chunked_head_rows:
             raise ValueError("The CUDA head requires positive ernie_chunked_head_rows")
+        if not isinstance(self.ernie_head_reference_wgrad, bool):
+            raise ValueError("ernie_head_reference_wgrad must be a bool")
+        if self.ernie_head_reference_wgrad and (
+            not self.ernie_chunked_head_rows or self.tensor_model_parallel_size != 1
+        ):
+            raise ValueError("ernie_head_reference_wgrad requires the TP1 chunked training head")
         if not isinstance(self.ernie_mtp_strict_head_backward, bool):
             raise ValueError("ernie_mtp_strict_head_backward must be a bool")
         if self.ernie_mtp_strict_head_backward and not self.ernie_chunked_head_rows:
