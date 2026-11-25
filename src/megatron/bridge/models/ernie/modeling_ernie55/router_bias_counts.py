@@ -26,7 +26,7 @@ def contiguous_owner_histogram(indices, padding_mask, packed, cp_group, num_expe
     if packed is None or getattr(packed, "qkv_format", None) != "thd":
         raise ValueError("Contiguous CP router counts require packed THD metadata on every routed layer.")
     cp_size, cp_rank = cp_group.size(), cp_group.rank()
-    if getattr(packed, "local_cp_size", None) not in (None, cp_size):
+    if getattr(packed, "local_cp_size", None) is not None:
         raise ValueError("Contiguous CP router counts require a static context-parallel group.")
     if indices.is_cuda and torch.cuda.is_current_stream_capturing():
         raise RuntimeError("Contiguous CP router counts require the router to execute outside CUDA graph capture.")

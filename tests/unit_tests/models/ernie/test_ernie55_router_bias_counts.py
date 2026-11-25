@@ -147,3 +147,13 @@ def test_native_local_bf16_order_and_one_collective_for_multiple_routers(monkeyp
 
     assert finalize_with_contiguous_cp_counts(finalize, [root], 42, extra=True) == 7
     assert calls == ["exchange", "finalize"]
+
+
+def test_dynamic_group_and_misaligned_valid_mask_are_rejected():
+    batch, group, _, _ = _sample((16,), 0, "zigzag")
+    selected = torch.zeros(batch.tokens.numel(), 1, dtype=torch.long)
+    with pytest.raises(ValueError, match="padding mask"):
+        contiguous_owner_histogram(selected, torch.zeros(1, dtype=torch.bool), batch.packed_seq_params, group, 2)
+    batch.packed_seq_params.local_cp_size = group.size()
+    with pytest.raises(ValueError, match="static context-parallel group"):
+        contiguous_owner_histogram(selected, None, batch.packed_seq_params, group, 2)
