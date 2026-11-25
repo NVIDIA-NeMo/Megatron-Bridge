@@ -64,7 +64,7 @@ def main():
     sys.path.insert(0, str(repo / "scripts/training"))
     from recipe_runner import apply_cli_overrides, bootstrap_recipe_environment
 
-    config = ernie55_pretrain_256k_64gpu_gb300_bf16_config()
+    config = ernie55_pretrain_256k_64gpu_gb300_bf16_config(hf_path=str(hf))
     config = apply_cli_overrides(config, overrides)
     config = bootstrap_recipe_environment(config, script_path=str(Path(__file__).resolve()), argv=sys.argv[1:])
 
