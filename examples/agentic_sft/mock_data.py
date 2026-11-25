@@ -51,7 +51,7 @@ _TRAINING_SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "train
 if str(_TRAINING_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TRAINING_SCRIPTS_DIR))
 
-DEFAULT_RECIPE = "qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config"
+DEFAULT_RECIPE = "qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_dynamic_cp_config"
 PACKING_MODES = ("online", "offline")
 LENGTH_BUCKET_SAMPLE_SHARES = (0.4, 0.3, 0.2, 0.1)
 """Share of samples that need at most a CP1, CP2, CP4 and CP8 group of a CP8 recipe."""

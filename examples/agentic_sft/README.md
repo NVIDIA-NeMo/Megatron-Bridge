@@ -1,8 +1,8 @@
 # Qwen3.5-35B-A3B with dynamic context parallelism
 
-`qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config` fine-tunes the **full 40-layer
+`qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_dynamic_cp_config` fine-tunes the **full 40-layer
 Qwen3.5-35B-A3B (plus one MTP layer)** on [CoderForge-Preview](https://huggingface.co/datasets/togethercomputer/CoderForge-Preview)
-SWE-Rebench trajectories at a 131,072-token context on 16 GB300 GPUs with **dynamic** context parallelism (CP): each
+SWE-Rebench trajectories at a 131,072-token context on 16 GPUs with **dynamic** context parallelism (CP): each
 step, the global-batch scheduler re-bins the sequences of the step's packed rows and runs every bin on a group of
 ranks sized for it (one GPU, CP2, CP4, CP8 or, rarely, the whole 16-rank pool), instead of splitting every row across
 the full CP8 group.
@@ -28,7 +28,9 @@ mock mixed-length data, where dynamic CP has short sequences to place on small g
 
 ## Requirements
 
-* 16 GB300 GPUs in one NVLink domain (four nodes of one NVL72 rack): the expert-parallel group spans all 16 ranks.
+* 16 GPUs in one NVLink domain (four nodes of one NVL72 rack): the expert-parallel group spans all 16 ranks. The
+  measurements below are from GB300 GPUs. The recipe has not been run on GB200 hardware; device memory in use peaked
+  at 153 GiB per GPU on CoderForge and 158 GiB on the mock data.
 * The NeMo container, with Transformer Engine built with NCCL EP, and Megatron-Core at Bridge's pin.
 * A Megatron checkpoint of the text model. Extract the text weights and import them as described in
   [the Qwen3.5 example](../models/qwen/qwen35_vl/README.md#prepare-a-text-only-checkpoint-with-pretrained-mtp).
@@ -46,7 +48,7 @@ tokenizing a trajectory takes seconds, so use many workers:
 
 ```bash
 uv run python examples/agentic_sft/item_tokens.py \
-    --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config \
+    --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_dynamic_cp_config \
     --output items.json --num-workers 96 "dataset.hf_dataset.split='SWE_Rebench[:8000]'"
 ```
 
@@ -63,7 +65,7 @@ one GPU to each rank:
 ```bash
 srun --nodes=4 --ntasks-per-node=4 --gpus-per-node=4 bash -c '
     CUDA_VISIBLE_DEVICES=$SLURM_LOCALID uv run python scripts/training/run_recipe.py \
-    --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config --mode sft \
+    --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_dynamic_cp_config --mode sft \
     checkpoint.pretrained_checkpoint=/path/to/megatron/qwen3.5-35b-a3b-text'
 ```
 

@@ -164,9 +164,9 @@ the peak allocated on rank 0 over the first two steps.
 
 ## Recipe at a 128K Context on 16 GPUs
 
-`qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config`
+`qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_dynamic_cp_config`
 fine-tunes the full Qwen3.5-35B-A3B plus one MTP layer on CoderForge-Preview
-SWE-Rebench trajectories at a 131,072-token context on 16 GB300 GPUs. It is the
+SWE-Rebench trajectories at a 131,072-token context on 16 GPUs. It is the
 static recipe `qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config`
 (TP1, base CP8, EP16, offline packed rows, 32 rows per step, MXFP8, selective
 recompute, NCCL EP) with global-batch packing and dynamic CP switched on, and
@@ -183,7 +183,7 @@ three settings changed for it:
 ```bash
 srun --nodes=4 --ntasks-per-node=4 --gpus-per-node=4 bash -c '
   CUDA_VISIBLE_DEVICES=$SLURM_LOCALID uv run python scripts/training/run_recipe.py \
-  --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config --mode sft \
+  --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_dynamic_cp_config --mode sft \
   checkpoint.pretrained_checkpoint=/path/to/megatron/qwen3.5-35b-a3b-text'
 ```
 
@@ -219,6 +219,9 @@ tokens per second over the steps from 11 on:
   static CP8 runs each as one bin and dynamic CP has nothing to gain.
 - The first microbatch on each group size takes about a minute. Peak device
   memory is 153 GiB per GPU with dynamic CP against 140 GiB with static CP8.
+- The recipe carries the GB200 name of the static recipe it extends. All of
+  these measurements are from GB300 GPUs; it has not been run on GB200
+  hardware.
 - Without fixed-width bins, the same mock run takes 40–66 s per step at 32
   samples per step, against 4–13 s with them.
 

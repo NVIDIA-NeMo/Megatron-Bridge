@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the 16-GPU GB300 Qwen3.5-35B-A3B 128K dynamic-CP recipe on CoderForge."""
+"""Tests for the 16-GPU Qwen3.5-35B-A3B 128K dynamic-CP recipe on CoderForge."""
 
 import importlib
 from types import SimpleNamespace
@@ -21,14 +21,13 @@ import pytest
 import torch
 from transformers import Qwen3_5MoeConfig
 
-from megatron.bridge.recipes.qwen.gb200 import qwen35 as gb200_qwen35
-from megatron.bridge.recipes.qwen.gb300 import qwen35
+from megatron.bridge.recipes.qwen.gb200 import qwen35
 
 
 pytestmark = pytest.mark.unit
 
-_STATIC = gb200_qwen35.qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config
-_DYNAMIC = qwen35.qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config
+_STATIC = qwen35.qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config
+_DYNAMIC = qwen35.qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_dynamic_cp_config
 
 # Text configuration of Qwen/Qwen3.5-35B-A3B at the recipe's pinned revision.
 _TEXT_CONFIG = {
@@ -72,18 +71,18 @@ _TEXT_CONFIG = {
 def published_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """Build recipes on the published 35B-A3B text config without reaching the Hub."""
     monkeypatch.setattr(
-        gb200_qwen35.AutoConfig,
+        qwen35.AutoConfig,
         "from_pretrained",
         lambda *_args, **_kwargs: Qwen3_5MoeConfig(text_config=_TEXT_CONFIG, tie_word_embeddings=False),
     )
 
 
 def _validated(cfg, monkeypatch: pytest.MonkeyPatch, *, world_size: int):
-    """Mirror runtime_config_update on ``world_size`` GB300 GPUs: set up mixed precision, then validate."""
+    """Mirror runtime_config_update on ``world_size`` GB200 GPUs: set up mixed precision, then validate."""
     training_module = importlib.import_module("megatron.bridge.training.config")
     monkeypatch.setattr(training_module, "get_world_size_safe", lambda: world_size)
     monkeypatch.setattr(
-        torch.cuda, "get_device_properties", lambda index: SimpleNamespace(major=10, name="NVIDIA GB300")
+        torch.cuda, "get_device_properties", lambda index: SimpleNamespace(major=10, name="NVIDIA GB200")
     )
     cfg.mixed_precision.finalize()
     cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)

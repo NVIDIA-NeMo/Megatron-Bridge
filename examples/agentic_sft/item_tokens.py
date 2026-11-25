@@ -29,11 +29,11 @@ With ``--mock-packing``, the items are those ``mock_data.py`` trains the recipe 
 Examples::
 
     python examples/agentic_sft/item_tokens.py \\
-        --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config \\
+        --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_dynamic_cp_config \\
         --output items.json --num-workers 64 "dataset.hf_dataset.split='SWE_Rebench[:8000]'"
 
     python examples/agentic_sft/item_tokens.py \\
-        --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb300_fp8mx_dynamic_cp_config \\
+        --recipe qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_dynamic_cp_config \\
         --mock-packing online --num-items 6400 --output mock_online_items.json
 """
 
