@@ -336,3 +336,23 @@ The CE comparison covers 1,048,320 valid main targets and 1,048,320 valid MTP ta
 | Final shared-expert FC2 | 8,217 | 0.0904% / 0.0947% | 2.9238% / 17.0765% | Fail |
 
 The native step-2 gradient norms were 80.515190 (Swift) and 80.408943 (Bridge). The optimizer threshold is 0.5% relative L2 and 1% relative peak. These results cover one repeated eight-document row and the first nonzero update. [Original Swift](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/mfoe2aft) · [Bridge](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/83k9gzii)
+
+### Repeated training starts and the largest sampled MTP difference
+
+This table uses one original Swift run (A) as the common denominator. Each run consumed identical physical input and target rows on the two complete GA8 updates and the following microbatch. The two G2 runs with the reference output-weight gradient have the same model, optimizer, topology and precision settings.
+
+| Compared with original Swift A | Main raw logits L2 | MTP raw logits L2 | MTP raw logits L2 at position 15,359 | True MTP target probability there |
+|---|---:|---:|---:|---:|
+| Second original Swift start | 1.776% | 2.190% | 11.94% | 99.894% |
+| Fourth original Swift start | 1.565% | 6.125% | 17.04% | 99.884% |
+| Public G2 | 1.563% | 3.416% | 10.18% | 99.904% |
+| G2 with reference output-weight gradient, first start | 1.953% | 6.257% | 129.51% | 99.759% |
+| G2 with reference output-weight gradient, second start | 1.963% | 2.386% | 20.44% | 99.869% |
+
+The first G2 start with the reference weight gradient produced 6.257%–6.781% MTP raw-logit L2 against the first three original starts. The second G2 start produced 2.289%–2.386% against those same references. A fourth original Swift start gave 6.101%–6.146% against the first three originals. The two identically configured G2 starts differ by 7.151% with the first G2 start as denominator. The observed ranges support substantial run-to-run variation in both trainers.
+
+At global position 15,359 in the first document, the original Swift A assigned the true MTP target probability 99.926%. This one position accounted for 87.73% of the first candidate’s sampled raw-logit squared error against A. Its 163 measured vocabulary columns shifted together, from a mean of 3.794 to −2.457. The common shift accounted for 96.71% of the local squared error. A constant cancels from softmax when applied to every vocabulary entry. The table uses the actual full-vocabulary cross-entropy to calculate the target probability. Raw-logit gates use uncentered values.
+
+On the fourth original start, all 64 ranks completed and recorded both native optimizer updates, all GA8 input shards, and the next forward and backward for both heads. The scheduler then reached its 15-minute wall limit during shutdown. Its recorded allocation status is TIMEOUT. The CPU comparator verified all completion records, input IDs and labels before scoring.
+
+[Original A](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/tktbc9jm) · [Original B](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/mmm0sqjj) · [Original C](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/mfoe2aft) · [Original D](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/4latrcz4) · [G2](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/e6vx6x3l) · [Reference weight gradient, first start](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/83k9gzii) · [Reference weight gradient, second start](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/q6nsinez)
