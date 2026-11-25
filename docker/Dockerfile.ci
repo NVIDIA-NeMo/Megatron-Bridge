@@ -29,7 +29,7 @@ RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
 # Cache the native wheel independently of Bridge's other dependencies. Both CPU
 # platforms use the same base runtime as the final image and build all GPU targets.
 FROM base AS mok-wheel
-ARG MOK_COMMIT=a7992160a441cc336b15652a638ef6455b11a0bc
+ARG MOK_COMMIT=81563b80e0c291161eae9d21fdecb47eab896082
 ARG MOK_ARCH=ALL
 RUN --mount=type=bind,source=docker/common/install_mok.sh,target=/opt/install_mok.sh \
     MOK_ARCH=${MOK_ARCH} bash /opt/install_mok.sh "${MOK_COMMIT}" /opt/mok-wheels
