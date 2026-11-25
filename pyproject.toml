@@ -29,7 +29,7 @@ description = "Megatron Bridge: Training Recipes for Megatron-based LLM and VLM 
 readme = "README.md"
 dynamic = ["version"]
 license = {file = "LICENSE"}
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
 authors = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
 maintainers = [
     { name = "Ananth Subramaniam", email = "ansubramania@nvidia.com" },
@@ -107,6 +107,7 @@ dependencies = [
 version = { attr = "megatron.bridge.package_info.__version__" }
 
 [tool.uv]
+environments = ["python_version < '3.13'"]
 managed = true
 # Packages that require pre-installed torch/CUDA at build time (no PEP 517 isolation).
 # mamba-ssm, causal-conv1d, and transformer-engine are optional extras ([ssm], [te])
