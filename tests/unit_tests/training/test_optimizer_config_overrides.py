@@ -20,9 +20,11 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from megatron.core.optimizer import OptimizerConfig, ParamKey, _get_param_groups
+from megatron.core.optimizer import OptimizerConfig, ParamKey, _get_param_groups, get_standard_config_overrides
+from megatron.core.optimizer.optimizer import get_param_group_identifier_tuple
+from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.transformer import TransformerConfig
-from megatron.training.config.optimizer_config import build_optimizer_config_overrides
+from megatron.training.config.optimizer_config import LoRAPlusOptimizerOverrides, build_optimizer_config_overrides
 
 from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.peft.lora import get_lora_plus_config_overrides
@@ -459,3 +461,142 @@ def test_bridge_wrapper_preserves_legacy_step_rescaling_behavior():
     assert scheduler.step_lr_rescale_schedule == ()
     assert schedule.step_lr_rescale_schedule == "0:0.5,8:1.0"
     assert schedule.step_lr_rescale_warmup_samples == 2
+
+
+@pytest.mark.parametrize(
+    "ratio,b_peak,b_min", [(1.0, 0.001, 0.0001), (16.0, 0.016, 0.0016), (0.25, 0.00025, 0.000025)]
+)
+def test_lora_legacy_groups_resume_without_changing_parameter_order(single_rank_group, tmp_path, ratio, b_peak, b_min):
+    """A pre-adoption checkpoint keeps its groups, Adam history and next updates."""
+    config = OptimizerConfig(lr=0.001, min_lr=0.0001, weight_decay=0.1)
+    # Capture the old helper's complete policy independently of the shared implementation.
+    legacy = get_standard_config_overrides(config)
+    legacy.update(
+        {
+            ParamKey(name="*.linear_in.weight"): {"max_lr": 0.001, "min_lr": 0.0001},
+            ParamKey(name="*.linear_out.weight"): {"max_lr": b_peak, "min_lr": b_min},
+        }
+    )
+    adopted = get_lora_plus_config_overrides(config, ratio)
+    assert adopted == legacy
+
+    def build(policy):
+        model = _model()[0]
+        groups = _get_param_groups([model], config, policy)
+        names = {id(param): name for name, param in model.named_parameters()}
+        signature = [
+            (
+                {key: value for key, value in group.items() if key != "params"},
+                [names[id(param)] for param in group["params"]],
+            )
+            for group in groups
+        ]
+        optimizer = torch.optim.AdamW(groups, lr=config.lr)
+        scheduler = OptimizerParamScheduler(optimizer, 0.0, 0.001, 0.0001, 2, 8, "linear", 0.1, 0.1, 8, "constant")
+        return model, optimizer, scheduler, signature
+
+    def step(model, optimizer, scheduler):
+        scheduler.step(1)
+        for i, param in enumerate(model.parameters()):
+            param.grad = torch.full_like(param, 0.1 * (i + 1))
+        optimizer.step()
+
+    model, optimizer, scheduler, old_groups = build(legacy)
+    for _ in range(3):
+        step(model, optimizer, scheduler)
+    path = tmp_path / "legacy-lora.pt"
+    torch.save(
+        {"model": model.state_dict(), "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict()}, path
+    )
+    restored, opt2, sched2, new_groups = build(adopted)
+    assert old_groups == new_groups
+    checkpoint = torch.load(path, weights_only=False)
+    restored.load_state_dict(checkpoint["model"])
+    opt2.load_state_dict(checkpoint["optimizer"])
+    sched2.load_state_dict(checkpoint["scheduler"])
+    for _ in range(3):
+        step(model, optimizer, scheduler)
+        step(restored, opt2, sched2)
+    for expected, actual in zip(model.parameters(), restored.parameters()):
+        torch.testing.assert_close(expected, actual, rtol=0, atol=0)
+        for key in ("exp_avg", "exp_avg_sq", "step"):
+            torch.testing.assert_close(optimizer.state[expected][key], opt2.state[actual][key], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("ratio", [1.0, 16.0, 0.25])
+def test_shared_lora_callable_matches_mlm_and_legacy_schedule(single_rank_group, ratio):
+    context = _context()
+    policy = LoRAPlusOptimizerOverrides(ratio)
+    bridge = _resolve_optimizer_config_overrides(context, None, policy, "extend")
+    mlm = build_optimizer_config_overrides(context.optimizer_config, context.model, policy)
+    groups = _get_param_groups(context.model, context.optimizer_config, bridge)
+    identities = [get_param_group_identifier_tuple(group) for group in groups]
+    assert len(identities) == len(set(identities))
+    assert _policy_by_parameter(context, bridge) == _policy_by_parameter(context, mlm)
+    old_groups = _get_param_groups(
+        context.model, context.optimizer_config, get_lora_plus_config_overrides(context.optimizer_config, ratio)
+    )
+    schedules = []
+    for param_groups in (groups, old_groups):
+        optimizer = torch.optim.SGD(param_groups, lr=0.001)
+        schedules.append(
+            (
+                optimizer,
+                OptimizerParamScheduler(optimizer, 0.0, 0.001, 0.0001, 2, 8, "linear", 0.1, 0.1, 8, "constant"),
+            )
+        )
+    for _ in range(9):
+        effective = []
+        for optimizer, scheduler in schedules:
+            effective.append(
+                {
+                    id(param): (group["lr"], group["weight_decay"])
+                    for group in optimizer.param_groups
+                    for param in group["params"]
+                }
+            )
+            scheduler.step(1)
+        assert effective[0] == effective[1]
+
+
+@pytest.mark.parametrize("source", ["cli", "yaml"])
+def test_shared_lora_callable_roundtrip_and_overrides(tmp_path, source):
+    cfg = _container()
+    cfg.optimizer_config_overrides = LoRAPlusOptimizerOverrides(16.0)
+    if source == "cli":
+        process_config_with_overrides(cfg, cli_overrides=["optimizer_config_overrides.ratio=8.0"])
+    else:
+        path = tmp_path / "lora-overrides.yaml"
+        path.write_text("optimizer_config_overrides:\n  ratio: 8.0\n")
+        process_config_with_overrides(cfg, config_filepath=str(path))
+    restored = ConfigContainer.from_dict(cfg.to_dict())
+    actual = restored.optimizer_config_overrides(optimizer_config=restored.optimizer, model=[])
+    assert actual[ParamKey(name="*.linear_out.weight")] == {"max_lr": 0.008, "min_lr": 0.0008}
+
+
+@pytest.mark.parametrize("initial_lr", [0.0, 0.00001])
+def test_shared_lora_callable_reaches_bridge_setup(initial_lr):
+    context = _context()
+    context.scheduler_config.lr_warmup_init = initial_lr
+    with (
+        patch("megatron.training.optim.get_megatron_optimizer") as factory,
+        patch("megatron.training.optim.build_optimizer_param_scheduler"),
+    ):
+        if initial_lr:
+            with pytest.raises(ValueError, match="lr_warmup_init=0"):
+                setup_optimizer(
+                    context.optimizer_config,
+                    context.scheduler_config,
+                    context.model,
+                    optimizer_config_overrides=LoRAPlusOptimizerOverrides(16.0),
+                )
+            factory.assert_not_called()
+        else:
+            setup_optimizer(
+                context.optimizer_config,
+                context.scheduler_config,
+                context.model,
+                optimizer_config_overrides=LoRAPlusOptimizerOverrides(16.0),
+            )
+            actual = factory.call_args.kwargs["config_overrides"]
+            assert actual[ParamKey(name="*.linear_out.weight")] == {"max_lr": 0.016, "min_lr": 0.0016}
