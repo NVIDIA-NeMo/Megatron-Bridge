@@ -46,6 +46,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
+from megatron.bridge.models.stepfun import step35_bridge
 from megatron.bridge.models.stepfun.modelling_step37.image_insert_embedding import (
     ImageForInsert,
     ImageInsertEmbedding,
@@ -81,6 +82,10 @@ class Step37Model(MegatronModule):
             settings (image token ID, projector bias, vocabulary and RoPE
             options) that a provider carries on ``language_transformer_config``.
             Defaults to None, which reads them from ``language_transformer_config``.
+
+    Raises:
+        ValueError: If the head-wise attention gate is enabled on a Megatron Core
+            without native support for it.
     """
 
     def __init__(
@@ -99,6 +104,15 @@ class Step37Model(MegatronModule):
         model_config: Optional[ModelConfig] = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
+        if (
+            getattr(language_transformer_config, "head_wise_attn_gate", False)
+            and not getattr(language_transformer_config, "attention_output_gate", False)
+            and not step35_bridge._mcore_supports_head_wise_attn_gate()
+        ):
+            raise ValueError(
+                "Step-3.7 head_wise_attn_gate requires a Megatron Core with native head-wise attention gate "
+                "support; run ./scripts/switch_mcore.sh dev (see examples/models/stepfun/step37/README.md)."
+            )
         # A builder-backed model config also exposes its nested transformer settings, so the
         # construction settings below are read from it.
         settings = language_transformer_config if model_config is None else model_config

@@ -267,9 +267,9 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | **Ernie** | [Ernie 4.5 MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie), [Ernie 4.5 VL MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie_vl), [Ernie 5.5](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/ernie55) |
 | [**EXAONE**](docs/models/exaone/exaone.md) | EXAONE 4.0, EXAONE 4.5 VL, K-EXAONE MoE |
 | [**Falcon**](docs/models/falcon/index.md) | Falcon H1 |
-| [**Gemma**](docs/models/gemma/index.md) | Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE) |
+| [**Gemma**](docs/models/gemma/index.md) | Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE), DiffusionGemma (26B-A4B) |
 | [**GLM**](docs/models/glm/index.md) | GLM-4.5 / GLM-4.7 / GLM-4.7-Flash, GLM-4.5V, GLM-5 / GLM-5.1 / GLM-5.2 / [GLM-5.3](docs/models/glm/glm5-2.md) |
-| [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-oss |
+| [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-OSS 20B, GPT-OSS 120B |
 | [**HY V3**](https://huggingface.co/tencent/Hy3-preview-Base) | Hy3 preview-Base (HF → Megatron checkpoint conversion) |
 | [**Inkling**](docs/models/inkling/inkling2.md) | Inkling 2 Small |
 | [**Kimi**](docs/models/kimi/index.md) | Kimi K2, Kimi-K2.5-VL, Kimi K3 |
@@ -283,7 +283,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**Muse Spark Open**](docs/models/muse_spark_open/muse-spark-open.md) | Muse-Spark-Open-816B-A42B |
 | [**Nemotron**](docs/models/nemotron/index.md) | Nemotron-3 Nano, Nemotron-3 Super, Nemotron-3 Ultra, Nemotron-3 Nano Omni |
 | [**OLMoE**](docs/models/olmoe/index.md) | OLMoE |
-| [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen3.5 (dense/MoE), Qwen3.8-Flash-Next (VLM / text-only), Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
+| [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen3.5 (dense/MoE), Qwen3.8-Flash-Next (VLM / text-only), Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL (35B-A3B), Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
 | [**Sarvam**](docs/models/sarvam/index.md) | Sarvam |
 | [**StepFun**](docs/models/stepfun/index.md) | Step-3.5-Flash, Step-3.7-Flash |
 

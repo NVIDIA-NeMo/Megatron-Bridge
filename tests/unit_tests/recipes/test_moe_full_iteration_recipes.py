@@ -21,6 +21,7 @@ import pytest
 from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config,
     deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config,
+    deepseek_v3_pretrain_64gpu_gb300_fp8mx_mfsdpv2_config,
     deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config,
 )
 from megatron.bridge.perf_recipes.nemotronh import (
@@ -140,6 +141,14 @@ def test_deepseek_v3_4gpu_vrnvl72_proxies_use_full_iteration_stack(recipe: Calla
         cfg.model.virtual_pipeline_model_parallel_size,
         cfg.model.expert_model_parallel_size,
     ) == (1, 1, None, 4)
+
+
+def test_deepseek_v3_64gpu_gb300_fp8mx_mfsdpv2_uses_full_iteration_stack() -> None:
+    cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_mfsdpv2_config()
+
+    _assert_full_iteration_hybridep(cfg)
+    assert cfg.ddp.megatron_fsdp_version == 2
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
 
 
 @pytest.mark.parametrize(
