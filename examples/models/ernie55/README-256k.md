@@ -279,7 +279,7 @@ The accuracy run uses the original Base weights, real router choices, one MTP la
 
 ```bash
 git -C "$BRIDGE" fetch origin refs/pull/7000/head
-git -C "$BRIDGE" worktree add --detach "$WORK/Bridge-accuracy" 88efc31c89d7e0ccf279ecaa9d4fd22dbe2ec5fd
+git -C "$BRIDGE" worktree add --detach "$WORK/Bridge-accuracy" b336a6e6b48e15b5669b070fea1f57082b71fd68
 git -C "$MCORE" fetch origin refs/pull/9506/head
 git -C "$MCORE" worktree add --detach "$WORK/MCore-accuracy" 6ce5dfe9c8c9988972f4a5123e1e6a6c51231636
 export BRIDGE=$WORK/Bridge-accuracy MCORE=$WORK/MCore-accuracy
@@ -348,3 +348,56 @@ The commands above were exercised on the same 64 GB300s for both implementations
 Both heads passed every stated threshold on all three fixtures. A separate single-document test saved the main and MTP head inputs produced by original Swift and by true routed MoK + MoonEP. Projecting those inputs through the released head weights gave exactly equal BF16 values for all 52,745,957,376 valid-position logits per head on one dense replica. Projected Swift logits also matched the raw columns sampled directly by its trainer. The largest absolute differences from the native Swift per-token CE were 1.91e-6 for the main head and 2.38e-6 for MTP.
 
 The complete single-document decoder backward still exceeds the fixed thresholds. At the inputs to blocks 1, 22 and 43, the full four-stream gradient relative L2 differences against Swift were 2.26123%, 0.98234%, 0.36896%, respectively. Two fresh runs of original Swift on the same 64 physical GPUs and the same rank assignments differed by 2.30726%, 1.16300%, 0.05733% at the same points. Each comparison covers all 262,144 tokens on one replica. The unreduced CE gradient coefficients agreed at every token in both heads. These measurements cover the first microbatch. Parameter-gradient and multi-update optimizer agreement with Swift remain open.
+
+#### Eight-document throughput and precision
+
+Both unprofiled arms used the same 64 GB300s, released weights, eight 32,768-token documents, true MoK + MoonEP, full zigzag, the CUDA head and eight microbatches per update. Each arm completed ten optimizer updates. The table uses every update from 4 through 10. Peak allocated memory is the largest PyTorch watermark across all 64 GPUs.
+
+| Configuration | Mean update, s | Tokens/s/GPU | Peak allocated, GiB | W&B |
+|---|---:|---:|---:|---|
+| Native throughput arithmetic, two-symbol recompute | 30.100 | 4,354.5 | 173.08 | [run](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/td9wjdgh) |
+| Reference arithmetic, one-symbol recompute | 56.264 | 2,329.6 | 216.96 | [run](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/5dgrccsw) |
+
+The reference-arithmetic arm includes score-ordered stable D top-k and preserved physical key slots, reference routed BF16 arithmetic and RMSNorm, eager mHC and VHA, and one-symbol recompute. The measured difference includes all these choices.
+
+The native throughput arm exceeded at least one of the fixed Swift head gates when tested separately with the public four-replica capture. Its sampled raw logit relative L2 was 1.605553% for main and 8.014075% for MTP. A third accuracy arm retained reference arithmetic and changed only recompute grouping to two symbols. It passed the same gates.
+
+#### Optional contiguous CP owners for D attention backward
+
+The opt-in setting `model.ernie_dsa_contiguous_backward=true` keeps the forward zigzag layout. In backward it moves query-side tensors to their contiguous CP owners, runs sparse attention backward there, reduce-scatters the BF16 key gradient to the contiguous owners, and returns the local gradients to zigzag. It adds CP communication to every D backward including MTP. The benchmark table above uses the default backward.
+
+After completing steps 1–4 of section 6c, run the following on all 16 nodes for a new twelve-document capture. It uses the step-4 `run_arm` function and the strict arithmetic switches from the previous example. Set the same `NCCL_ALGO=Ring` in both frameworks when comparing reduction order.
+
+```bash
+export NCCL_ALGO=Ring
+DOCS=12
+INPUT=$DATA/skew.jsonl
+export ERNIE55_COMPARE_HEADS="$LOGS/accuracy-skew-d-backward-heads"
+run_arm accuracy-skew-d-backward true train.train_iters=1 \
+  optimizer.lr=1e-5 optimizer.min_lr=1e-5 scheduler.lr_decay_style=constant \
+  scheduler.lr_warmup_iters=5 scheduler.lr_decay_iters=6 \
+  model.recompute_num_layers=1 model.ernie_reference_rmsnorm=true \
+  model.ernie_fused_mhc=false model.ernie_vha_batched_mix=false \
+  model.ernie_dsa_preserve_cp_key_slots=true model.ernie_dsa_contiguous_backward=true \
+  '+model.moe_megakernel_backend_config.reference_pre_fc2_gate=true' \
+  "logger.wandb_project=$WANDB_PROJECT" logger.wandb_exp_name=ernie55-accuracy-skew-d-backward
+```
+
+On one node compare the 64 saved shards with the original Swift twelve-document capture.
+
+```bash
+python "$EX/head_parity_256k.py" "$WORK/swift-heads/skew" "$LOGS/accuracy-skew-d-backward-heads" --check
+```
+
+For a single 256K document, a controlled replay of the final backbone D layer held the original input and upstream gradient fixed. With contiguous query owners, switching the BF16 key gradient reduction from zigzag to contiguous owners reduced the full input-gradient relative L2 difference from 0.315478% to 0.006776%. Repeating original Swift with the same input and upstream gradient gave 0.007088%. This local test covers all 1,073,741,824 input coordinates of that layer.
+
+Two complete backward runs on one rack with NCCL Ring used the same contiguous query owners. The additional contiguous **key** reduction changed the full block-input relative L2 differences against original Swift as follows. Each value covers all 262,144 physical positions and four residual streams on one dense replica.
+
+| D backward configuration | Block 1 | Block 22 | Block 43 |
+|---|---:|---:|---:|
+| Contiguous query owners | 2.78964% | 1.07683% | 0.34410% |
+| Contiguous query and key owners | 1.67824% | 1.10718% | 0.31989% |
+
+The two arms used independent native starts and the original main and MTP losses. Early and middle block gradients continue to cross the fixed 0.5% threshold. [Query-owner run](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/f10s69mw) · [Query-and-key-owner run](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/gyyha0mx)
+
+The published option was also exercised in the normal trainer on 64 GB300s with twelve unequal documents. All ranks completed one GA8 update. Each rank executed all seven D backward modules eight times. Both heads passed the four-replica Swift check on the first microbatch. All 173,432 main and 166,260 MTP raw logits sampled at valid positions agreed exactly. The head-input gradient relative L2 was 0.0012833% for main and 0.00066723% for MTP.
