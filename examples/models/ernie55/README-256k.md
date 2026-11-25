@@ -2,6 +2,8 @@
 
 This experiment trains the public ERNIE-5.5-Flash-Base checkpoint with both its main LM head and MTP head. It compares natural MoK routing with the same routing under MoonEP expert replication. Use one 64-GPU NVLink domain (16 nodes × 4 GB300s). TP1, PP1 and CP16 give four dense data replicas. EP64 spans all ranks. Each replica sees one packed 262,144-position row per microbatch and accumulates eight microbatches. An optimizer update therefore contains 32 rows. The recipe runs eagerly with full uniform recomputation, two hybrid symbols per group, BF16 weights and expert math, FP32 router scores, and a CUDA token-chunked head (4,096 rows) on both outputs.
 
+**Accuracy status.** The native eight-document throughput recipe exceeds the original Swift main and MTP head error limits. Reference arithmetic passes both first-microbatch head comparisons on all three packings. Its first nonzero optimizer update still exceeds the limits for all three sampled parameter matrices on eight equal documents. [Throughput and recompute grouping](#eight-document-throughput-and-precision) · [First nonzero update](#first-nonzero-parameter-update-on-eight-equal-documents)
+
 ## 1. Check out the source and prepare the training environment
 
 Use a Linux GPU container supporting SM103/SM103a on **every** node. The measured base was NGC PyTorch 26.04 (Python 3.12, CUDA 13.2, PyTorch 2.12.0a0, Triton 3.6). The training stack used Transformer Engine 2.20.2, FlashMLA with sparse sink attention (commit `b7643bd`), DeepEP hybrid-ep (`10d4dd7`), cuDNN frontend 1.29.1 with CUTLASS DSL 4.8.1, fast-hadamard-transform 1.1.0, Emerging Optimizers 0.3.0 and Transformers 5.20.2. The base NGC image alone needs these additions. Install the dependencies in the same Python environment used by torchrun. [NGC PyTorch](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch) · [FlashMLA source and build instructions](https://github.com/deepseek-ai/FlashMLA/tree/b7643bd54521f563b839b98289b5cd048c062ba2) · [DeepEP HybridEP source and build instructions](https://github.com/deepseek-ai/DeepEP/tree/10d4dd7377d5bce900fbb4b80cce863764892b95) · [Transformer Engine](https://github.com/NVIDIA/TransformerEngine)
@@ -362,6 +364,39 @@ The reference-arithmetic arm includes score-ordered stable D top-k and preserved
 
 The native throughput arm exceeded at least one of the fixed Swift head gates when tested separately with the public four-replica capture. Its sampled raw logit relative L2 was 1.605553% for main and 8.014075% for MTP. A third accuracy arm retained reference arithmetic and changed only recompute grouping to two symbols. It passed the same gates.
 
+A separate unprofiled pair isolates recompute grouping within reference arithmetic. Both arms started from the same checkpoint on the same 64 GPUs. G2 ran first. Each arm completed seven updates. The step window is updates 4–7, with 131,072 physical positions per GPU per update. The memory columns use the maximum whole-run PyTorch allocator watermark across all 64 GPUs.
+
+| Reference arithmetic | Mean update, s | Tokens/s/GPU | Peak allocated, GiB | Peak reserved, GiB | W&B |
+|---|---:|---:|---:|---:|---|
+| One symbol per checkpoint (G1) | 56.382 | 2,324.72 | 216.96 | 218.74 | [G1](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/tb2o5p0o) |
+| Two symbols per checkpoint (G2) | 56.286 | 2,328.67 | 175.57 | 176.43 | [G2](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/117318ku) |
+
+G2 saved 41.39 GiB allocated (19.08%) and 42.31 GiB reserved. The 0.17% difference in throughput comes from four warm updates per arm. In the separate four-replica head test, every one of the seven comparison metrics on each head was identical for G1 and G2, including zero sampled raw-logit error.
+
+To repeat the timing pair, complete section 6c steps 1–3 and run this on all 16 nodes. Leave the section 6c environment and the step 4 `run_arm` function in place. Each invocation starts from the released checkpoint and writes a fresh set of per-node logs.
+
+```bash
+unset ERNIE55_COMPARE_HEADS
+DOCS=8
+INPUT=$DATA/uniform.jsonl
+strict_args=(
+  optimizer.lr=1e-5 optimizer.min_lr=1e-5 scheduler.lr_decay_style=constant
+  scheduler.lr_warmup_iters=5 model.ernie_reference_rmsnorm=true
+  model.ernie_fused_mhc=false model.ernie_vha_batched_mix=false
+  model.ernie_dsa_preserve_cp_key_slots=true
+  '+model.moe_megakernel_backend_config.reference_pre_fc2_gate=true'
+  "logger.wandb_project=$WANDB_PROJECT"
+)
+for group in 2 1; do
+  run_arm "strict-g$group" true "${strict_args[@]}" "model.recompute_num_layers=$group" \
+    train.train_iters=7 scheduler.lr_decay_iters=12 "logger.wandb_exp_name=ernie55-uniform-strict-g$group"
+done
+# Once both runs have completed, execute on one node.
+for group in 2 1; do
+  python "$EX/benchmark_256k.py" summarize --first-step 4 --last-step 7 "$LOGS"/strict-g"$group"-node*.log
+done
+```
+
 #### First GA8 parameter gradients on eight equal documents
 
 The two trainers accumulated the same eight microbatches on each of four dense replicas, checked the input tokens and main labels at every physical position, and ran their native distributed optimizer reduction. All 1,656,750,080 initial FP32 master-weight values in the three matrices below matched bitwise. The LM and embedding weights are independent. The last shared-expert FC2 is shared with MTP. The comparison reconstructs weights by logical coordinates across the two optimizer shard layouts, and reads the FP32 gradient before clipping.
@@ -375,6 +410,30 @@ The two trainers accumulated the same eight microbatches on each of four dense r
 | Embedding, remaining rows | 824,176,640 | 0.463432% | 0.682193% | Pass |
 
 The native whole-model gradient norms were 110.937294 for Swift and 110.546158 for Bridge. Both loss scales were 1. The measured warmup step used a zero learning rate for these parameter groups. Its gradient comparison is valid, and the unchanged weights provide no test of a nonzero optimizer update. Swift needed a one-time allocator cache release before its native distributed gradient synchronization to complete on this allocation. Live allocated bytes on all ranks were identical immediately before and after that cache release.
+
+#### First nonzero parameter update on eight equal documents
+
+Swift and Bridge each ran two consecutive GA8 updates in one process group. Both consumed the same tokens and shifted main labels for all 32 microbatch/replica pairs in each update. Both started update 2 with bitwise-identical sampled FP32 master weights at loss scale 1. The native optimizer retained its Adam moments and Muon momentum from the LR-0 update. At the first nonzero LR (2e-6), all three sampled update vectors exceeded the 0.5% relative L2 and 1% peak-relative limits. The native whole-model gradient norms were 80.538742 for Swift and 105.850609 for Bridge. The runs used separate 64-GPU racks. [Original Swift run](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/62nxkb13) · [Bridge run](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/rkt1q2vg)
+
+| Parameter | Sampled coordinates | Preclip gradient relative L2 | Master update relative L2 | Max update error / Swift update peak |
+|---|---:|---:|---:|---:|
+| LM output weight | 807,229 | 4.10352% | 6.27027% | 69.5693% |
+| Token embedding, including BOS | 811,321 | 51.1103% | 38.8568% | 170.901% |
+| Last shared-expert FC2 | 8,217 | 1.52254% | 6.48272% | 27.3452% |
+
+Embedding updates also differed away from BOS. The relative L2 was 36.1015% for the complete BOS row and 39.6441% for the sampled non-BOS rows. Across two fresh runs per trainer, the four Swift-to-Bridge **first-update** BOS gradient comparisons ranged from 0.30639% to 0.54442% relative L2 (two passed). The within-Swift and within-Bridge pairs differed by 0.35908% and 0.16287%, respectively.
+
+To run the two Bridge updates, use the section 6c environment and `strict_args` from the timing pair above. In the original Swift environment, use its native training entry with the eight-document cache, deterministic settings and optimizer arguments from the Swift guide. Set `--train_iters 2 --lr_decay_iters 6`, retain the five-update warmup, and let the same optimizer run both updates. The Swift head recorder exits after one microbatch and is only suitable for the head test. [Swift setup and training arguments](SWIFT-HEAD-PARITY.md)
+
+```bash
+unset ERNIE55_COMPARE_HEADS
+DOCS=8
+INPUT=$DATA/uniform.jsonl
+run_arm strict-two-updates true "${strict_args[@]}" model.recompute_num_layers=1 \
+  train.train_iters=2 scheduler.lr_decay_iters=6 logger.wandb_exp_name=ernie55-uniform-strict-two-updates
+```
+
+To reproduce the parameter measurement in either trainer, record the FP32 master values immediately before and after each native optimizer step, and the reduced gradients passed to the gradient norm routine before clipping. Map each local shard to the global row-major index for its parameter. Select indices divisible by 1,021 and additionally keep all 4,096 entries of embedding row 1 (BOS). Deduplicate replicated coordinates, verify input IDs, labels, pre-step weights and optimizer-state continuity, then compute `delta = post.double() - pre.double()` on each selected coordinate. Divide the L2 norm of the update difference by the Swift update L2 norm, and its largest absolute component by the largest absolute Swift update. Ordinary training logs give the native gradient norm. The per-coordinate comparison requires optimizer instrumentation in each trainer.
 
 #### Optional contiguous CP owners for D attention backward
 
