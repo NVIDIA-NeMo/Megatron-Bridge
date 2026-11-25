@@ -43,6 +43,9 @@ def _launch(tmp_path):
     fake_srun = fake_bin / "srun"
     fake_srun.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$SRUN_ARGS_FILE"\nexit 0\n')
     fake_srun.chmod(0o755)
+    fake_scontrol = fake_bin / "scontrol"
+    fake_scontrol.write_text('#!/bin/bash\nprintf "%s\\n" "node-0"\n')
+    fake_scontrol.chmod(0o755)
 
     args_file = tmp_path / "srun-args"
     env = os.environ.copy()
@@ -53,6 +56,7 @@ def _launch(tmp_path):
             "CONTAINER_IMAGE": "test.sqsh",
             "WORKSPACE": str(tmp_path),
             "SLURM_JOB_ID": "1",
+            "SLURM_JOB_NODELIST": "node-0",
             "SLURM_JOB_NUM_NODES": str(nodes),
             "SLURM_GPUS_PER_NODE": str(gpus_per_node),
         }

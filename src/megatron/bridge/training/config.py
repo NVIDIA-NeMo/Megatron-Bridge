@@ -2298,8 +2298,12 @@ def apply_ncclep_one_gpu_per_rank(cfg: ConfigContainer) -> None:
     No-op when the recipe does not use NCCL EP, when no local rank can be determined, or when CUDA
     is already initialized in this process (the visible-device list can no longer change). A
     launcher that already exposes exactly one device only gets ``external_gpu_device_mapping``.
+    Also a no-op with a MoE megakernel backend: it owns dispatch and combine, so NCCL EP is not its
+    transport, and its symmetric-memory buffers need each rank's real device index.
     """
     model = getattr(cfg, "model", None)
+    if getattr(model, "moe_megakernel_backend", None) is not None:
+        return
     if getattr(model, "moe_token_dispatcher_type", None) != "flex":
         return
     if getattr(model, "moe_flex_dispatcher_backend", None) != "ncclep":
