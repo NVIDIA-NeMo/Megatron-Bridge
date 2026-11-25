@@ -397,6 +397,27 @@ for group in 2 1; do
 done
 ```
 
+#### Opt-in MTP head backward for gradient comparisons
+
+Add `model.ernie_mtp_strict_head_backward=true` to a strict run to reproduce the BF16 MTP head gradients. The standard recipe uses `false`. Both settings use the same chunked forward and ordinary main-head backward. The opt-in MTP backward computes the corrected-logit gradient in FP32 with the reference normalization order, rounds it to BF16 before multimax backward, and contracts up to 1,024 rows of raw-logit gradients at a time. A 512-row softmax tile and a 1,024-row projection tile need a 393 MiB BF16 raw-gradient buffer at vocabulary size 201,216. The implementation uses PyTorch and the Bridge multimax operator included in this checkout.
+
+For this check, use Bridge commit `fe1504750075c9907eaa8071f147d5f3bb164672` in the worktree command in section 6c step 1. To repeat the single-document GA8 run, retain that section’s strict environment and use the `run_arm` function and `strict_args` from above on every node:
+
+```bash
+(
+  export DOCS=1 INPUT="$DATA/single.jsonl" NCCL_ALGO=Ring
+  run_arm strict-mtp-head-single true "${strict_args[@]}" model.recompute_num_layers=1 \
+    model.ernie_dsa_contiguous_backward=true model.ernie_mtp_strict_head_backward=true \
+    train.train_iters=1 "logger.wandb_exp_name=ernie55-single-strict-mtp-head"
+)
+```
+
+One 64-GB300 update processed all eight microbatches. On the first microbatch, all 52,747,567,104 MTP raw-logit gradients and all 1,073,741,824 head-input gradients on one reconstructed dense replica matched independent Swift training bitwise. The LM/MTP losses were 1.285155/1.493400 with zero skipped or NaN updates. In a separate single-document whole-branch comparison, MTP-to-trunk gradient relative L2 and peak error changed from 0.3793%/1.3575% to 0.3772%/0.9050%. The independent thresholds were 0.5% relative L2 and 1% of the reference peak.
+
+A separate complete GA8 update on the 12 unequal documents passed both independent Swift head gates. All sampled MTP head-input gradients and raw logits matched Swift exactly. Each of the 64 ranks ran eight standard main-head backwards and eight strict MTP backwards. Four GPU workers also passed the saved-projection, recomputed-projection and head-dispatch tests.
+
+For the isolated MTP head forward and backward on four real 16,384-token shards, the median changed from 58.35 ms to 92.98 ms over twelve warmed observations per mode. Peak allocated above resident inputs and weights changed from 7.83 GiB to 7.61 GiB. Whole-training step times depend on the rest of the model.
+
 #### First GA8 parameter gradients on eight equal documents
 
 The two trainers accumulated the same eight microbatches on each of four dense replicas, checked the input tokens and main labels at every physical position, and ran their native distributed optimizer reduction. All 1,656,750,080 initial FP32 master-weight values in the three matrices below matched bitwise. The LM and embedding weights are independent. The last shared-expert FC2 is shared with MTP. The comparison reconstructs weights by logical coordinates across the two optimizer shard layouts, and reads the FP32 gradient before clipping.
