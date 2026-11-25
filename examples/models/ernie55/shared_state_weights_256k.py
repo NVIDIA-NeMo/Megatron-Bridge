@@ -43,6 +43,8 @@ class WeightAudit:
         self.expected = set(ernie55_hf_param_dtypes(self.config))
         self.mapped, self.checked, self.bias = set(), {}, {}
         self.covered = set()
+        self.witnesses = {}
+        self.bias_names = {}
         self.pending = None
         self.rank = dist.get_rank()
 
@@ -120,6 +122,11 @@ class WeightAudit:
                 raise ValueError(f"Wrong runtime values after importing {keys} into {task.param_name} at row {i}")
         self.mapped.update(keys)
         self.covered.add((target.data_ptr(), target.numel()))
+        # A small, independent source-derived witness lets us resolve every live
+        # name again after the optimizer and the input pipeline have been initialized.
+        stride = max(1, (target.numel() - 1) // 3)
+        witness = expected.detach().reshape(-1)[::stride][:4].to(device=target.device, dtype=target.dtype).clone()
+        self.witnesses[task.param_name] = (target, stride, witness)
         self.checked[task.global_param_name] = [
             keys,
             str(target.dtype),
@@ -128,6 +135,7 @@ class WeightAudit:
         if isinstance(source, str) and source.endswith(".e_score_correction_bias"):
             assert source not in self.bias and target.dtype == torch.float32 and target.shape == (512,)
             self.bias[source] = target
+            self.bias_names[source] = task.param_name
 
     def load(self, model):
         """Load using AutoBridge and check every local live write and the union of global source keys."""
@@ -193,6 +201,26 @@ class WeightAudit:
         )
 
         assert check_ernie55_mtp_aliases(self.models) == self.alias_count
+        from megatron.core.utils import unwrap_model
+
+        (root,) = unwrap_model(self.models)
+        live = dict(root.named_parameters(remove_duplicate=False))
+        live.update(root.named_buffers(remove_duplicate=False))
+        confirmed = 0
+        if stage == "before-forward":
+            for name, (original, stride, witness) in self.witnesses.items():
+                tensor = live[name]
+                if (
+                    tensor.data_ptr() != original.data_ptr()
+                    or tensor.dtype != witness.dtype
+                    or not torch.equal(tensor.detach().reshape(-1)[::stride][:4], witness)
+                ):
+                    raise ValueError(f"Live target differs from the checked source before the actual forward: {name}")
+                confirmed += 1
+            (self.output / f"before-forward-{self.rank:02}.json").write_text(
+                json.dumps({"live_rechecked_by_name": confirmed, "shared_mtp_parameters": self.alias_count, "ga": 8})
+            )
+        self.bias = {key: live[name] for key, name in self.bias_names.items()}
         keys = sorted(self.bias, key=lambda k: int(k.split(".")[2]))
         assert len(keys) == 43 and len({x.data_ptr() for x in self.bias.values()}) == 43
         assert set(keys) == {k for k in self.index if k.endswith(".e_score_correction_bias")}
