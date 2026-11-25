@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 
 
-def install(dest: Path) -> Callable[[], None]:
+def install(dest: Path, *, model_parts=()) -> Callable[[], None]:
     """Record real CE, sampled logits and head-input gradients at global packed coordinates."""
     import torch
     import torch.distributed as dist
@@ -131,6 +131,21 @@ def install(dest: Path) -> Callable[[], None]:
     mtp_loss.roll_tensor = roll
     cuda_head.forward = raw
     chunked_head.chunked_training_loss = head
+
+    if model_parts:
+        # Model construction binds the chunked loss to each output-layer instance.
+        # A recorder attached after warmup must also instrument these existing bound methods.
+        from types import MethodType
+
+        bound = 0
+        for part in model_parts:
+            for module in part.modules():
+                method = getattr(module, "chunked_training_loss", None)
+                if getattr(method, "__func__", None) is original_head:
+                    module.chunked_training_loss = MethodType(head, module)
+                    bound += 1
+        if not bound:
+            raise RuntimeError("No initialized ERNIE CUDA output layer uses the chunked head.")
 
     def save():
         required = {"dp", "bounds", "pos", "tokens", "sample"}

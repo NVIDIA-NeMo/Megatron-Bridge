@@ -375,7 +375,7 @@ def install(role, output, next_heads=False):
                 else:
                     from head_parity_256k import install as record_heads
 
-                    save_heads = record_heads(output / "heads")
+                    save_heads = record_heads(output / "heads", model_parts=models)
             elif role == "swift":
                 raise RecordedSwiftUpdates
         return result
