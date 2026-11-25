@@ -58,6 +58,36 @@ Nonconstant schedules retain their separate bounds. Unequal or incomplete explic
 constant bounds are rejected; provide a resolved configuration. Per-group decay
 multipliers still need the corresponding optimizer mapping policy.
 
+
+For optimizer-sensitive migration, resolve a recipe for its intended rank count:
+
+```bash
+uv run python scripts/translate_mlm_to_bridge.py --reverse \
+    --recipe vanilla_gpt_pretrain_1gpu_h100_bf16_config --world-size 2 \
+    --args "optimizer.lr=0.002 mixed_precision=bf16_mixed"
+```
+
+YAML/CLI overrides are applied to the recipe object first. Translation then uses
+the same precision, optimizer/DDP distribution and communication-overlap resolver
+as training. The exported fields include loss scaling, optimizer state dtypes and
+DDP bucket size (measured in parameter elements), alongside LR/WD and overlap flags.
+Without `--world-size`, `--recipe` continues to export unresolved defaults and
+prints a note explaining that limitation.
+
+This resolves optimizer-related policy without constructing models or process
+groups. It does not run the complete model/dataset/scheduler validation, translate
+custom callable group policies, or establish performance parity. Review unmapped
+fields and complete MLM validation before training. Full serialized run configs
+can still be supplied through `--reverse --yaml`.
+
+FP8 and FP4 parameter-gather flags both map to `mixed_precision.*_param_gather`.
+Precision setup then propagates them to the model and DDP. Reverse translation
+accepts the precision-policy fields and their model/DDP copies. When copies
+disagree, an explicit precision-policy value (including `false`) takes precedence,
+followed by DDP and then the model. Generated Python recipes retain these precision
+overrides instead of dropping them. FP4 format and recipe settings are translated
+alongside the gather flag; enabling gather alone does not select a quantization format.
+
 | MLM flag | Bridge override | Notes |
 |---|---|---|
 | `--num-layers N` | `model.num_layers=N` | |
