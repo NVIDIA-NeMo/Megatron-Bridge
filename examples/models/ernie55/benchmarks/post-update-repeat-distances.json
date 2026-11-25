@@ -1,0 +1,1497 @@
+{
+  "summary": {
+    "swift-swift": {
+      "main_ce": {
+        "pairs": 10,
+        "minimum": 0.018092785827374964,
+        "median": 0.018585491421852583,
+        "maximum": 0.018958558974618275
+      },
+      "main_logits": {
+        "pairs": 10,
+        "minimum": 0.014159334551648188,
+        "median": 0.01570100530379892,
+        "maximum": 0.01800042557251692
+      },
+      "main_dh": {
+        "pairs": 10,
+        "minimum": 0.020804196036471902,
+        "median": 0.025095716132761292,
+        "maximum": 0.03054466042248338
+      },
+      "mtp_ce": {
+        "pairs": 10,
+        "minimum": 0.02307801954271702,
+        "median": 0.023304085709543468,
+        "maximum": 0.023957889233615835
+      },
+      "mtp_logits": {
+        "pairs": 10,
+        "minimum": 0.021894877982245323,
+        "median": 0.030608063301371648,
+        "maximum": 0.06143834617628102
+      },
+      "mtp_dh": {
+        "pairs": 10,
+        "minimum": 0.022467584144415183,
+        "median": 0.03674831247033364,
+        "maximum": 0.057531441512265254
+      }
+    },
+    "bridge-swift": {
+      "main_ce": {
+        "pairs": 20,
+        "minimum": 0.018010073456343933,
+        "median": 0.018497353986074466,
+        "maximum": 0.019012044292605057
+      },
+      "main_logits": {
+        "pairs": 20,
+        "minimum": 0.01297772327902968,
+        "median": 0.01634448517449076,
+        "maximum": 0.020497117961844922
+      },
+      "main_dh": {
+        "pairs": 20,
+        "minimum": 0.02307470410502415,
+        "median": 0.028041775572599674,
+        "maximum": 0.038628338202702124
+      },
+      "mtp_ce": {
+        "pairs": 20,
+        "minimum": 0.02306197454829402,
+        "median": 0.023530170150050014,
+        "maximum": 0.023991561416185296
+      },
+      "mtp_logits": {
+        "pairs": 20,
+        "minimum": 0.020258351714760484,
+        "median": 0.061909724110846706,
+        "maximum": 0.08787067849179285
+      },
+      "mtp_dh": {
+        "pairs": 20,
+        "minimum": 0.02029627634706375,
+        "median": 0.03072715703245979,
+        "maximum": 0.057311438122200034
+      }
+    },
+    "bridge-bridge": {
+      "main_ce": {
+        "pairs": 6,
+        "minimum": 0.017955280036911308,
+        "median": 0.01832866706518668,
+        "maximum": 0.0185927283762349
+      },
+      "main_logits": {
+        "pairs": 6,
+        "minimum": 0.01361599555661221,
+        "median": 0.016399460334818174,
+        "maximum": 0.0185571663619128
+      },
+      "main_dh": {
+        "pairs": 6,
+        "minimum": 0.0251597421535474,
+        "median": 0.02731714111417865,
+        "maximum": 0.0323297903427537
+      },
+      "mtp_ce": {
+        "pairs": 6,
+        "minimum": 0.023161941582892392,
+        "median": 0.023723953012321688,
+        "maximum": 0.024247592871052364
+      },
+      "mtp_logits": {
+        "pairs": 6,
+        "minimum": 0.021126612084276238,
+        "median": 0.07164959761507744,
+        "maximum": 0.09070709061901501
+      },
+      "mtp_dh": {
+        "pairs": 6,
+        "minimum": 0.025580639921829934,
+        "median": 0.03527538613638034,
+        "maximum": 0.050350556627501354
+      }
+    }
+  },
+  "pairs": {
+    "swift_A-swift_B": {
+      "main_ce": {
+        "symmetric": 0.018127782286770776,
+        "relative_to_first": 0.018126721438196998,
+        "relative_to_second": 0.018128843259522062,
+        "best_common_bound": 0.009063891143385388
+      },
+      "main_logits": {
+        "symmetric": 0.01777690708852187,
+        "relative_to_first": 0.01776490982611582,
+        "relative_to_second": 0.01778892056621707,
+        "best_common_bound": 0.008888453544260934
+      },
+      "main_dh": {
+        "symmetric": 0.027930713444814965,
+        "relative_to_first": 0.027943725721364727,
+        "relative_to_second": 0.02791771328121923,
+        "best_common_bound": 0.013965356722407483
+      },
+      "mtp_ce": {
+        "symmetric": 0.02330411769565174,
+        "relative_to_first": 0.023302036066008957,
+        "relative_to_second": 0.023306199697242198,
+        "best_common_bound": 0.01165205884782587
+      },
+      "mtp_logits": {
+        "symmetric": 0.021894877982245323,
+        "relative_to_first": 0.02189511140140391,
+        "relative_to_second": 0.021894644568063545,
+        "best_common_bound": 0.010947438991122662
+      },
+      "mtp_dh": {
+        "symmetric": 0.035070651488641594,
+        "relative_to_first": 0.035063427284517015,
+        "relative_to_second": 0.035077878670220705,
+        "best_common_bound": 0.017535325744320797
+      }
+    },
+    "swift_A-swift_C": {
+      "main_ce": {
+        "symmetric": 0.018785721770293015,
+        "relative_to_first": 0.018784432360417696,
+        "relative_to_second": 0.018787011357197042,
+        "best_common_bound": 0.009392860885146508
+      },
+      "main_logits": {
+        "symmetric": 0.01800042557251692,
+        "relative_to_first": 0.01800323303018428,
+        "relative_to_second": 0.017997618990313383,
+        "best_common_bound": 0.00900021278625846
+      },
+      "main_dh": {
+        "symmetric": 0.02280498355946293,
+        "relative_to_first": 0.022791653033662027,
+        "relative_to_second": 0.022818329688073746,
+        "best_common_bound": 0.011402491779731464
+      },
+      "mtp_ce": {
+        "symmetric": 0.023723938128320427,
+        "relative_to_first": 0.023721726974962068,
+        "relative_to_second": 0.02372614969392997,
+        "best_common_bound": 0.011861969064160214
+      },
+      "mtp_logits": {
+        "symmetric": 0.029769230739015305,
+        "relative_to_first": 0.02976307071172723,
+        "relative_to_second": 0.02977539331669825,
+        "best_common_bound": 0.014884615369507652
+      },
+      "mtp_dh": {
+        "symmetric": 0.04121739025452928,
+        "relative_to_first": 0.041232800341593906,
+        "relative_to_second": 0.04120199168169913,
+        "best_common_bound": 0.02060869512726464
+      }
+    },
+    "swift_A-swift_D": {
+      "main_ce": {
+        "symmetric": 0.018958558974618275,
+        "relative_to_first": 0.018957060297514518,
+        "relative_to_second": 0.018960057888700827,
+        "best_common_bound": 0.009479279487309138
+      },
+      "main_logits": {
+        "symmetric": 0.015650687744443843,
+        "relative_to_first": 0.015650657521068416,
+        "relative_to_second": 0.015650717967936,
+        "best_common_bound": 0.007825343872221922
+      },
+      "main_dh": {
+        "symmetric": 0.02321568362908719,
+        "relative_to_first": 0.023257392813113464,
+        "relative_to_second": 0.023174123777514363,
+        "best_common_bound": 0.011607841814543595
+      },
+      "mtp_ce": {
+        "symmetric": 0.023142687879577434,
+        "relative_to_first": 0.023140582766840372,
+        "relative_to_second": 0.023144793375356087,
+        "best_common_bound": 0.011571343939788717
+      },
+      "mtp_logits": {
+        "symmetric": 0.06123666410831052,
+        "relative_to_first": 0.06124914902195289,
+        "relative_to_second": 0.06122418428343443,
+        "best_common_bound": 0.03061833205415526
+      },
+      "mtp_dh": {
+        "symmetric": 0.036063564192743744,
+        "relative_to_first": 0.036083029938099434,
+        "relative_to_second": 0.036044119438471085,
+        "best_common_bound": 0.018031782096371872
+      }
+    },
+    "swift_A-swift_E": {
+      "main_ce": {
+        "symmetric": 0.018214550886230137,
+        "relative_to_first": 0.018213227281932542,
+        "relative_to_second": 0.018215874682921494,
+        "best_common_bound": 0.009107275443115069
+      },
+      "main_logits": {
+        "symmetric": 0.014968713371250808,
+        "relative_to_first": 0.014964105390803445,
+        "relative_to_second": 0.014973324190494583,
+        "best_common_bound": 0.007484356685625404
+      },
+      "main_dh": {
+        "symmetric": 0.020804196036471902,
+        "relative_to_first": 0.02080794100087334,
+        "relative_to_second": 0.02080045241984771,
+        "best_common_bound": 0.010402098018235951
+      },
+      "mtp_ce": {
+        "symmetric": 0.02307801954271702,
+        "relative_to_first": 0.023076586870730775,
+        "relative_to_second": 0.023079452392604474,
+        "best_common_bound": 0.01153900977135851
+      },
+      "mtp_logits": {
+        "symmetric": 0.02776354022160693,
+        "relative_to_first": 0.027766244246503816,
+        "relative_to_second": 0.027760836723323485,
+        "best_common_bound": 0.013881770110803465
+      },
+      "mtp_dh": {
+        "symmetric": 0.037433060747923526,
+        "relative_to_first": 0.037622583512969675,
+        "relative_to_second": 0.03724543784416553,
+        "best_common_bound": 0.018716530373961763
+      }
+    },
+    "swift_A-bridge_A": {
+      "main_ce": {
+        "symmetric": 0.01825119601685045,
+        "relative_to_first": 0.018249615843403334,
+        "relative_to_second": 0.01825277646396517,
+        "best_common_bound": 0.009125598008425224
+      },
+      "main_logits": {
+        "symmetric": 0.01955082731817009,
+        "relative_to_first": 0.019529638671840016,
+        "relative_to_second": 0.019572061991604592,
+        "best_common_bound": 0.009775413659085045
+      },
+      "main_dh": {
+        "symmetric": 0.038628338202702124,
+        "relative_to_first": 0.03859811347154756,
+        "relative_to_second": 0.03865861030665324,
+        "best_common_bound": 0.019314169101351062
+      },
+      "mtp_ce": {
+        "symmetric": 0.023710412754629887,
+        "relative_to_first": 0.023707884306777664,
+        "relative_to_second": 0.02371294174185799,
+        "best_common_bound": 0.011855206377314943
+      },
+      "mtp_logits": {
+        "symmetric": 0.0625779252010604,
+        "relative_to_first": 0.06257292941508072,
+        "relative_to_second": 0.062582921784825,
+        "best_common_bound": 0.0312889626005302
+      },
+      "mtp_dh": {
+        "symmetric": 0.025105020018881114,
+        "relative_to_first": 0.025168297345807184,
+        "relative_to_second": 0.025042060073660694,
+        "best_common_bound": 0.012552510009440557
+      }
+    },
+    "swift_A-bridge_B": {
+      "main_ce": {
+        "symmetric": 0.01867113859478819,
+        "relative_to_first": 0.018668371757443143,
+        "relative_to_second": 0.018673906252400133,
+        "best_common_bound": 0.009335569297394096
+      },
+      "main_logits": {
+        "symmetric": 0.019601304031759706,
+        "relative_to_first": 0.019631012240006376,
+        "relative_to_second": 0.01957168560431629,
+        "best_common_bound": 0.009800652015879853
+      },
+      "main_dh": {
+        "symmetric": 0.02687737230101643,
+        "relative_to_first": 0.02688382772315084,
+        "relative_to_second": 0.026870919978326885,
+        "best_common_bound": 0.013438686150508215
+      },
+      "mtp_ce": {
+        "symmetric": 0.023765256466296306,
+        "relative_to_first": 0.02376259466200632,
+        "relative_to_second": 0.02376791886698545,
+        "best_common_bound": 0.011882628233148153
+      },
+      "mtp_logits": {
+        "symmetric": 0.023851631945556513,
+        "relative_to_first": 0.02385797986671004,
+        "relative_to_second": 0.02384528740150234,
+        "best_common_bound": 0.011925815972778257
+      },
+      "mtp_dh": {
+        "symmetric": 0.03616932276862015,
+        "relative_to_first": 0.03605541606746917,
+        "relative_to_second": 0.03628395146151805,
+        "best_common_bound": 0.018084661384310075
+      }
+    },
+    "swift_A-bridge_C": {
+      "main_ce": {
+        "symmetric": 0.0188015913137301,
+        "relative_to_first": 0.01880023874764124,
+        "relative_to_second": 0.018802944074451246,
+        "best_common_bound": 0.00940079565686505
+      },
+      "main_logits": {
+        "symmetric": 0.016344061085434233,
+        "relative_to_first": 0.01634434552695319,
+        "relative_to_second": 0.01634377665381541,
+        "best_common_bound": 0.008172030542717116
+      },
+      "main_dh": {
+        "symmetric": 0.02660902303611073,
+        "relative_to_first": 0.026585215258456592,
+        "relative_to_second": 0.026632873492999944,
+        "best_common_bound": 0.013304511518055366
+      },
+      "mtp_ce": {
+        "symmetric": 0.02364772402593819,
+        "relative_to_first": 0.023644496437768336,
+        "relative_to_second": 0.023650952495391155,
+        "best_common_bound": 0.011823862012969096
+      },
+      "mtp_logits": {
+        "symmetric": 0.020258351714760484,
+        "relative_to_first": 0.020257607869122663,
+        "relative_to_second": 0.020259095615027332,
+        "best_common_bound": 0.010129175857380242
+      },
+      "mtp_dh": {
+        "symmetric": 0.036557176053303365,
+        "relative_to_first": 0.03659900588296307,
+        "relative_to_second": 0.036515441730998514,
+        "best_common_bound": 0.018278588026651683
+      }
+    },
+    "swift_A-bridge_D": {
+      "main_ce": {
+        "symmetric": 0.018538223583568714,
+        "relative_to_first": 0.018535576843849044,
+        "relative_to_second": 0.01854087107926502,
+        "best_common_bound": 0.009269111791784357
+      },
+      "main_logits": {
+        "symmetric": 0.016660999076389398,
+        "relative_to_first": 0.0166609013310696,
+        "relative_to_second": 0.0166610968228561,
+        "best_common_bound": 0.008330499538194699
+      },
+      "main_dh": {
+        "symmetric": 0.03641203509375345,
+        "relative_to_first": 0.036327083005800245,
+        "relative_to_second": 0.036497385439594084,
+        "best_common_bound": 0.018206017546876726
+      },
+      "mtp_ce": {
+        "symmetric": 0.02351745971113405,
+        "relative_to_first": 0.023515351192151812,
+        "relative_to_second": 0.02351956860827359,
+        "best_common_bound": 0.011758729855567024
+      },
+      "mtp_logits": {
+        "symmetric": 0.07028524776781385,
+        "relative_to_first": 0.07030996548404318,
+        "relative_to_second": 0.07026054742467752,
+        "best_common_bound": 0.035142623883906925
+      },
+      "mtp_dh": {
+        "symmetric": 0.042641161216886554,
+        "relative_to_first": 0.042656461227212714,
+        "relative_to_second": 0.042625872178233895,
+        "best_common_bound": 0.021320580608443277
+      }
+    },
+    "swift_B-swift_C": {
+      "main_ce": {
+        "symmetric": 0.0187205543305174,
+        "relative_to_first": 0.018720364909364587,
+        "relative_to_second": 0.018720743755503554,
+        "best_common_bound": 0.0093602771652587
+      },
+      "main_logits": {
+        "symmetric": 0.01717643982117002,
+        "relative_to_first": 0.017190730072927467,
+        "relative_to_second": 0.017162173307983225,
+        "best_common_bound": 0.00858821991058501
+      },
+      "main_dh": {
+        "symmetric": 0.02599101821231171,
+        "relative_to_first": 0.02596374210518145,
+        "relative_to_second": 0.026018351689325772,
+        "best_common_bound": 0.012995509106155856
+      },
+      "mtp_ce": {
+        "symmetric": 0.023957889233615835,
+        "relative_to_first": 0.02395779628608369,
+        "relative_to_second": 0.023957982181869182,
+        "best_common_bound": 0.011978944616807917
+      },
+      "mtp_logits": {
+        "symmetric": 0.028744568191583275,
+        "relative_to_first": 0.028738313883913822,
+        "relative_to_second": 0.02875082522209022,
+        "best_common_bound": 0.014372284095791638
+      },
+      "mtp_dh": {
+        "symmetric": 0.027459180244005957,
+        "relative_to_first": 0.027475109381419095,
+        "relative_to_second": 0.027443269566238753,
+        "best_common_bound": 0.013729590122002979
+      }
+    },
+    "swift_B-swift_D": {
+      "main_ce": {
+        "symmetric": 0.018320908024463525,
+        "relative_to_first": 0.018320531860148648,
+        "relative_to_second": 0.018321284204225824,
+        "best_common_bound": 0.009160454012231763
+      },
+      "main_logits": {
+        "symmetric": 0.016103574250670574,
+        "relative_to_first": 0.01611442576474339,
+        "relative_to_second": 0.016092737341662295,
+        "best_common_bound": 0.008051787125335287
+      },
+      "main_dh": {
+        "symmetric": 0.02622385479552923,
+        "relative_to_first": 0.026258718870078225,
+        "relative_to_second": 0.026189083177280064,
+        "best_common_bound": 0.013111927397764615
+      },
+      "mtp_ce": {
+        "symmetric": 0.023304053723435192,
+        "relative_to_first": 0.02330401554959428,
+        "relative_to_second": 0.023304091897401163,
+        "best_common_bound": 0.011652026861717596
+      },
+      "mtp_logits": {
+        "symmetric": 0.06099746231217855,
+        "relative_to_first": 0.061009247918140296,
+        "relative_to_second": 0.06098568125876204,
+        "best_common_bound": 0.030498731156089275
+      },
+      "mtp_dh": {
+        "symmetric": 0.022467584144415183,
+        "relative_to_first": 0.022484346298678785,
+        "relative_to_second": 0.02245084696401597,
+        "best_common_bound": 0.011233792072207592
+      }
+    },
+    "swift_B-swift_E": {
+      "main_ce": {
+        "symmetric": 0.018092785827374964,
+        "relative_to_first": 0.018092529842028617,
+        "relative_to_second": 0.018093041819965128,
+        "best_common_bound": 0.009046392913687482
+      },
+      "main_logits": {
+        "symmetric": 0.014920505393145971,
+        "relative_to_first": 0.014925989191587035,
+        "relative_to_second": 0.014915025622712772,
+        "best_common_bound": 0.007460252696572986
+      },
+      "main_dh": {
+        "symmetric": 0.03054466042248338,
+        "relative_to_first": 0.0305359368423268,
+        "relative_to_second": 0.030553388988411187,
+        "best_common_bound": 0.01527233021124169
+      },
+      "mtp_ce": {
+        "symmetric": 0.023430121684011426,
+        "relative_to_first": 0.023430760152652393,
+        "relative_to_second": 0.023429483250164987,
+        "best_common_bound": 0.011715060842005713
+      },
+      "mtp_logits": {
+        "symmetric": 0.02815095576363028,
+        "relative_to_first": 0.028153397354139943,
+        "relative_to_second": 0.02814851459657553,
+        "best_common_bound": 0.01407547788181514
+      },
+      "mtp_dh": {
+        "symmetric": 0.04538390856260792,
+        "relative_to_first": 0.045623133483671786,
+        "relative_to_second": 0.04514717930748225,
+        "best_common_bound": 0.02269195428130396
+      }
+    },
+    "swift_B-bridge_A": {
+      "main_ce": {
+        "symmetric": 0.018343592074116403,
+        "relative_to_first": 0.018343077318738098,
+        "relative_to_second": 0.01834410685838632,
+        "best_common_bound": 0.009171796037058201
+      },
+      "main_logits": {
+        "symmetric": 0.015029915696376312,
+        "relative_to_first": 0.015023761758219664,
+        "relative_to_second": 0.01503607467807322,
+        "best_common_bound": 0.007514957848188156
+      },
+      "main_dh": {
+        "symmetric": 0.029790658989223503,
+        "relative_to_first": 0.029753505133289285,
+        "relative_to_second": 0.02982790575084442,
+        "best_common_bound": 0.014895329494611751
+      },
+      "mtp_ce": {
+        "symmetric": 0.023470063193136284,
+        "relative_to_first": 0.023469656755890193,
+        "relative_to_second": 0.02347046964445962,
+        "best_common_bound": 0.011735031596568142
+      },
+      "mtp_logits": {
+        "symmetric": 0.0678143098065677,
+        "relative_to_first": 0.06780817315319068,
+        "relative_to_second": 0.06782044757078198,
+        "best_common_bound": 0.03390715490328385
+      },
+      "mtp_dh": {
+        "symmetric": 0.042048021786145535,
+        "relative_to_first": 0.04216271275583664,
+        "relative_to_second": 0.04193395308827671,
+        "best_common_bound": 0.021024010893072768
+      }
+    },
+    "swift_B-bridge_B": {
+      "main_ce": {
+        "symmetric": 0.018518686162208486,
+        "relative_to_first": 0.018517025446601918,
+        "relative_to_second": 0.018520347175727234,
+        "best_common_bound": 0.009259343081104243
+      },
+      "main_logits": {
+        "symmetric": 0.017305807823324852,
+        "relative_to_first": 0.017343767485997613,
+        "relative_to_second": 0.017268013959594607,
+        "best_common_bound": 0.008652903911662426
+      },
+      "main_dh": {
+        "symmetric": 0.027814907454314707,
+        "relative_to_first": 0.027808635572806755,
+        "relative_to_second": 0.02782118216554592,
+        "best_common_bound": 0.013907453727157354
+      },
+      "mtp_ce": {
+        "symmetric": 0.023839757670920093,
+        "relative_to_first": 0.02383921690102588,
+        "relative_to_second": 0.023840298465348568,
+        "best_common_bound": 0.011919878835460047
+      },
+      "mtp_logits": {
+        "symmetric": 0.023357990431182238,
+        "relative_to_first": 0.023363957829099884,
+        "relative_to_second": 0.023352026080757267,
+        "best_common_bound": 0.011678995215591119
+      },
+      "mtp_dh": {
+        "symmetric": 0.02310208289176934,
+        "relative_to_first": 0.02303405913653998,
+        "relative_to_second": 0.023170509610000254,
+        "best_common_bound": 0.01155104144588467
+      }
+    },
+    "swift_B-bridge_C": {
+      "main_ce": {
+        "symmetric": 0.01848830531101685,
+        "relative_to_first": 0.01848805719993909,
+        "relative_to_second": 0.018488553428754037,
+        "best_common_bound": 0.009244152655508426
+      },
+      "main_logits": {
+        "symmetric": 0.014502085985214082,
+        "relative_to_first": 0.014512139093655882,
+        "relative_to_second": 0.014492046795468293,
+        "best_common_bound": 0.007251042992607041
+      },
+      "main_dh": {
+        "symmetric": 0.026493497768219052,
+        "relative_to_first": 0.026457484198936544,
+        "relative_to_second": 0.026529609513503236,
+        "best_common_bound": 0.013246748884109526
+      },
+      "mtp_ce": {
+        "symmetric": 0.023991561416185296,
+        "relative_to_first": 0.023990429732018037,
+        "relative_to_second": 0.023992693207125916,
+        "best_common_bound": 0.011995780708092648
+      },
+      "mtp_logits": {
+        "symmetric": 0.021289947665723095,
+        "relative_to_first": 0.021288938993422872,
+        "relative_to_second": 0.021290956433609856,
+        "best_common_bound": 0.010644973832861547
+      },
+      "mtp_dh": {
+        "symmetric": 0.021946320111422838,
+        "relative_to_first": 0.02197596469239648,
+        "relative_to_second": 0.021916755401101277,
+        "best_common_bound": 0.010973160055711419
+      }
+    },
+    "swift_B-bridge_D": {
+      "main_ce": {
+        "symmetric": 0.018336380854309543,
+        "relative_to_first": 0.0183348358071366,
+        "relative_to_second": 0.018337926161901722,
+        "best_common_bound": 0.009168190427154771
+      },
+      "main_logits": {
+        "symmetric": 0.01460969722069826,
+        "relative_to_first": 0.01461948449901549,
+        "relative_to_second": 0.01459992303815481,
+        "best_common_bound": 0.00730484861034913
+      },
+      "main_dh": {
+        "symmetric": 0.027438381946053834,
+        "relative_to_first": 0.027361654663745093,
+        "relative_to_second": 0.027515540754220653,
+        "best_common_bound": 0.013719190973026917
+      },
+      "mtp_ce": {
+        "symmetric": 0.023571460201745633,
+        "relative_to_first": 0.023571452349696015,
+        "relative_to_second": 0.02357146805380049,
+        "best_common_bound": 0.011785730100872817
+      },
+      "mtp_logits": {
+        "symmetric": 0.07044439724931245,
+        "relative_to_first": 0.07046841942173507,
+        "relative_to_second": 0.07042039144927685,
+        "best_common_bound": 0.035222198624656226
+      },
+      "mtp_dh": {
+        "symmetric": 0.026071115387666727,
+        "relative_to_first": 0.02608584638340159,
+        "relative_to_second": 0.026056401020087796,
+        "best_common_bound": 0.013035557693833364
+      }
+    },
+    "swift_C-swift_D": {
+      "main_ce": {
+        "symmetric": 0.018669887865167153,
+        "relative_to_first": 0.018669693440166193,
+        "relative_to_second": 0.01867008229421761,
+        "best_common_bound": 0.009334943932583576
+      },
+      "main_logits": {
+        "symmetric": 0.014960265534181443,
+        "relative_to_first": 0.014957904085196637,
+        "relative_to_second": 0.014962627728901987,
+        "best_common_bound": 0.007480132767090721
+      },
+      "main_dh": {
+        "symmetric": 0.024637553644109692,
+        "relative_to_first": 0.024696287762686276,
+        "relative_to_second": 0.024579098232350785,
+        "best_common_bound": 0.012318776822054846
+      },
+      "mtp_ce": {
+        "symmetric": 0.023224623414269608,
+        "relative_to_first": 0.023224675473684238,
+        "relative_to_second": 0.02322457135508837,
+        "best_common_bound": 0.011612311707134804
+      },
+      "mtp_logits": {
+        "symmetric": 0.06143834617628102,
+        "relative_to_first": 0.06146359584851441,
+        "relative_to_second": 0.06141311724101034,
+        "best_common_bound": 0.03071917308814051
+      },
+      "mtp_dh": {
+        "symmetric": 0.028048158802653708,
+        "relative_to_first": 0.028052808198012456,
+        "relative_to_second": 0.02804351094819561,
+        "best_common_bound": 0.014024079401326854
+      }
+    },
+    "swift_C-swift_E": {
+      "main_ce": {
+        "symmetric": 0.018872448218222128,
+        "relative_to_first": 0.01887237215837053,
+        "relative_to_second": 0.018872524278686804,
+        "best_common_bound": 0.009436224109111064
+      },
+      "main_logits": {
+        "symmetric": 0.015751322863153998,
+        "relative_to_first": 0.015744019568019057,
+        "relative_to_second": 0.01575863293710085,
+        "best_common_bound": 0.007875661431576999
+      },
+      "main_dh": {
+        "symmetric": 0.025553878621412895,
+        "relative_to_first": 0.02557343882109245,
+        "relative_to_second": 0.02553434832064524,
+        "best_common_bound": 0.012776939310706448
+      },
+      "mtp_ce": {
+        "symmetric": 0.023854031807146715,
+        "relative_to_first": 0.02385477437766565,
+        "relative_to_second": 0.023853289282856998,
+        "best_common_bound": 0.011927015903573358
+      },
+      "mtp_logits": {
+        "symmetric": 0.03144689586372799,
+        "relative_to_first": 0.03145646977034124,
+        "relative_to_second": 0.03143732778305769,
+        "best_common_bound": 0.015723447931863994
+      },
+      "mtp_dh": {
+        "symmetric": 0.057531441512265254,
+        "relative_to_first": 0.057801010891014526,
+        "relative_to_second": 0.05726437486896728,
+        "best_common_bound": 0.028765720756132627
+      }
+    },
+    "swift_C-bridge_A": {
+      "main_ce": {
+        "symmetric": 0.018506402661132078,
+        "relative_to_first": 0.01850607058455606,
+        "relative_to_second": 0.018506734749626,
+        "best_common_bound": 0.009253201330566039
+      },
+      "main_logits": {
+        "symmetric": 0.020497117961844922,
+        "relative_to_first": 0.020471714818680754,
+        "relative_to_second": 0.020522584228343303,
+        "best_common_bound": 0.010248558980922461
+      },
+      "main_dh": {
+        "symmetric": 0.03047678658553366,
+        "relative_to_first": 0.030470748009184125,
+        "relative_to_second": 0.030482827555761555,
+        "best_common_bound": 0.01523839329276683
+      },
+      "mtp_ce": {
+        "symmetric": 0.023908664371493887,
+        "relative_to_first": 0.023908343092941493,
+        "relative_to_second": 0.02390898565868103,
+        "best_common_bound": 0.011954332185746944
+      },
+      "mtp_logits": {
+        "symmetric": 0.06649784048264719,
+        "relative_to_first": 0.06650629538790187,
+        "relative_to_second": 0.06648938772685327,
+        "best_common_bound": 0.033248920241323594
+      },
+      "mtp_dh": {
+        "symmetric": 0.04875030511764839,
+        "relative_to_first": 0.048854875866195975,
+        "relative_to_second": 0.04864618106701951,
+        "best_common_bound": 0.024375152558824196
+      }
+    },
+    "swift_C-bridge_B": {
+      "main_ce": {
+        "symmetric": 0.018824565919770643,
+        "relative_to_first": 0.018823068216800975,
+        "relative_to_second": 0.018826063861095994,
+        "best_common_bound": 0.009412282959885322
+      },
+      "main_logits": {
+        "symmetric": 0.016344909263547293,
+        "relative_to_first": 0.016367125818322684,
+        "relative_to_second": 0.016322752940024,
+        "best_common_bound": 0.008172454631773646
+      },
+      "main_dh": {
+        "symmetric": 0.0304650337705874,
+        "relative_to_first": 0.030490188452673907,
+        "relative_to_second": 0.03043992055996842,
+        "best_common_bound": 0.0152325168852937
+      },
+      "mtp_ce": {
+        "symmetric": 0.023213094120404947,
+        "relative_to_first": 0.02321265762007553,
+        "relative_to_second": 0.02321353063715094,
+        "best_common_bound": 0.011606547060202473
+      },
+      "mtp_logits": {
+        "symmetric": 0.02288404046533113,
+        "relative_to_first": 0.02289487065437601,
+        "relative_to_second": 0.022873220517666378,
+        "best_common_bound": 0.011442020232665565
+      },
+      "mtp_dh": {
+        "symmetric": 0.030277570580116188,
+        "relative_to_first": 0.03017097827960469,
+        "relative_to_second": 0.03038491871968166,
+        "best_common_bound": 0.015138785290058094
+      }
+    },
+    "swift_C-bridge_C": {
+      "main_ce": {
+        "symmetric": 0.01871488706141246,
+        "relative_to_first": 0.01871482527219085,
+        "relative_to_second": 0.018714948851042083,
+        "best_common_bound": 0.00935744353070623
+      },
+      "main_logits": {
+        "symmetric": 0.015795569069840542,
+        "relative_to_first": 0.015793381073649568,
+        "relative_to_second": 0.015797757672360288,
+        "best_common_bound": 0.007897784534920271
+      },
+      "main_dh": {
+        "symmetric": 0.025930699944134272,
+        "relative_to_first": 0.0259226473112231,
+        "relative_to_second": 0.02593875758155334,
+        "best_common_bound": 0.012965349972067136
+      },
+      "mtp_ce": {
+        "symmetric": 0.02306197454829402,
+        "relative_to_first": 0.023060976176801192,
+        "relative_to_second": 0.02306297300623495,
+        "best_common_bound": 0.01153098727414701
+      },
+      "mtp_logits": {
+        "symmetric": 0.027587208413898102,
+        "relative_to_first": 0.02759190592173799,
+        "relative_to_second": 0.027582512505282545,
+        "best_common_bound": 0.013793604206949051
+      },
+      "mtp_dh": {
+        "symmetric": 0.026111562760220863,
+        "relative_to_first": 0.0261316629529393,
+        "relative_to_second": 0.026091493465438067,
+        "best_common_bound": 0.013055781380110432
+      }
+    },
+    "swift_C-bridge_D": {
+      "main_ce": {
+        "symmetric": 0.019012044292605057,
+        "relative_to_first": 0.019010634655181036,
+        "relative_to_second": 0.019013454139093642,
+        "best_common_bound": 0.009506022146302529
+      },
+      "main_logits": {
+        "symmetric": 0.01688435595449717,
+        "relative_to_first": 0.016881624362329237,
+        "relative_to_second": 0.016887088430798423,
+        "best_common_bound": 0.008442177977248585
+      },
+      "main_dh": {
+        "symmetric": 0.028268643690884644,
+        "relative_to_first": 0.02821915718724014,
+        "relative_to_second": 0.028318304063373444,
+        "best_common_bound": 0.014134321845442322
+      },
+      "mtp_ce": {
+        "symmetric": 0.023854980415482514,
+        "relative_to_first": 0.023855065017928914,
+        "relative_to_second": 0.023854895813636198,
+        "best_common_bound": 0.011927490207741257
+      },
+      "mtp_logits": {
+        "symmetric": 0.07163711518174215,
+        "relative_to_first": 0.07167714846708434,
+        "relative_to_second": 0.07159712659040202,
+        "best_common_bound": 0.035818557590871075
+      },
+      "mtp_dh": {
+        "symmetric": 0.02104989215396291,
+        "relative_to_first": 0.02104957527537958,
+        "relative_to_second": 0.02105020904208691,
+        "best_common_bound": 0.010524946076981454
+      }
+    },
+    "swift_D-swift_E": {
+      "main_ce": {
+        "symmetric": 0.018501094978538017,
+        "relative_to_first": 0.018501213084997175,
+        "relative_to_second": 0.018500976873586764,
+        "best_common_bound": 0.009250547489269009
+      },
+      "main_logits": {
+        "symmetric": 0.014159334551648188,
+        "relative_to_first": 0.01415500305767287,
+        "relative_to_second": 0.014163668697347838,
+        "best_common_bound": 0.007079667275824094
+      },
+      "main_dh": {
+        "symmetric": 0.022066858875359113,
+        "relative_to_first": 0.022031313641476598,
+        "relative_to_second": 0.022102518991670685,
+        "best_common_bound": 0.011033429437679557
+      },
+      "mtp_ce": {
+        "symmetric": 0.023240234418249316,
+        "relative_to_first": 0.023240905783979367,
+        "relative_to_second": 0.023239563091305954,
+        "best_common_bound": 0.011620117209124658
+      },
+      "mtp_logits": {
+        "symmetric": 0.057734863850200054,
+        "relative_to_first": 0.057728718464888945,
+        "relative_to_second": 0.05774101054403775,
+        "best_common_bound": 0.028867431925100027
+      },
+      "mtp_dh": {
+        "symmetric": 0.041851674734276374,
+        "relative_to_first": 0.04204077475881696,
+        "relative_to_second": 0.04166426824159988,
+        "best_common_bound": 0.020925837367138187
+      }
+    },
+    "swift_D-bridge_A": {
+      "main_ce": {
+        "symmetric": 0.018010073456343933,
+        "relative_to_first": 0.018009937836819683,
+        "relative_to_second": 0.0180102090779107,
+        "best_common_bound": 0.009005036728171966
+      },
+      "main_logits": {
+        "symmetric": 0.016614750424845087,
+        "relative_to_first": 0.016596775833184082,
+        "relative_to_second": 0.016632763992297003,
+        "best_common_bound": 0.008307375212422544
+      },
+      "main_dh": {
+        "symmetric": 0.03228859400416798,
+        "relative_to_first": 0.032205618420365296,
+        "relative_to_second": 0.03237199825428822,
+        "best_common_bound": 0.01614429700208399
+      },
+      "mtp_ce": {
+        "symmetric": 0.02337720352021477,
+        "relative_to_first": 0.023376836983509116,
+        "relative_to_second": 0.023377570068414816,
+        "best_common_bound": 0.011688601760107385
+      },
+      "mtp_logits": {
+        "symmetric": 0.08787067849179285,
+        "relative_to_first": 0.08784575862083958,
+        "relative_to_second": 0.08789561250517465,
+        "best_common_bound": 0.043935339245896425
+      },
+      "mtp_dh": {
+        "symmetric": 0.037001198360459495,
+        "relative_to_first": 0.037074409186031373,
+        "relative_to_second": 0.03692827610384462,
+        "best_common_bound": 0.018500599180229747
+      }
+    },
+    "swift_D-bridge_B": {
+      "main_ce": {
+        "symmetric": 0.01828062718371072,
+        "relative_to_first": 0.018279363102078713,
+        "relative_to_second": 0.018281891440186118,
+        "best_common_bound": 0.00914031359185536
+      },
+      "main_logits": {
+        "symmetric": 0.01776694143145084,
+        "relative_to_first": 0.017793903849835695,
+        "relative_to_second": 0.01774006059967286,
+        "best_common_bound": 0.00888347071572542
+      },
+      "main_dh": {
+        "symmetric": 0.02332603726405415,
+        "relative_to_first": 0.0232898622634073,
+        "relative_to_second": 0.023362324817231443,
+        "best_common_bound": 0.011663018632027075
+      },
+      "mtp_ce": {
+        "symmetric": 0.023478761245018645,
+        "relative_to_first": 0.023478267122204733,
+        "relative_to_second": 0.023479255388631572,
+        "best_common_bound": 0.011739380622509323
+      },
+      "mtp_logits": {
+        "symmetric": 0.06124152302063302,
+        "relative_to_first": 0.06124533450392757,
+        "relative_to_second": 0.061237712011709335,
+        "best_common_bound": 0.03062076151031651
+      },
+      "mtp_dh": {
+        "symmetric": 0.029623589763846853,
+        "relative_to_first": 0.029514425450190642,
+        "relative_to_second": 0.02973356460234899,
+        "best_common_bound": 0.014811794881923426
+      }
+    },
+    "swift_D-bridge_C": {
+      "main_ce": {
+        "symmetric": 0.018461254011882956,
+        "relative_to_first": 0.018461385315116895,
+        "relative_to_second": 0.018461122710516746,
+        "best_common_bound": 0.009230627005941478
+      },
+      "main_logits": {
+        "symmetric": 0.014171342419207911,
+        "relative_to_first": 0.014171616415768211,
+        "relative_to_second": 0.014171068433242404,
+        "best_common_bound": 0.007085671209603956
+      },
+      "main_dh": {
+        "symmetric": 0.023166017419443678,
+        "relative_to_first": 0.02310389345677617,
+        "relative_to_second": 0.02322847637259345,
+        "best_common_bound": 0.011583008709721839
+      },
+      "mtp_ce": {
+        "symmetric": 0.023459995307667677,
+        "relative_to_first": 0.02345892712330858,
+        "relative_to_second": 0.023461063589309127,
+        "best_common_bound": 0.011729997653833838
+      },
+      "mtp_logits": {
+        "symmetric": 0.06261913493242001,
+        "relative_to_first": 0.06260407505403932,
+        "relative_to_second": 0.06263420205807678,
+        "best_common_bound": 0.031309567466210005
+      },
+      "mtp_dh": {
+        "symmetric": 0.02029627634706375,
+        "relative_to_first": 0.020308531571393704,
+        "relative_to_second": 0.020284035904693267,
+        "best_common_bound": 0.010148138173531876
+      }
+    },
+    "swift_D-bridge_D": {
+      "main_ce": {
+        "symmetric": 0.01838705300562711,
+        "relative_to_first": 0.01838588116303425,
+        "relative_to_second": 0.018388224997606624,
+        "best_common_bound": 0.009193526502813555
+      },
+      "main_logits": {
+        "symmetric": 0.013908187671596163,
+        "relative_to_first": 0.013908132934419244,
+        "relative_to_second": 0.013908242409203938,
+        "best_common_bound": 0.0069540938357980815
+      },
+      "main_dh": {
+        "symmetric": 0.03364318004357955,
+        "relative_to_first": 0.03350474216851803,
+        "relative_to_second": 0.03378276668507819,
+        "best_common_bound": 0.016821590021789776
+      },
+      "mtp_ce": {
+        "symmetric": 0.023427509873841262,
+        "relative_to_first": 0.023427540445915697,
+        "relative_to_second": 0.023427479301846618,
+        "best_common_bound": 0.011713754936920631
+      },
+      "mtp_logits": {
+        "symmetric": 0.027071485509615155,
+        "relative_to_first": 0.027075484975141978,
+        "relative_to_second": 0.027067487225478953,
+        "best_common_bound": 0.013535742754807577
+      },
+      "mtp_dh": {
+        "symmetric": 0.030869540324290005,
+        "relative_to_first": 0.030863960392770156,
+        "relative_to_second": 0.030875122273779382,
+        "best_common_bound": 0.015434770162145003
+      }
+    },
+    "swift_E-bridge_A": {
+      "main_ce": {
+        "symmetric": 0.01802194179531324,
+        "relative_to_first": 0.018021691041956882,
+        "relative_to_second": 0.01802219255564764,
+        "best_common_bound": 0.00901097089765662
+      },
+      "main_logits": {
+        "symmetric": 0.01604886387671407,
+        "relative_to_first": 0.01603640338470935,
+        "relative_to_second": 0.01606134374770211,
+        "best_common_bound": 0.008024431938357035
+      },
+      "main_dh": {
+        "symmetric": 0.03648658860134408,
+        "relative_to_first": 0.03645148436703,
+        "relative_to_second": 0.03652176051439296,
+        "best_common_bound": 0.01824329430067204
+      },
+      "mtp_ce": {
+        "symmetric": 0.023489481893627814,
+        "relative_to_first": 0.023488435090952373,
+        "relative_to_second": 0.02349052878961255,
+        "best_common_bound": 0.011744740946813907
+      },
+      "mtp_logits": {
+        "symmetric": 0.07012473444909328,
+        "relative_to_first": 0.07011230881315465,
+        "relative_to_second": 0.07013716449007289,
+        "best_common_bound": 0.03506236722454664
+      },
+      "mtp_dh": {
+        "symmetric": 0.03058477374062957,
+        "relative_to_first": 0.030507792286472758,
+        "relative_to_second": 0.03066214467795308,
+        "best_common_bound": 0.015292386870314785
+      }
+    },
+    "swift_E-bridge_B": {
+      "main_ce": {
+        "symmetric": 0.018538486308455657,
+        "relative_to_first": 0.018537086068921328,
+        "relative_to_second": 0.018539886759546306,
+        "best_common_bound": 0.009269243154227828
+      },
+      "main_logits": {
+        "symmetric": 0.01716039071731632,
+        "relative_to_first": 0.017191701364090362,
+        "relative_to_second": 0.01712919391318499,
+        "best_common_bound": 0.00858019535865816
+      },
+      "main_dh": {
+        "symmetric": 0.02307470410502415,
+        "relative_to_first": 0.023076092021855597,
+        "relative_to_second": 0.023073316355135817,
+        "best_common_bound": 0.011537352052512075
+      },
+      "mtp_ce": {
+        "symmetric": 0.023616358468952423,
+        "relative_to_first": 0.02361517928723016,
+        "relative_to_second": 0.023617537768441228,
+        "best_common_bound": 0.011808179234476211
+      },
+      "mtp_logits": {
+        "symmetric": 0.027336202833668072,
+        "relative_to_first": 0.02734081484268298,
+        "relative_to_second": 0.027331592380352196,
+        "best_common_bound": 0.013668101416834036
+      },
+      "mtp_dh": {
+        "symmetric": 0.05438436498936854,
+        "relative_to_first": 0.05394222458208634,
+        "relative_to_second": 0.054833813352993886,
+        "best_common_bound": 0.02719218249468427
+      }
+    },
+    "swift_E-bridge_C": {
+      "main_ce": {
+        "symmetric": 0.018619027960744765,
+        "relative_to_first": 0.018619041526637466,
+        "relative_to_second": 0.01861901439487183,
+        "best_common_bound": 0.009309513980372382
+      },
+      "main_logits": {
+        "symmetric": 0.01297772327902968,
+        "relative_to_first": 0.012981946807819156,
+        "relative_to_second": 0.012973502497500554,
+        "best_common_bound": 0.00648886163951484
+      },
+      "main_dh": {
+        "symmetric": 0.025465436798668386,
+        "relative_to_first": 0.025438078032163892,
+        "relative_to_second": 0.025492854477484405,
+        "best_common_bound": 0.012732718399334193
+      },
+      "mtp_ce": {
+        "symmetric": 0.02354288058896598,
+        "relative_to_first": 0.023541128623285917,
+        "relative_to_second": 0.023544632815433213,
+        "best_common_bound": 0.01177144029448299
+      },
+      "mtp_logits": {
+        "symmetric": 0.025483630035626707,
+        "relative_to_first": 0.025480213020489483,
+        "relative_to_second": 0.02548704796736211,
+        "best_common_bound": 0.012741815017813353
+      },
+      "mtp_dh": {
+        "symmetric": 0.04248895388925381,
+        "relative_to_first": 0.042324119503721544,
+        "relative_to_second": 0.04265507721384554,
+        "best_common_bound": 0.021244476944626906
+      }
+    },
+    "swift_E-bridge_D": {
+      "main_ce": {
+        "symmetric": 0.018110626856560896,
+        "relative_to_first": 0.018109357033549472,
+        "relative_to_second": 0.018111896857664074,
+        "best_common_bound": 0.009055313428280448
+      },
+      "main_logits": {
+        "symmetric": 0.013844553327974445,
+        "relative_to_first": 0.013848736599639375,
+        "relative_to_second": 0.013840372582818292,
+        "best_common_bound": 0.006922276663987223
+      },
+      "main_dh": {
+        "symmetric": 0.03499421795830076,
+        "relative_to_first": 0.03490630608620572,
+        "relative_to_second": 0.035082573762255945,
+        "best_common_bound": 0.01749710897915038
+      },
+      "mtp_ce": {
+        "symmetric": 0.023471023054254126,
+        "relative_to_first": 0.023470375687743652,
+        "relative_to_second": 0.023471670456477276,
+        "best_common_bound": 0.011735511527127063
+      },
+      "mtp_logits": {
+        "symmetric": 0.06848715404647816,
+        "relative_to_first": 0.06850456572882112,
+        "relative_to_second": 0.06846975121287814,
+        "best_common_bound": 0.03424357702323908
+      },
+      "mtp_dh": {
+        "symmetric": 0.057311438122200034,
+        "relative_to_first": 0.05704453801762332,
+        "relative_to_second": 0.05758084751277178,
+        "best_common_bound": 0.028655719061100017
+      }
+    },
+    "bridge_A-bridge_B": {
+      "main_ce": {
+        "symmetric": 0.017955280036911308,
+        "relative_to_first": 0.01795417364286792,
+        "relative_to_second": 0.017956386567322236,
+        "best_common_bound": 0.008977640018455654
+      },
+      "main_logits": {
+        "symmetric": 0.0185571663619128,
+        "relative_to_first": 0.018605508577934308,
+        "relative_to_second": 0.018509074707544825,
+        "best_common_bound": 0.0092785831809564
+      },
+      "main_dh": {
+        "symmetric": 0.031786417779870395,
+        "relative_to_first": 0.0318189744798786,
+        "relative_to_second": 0.031753927634823674,
+        "best_common_bound": 0.015893208889935197
+      },
+      "mtp_ce": {
+        "symmetric": 0.023647803482914054,
+        "relative_to_first": 0.023647676578044768,
+        "relative_to_second": 0.02364793038914541,
+        "best_common_bound": 0.011823901741457027
+      },
+      "mtp_logits": {
+        "symmetric": 0.0714823209802968,
+        "relative_to_first": 0.07150705602884819,
+        "relative_to_second": 0.07145760303805906,
+        "best_common_bound": 0.0357411604901484
+      },
+      "mtp_dh": {
+        "symmetric": 0.047431975071803086,
+        "relative_to_first": 0.04716439566226431,
+        "relative_to_second": 0.04770260793981218,
+        "best_common_bound": 0.023715987535901543
+      }
+    },
+    "bridge_A-bridge_C": {
+      "main_ce": {
+        "symmetric": 0.01825988369529319,
+        "relative_to_first": 0.018260151070980373,
+        "relative_to_second": 0.018259616327436032,
+        "best_common_bound": 0.009129941847646594
+      },
+      "main_logits": {
+        "symmetric": 0.016625057607121463,
+        "relative_to_first": 0.016643404484575904,
+        "relative_to_second": 0.016606751134532634,
+        "best_common_bound": 0.008312528803560731
+      },
+      "main_dh": {
+        "symmetric": 0.025766132041285337,
+        "relative_to_first": 0.025763234587634673,
+        "relative_to_second": 0.025769030146731636,
+        "best_common_bound": 0.012883066020642668
+      },
+      "mtp_ce": {
+        "symmetric": 0.024247592871052364,
+        "relative_to_first": 0.024246868986718004,
+        "relative_to_second": 0.024248316798610794,
+        "best_common_bound": 0.012123796435526182
+      },
+      "mtp_logits": {
+        "symmetric": 0.06826960402272134,
+        "relative_to_first": 0.06827254794119894,
+        "relative_to_second": 0.06826666035811685,
+        "best_common_bound": 0.03413480201136067
+      },
+      "mtp_dh": {
+        "symmetric": 0.03774471760033499,
+        "relative_to_first": 0.03769303105633611,
+        "relative_to_second": 0.03779654608925454,
+        "best_common_bound": 0.018872358800167494
+      }
+    },
+    "bridge_A-bridge_D": {
+      "main_ce": {
+        "symmetric": 0.018362173209807563,
+        "relative_to_first": 0.018361141208217198,
+        "relative_to_second": 0.018363205327413274,
+        "best_common_bound": 0.009181086604903781
+      },
+      "main_logits": {
+        "symmetric": 0.016173863062514886,
+        "relative_to_first": 0.016191334831721495,
+        "relative_to_second": 0.01615642895958769,
+        "best_common_bound": 0.008086931531257443
+      },
+      "main_dh": {
+        "symmetric": 0.0251597421535474,
+        "relative_to_first": 0.025120667618082414,
+        "relative_to_second": 0.02519893843720571,
+        "best_common_bound": 0.0125798710767737
+      },
+      "mtp_ce": {
+        "symmetric": 0.023306092655609754,
+        "relative_to_first": 0.023306488503393764,
+        "relative_to_second": 0.023305696821272027,
+        "best_common_bound": 0.011653046327804877
+      },
+      "mtp_logits": {
+        "symmetric": 0.09070709061901501,
+        "relative_to_first": 0.09074623790416193,
+        "relative_to_second": 0.0906679770950276,
+        "best_common_bound": 0.045353545309507505
+      },
+      "mtp_dh": {
+        "symmetric": 0.050350556627501354,
+        "relative_to_first": 0.05024225993239093,
+        "relative_to_second": 0.05045932119602191,
+        "best_common_bound": 0.025175278313750677
+      }
+    },
+    "bridge_B-bridge_C": {
+      "main_ce": {
+        "symmetric": 0.018399294380509294,
+        "relative_to_first": 0.01840069772445693,
+        "relative_to_second": 0.018397891250599638,
+        "best_common_bound": 0.009199647190254647
+      },
+      "main_logits": {
+        "symmetric": 0.015804503092413123,
+        "relative_to_first": 0.015780896017370722,
+        "relative_to_second": 0.01582818090221124,
+        "best_common_bound": 0.007902251546206562
+      },
+      "main_dh": {
+        "symmetric": 0.026768716599963476,
+        "relative_to_first": 0.026738351201576537,
+        "relative_to_second": 0.026799151045670266,
+        "best_common_bound": 0.013384358299981738
+      },
+      "mtp_ce": {
+        "symmetric": 0.023161941582892392,
+        "relative_to_first": 0.023161374400869524,
+        "relative_to_second": 0.023162508792694558,
+        "best_common_bound": 0.011580970791446196
+      },
+      "mtp_logits": {
+        "symmetric": 0.021126612084276238,
+        "relative_to_first": 0.021120217082930028,
+        "relative_to_second": 0.02113301095948688,
+        "best_common_bound": 0.010563306042138119
+      },
+      "mtp_dh": {
+        "symmetric": 0.03280605467242571,
+        "relative_to_first": 0.03294780002815832,
+        "relative_to_second": 0.03266552370302803,
+        "best_common_bound": 0.016403027336212853
+      }
+    },
+    "bridge_B-bridge_D": {
+      "main_ce": {
+        "symmetric": 0.0185927283762349,
+        "relative_to_first": 0.018592829102505662,
+        "relative_to_second": 0.018592627651055495,
+        "best_common_bound": 0.00929636418811745
+      },
+      "main_logits": {
+        "symmetric": 0.018407583242545097,
+        "relative_to_first": 0.018379660913740117,
+        "relative_to_second": 0.018435590539479095,
+        "best_common_bound": 0.009203791621272548
+      },
+      "main_dh": {
+        "symmetric": 0.0323297903427537,
+        "relative_to_first": 0.03224663740337429,
+        "relative_to_second": 0.03241337323625297,
+        "best_common_bound": 0.01616489517137685
+      },
+      "mtp_ce": {
+        "symmetric": 0.02380010254172932,
+        "relative_to_first": 0.02380063450802469,
+        "relative_to_second": 0.023799570599213307,
+        "best_common_bound": 0.01190005127086466
+      },
+      "mtp_logits": {
+        "symmetric": 0.07181687424985807,
+        "relative_to_first": 0.07182301384920534,
+        "relative_to_second": 0.07181073570007572,
+        "best_common_bound": 0.035908437124929034
+      },
+      "mtp_dh": {
+        "symmetric": 0.030761888962289655,
+        "relative_to_first": 0.03087048787323483,
+        "relative_to_second": 0.03065405145038382,
+        "best_common_bound": 0.015380944481144828
+      }
+    },
+    "bridge_C-bridge_D": {
+      "main_ce": {
+        "symmetric": 0.018295160920565795,
+        "relative_to_first": 0.018293864830951752,
+        "relative_to_second": 0.0182964571938444,
+        "best_common_bound": 0.009147580460282898
+      },
+      "main_logits": {
+        "symmetric": 0.01361599555661221,
+        "relative_to_first": 0.01361567872246328,
+        "relative_to_second": 0.01361631240550682,
+        "best_common_bound": 0.006807997778306105
+      },
+      "main_dh": {
+        "symmetric": 0.027865565628393818,
+        "relative_to_first": 0.027825413301278596,
+        "relative_to_second": 0.02790583400332117,
+        "best_common_bound": 0.013932782814196909
+      },
+      "mtp_ce": {
+        "symmetric": 0.023867450700589047,
+        "relative_to_first": 0.023868568685264237,
+        "relative_to_second": 0.023866332820639966,
+        "best_common_bound": 0.011933725350294523
+      },
+      "mtp_logits": {
+        "symmetric": 0.07277042126208894,
+        "relative_to_first": 0.07279868701525226,
+        "relative_to_second": 0.07274217745005512,
+        "best_common_bound": 0.03638521063104447
+      },
+      "mtp_dh": {
+        "symmetric": 0.025580639921829934,
+        "relative_to_first": 0.025560594202161696,
+        "relative_to_second": 0.025600717107609975,
+        "best_common_bound": 0.012790319960914967
+      }
+    }
+  },
+  "identical_input_hashes": {
+    "bounds": "0f2779a0d49ce1a28aacb4543b81c420f248b3670bd4e15c4c5db1a41253d465",
+    "pos": "aed54e23940f33681343dd89d6823c5f33f5948cf4feb9a2c664815f3462a2a1",
+    "sample": "1433145b2358503796e8ef0dd8c75e20583e5004515b7985e63f9a08aa98b485",
+    "logit_sample": "1433145b2358503796e8ef0dd8c75e20583e5004515b7985e63f9a08aa98b485",
+    "tokens": "6aee1479171e1a34a25cb2168e1563c814a3215c99f3c089c55d6d5c4a7f196f",
+    "main_labels": "e302f844067a2bbb435e587a2538012d3ed3e897efa29ac939ab4cba6c7ae778",
+    "mtp_labels": "0e30cda0d242943e545e6a3775cf963c212ab6a2de7c61a2a7bbb285a59570e2"
+  }
+}
