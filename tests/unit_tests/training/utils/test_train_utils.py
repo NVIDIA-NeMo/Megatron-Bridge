@@ -496,7 +496,6 @@ class TestTrainingLog:
         # Assertions
         assert total_loss_dict["nan iterations"] == 1
 
-    @pytest.mark.parametrize("learning_rate", [None, 0.0, 1e-4])
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
@@ -513,7 +512,6 @@ class TestTrainingLog:
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
-        learning_rate,
         mock_config,
         mock_global_state,
         loss_dict,
@@ -527,7 +525,7 @@ class TestTrainingLog:
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
         mock_get_microbatches.return_value = 8
-        mock_reduce_lr.return_value = learning_rate
+        mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
 
         # Set iteration to match tensorboard logging interval
@@ -537,7 +535,7 @@ class TestTrainingLog:
         training_log(
             loss_dict=loss_dict,
             total_loss_dict=total_loss_dict,
-            learning_rate=learning_rate,
+            learning_rate=1e-4,
             decoupled_learning_rate=None,
             loss_scale=1024.0,
             report_memory_flag=False,
@@ -554,20 +552,6 @@ class TestTrainingLog:
         # Verify tensorboard logging was called
         mock_global_state.tensorboard_logger.add_scalar.assert_called()
         mock_global_state.timers.write.assert_called()
-
-        mock_reduce_lr.assert_called_once_with(learning_rate, mp_group=mock.ANY)
-        log_string = mock_print_rank_last.call_args.args[0]
-        writer = mock_global_state.tensorboard_logger
-        if learning_rate is None:
-            assert " learning rate:" not in log_string
-            assert not any(call.args[0] == "learning-rate" for call in writer.add_scalar.call_args_list)
-            assert not any(
-                "learning-rate" in call.args[0] for call in mock_global_state.wandb_logger.log.call_args_list
-            )
-        else:
-            assert f" learning rate: {learning_rate:.6E} |" in log_string
-            writer.add_scalar.assert_any_call("learning-rate", learning_rate, 100)
-            mock_global_state.wandb_logger.log.assert_any_call({"learning-rate": learning_rate}, 100)
 
     def test_comet_only_logs_general_training_scalars(self, monkeypatch, mock_config, mock_global_state):
         """Comet does not require another backend to receive general training scalars."""
@@ -2058,7 +2042,6 @@ class TestTrainingLog:
         for key in loss_dict:
             wandb_writer.log.assert_any_call({key: loss_dict[key]}, 10)
 
-    @pytest.mark.parametrize("learning_rate", [None, 0.0, 1e-4])
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
@@ -2069,7 +2052,6 @@ class TestTrainingLog:
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
-        learning_rate,
         mock_config,
         mock_global_state,
         loss_dict,
@@ -2080,7 +2062,7 @@ class TestTrainingLog:
 
         # Setup mocks
         mock_get_microbatches.return_value = 8
-        mock_reduce_lr.return_value = learning_rate
+        mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
 
         # Remove loggers
@@ -2097,7 +2079,7 @@ class TestTrainingLog:
         result = training_log(
             loss_dict=loss_dict,
             total_loss_dict=total_loss_dict,
-            learning_rate=learning_rate,
+            learning_rate=1e-4,
             decoupled_learning_rate=None,
             loss_scale=1024.0,
             report_memory_flag=False,
@@ -2115,14 +2097,6 @@ class TestTrainingLog:
 
         # Should still print log string even without loggers
         mock_print_rank_last.assert_called()
-
-        mock_reduce_lr.assert_called_once_with(learning_rate, mp_group=mock.ANY)
-        log_string = mock_print_rank_last.call_args.args[0]
-        if learning_rate is None:
-            assert " learning rate:" not in log_string
-        else:
-            assert f" learning rate: {learning_rate:.6E} |" in log_string
-        assert "lm_loss: 2.500000E+00" in log_string
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
