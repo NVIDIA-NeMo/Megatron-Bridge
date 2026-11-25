@@ -175,6 +175,7 @@ from megatron.bridge.models.ernie.modeling_ernie55.expert_load import (
     expert_load_logging_enabled,
 )
 from megatron.bridge.models.ernie.modeling_ernie55.latent_mqa_core import _param_device
+from megatron.bridge.models.ernie.modeling_ernie55.norm import Ernie55RMSNorm, uses_reference_rmsnorm
 
 
 __all__ = [
@@ -820,8 +821,8 @@ class Ernie55MoELayer(MoELayer):
     The routing, dispatch, expert, shared-expert and combine code is Megatron-Core's. The constructor
     checks that the spec installed :class:`Ernie55SplitFeatureRouter` and, for latent MoE, replaces
     ``fc1_latent_proj`` (``init_method``) and ``fc2_latent_proj`` (``output_layer_init_method``) with
-    :class:`Ernie55LatentProjection`. ``fc2_norm`` (``moe_use_norm_before_up_proj``) stays
-    Megatron-Core's ``TENorm``. With ``ernie_fused_situ_prob`` the routed ``TEGroupedMLP`` becomes
+    :class:`Ernie55LatentProjection`. Under ``ernie_reference_rmsnorm``, the optional routed latent
+    norm uses :class:`Ernie55RMSNorm` before its up projection. With ``ernie_fused_situ_prob``, the routed ``TEGroupedMLP`` becomes
     :class:`Ernie55GroupedMLP` (:func:`use_ernie55_fused_situ_prob`).
 
     With ``ERNIE55_LOG_EXPERT_LOAD=1`` (a diagnostic, off by default) the constructor also attaches the layer to
@@ -846,6 +847,11 @@ class Ernie55MoELayer(MoELayer):
             self.fc2_latent_proj = Ernie55LatentProjection(
                 self.config, latent_size, self.config.hidden_size, init_method=self.config.output_layer_init_method
             )
+            if self.config.moe_use_norm_before_up_proj and uses_reference_rmsnorm(self.config):
+                # Preserve Megatron-Core's parameter, including its distributed optimizer attributes.
+                weight = self.fc2_norm.weight
+                self.fc2_norm = Ernie55RMSNorm(self.config, latent_size, eps=self.config.layernorm_epsilon)
+                self.fc2_norm.weight = weight
         if getattr(self.config, "ernie_fused_situ_prob", False):
             use_ernie55_fused_situ_prob(self)
         if expert_load_logging_enabled():

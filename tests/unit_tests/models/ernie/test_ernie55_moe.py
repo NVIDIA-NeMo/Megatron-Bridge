@@ -69,6 +69,7 @@ from megatron.bridge.models.ernie.modeling_ernie55 import (
     ernie55_hybrid_stack_spec,
     validate_ernie55_moe_config,
 )
+from megatron.bridge.models.ernie.modeling_ernie55.norm import Ernie55RMSNorm
 from megatron.bridge.models.ernie.modeling_ernie55.stack_spec import _copy_spec_tree
 from tests.unit_tests.models.ernie.ernie55_test_utils import cpu_current_device
 
@@ -876,10 +877,12 @@ def test_moe_layer_matches_oracle(pg_collection, activation):
     _check_moe_against_oracle(moe, config, seed=12)
 
 
-@pytest.mark.parametrize("use_norm", [False, True])
-def test_latent_moe_matches_oracle(pg_collection, latent_moe_without_te, use_norm):
+@pytest.mark.parametrize(("use_norm", "reference_norm"), [(False, False), (False, True), (True, False), (True, True)])
+def test_latent_moe_matches_oracle(pg_collection, latent_moe_without_te, use_norm, reference_norm):
     """Latent MoE: fp32 projections cast to the activation dtype, experts at latent width, optional norm."""
-    config = _config(moe_latent_size=LATENT, moe_use_norm_before_up_proj=use_norm)
+    config = _config(
+        moe_latent_size=LATENT, moe_use_norm_before_up_proj=use_norm, ernie_reference_rmsnorm=reference_norm
+    )
     moe = _moe(config, pg_collection, seed=37)
     for name, shape in (("fc1_latent_proj", (LATENT, HIDDEN)), ("fc2_latent_proj", (HIDDEN, LATENT))):
         projection = getattr(moe, name)
@@ -889,6 +892,9 @@ def test_latent_moe_matches_oracle(pg_collection, latent_moe_without_te, use_nor
             projection.weight
         )
     assert hasattr(moe, "fc2_norm") is use_norm
+    if use_norm:
+        assert isinstance(moe.fc2_norm, Ernie55RMSNorm) is reference_norm
+        assert set(moe.fc2_norm.state_dict()) == {"weight"}
     assert moe.experts.local_experts[0].linear_fc1.weight.shape == (2 * MOE_FFN, LATENT)
     _check_moe_against_oracle(moe, config, seed=14)
 
