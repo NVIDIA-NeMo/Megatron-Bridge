@@ -19,27 +19,35 @@ EXPERT_VIEW_NAME = "expert"
 def _lazy_nccl_pg_options() -> "ProcessGroupNCCL.Options | None":
     """Return new NCCL options that create a MegatronMIMO group's communicator on first use.
 
-    With PyTorch's ProcessGroupNCCL2 backend (the ``nccl`` backend of NeMo 26.12 images), the
-    default process group is bound to a device, so every later ``new_group`` splits its NCCL
-    communicator eagerly, even if the group never communicates. MegatronMIMO creates every
-    parallelism group of every module on every rank, so eager splitting holds NCCL buffers for
-    groups the rank never uses. ``lazy_init`` defers each communicator to the group's first
-    operation, as the legacy NCCL backend does.
+    PyTorch builds whose ``nccl`` backend is ProcessGroupNCCL2 bind the default process group to a
+    device, so every later ``new_group`` splits its NCCL communicator eagerly, even if the group
+    never communicates. MegatronMIMO creates every parallelism group of every module on every
+    rank, so eager splitting holds NCCL buffers for groups the rank never uses. ``lazy_init``
+    instead creates a group's communicator at the group's first operation. That creation is
+    collective over all members, so every member must take part in the first operation: MIMO
+    groups are used by collectives over the whole group, and every pipeline stage issues its
+    point-to-point operations on its pipeline group during the warm-up phase.
 
     Returns:
-        Options with ``lazy_init=True``, or None (default options) when the default process group
-        is not an NCCL group bound to a device, so subgroups are not split eagerly, or when this
-        PyTorch build has no ``lazy_init`` option. Each call returns a new object because PyTorch
-        writes per-group settings into the options it is given.
+        Options with ``lazy_init=True`` when the default process group is a ProcessGroupNCCL2 group
+        bound to a device and PyTorch has the option, else None (default options). ``lazy_init`` is
+        specific to ProcessGroupNCCL2; on the legacy backend it would only replace the split with an
+        eager per-group initialization. Each call returns a new object because PyTorch writes
+        per-group settings into the options it is given.
     """
     if not dist.is_initialized() or dist.get_backend() != dist.Backend.NCCL:
         return None
-    if getattr(dist.group.WORLD, "bound_device_id", None) is None:
+    default_group = dist.group.WORLD
+    device = getattr(default_group, "bound_device_id", None)
+    nccl2_backend = getattr(dist, "ProcessGroupNCCL2", None)
+    if device is None or nccl2_backend is None:
         return None
-    process_group_nccl = getattr(dist, "ProcessGroupNCCL", None)
-    if process_group_nccl is None:
+    try:
+        if not isinstance(default_group._get_backend(device), nccl2_backend):
+            return None
+    except RuntimeError:
         return None
-    options = process_group_nccl.Options()
+    options = dist.ProcessGroupNCCL.Options()
     if not hasattr(options, "lazy_init"):
         return None
     options.lazy_init = True

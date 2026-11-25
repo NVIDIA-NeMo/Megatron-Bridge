@@ -150,10 +150,16 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
     # Cached grids after build_model() - used by data loading
     _grids: Optional[Dict[str, "HyperCommGrid"]] = field(default=None, repr=False)
 
-    # (parallelism config, infra) of the last build_infra() call, reused while the config is unchanged.
-    _infra_cache: Optional[Tuple[Optional[MegatronMIMOParallelismConfig], MegatronMIMOInfra]] = field(
-        default=None, repr=False
-    )
+    # (parallelism config, default process group, grids, pg_collections) from the last process group creation.
+    # build_infra() reuses the groups while both keys are the same objects.
+    _process_group_cache: Optional[
+        Tuple[
+            MegatronMIMOParallelismConfig,
+            Optional[dist.ProcessGroup],
+            Dict[str, "HyperCommGrid"],
+            Dict[str, Optional[ProcessGroupCollection]],
+        ]
+    ] = field(default=None, init=False, repr=False, compare=False)
 
     # Freezing options
     freeze_language_model: bool = False
@@ -259,11 +265,12 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         """Build MegatronMIMO parallelism infrastructure.
 
         This method builds HyperCommGrids, ProcessGroupCollections, and topology
-        for MegatronMIMO's heterogeneous parallelism. The process groups are
-        created by the first call only: later calls return the same infra while
-        ``megatron_mimo_parallelism_config`` is the same object, so ``provide()``,
-        ``provide_distributed_model()`` and the training loop share one set of
-        process groups instead of each creating its own.
+        for MegatronMIMO's heterogeneous parallelism. The grids and their process
+        groups are created by the first call and reused while
+        ``megatron_mimo_parallelism_config`` and the default process group are the
+        same objects, so ``provide()``, ``provide_distributed_model()`` and the
+        training loop share one set of process groups instead of each creating its
+        own. Topology and output dimensionality are derived again on every call.
 
         Can be called before or after provide(). Call finalize() first to
         validate the parallelism configuration.
@@ -272,14 +279,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             MegatronMIMOInfra containing grids, topology, pg_collections,
             and the list of modules this rank participates in.
         """
-        if self._infra_cache is not None and self._infra_cache[0] is self.megatron_mimo_parallelism_config:
-            return self._infra_cache[1]
-
         if self.megatron_mimo_parallelism_config is not None:
-            grids = build_hypercomm_grids(self.megatron_mimo_parallelism_config)
+            grids, pg_collections = self._get_or_create_process_groups(self.megatron_mimo_parallelism_config)
             language_grid = grids.get(MIMO_LANGUAGE_MODULE_KEY)
             set_default_log_ranks({0, language_grid.rank_offset} if language_grid is not None else {0})
-            pg_collections = self._get_pg_collections_from_grids(grids)
         else:
             grids = {}
             pg_collections = {}
@@ -304,15 +307,33 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         else:
             output_ndim = {name: 3 if name == MIMO_LANGUAGE_MODULE_KEY else 2 for name in grids}
 
-        infra = MegatronMIMOInfra(
+        return MegatronMIMOInfra(
             module_to_grid_map=grids,
             topology=topology,
             pg_collections=pg_collections,
             participating_modules=participating_modules,
             module_output_ndim=output_ndim,
         )
-        object.__setattr__(self, "_infra_cache", (self.megatron_mimo_parallelism_config, infra))
-        return infra
+
+    def _get_or_create_process_groups(
+        self,
+        megatron_mimo_parallelism_config: MegatronMIMOParallelismConfig,
+    ) -> Tuple[Dict[str, "HyperCommGrid"], Dict[str, Optional[ProcessGroupCollection]]]:
+        """Return the HyperCommGrids and ProcessGroupCollections, creating their process groups once.
+
+        Creating the groups is collective over the default process group, and every created group can
+        hold its own NCCL communicator, so the groups are reused while the parallelism config and the
+        default process group are the same objects. Each call returns new dicts over the same grids
+        and collections.
+        """
+        default_group = dist.group.WORLD
+        cache = self._process_group_cache
+        if cache is None or cache[0] is not megatron_mimo_parallelism_config or cache[1] is not default_group:
+            grids = build_hypercomm_grids(megatron_mimo_parallelism_config)
+            pg_collections = self._get_pg_collections_from_grids(grids)
+            cache = (megatron_mimo_parallelism_config, default_group, grids, pg_collections)
+            object.__setattr__(self, "_process_group_cache", cache)
+        return dict(cache[2]), dict(cache[3])
 
     def _get_pg_collections_from_grids(
         self,

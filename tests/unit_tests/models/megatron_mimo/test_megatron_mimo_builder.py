@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import torch
+import torch.distributed as dist
 
 from megatron.bridge.models.megatron_mimo import megatron_mimo_builder
 from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
@@ -30,21 +32,54 @@ class _NcclOptionsWithoutLazyInit:
     """Stand-in for ``ProcessGroupNCCL.Options`` on PyTorch builds without ``lazy_init``."""
 
 
-def _fake_dist(*, initialized=True, backend="nccl", bound_device_id="cuda:0", options_cls=_NcclOptions):
+class _Nccl2Backend:
+    """Stand-in for the ProcessGroupNCCL2 backend class."""
+
+
+class _LegacyNcclBackend:
+    """Stand-in for the legacy ProcessGroupNCCL backend class."""
+
+
+class _DefaultGroup:
+    """Stand-in for the default process group."""
+
+    def __init__(self, bound_device_id, backend):
+        self.bound_device_id = bound_device_id
+        self._backend = backend
+
+    def _get_backend(self, device):
+        assert device == self.bound_device_id
+        return self._backend
+
+
+def _fake_dist(
+    *,
+    initialized=True,
+    backend="nccl",
+    bound_device_id="cuda:0",
+    default_backend=None,
+    has_nccl2=True,
+    options_cls=_NcclOptions,
+):
     """Minimal ``torch.distributed`` stand-in for ``_lazy_nccl_pg_options``."""
-    return SimpleNamespace(
+    fake = SimpleNamespace(
         is_initialized=lambda: initialized,
         get_backend=lambda: backend,
         Backend=SimpleNamespace(NCCL="nccl"),
-        group=SimpleNamespace(WORLD=SimpleNamespace(bound_device_id=bound_device_id)),
-        ProcessGroupNCCL=None if options_cls is None else SimpleNamespace(Options=options_cls),
+        group=SimpleNamespace(
+            WORLD=_DefaultGroup(bound_device_id, _Nccl2Backend() if default_backend is None else default_backend)
+        ),
+        ProcessGroupNCCL=SimpleNamespace(Options=options_cls),
     )
+    if has_nccl2:
+        fake.ProcessGroupNCCL2 = _Nccl2Backend
+    return fake
 
 
 class TestLazyNcclPgOptions:
     """Test cases for _lazy_nccl_pg_options()."""
 
-    def test_device_bound_nccl_default_group_gets_new_lazy_options_per_call(self):
+    def test_device_bound_nccl2_default_group_gets_new_lazy_options_per_call(self):
         """Eager-split setups get lazy_init options, and every group gets its own object."""
         with patch.object(megatron_mimo_builder, "dist", _fake_dist()):
             first = _lazy_nccl_pg_options()
@@ -61,15 +96,55 @@ class TestLazyNcclPgOptions:
             _fake_dist(initialized=False),
             _fake_dist(backend="gloo"),
             _fake_dist(bound_device_id=None),
-            _fake_dist(options_cls=None),
+            _fake_dist(default_backend=_LegacyNcclBackend()),
+            _fake_dist(has_nccl2=False),
             _fake_dist(options_cls=_NcclOptionsWithoutLazyInit),
         ],
-        ids=["not-initialized", "gloo-default-group", "not-device-bound", "no-nccl", "no-lazy-init-option"],
+        ids=[
+            "not-initialized",
+            "gloo-default-group",
+            "not-device-bound",
+            "legacy-nccl-backend",
+            "no-nccl2-backend",
+            "no-lazy-init-option",
+        ],
     )
     def test_default_options_otherwise(self, fake_dist):
-        """Groups keep default options when they are not split eagerly or lazy_init is unavailable."""
+        """Groups keep default options unless they would be split eagerly by ProcessGroupNCCL2 with lazy_init."""
         with patch.object(megatron_mimo_builder, "dist", fake_dist):
             assert _lazy_nccl_pg_options() is None
+
+
+@pytest.mark.run_only_on("GPU")
+def test_mimo_groups_use_lazy_nccl2_communicators(tmp_path):
+    """With a real ProcessGroupNCCL2 default group, every MIMO group is created lazily and works on first use."""
+    if dist.is_initialized():
+        pytest.skip("this test owns a single-rank default process group")
+    device = torch.device("cuda", 0)
+    torch.cuda.set_device(device)
+    dist.init_process_group(
+        "nccl", init_method=(tmp_path / "rendezvous").as_uri(), rank=0, world_size=1, device_id=device
+    )
+    try:
+        if _lazy_nccl_pg_options() is None:
+            pytest.skip("default group is not a device-bound ProcessGroupNCCL2 group with lazy_init support")
+        grid = build_hypercomm_grids(
+            MegatronMIMOParallelismConfig(
+                module_parallelisms={"language": ModuleParallelismConfig(data_parallel_size=1)}
+            )
+        )["language"]
+        groups = [grid.get_pg(dims) for dims in (["tp"], ["dp"], ["pp"], ["tp", "cp", "dp", "pp"])]
+        groups += [grid.get_pg(dims, view=EXPERT_VIEW_NAME) for dims in (["ep"], ["expt_tp", "ep", "pp"])]
+        groups += list(populate_embedding_and_position_groups(grid.get_rank_enum(["pp"])))
+
+        assert all(group._get_backend(device).options.lazy_init for group in groups)
+
+        tensor = torch.full((4,), 3.0, device=device)
+        dist.all_reduce(tensor, group=grid.get_pg(["dp"]))
+        torch.cuda.synchronize(device)
+        assert torch.equal(tensor, torch.full((4,), 3.0, device=device))
+    finally:
+        dist.destroy_process_group()
 
 
 class TestPopulateEmbeddingAndPositionGroups:
