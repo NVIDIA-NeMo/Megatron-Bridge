@@ -26,11 +26,17 @@ export PYTORCH_ALLOC_CONF=expandable_segments:True
 capture_optimizer_bridge() {
   local capture=$1 layers=$2 experiment=$3
   shift 3
+  local iters=2
+  local -a recorder=("$EX/optimizer_parity_256k.py")
+  if [[ ${ERNIE_CAPTURE_NEXT_HEADS:-0} == 1 ]]; then
+    recorder+=(--next-heads)
+    iters=3
+  fi
   torchrun --nnodes=16 --nproc-per-node=4 --node-rank="$NODE_RANK" \
     --master-addr="$MASTER_ADDR" --master-port="$MASTER_PORT" \
-    "$EX/optimizer_parity_256k.py" bridge "$capture" -- \
+    "${recorder[@]}" bridge "$capture" -- \
     "dataset.path=$DATA/uniform.jsonl" "checkpoint.pretrained_checkpoint=$CKPT" \
-    train.train_iters=2 train.micro_batch_size=1 train.global_batch_size=32 \
+    "train.train_iters=$iters" train.micro_batch_size=1 train.global_batch_size=32 \
     optimizer.lr=1e-5 optimizer.min_lr=1e-5 scheduler.lr_warmup_iters=5 \
     scheduler.lr_decay_style=constant scheduler.lr_decay_iters=6 \
     model.thd_max_packed_sequences=8 model.moe_virtual_expert_load_balance=true \
@@ -66,31 +72,40 @@ In the original environment, execute the following on each of the 16 nodes. Keep
 export PYTHONPATH="$MCORE_BRIDGE_INT/src:$MS_SWIFT_INT"
 export CUBLAS_WORKSPACE_CONFIG=:4096:8 NVTE_ALLOW_NONDETERMINISTIC_ALGO=0 NCCL_ALGO=Ring
 export CUDA_DEVICE_MAX_CONNECTIONS=1 NCCL_NVLS_ENABLE=0 PYTORCH_ALLOC_CONF=expandable_segments:True
-torchrun --nnodes=16 --nproc-per-node=4 --node-rank="$NODE_RANK" \
-  --master-addr="$MASTER_ADDR" --master-port="$MASTER_PORT" \
-  "$EX/optimizer_parity_256k.py" swift "$OPT/swift-capture" -- \
-  --model "$SWIFT_MODEL" --model_type ernie5_5 --template ernie5_5 \
-  --cached_dataset "$OPT/swift-cache-64" --max_length 262144 --truncation_strategy split \
-  --packing false --padding_free true --split_dataset_ratio 0 \
-  --dataset_shuffle false --train_dataloader_shuffle false --tuner_type full \
-  --tensor_model_parallel_size 1 --pipeline_model_parallel_size 1 --context_parallel_size 16 \
-  --cp_partition_mode contiguous --sequence_packing_scheduler dp_balanced \
-  --expert_model_parallel_size 64 --expert_tensor_parallel_size 1 --sequence_parallel false \
-  --micro_batch_size 1 --global_batch_size 32 --mtp_num_layers 1 --bf16 true \
-  --attention_backend local --apply_rope_fusion false --masked_softmax_fusion false \
-  --bias_activation_fusion false --gradient_accumulation_fusion false \
-  --moe_grouped_gemm true --csa_dense_mode true --moe_permute_fusion false \
-  --moe_token_dispatcher_type alltoall --moe_aux_loss_coeff 0 --moe_z_loss_coeff 0 \
-  --megatron_extra_kwargs '{"ernie_router_bias_update_rate":0.0001,"deterministic_mode":true}' \
-  --calculate_per_row_loss true --dsa_indexer_loss_coeff 0.01 --dsa_indexer_use_sparse_loss true \
-  --recompute_granularity full --recompute_method uniform --recompute_num_layers 1 \
-  --optimizer dist_muon --muon_momentum 0.95 --muon_use_nesterov true --muon_scale_mode spectral \
-  --muon_extra_scale_factor 0.2 --muon_num_ns_steps 5 --muon_coefficient_type quintic \
-  --muon_split_qkv false --muon_fp32_matmul_prec medium \
-  --train_iters 2 --lr_decay_iters 6 --lr 1e-5 --min_lr 1e-5 --lr_warmup_iters 5 \
-  --lr_decay_style constant --weight_decay 0.1 --clip_grad 1.0 --seed 42 \
-  --logging_steps 1 --save_steps 1000000 --no_save_optim true --no_save_rng true \
-  --output_dir "$OPT/swift-log" --check_model false
+capture_optimizer_swift() {
+  local capture=$1 cache=$2 log=$3 iters=2
+  local -a recorder=("$EX/optimizer_parity_256k.py")
+  if [[ ${ERNIE_CAPTURE_NEXT_HEADS:-0} == 1 ]]; then
+    recorder+=(--next-heads)
+    iters=3
+  fi
+  torchrun --nnodes=16 --nproc-per-node=4 --node-rank="$NODE_RANK" \
+    --master-addr="$MASTER_ADDR" --master-port="$MASTER_PORT" \
+    "${recorder[@]}" swift "$capture" -- \
+    --model "$SWIFT_MODEL" --model_type ernie5_5 --template ernie5_5 \
+    --cached_dataset "$cache" --max_length 262144 --truncation_strategy split \
+    --packing false --padding_free true --split_dataset_ratio 0 \
+    --dataset_shuffle false --train_dataloader_shuffle false --tuner_type full \
+    --tensor_model_parallel_size 1 --pipeline_model_parallel_size 1 --context_parallel_size 16 \
+    --cp_partition_mode contiguous --sequence_packing_scheduler dp_balanced \
+    --expert_model_parallel_size 64 --expert_tensor_parallel_size 1 --sequence_parallel false \
+    --micro_batch_size 1 --global_batch_size 32 --mtp_num_layers 1 --bf16 true \
+    --attention_backend local --apply_rope_fusion false --masked_softmax_fusion false \
+    --bias_activation_fusion false --gradient_accumulation_fusion false \
+    --moe_grouped_gemm true --csa_dense_mode true --moe_permute_fusion false \
+    --moe_token_dispatcher_type alltoall --moe_aux_loss_coeff 0 --moe_z_loss_coeff 0 \
+    --megatron_extra_kwargs '{"ernie_router_bias_update_rate":0.0001,"deterministic_mode":true}' \
+    --calculate_per_row_loss true --dsa_indexer_loss_coeff 0.01 --dsa_indexer_use_sparse_loss true \
+    --recompute_granularity full --recompute_method uniform --recompute_num_layers 1 \
+    --optimizer dist_muon --muon_momentum 0.95 --muon_use_nesterov true --muon_scale_mode spectral \
+    --muon_extra_scale_factor 0.2 --muon_num_ns_steps 5 --muon_coefficient_type quintic \
+    --muon_split_qkv false --muon_fp32_matmul_prec medium \
+    --train_iters "$iters" --lr_decay_iters 6 --lr 1e-5 --min_lr 1e-5 --lr_warmup_iters 5 \
+    --lr_decay_style constant --weight_decay 0.1 --clip_grad 1.0 --seed 42 \
+    --logging_steps 1 --save_steps 1000000 --no_save_optim true --no_save_rng true \
+    --output_dir "$log" --check_model false
+}
+capture_optimizer_swift "$OPT/swift-capture" "$OPT/swift-cache-64" "$OPT/swift-log"
 ```
 
 ### Compare after both trainers finish
@@ -227,3 +242,62 @@ The fixed gates are 0.5% relative L2 and 1% peak-relative. Every Bridge embeddin
 **Fixed-input lookup replay.** To isolate the local backward, record the actual input IDs and the BF16 incoming gradients at every BOS occurrence on every rank of both Swift updates. Keep the full original token-ID vectors and original hidden dimension when replaying the CUDA lookup backward. Other vocabulary rows have independent weight gradients, so their incoming gradients can be zeroed for this BOS-only replay. Reconstruct each layout in physical row order, accumulate eight native microbatch gradients, average over the 64-rank dense DP-with-CP group, and use the original step's clip factor and AdamW state progression. The reconstructed original step-2 BOS gradient matched the measured preclip gradient to 0.0000013% L2 and 0.0000037% peak-relative.
 
 On these identical original operands, the production zigzag `F.embedding` gives **0.02906% L2 / 0.02529% peak** on the step-2 BOS gradient and **0.00610% / 0.08113%** on the resulting two-step AdamW update. Using advanced indexing on zigzag owners raises the replayed update peak to 1.2680%. On the original contiguous owners, both advanced-index algorithms reproduce the same BOS gradients and replayed update. The production lookup therefore passes the fixed-input gates on this BOS row. The independent training measurements above continue to include the variation already present in the incoming gradients.
+
+## Capture both heads after the first nonzero weight update
+
+The optional `--next-heads` flag records the two optimizer updates above, then captures the first training microbatch of iteration 3. With this warmup, update 1 has learning rate zero and update 2 uses 2e-6. Each trainer uses its own weights, routing bias and optimizer state throughout. Use the same eight-document input on both sides.
+
+1. Use the software and checkpoint from **Prepare the inputs and public scripts**. Fetch the recorder and matching MCore from the two PRs. Perform this checkout once in your shared worktrees, before launching either job. Keep the original Swift MCore on the Python path of the Swift job.
+
+   ```bash
+   git -C "$BRIDGE" fetch origin refs/pull/7000/head
+   git -C "$BRIDGE" checkout --detach 2d88bee4a96060994fb4aaaf0d43857d1de8635a
+   git -C "$MCORE" fetch origin refs/pull/9506/head
+   git -C "$MCORE" checkout --detach 3ba272c0e128d6e0b5147142363710fcbcaa2671
+   ```
+
+2. Prepare 96 rows in the original Swift environment. Use the existing 32-row cache from **Run original Swift** and a fresh destination.
+
+   ```bash
+   python - "$OPT/swift-cache-32" "$OPT/swift-cache-96" <<'PYDATA'
+   import sys
+   from pathlib import Path
+   from datasets import concatenate_datasets, load_from_disk
+
+   rows = load_from_disk(sys.argv[1])
+   assert len(rows) == 32 and not Path(sys.argv[2]).exists()
+   concatenate_datasets([rows, rows, rows]).save_to_disk(sys.argv[2])
+   PYDATA
+   ```
+
+3. In the 16-node Bridge allocation, use its environment and `capture_optimizer_bridge` definition from **Run Bridge**. On each node, run
+
+   ```bash
+   export NCCL_ALGO=Ring
+   ERNIE_CAPTURE_NEXT_HEADS=1 capture_optimizer_bridge "$OPT/bridge-post" 2 ernie55-post-update-heads \
+     model.moe_router_bias_bf16_counts=true model.ernie_router_bias_contiguous_cp_counts=true \
+     model.ernie_dsa_contiguous_backward=true model.ernie_mtp_strict_head_backward=true \
+     model.ernie_head_reference_wgrad=true
+   ```
+
+4. In the original Swift allocation, use its environment and `capture_optimizer_swift` definition from **Run original Swift**. On each node, run
+
+   ```bash
+   ERNIE_CAPTURE_NEXT_HEADS=1 capture_optimizer_swift "$OPT/swift-post" "$OPT/swift-cache-96" "$OPT/swift-post-log"
+   ```
+
+   Both commands enable `--next-heads` and set three training iterations. Swift exits after the forward and backward of microbatch 17. Bridge finishes its third iteration and writes the measurements from microbatch 17. The optimizer recorder covers the first two updates on each side.
+
+5. On one CPU host, run both checks independently. Each check returns zero on a pass and writes its report before returning one on a failed numerical gate. Treat a missing or incomplete report as a capture or scoring error.
+
+   ```bash
+   optimizer_status=0
+   python "$EX/compare_optimizer_256k.py" "$OPT/swift-post" "$OPT/bridge-post" \
+       --json "$OPT/post-optimizer.json" --check || optimizer_status=$?
+   heads_status=0
+   python "$EX/head_parity_256k.py" "$OPT/swift-post/heads" "$OPT/bridge-post/heads" \
+       --check > "$OPT/post-heads.json" || heads_status=$?
+   printf 'Optimizer exit %s, heads exit %s\n' "$optimizer_status" "$heads_status"
+   ```
+
+Raw logits and head-input gradients are joined by their actual global token positions, including when the output projection temporarily changes CP owners. The comparison includes all valid cross-entropies on four dense replicas, sampled raw logits and head-input gradients. A head prediction and an applied parameter update have separate error measures.
