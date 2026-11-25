@@ -106,7 +106,8 @@ The fused attention's selection and key lists:
   (``PACKED_THD_GENERAL`` for packed THD rows, ``UNFUSED_BOUNDS`` otherwise); its top-k only feeds
   the loss. (A pack with tail rows past ``cu_seqlens[-1]``, which only hand-built inputs have, keeps
   ``UNFUSED_BOUNDS``, because the packed plan would leave the tail rows out of the last document.)
-* At CP > 1 the hooks' top-k (sorted by key id) goes to FlashMLA in compacted
+* At CP > 1, enabling ``ernie_dsa_preserve_cp_key_slots`` retains interior remote-key padding before the
+  window. By default the hooks' top-k (sorted by key id) goes to FlashMLA in compacted
   ``[top-k | window]`` lists with per-row lengths, the format Megatron-Core DSA uses at
   ``d_qk = 576``.
 
@@ -629,6 +630,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         # Only the cuDNN hooks take a score scale (through dsa_cudnn_kernels); other fused backends get
         # Megatron-Core's pre-scaled weights.
         self._hooks_take_score_scale = getattr(config, "dsa_kernel_backend", None) == "cudnn"
+        self.preserve_cp_key_slots = getattr(config, "ernie_dsa_preserve_cp_key_slots", False)
         self.native_sink_grad = bool(getattr(config, "ernie_native_sink_grad", True))
         # At CP > 1: the key gathers' backward gathers by the inverse permutation (off: index_select's backward).
         self.cp_key_gather_inverse_grad = bool(getattr(config, "ernie_cp_key_gather_inverse_grad", False))
@@ -1256,7 +1258,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
 
         On the fused path ``block_layout`` (CP = 1) hands FlashMLA the rows without their all-invalid
         key blocks (:func:`drop_invalid_key_blocks`), keeping every other block's keys and slots;
-        otherwise (CP > 1) the valid keys are compacted to the front of each row.
+        at CP > 1 the valid keys are compacted unless the configuration preserves physical slots.
 
         Returns:
             ``[s, b, H, kv_lora_rank]`` in the activation dtype.
@@ -1275,6 +1277,10 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         if block_layout:
             flat_indices, _ = fused_sparse_attention.build_flat_topk_idxs(indices, batch_size=batch)
             flat_indices, topk_length = drop_invalid_key_blocks(flat_indices, block=_FLASH_MLA_KEY_BLOCK)
+        elif self.preserve_cp_key_slots:
+            flat_indices, _ = fused_sparse_attention.build_flat_topk_idxs(indices, batch_size=batch)
+            # An interior -1 still occupies a slot. The window after it contributes to the reduction.
+            topk_length = flat_indices.new_full((flat_indices.size(0),), flat_indices.size(1), dtype=torch.int32)
         else:
             flat_indices, topk_length = fused_sparse_attention.build_flat_topk_idxs(
                 indices, batch_size=batch, compact=True

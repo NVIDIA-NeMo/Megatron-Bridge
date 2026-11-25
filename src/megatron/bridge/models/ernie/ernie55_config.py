@@ -207,6 +207,10 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     """Run the output gate's sigmoid and product in fp32 and round once, in D and H layers (Hugging
     Face ``sigmoid_gate_fusion``). False runs both in the activation dtype, the reference default."""
 
+    ernie_dsa_preserve_cp_key_slots: bool = False
+    """Retain remote-key padding before the causal window in fused D attention at CP > 1.
+    FlashMLA's BF16 reduction depends on the physical slot occupied by each valid key."""
+
     ernie_native_sink_grad: bool = True
     """Let the cuDNN sparse-attention backward differentiate the attention sink on the fused path.
     True (the default) runs Megatron-Core's ``csa_sparse_attn``. ``test_sink_gradient`` checks its sink

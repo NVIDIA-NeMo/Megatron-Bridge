@@ -1382,6 +1382,24 @@ class TestFusedPathWiring:
     are covered by the GPU tests.
     """
 
+    @pytest.mark.parametrize("preserve", [False, True])
+    def test_cp_window_after_remote_padding(self, pg_collection, monkeypatch, preserve):
+        core = _build_fused_core(monkeypatch, pg_collection, seed=71, ernie_dsa_preserve_cp_key_slots=preserve)
+        calls = _install_fused_stand_ins(monkeypatch)
+        batch = _core_batch(seed=72, seqlen=3)
+        indices = torch.tensor([[[-1, -1, 0, -1], [-1, -1, 0, 1], [0, -1, 1, 2]]], dtype=torch.int32)
+        core._sparse_attention(batch.query, batch.key.squeeze(2), indices, block_layout=False)
+
+        (call,) = [arguments for name, arguments in calls if name == "csa_sparse_attn"]
+        if preserve:
+            expected = indices[0]
+            lengths = [4, 4, 4]
+        else:
+            expected = torch.tensor([[0, -1, -1, -1], [0, 1, -1, -1], [0, 1, 2, -1]], dtype=torch.int32)
+            lengths = [1, 2, 3]
+        assert torch.equal(call["topk_idxs"], expected)
+        assert call["topk_length"].tolist() == lengths
+
     @pytest.mark.parametrize("native_sink_grad", [False, True], ids=["sink-grad-fallback", "native-sink-grad"])
     @pytest.mark.parametrize(
         "layout",
