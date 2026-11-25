@@ -62,6 +62,18 @@ launch settings and measurement windows for GB300/VRNVL72 comparisons, and
 revalidate improvements at scale. Both proxies previously used HybridEP, so rerun
 any earlier proxy baseline before comparing.
 
+### DeepSeek V3 H100 proxies
+
+Use `deepseek_v3_pretrain_64gpu_h100_bf16_proxy_config` or
+`deepseek_v3_pretrain_64gpu_h100_fp8cs_proxy_config` with the training launcher, or select
+`--model_family_name deepseek --model_recipe_name deepseek_v3 --task pretrain --gpu h100
+--compute_dtype bf16 --num_gpus 64 --config_variant proxy` (or `--compute_dtype fp8_cs`) in the
+performance launcher. These mock-data debugging benchmarks have 3 dense + 10 MoE decoder layers and
+one MTP layer, with PP=1 and no virtual pipeline or explicit stage layout, TP=2, EP=64, GBS=1024 and
+MBS=1. Thus dense DP=32, expert DP=1, and there are 32 microbatches per iteration. Other settings and
+the process environment follow the 64-GPU H100 parent recipes. The reduced depth means these proxies
+are not convergence-equivalent to the full model or a direct predictor of its end-to-end throughput.
+
 ## Setup Instructions
 
 Follow the steps below on a Slurm based login node to launch Megatron-Bridge experiments.

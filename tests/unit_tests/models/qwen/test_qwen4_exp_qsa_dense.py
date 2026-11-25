@@ -1,0 +1,246 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Shape-only QSA shortcut contracts and optional native CUDA attention parity."""
+
+import os
+from functools import partial
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+import pytest
+import torch
+from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer.enums import AttnMaskType
+
+from megatron.bridge.models.qwen.modeling_qwen4_exp import qsa
+
+
+pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("backend", ["flex", "dense_masked"])
+def test_nonzero_attention_dropout_is_rejected_before_backend_construction(monkeypatch, backend):
+    monkeypatch.setenv("MCORE_QSA_SPARSE_BACKEND", backend)
+    dense_backend = Mock()
+    with pytest.raises(ValueError, match="attention_dropout=0"):
+        qsa.QSACoreAttention(
+            SimpleNamespace(attention_dropout=0.5, kv_channels=4),
+            layer_number=1,
+            attn_mask_type=AttnMaskType.causal,
+            attention_type="self",
+            dense_core_attention=dense_backend,
+        )
+    dense_backend.assert_not_called()
+
+
+def _owner(*, sequence_parallel=False, force_sparse=False):
+    module = qsa.QwenSparseSelfAttention.__new__(qsa.QwenSparseSelfAttention)
+    torch.nn.Module.__init__(module)
+    module.config = SimpleNamespace(
+        sequence_parallel=sequence_parallel, qsa_force_sparse=force_sparse, qwen4_mrope=True
+    )
+    module.pg_collection = SimpleNamespace(tp=object())
+    module.indexer = Mock(block_topk=2, compress_ratio=4)
+    module.core_attention = Mock()
+    return module
+
+
+@pytest.mark.parametrize("packed", [False, True])
+def test_production_forward_skips_indexer_and_preserves_attention_arguments(monkeypatch, packed):
+    module = _owner()
+    hidden = torch.randn(8, 1, 8, requires_grad=True)
+    rotary = torch.randn(8, 1, 1, 4)
+    mask = torch.ones(1, 1, 8, 8, dtype=torch.bool)
+    params = PackedSeqParams(qkv_format="thd") if packed else None
+    result = (hidden, None)
+    attention = Mock(return_value=result)
+    monkeypatch.setattr(qsa.Qwen3VLSelfAttention, "forward", attention)
+    assert module(hidden, mask, rotary_pos_emb=rotary, packed_seq_params=params) is result
+    module.indexer.assert_not_called()
+    module.core_attention.set_selection.assert_called_once_with(qsa._DENSE_QSA_SELECTION)
+    assert attention.call_args.args == (module, hidden, mask)
+    assert attention.call_args.kwargs["key_value_states"] is None
+    assert attention.call_args.kwargs["rotary_pos_emb"] is rotary
+    assert attention.call_args.kwargs["packed_seq_params"] is params
+
+
+@pytest.mark.parametrize("force_sparse,length", [(True, 8), (False, 12)])
+def test_force_sparse_and_long_packed_sequence_keep_original_indexer(monkeypatch, force_sparse, length):
+    module = _owner(force_sparse=force_sparse)
+    hidden = torch.randn(length, 1, 8)
+    rotary = torch.randn(length, 1, 1, 4)
+    params = PackedSeqParams(qkv_format="thd")
+    monkeypatch.setattr(qsa.Qwen3VLSelfAttention, "forward", Mock(return_value=(hidden, None)))
+    module(hidden, None, rotary_pos_emb=rotary, packed_seq_params=params)
+    module.indexer.assert_called_once_with(hidden, rotary, params)
+    module.core_attention.set_selection.assert_called_once_with(module.indexer.return_value)
+
+
+@pytest.fixture
+def native_qsa_cuda(tmp_path):
+    """Opt-in one-GPU actual Core/TE constructor, never a synthetic backend."""
+    if os.environ.get("RUN_QSA_CUDA_TESTS") != "1":
+        pytest.skip("Set RUN_QSA_CUDA_TESTS=1 for the native CUDA attention comparison")
+    assert torch.cuda.is_available(), "Explicit native QSA qualification requires CUDA"
+    from megatron.core import parallel_state
+    from megatron.core.models.backends import get_backend_from_config
+    from megatron.core.process_groups_config import ProcessGroupCollection
+    from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+    from megatron.core.transformer.spec_utils import ModuleSpec
+
+    from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpTransformerConfig
+
+    assert not torch.distributed.is_initialized(), "Native fixture owns its single-rank process groups"
+    torch.cuda.set_device(0)
+    torch.distributed.init_process_group("nccl", init_method=(tmp_path / "rendezvous").as_uri(), rank=0, world_size=1)
+    try:
+        parallel_state.initialize_model_parallel(tensor_model_parallel_size=1)
+        model_parallel_cuda_manual_seed(173)
+        config = Qwen4ExpTransformerConfig(
+            num_layers=1,
+            hidden_size=32,
+            num_attention_heads=2,
+            num_query_groups=1,
+            kv_channels=16,
+            ffn_hidden_size=64,
+            params_dtype=torch.bfloat16,
+            bf16=True,
+            normalization="RMSNorm",
+            qk_layernorm=True,
+            add_bias_linear=False,
+            attention_output_gate=True,
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            gradient_accumulation_fusion=False,
+            qwen4_mrope=True,
+            qsa_indexer_n_heads=2,
+            qsa_indexer_head_dim=16,
+            qsa_indexer_budget=8,
+            qsa_indexer_compress_ratio=4,
+            apply_rope_fusion=False,
+        )
+        config.finalize()
+        assert callable(config.init_method) and callable(config.output_layer_init_method)
+        backend = get_backend_from_config(config)
+        norm = backend.layer_norm(rms_norm=True, for_qk=True)
+        modules = qsa.QwenSparseSelfAttentionSubmodules(
+            linear_qkv=backend.column_parallel_linear(),
+            linear_proj=backend.row_parallel_linear(),
+            core_attention=partial(qsa.QSACoreAttention, dense_core_attention=backend.core_attention()),
+            q_layernorm=norm,
+            k_layernorm=norm,
+            indexer=ModuleSpec(
+                module=qsa.QSAIndexer,
+                submodules=qsa.QSAIndexerSubmodules(linear_qk=backend.linear(), q_layernorm=norm, k_layernorm=norm),
+            ),
+        )
+        module = (
+            qsa.QwenSparseSelfAttention(
+                config,
+                modules,
+                layer_number=1,
+                attn_mask_type=AttnMaskType.causal,
+                pg_collection=ProcessGroupCollection.use_mpu_process_groups(),
+            )
+            .cuda()
+            .train()
+        )
+        yield module
+    finally:
+        parallel_state.destroy_model_parallel()
+        torch.distributed.destroy_process_group()
+
+
+@pytest.mark.parametrize("packed", [False, True])
+@pytest.mark.parametrize("recompute", [False, True])
+def test_native_attention_outputs_and_all_vjps_two_forwards_reverse_backward(native_qsa_cuda, packed, recompute):
+    """Compare the old indexer path with bypass through the actual full attention.
+
+    Two live forward graphs use different inputs/lengths; reverse backward
+    exercises the persistent selection under selective core-attention replay.
+    """
+    module = native_qsa_cuda
+    assert list(module.indexer.parameters())
+    assert all(not parameter.requires_grad for parameter in module.indexer.parameters())
+    module.checkpoint_core_attention = recompute
+    lengths = [8, 11] if not packed else [8, 10]
+    values = [torch.randn(s, 1, 32, device="cuda", dtype=torch.bfloat16) for s in lengths]
+    cotangents = [torch.randn_like(x) for x in values]
+    frequencies = [torch.randn(s, 1, 1, 16, device="cuda") for s in lengths]
+    state_keys = tuple(module.state_dict())
+
+    def run(skip):
+        module.zero_grad(set_to_none=True)
+        inputs = [x.detach().clone().requires_grad_() for x in values]
+        outputs = []
+        with patch.object(module, "_can_skip_indexer", return_value=skip):
+            for x, freq in zip(inputs, frequencies):
+                params = None
+                if packed:
+                    cu = torch.tensor([0, 4, x.shape[0]], dtype=torch.int32, device="cuda")
+                    params = PackedSeqParams(
+                        qkv_format="thd",
+                        cu_seqlens_q=cu,
+                        cu_seqlens_kv=cu,
+                        max_seqlen_q=x.shape[0] - 4,
+                        max_seqlen_kv=x.shape[0] - 4,
+                    )
+                out, bias = module(x, None, rotary_pos_emb=freq, packed_seq_params=params)
+                assert bias is None
+                outputs.append(out)
+            for out, grad in reversed(list(zip(outputs, cotangents))):
+                out.backward(grad)
+        gradients = {n: None if p.grad is None else p.grad.detach().clone() for n, p in module.named_parameters()}
+        return [y.detach().clone() for y in outputs], [x.grad.detach().clone() for x in inputs], gradients
+
+    expected, actual = run(False), run(True)
+    for old, new in zip(expected[:2], actual[:2]):
+        for lhs, rhs in zip(old, new):
+            torch.testing.assert_close(lhs, rhs, rtol=0, atol=0)
+    assert expected[2].keys() == actual[2].keys()
+    assert any("linear_qkv.weight" in n and g is not None for n, g in actual[2].items())
+    assert any("linear_proj.weight" in n and g is not None for n, g in actual[2].items())
+    for name, gradient in expected[2].items():
+        if gradient is None:
+            assert actual[2][name] is None, name
+        else:
+            torch.testing.assert_close(gradient, actual[2][name], rtol=0, atol=0, msg=name)
+    assert all(g is None for n, g in actual[2].items() if n.startswith("indexer."))
+    assert tuple(module.state_dict()) == state_keys
+
+
+def test_native_indexer_allows_overlapped_ddp_bucket_reset(native_qsa_cuda):
+    """Both skipped and active hard selection leave no unready trainable parameters."""
+    from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig
+
+    attention = native_qsa_cuda
+    model = DistributedDataParallel(
+        attention.config,
+        DistributedDataParallelConfig(overlap_grad_reduce=True, grad_reduce_in_fp32=True),
+        attention,
+        pg_collection=attention.pg_collection,
+    )
+    for length in (8, 16):
+        model.zero_grad_buffer()
+        hidden = torch.randn(length, 1, 32, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+        rotary = torch.randn(length, 1, 1, 16, device="cuda")
+        output, _ = model(hidden, None, rotary_pos_emb=rotary)
+        output.float().square().mean().backward()
+        model.finish_grad_sync()
+        assert hidden.grad is not None and torch.isfinite(hidden.grad).all()
+        for parameter in attention.parameters():
+            if parameter.requires_grad:
+                assert torch.isfinite(parameter.main_grad).all()
+    model.zero_grad_buffer()
