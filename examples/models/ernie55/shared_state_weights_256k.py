@@ -45,6 +45,7 @@ class WeightAudit:
         self.covered = set()
         self.witnesses = {}
         self.bias_names = {}
+        self.single_source_names = {}
         self.pending = None
         self.rank = dist.get_rank()
 
@@ -127,6 +128,8 @@ class WeightAudit:
         stride = max(1, (target.numel() - 1) // 3)
         witness = expected.detach().reshape(-1)[::stride][:4].to(device=target.device, dtype=target.dtype).clone()
         self.witnesses[task.param_name] = (target, stride, witness)
+        if isinstance(source, str):
+            self.single_source_names[source] = task.param_name
         self.checked[task.global_param_name] = [
             keys,
             str(target.dtype),
@@ -192,6 +195,44 @@ class WeightAudit:
         self.check_bias("after-load")
         return model
 
+    def verify_raw_fp32(self, live):
+        """Independently compare native FP32 disk bytes to the actual pre-forward tensors in HF orientation."""
+        from safetensors import safe_open
+
+        receipts = {}
+        errors = []
+        for shard in sorted(set(self.index.values())):
+            with safe_open(str(self.hf / shard), framework="pt", device="cpu") as store:
+                for key in store.keys():
+                    if key not in self.expected or store.get_slice(key).get_dtype() != "F32":
+                        continue
+                    # The Base F32 state is replicated. Only the hyper-connection matrices
+                    # below transpose in the released formats. No conversion code is called here.
+                    tensor = live[self.single_source_names[key]].detach()
+                    source = store.get_tensor(key).contiguous()
+                    if tensor.dtype != torch.float32 or source.dtype != torch.float32:
+                        raise TypeError(f"FP32 HF tensor {key} reached the forward as {tensor.dtype}")
+                    value = tensor.cpu()
+                    if key.endswith((".hc_head_fn", ".mapping_proj.weight")):
+                        value = value.T
+                    if value.shape != source.shape:
+                        raise ValueError(f"Direct FP32 shape mismatch for {key}: {value.shape} and {source.shape}")
+                    bits = source.view(torch.int32)
+                    actual = value.contiguous().view(torch.int32)
+                    bad = int(torch.count_nonzero(actual != bits))
+                    if bad:
+                        errors.append((key, bad))
+                    receipts[key] = [
+                        source.numel(),
+                        int(torch.count_nonzero(bits.bitwise_and(65535))),
+                        hashlib.sha256(memoryview(source.numpy())).hexdigest(),
+                        bad,
+                    ]
+        with gzip.open(self.output / f"raw-fp32-{self.rank:02}.json.gz", "xt") as stream:
+            json.dump(receipts, stream)
+        if not receipts or errors:
+            raise ValueError(f"Direct on-disk FP32 check failed, {len(errors)} mismatching tensors: {errors[:8]}")
+
     def check_bias(self, stage):
         """Compare every live router buffer with its on-disk value and save its full values."""
         from safetensors import safe_open
@@ -208,6 +249,7 @@ class WeightAudit:
         live.update(root.named_buffers(remove_duplicate=False))
         confirmed = 0
         if stage == "before-forward":
+            self.verify_raw_fp32(live)
             for name, (original, stride, witness) in self.witnesses.items():
                 tensor = live[name]
                 if (
