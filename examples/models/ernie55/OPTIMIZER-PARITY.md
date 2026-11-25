@@ -396,3 +396,31 @@ On four GB300 GPUs with cuDNN frontend 1.29.1, we replayed original block 43 wit
 | H backward, original contiguous layout, eight equal documents | 16,384 | 18,576 × 512 | 384 | 4.54297 |
 
 The replay allocated the first workspace. For the full-rank rows we passed real device tensor descriptors to the installed cuDNN plan and queried its supported workspace size without allocating that scratch. All queries use 64 query heads and a 512-wide output. Original H calls the same sparse backward with per-query key lengths. Its table geometry comes from the original contiguous CP implementation. Enabling deterministic D throughout training requires checking available memory at each D backward.
+
+### Inside the post-update MTP block at every sampled position
+
+A fifth original Swift start and another strict G2 start with the reference output-weight gradient each completed two native optimizer updates. Hooks on the following microbatch recorded the inputs and outputs of both MTP input branches, attention, FFN, router and final norm. Each of the four dense replicas supplied all 264 scheduled physical positions, including 256 valid MTP targets. The four replicas were bitwise identical at every recorded boundary within each trainer. The table uses original Swift as the denominator and includes only valid targets. The right column is the position with the most sampled squared MTP logit error in this comparison.
+
+| Observed boundary | Relative L2 over valid positions | Relative L2 at position 84,991 |
+|---|---:|---:|
+| Token embedding input to MTP norm | 0.0003% | 0.0000% |
+| Trunk residual entering MTP hidden norm | 1.7180% | 5.6266% |
+| Hidden norm output | 3.4846% | 13.0769% |
+| Attention input | 2.8085% | 10.9877% |
+| Attention output | 3.7209% | 27.3875% |
+| FFN input | 3.4488% | 26.8395% |
+| Returned expert routing weights | 4.2388% | 9.2488% |
+| FFN output | 9.7265% | 171.9148% |
+| Final MTP norm input | 7.5824% | 97.4771% |
+| Final MTP norm output / head input | 6.4080% | 78.4600% |
+| Raw MTP logits | 6.8505% | 170.8983% |
+
+At position 84,991, the incoming token embedding matched bitwise. A difference was already present in the trunk residual entering the MTP hidden norm. Swift supplied FP32 there and Bridge supplied BF16. Rounding the observed Swift input to BF16 alone changed it by 0.1633% relative L2 at this position and 0.1688% over all valid samples. Comparing the two inputs after that rounding still gave 5.6302% and 1.7192%, respectively.
+
+At the hotspot, nine of ten selected experts matched. Swift selected expert 66 with weight 0.2359 and Bridge selected expert 178 with weight 0.2278. Across the 256 distinct valid sampled positions, 232 had identical expert sets and 24 differed by one expert. The largest change in relative error across a measured module at the hotspot occurred between the FFN input and output. Both its input and routing differed in this natural comparison. Isolating the effect of the changed expert would require applying the same input to both routes.
+
+Position 84,991 contributed 85.94% of the sampled MTP squared logit error. Its mean across the 163 vocabulary columns moved from 1.7264 to −5.0171, while the full-vocabulary target probability was 99.4272% in Swift and 99.7444% in Bridge. Ten of the 667,648 sampled BF16 output-weight elements differed in this pair. The symmetric projection replay attributed −1.45e−9 of the −6.7436 observed mean logit change to those weights.
+
+Comparing the fourth and fifth original Swift starts gave 5.7729% aggregate MTP raw-logit relative L2. The same position accounted for 85.97% of that within-Swift squared error, with a 280.32% relative L2 difference in the actual MTP head-input row. The previous original captured its FFN and router at four other preselected positions, so the within-Swift comparison at 84,991 covers the output projection operands and logits. All ranks in the new pair completed normally.
+
+The CSV gives the 264 physical positions, document coordinates, target validity, expert-set overlap and relative L2 at every measured boundary. Entries use fractions. Squared-error shares and target probabilities apply to valid MTP targets. [Per-position measurements](benchmarks/ernie55-256k-bf16-mtp-edges.csv) · [Original Swift](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/syza98dp) · [G2](https://wandb.ai/megatron-core-moe-dev/ernie55-perf/runs/ibhfb25y)
