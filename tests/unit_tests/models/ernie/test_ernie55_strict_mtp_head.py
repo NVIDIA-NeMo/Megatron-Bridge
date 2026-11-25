@@ -53,3 +53,46 @@ def test_strict_mtp_head_matches_dense_vjp(save_projection):
     reference_wgrad = 0.25 + draw.float().T @ x.float()
     assert torch.isfinite(weight.main_grad).all()
     torch.testing.assert_close(weight.main_grad, reference_wgrad, atol=3e-4, rtol=3e-4)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="BF16 CUDA training head")
+def test_only_mtp_selects_the_strict_backward(monkeypatch):
+    from types import SimpleNamespace
+
+    from megatron.bridge.models.ernie.modeling_ernie55 import chunked_head
+
+    x = torch.empty(3, 1, 16, device="cuda", dtype=torch.bfloat16)
+    w = torch.nn.Parameter(torch.empty(32, 16, device="cuda", dtype=x.dtype))
+    w.main_grad = torch.zeros_like(w, dtype=torch.float32)
+    cfg = SimpleNamespace(
+        ernie_chunked_head_backend="triton",
+        ernie_chunked_head_rows=16,
+        ernie_head_save_projection=True,
+        ernie_mtp_strict_head_backward=True,
+    )
+    layer = SimpleNamespace(
+        training=True,
+        config=cfg,
+        weight=w,
+        output_dtype=None,
+        sequence_parallel=False,
+        multimax_ranges=torch.zeros(4, device="cuda"),
+        multimax_ts=torch.zeros(4, device="cuda"),
+    )
+    calls = []
+
+    def record(which):
+        def apply(*args):
+            calls.append(which)
+            return x.new_zeros(3, dtype=torch.float32), x.new_empty(0, dtype=torch.long)
+
+        return staticmethod(apply)
+
+    monkeypatch.setattr(chunked_head._MultimaxTrainingLoss, "apply", record("production"))
+    monkeypatch.setattr(chunked_head._StrictMtpTrainingLoss, "apply", record("strict"))
+    labels = torch.zeros(1, 3, dtype=torch.long, device="cuda")
+    for kind in ("main", "mtp"):
+        chunked_head.chunked_training_loss(layer, x, labels, None, head_kind=kind)
+    cfg.ernie_mtp_strict_head_backward = False
+    chunked_head.chunked_training_loss(layer, x, labels, None, head_kind="mtp")
+    assert calls == ["production", "strict", "production"]

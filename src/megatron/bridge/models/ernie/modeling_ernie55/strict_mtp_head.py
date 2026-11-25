@@ -69,8 +69,9 @@ def accumulate_strict_mtp_gradients(ctx, loss_grad):
                 buffer[i - start : j - start].copy_(draw)
                 d_ranges.add_(dr)
                 d_scales.add_(dt)
-                del corrected, gradient, draw
+                del x, corrected, gradient, draw
             d_raw = buffer[: end - start]
             torch.mm(d_raw, weight, out=dx[start:end])
             fused_weight_gradient_mlp_cuda.wgrad_gemm_accum_fp32(hidden[start:end], d_raw, weight.main_grad)
+        del logits
     return dx, d_ranges.to(ranges.dtype), d_scales.to(scales.dtype)
