@@ -42,6 +42,21 @@ class RouterReplayState:
         self.sequence_parallel = sequence_parallel
         # With pipeline parallelism this rank owns only its stage's routers; see span_pipeline_stages.
         self.model_layer_indices: list[int] | None = None
+        # With virtual pipeline stages this rank runs several model chunks in turn; see split_by_chunk.
+        self.chunk_routers: dict[int, list[RouterReplay]] | None = None
+
+    def split_by_chunk(self, model: list[torch.nn.Module]) -> None:
+        """Learn which routers each model chunk holds, so a forward step arms only the chunk it runs.
+        Setting a router's target also queues it for the backward, so arming another chunk's routers
+        would leave entries in their queues that no forward of theirs matches."""
+        self.chunk_routers = {
+            id(chunk): [
+                module.router_replay
+                for module in chunk.modules()
+                if getattr(module, "router_replay", None) in self.routers
+            ]
+            for chunk in model
+        }
 
     def span_pipeline_stages(self, pp_group: torch.distributed.ProcessGroup) -> None:
         """Learn every stage's MoE layers, so ``routed_experts`` keeps one column per MoE layer of the
@@ -85,8 +100,9 @@ class RouterReplayState:
             return self.model_layer_indices
         return self._local_layer_indices()
 
-    def arm_forward(self, microbatch: PreparedMicrobatch) -> None:
-        """Set this microbatch's routing as the replay target and switch the routers to replay mode."""
+    def arm_forward(self, microbatch: PreparedMicrobatch, chunk: torch.nn.Module) -> None:
+        """Set this microbatch's routing as the replay target of the routers in ``chunk`` (the model chunk
+        about to run) and switch them to replay mode."""
         routed = microbatch.routed_experts
         if routed is None:
             return
@@ -114,15 +130,17 @@ class RouterReplayState:
         if self.model_layer_indices is not None:
             # This stage's routers replay their own layers' columns among the whole model's MoE layers.
             columns = [self.model_layer_indices.index(layer) for layer in self._local_layer_indices()]
+        armed = self.routers if self.chunk_routers is None else self.chunk_routers[id(chunk)]
         for column, router in zip(columns, self.routers):
-            router.set_target_indices(ids[:, column].contiguous())
-            router.set_router_replay_action(RouterReplayAction.REPLAY_FORWARD)
+            if router in armed:
+                router.set_target_indices(ids[:, column].contiguous())
+                router.set_router_replay_action(RouterReplayAction.REPLAY_FORWARD)
 
-    def arm_backward(self, microbatch: PreparedMicrobatch) -> None:
-        """After the forward: recomputed MoE blocks in the backward replay the queued indices."""
+    def arm_backward(self, microbatch: PreparedMicrobatch, chunk: torch.nn.Module) -> None:
+        """After the forward of ``chunk``: its recomputed MoE blocks in the backward replay the queued indices."""
         if microbatch.routed_experts is None:
             return
-        for router in self.routers:
+        for router in self.routers if self.chunk_routers is None else self.chunk_routers[id(chunk)]:
             router.set_router_replay_action(RouterReplayAction.REPLAY_BACKWARD)
 
     def clear(self) -> None:

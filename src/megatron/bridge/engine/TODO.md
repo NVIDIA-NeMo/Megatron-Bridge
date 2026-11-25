@@ -30,8 +30,16 @@ sharing one runtime.
   the other stages, and `optim_step` shares the window totals). Content-sized packs
   (`pad_to_max_length=False`) need `model.variable_seq_lengths=True` on the recipe, so stages can
   exchange packs of different lengths. A value head and LoRA adapters are initialized differently than
-  without PP, because Megatron seeds each pipeline stage separately. Still rejected with PP > 1:
-  - Virtual pipeline stages (`TODO(pp-vpp)`).
+  without PP, because Megatron seeds each pipeline stage separately.
+- **Virtual pipeline stages** (`model.virtual_pipeline_model_parallel_size`) are supported for the same
+  calls. Megatron's interleaved schedule sets a rule for the microbatch count of a call, on every
+  data-parallel replica: at least `model.microbatch_group_size_per_vp_stage` (default: the pipeline
+  size), with a remainder of 0 or at least the pipeline size when divided by it. The engine does not
+  add packs to reach such a count; `forward_only` and `forward_backward` raise with the nearest valid
+  counts, and the caller passes Datums that pack into one (`preprocess` returns the microbatches
+  without running the model). Not run: `overlap_p2p_comm`, a group size other than the default, and
+  the checks of `examples/engine/router_replay_gate.py` that record the policy's own routing (they
+  need one pack per call; replaying a generation backend's routing is checked).
 - **Gradient-reduce overlap** (`TODO(overlap)`): `ddp.overlap_grad_reduce=True` is rejected in
   `forward_backward`. Bucket reductions have to be deferred across accumulation calls.
 - **Dense `bshd` layout** (`TODO(bshd)`): `batch_layout="bshd"` raises in packing and CP sharding; only

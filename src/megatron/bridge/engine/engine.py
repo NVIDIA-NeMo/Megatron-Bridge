@@ -450,6 +450,8 @@ class TrainingEngine:
         )
         if runtime.topology.pp > 1 and recipe.router_replay:
             self._router_replay.span_pipeline_stages(pg_collection.pp)
+        if len(self._model) > 1 and recipe.router_replay:
+            self._router_replay.split_by_chunk(self._model)
 
         if checkpoint_path is not None and output_head != "value" and peft is None:
             # The value-head and LoRA pre-wrap hooks load the checkpoint into the bare model instead.
@@ -706,6 +708,23 @@ class TrainingEngine:
                 "With pipeline parallelism every microbatch of a call must have the same shape, unless the "
                 "recipe sets model.variable_seq_lengths=True."
             )
+        if self._runtime.topology.pp > 1 and self._runtime.topology.vpp is not None:
+            # Megatron's interleaved schedule runs the microbatches through each virtual stage in groups and
+            # refuses a count that leaves a pipeline stage idle inside a group.
+            count, stages = len(microbatches), self._runtime.topology.pp
+            group = get_model_config(self._model[0]).microbatch_group_size_per_vp_stage
+            valid = [n for n in range(group, count + group + stages + 1) if n % group == 0 or n % group >= stages]
+            if count not in valid:
+                fewer = [n for n in valid if n < count]
+                raise ValueError(
+                    f"With virtual pipeline stages a call needs, on every data-parallel replica, at least {group} "
+                    f"microbatches (model.microbatch_group_size_per_vp_stage), and a count whose remainder when "
+                    f"divided by {group} is 0 or at least {stages} (the pipeline size). This call has {count} "
+                    f"per replica on {self._runtime.pg_collection.dp.size()} replicas. Nearest valid counts per "
+                    f"replica: {f'{fewer[-1]} or ' if fewer else ''}{min(n for n in valid if n > count)}. Pass "
+                    f"Datums that pack into such a count; preprocess() returns the microbatches without running "
+                    f"the model."
+                )
         routed_shape = None
         if getattr(self._recipe, "router_replay", False) and self._router_replay.num_layers:
             routed_shape = (self._router_replay.num_layers, int(self._recipe.model.moe_router_topk))

@@ -133,6 +133,12 @@ def test_check_supported_accepts_pipeline_parallelism_with_padded_packs():
     check_supported(_pipeline_recipe_like())
 
 
+def test_check_supported_accepts_virtual_pipeline_stages():
+    recipe = _pipeline_recipe_like()
+    recipe.model.virtual_pipeline_model_parallel_size = 2
+    check_supported(recipe)
+
+
 def test_check_supported_accepts_content_sized_packs_with_variable_transfers():
     recipe = _pipeline_recipe_like()
     recipe.pad_to_max_length = False
@@ -146,7 +152,13 @@ def test_check_supported_accepts_content_sized_packs_with_variable_transfers():
     ("mutate", "message"),
     [
         (lambda r: setattr(r, "pad_to_max_length", False), "pad_to_max_length"),
-        (lambda r: setattr(r.model, "virtual_pipeline_model_parallel_size", 2), "virtual pipeline"),
+        (
+            lambda r: (
+                setattr(r.model, "virtual_pipeline_model_parallel_size", 2),
+                setattr(r.model, "microbatch_group_size_per_vp_stage", 1),
+            ),
+            "microbatch_group_size_per_vp_stage",
+        ),
     ],
 )
 def test_check_supported_rejects_unsupported_pipeline_modes(mutate, message):
@@ -480,6 +492,28 @@ def test_check_microbatches_passes_the_replayable_shape(monkeypatch):
     assert seen["routed_shape"] == (40, 8)
     with pytest.raises(ValueError, match="no microbatches"):
         engine.check_microbatches([])
+
+
+@pytest.mark.parametrize(("count", "nearest"), [(1, "per replica: 2"), (3, "2 or 4"), (5, "4 or 6")])
+def test_check_microbatches_explains_the_count_virtual_pipeline_stages_need(monkeypatch, count, nearest):
+    # Two pipeline stages with two virtual stages each; Megatron groups the microbatches by two.
+    engine = _unbuilt_engine()
+    engine._runtime = SimpleNamespace(
+        topology=Topology(16, 1, 2, 2, 8, 8, None, False),
+        pg_collection=SimpleNamespace(dp=SimpleNamespace(size=lambda: 1)),
+    )
+    engine._recipe = SimpleNamespace(
+        batch_layout="thd", router_replay=False, model=SimpleNamespace(vocab_size=100, variable_seq_lengths=True)
+    )
+    engine._model = ["chunk", "chunk"]
+    monkeypatch.setattr(
+        "megatron.bridge.engine.engine.get_model_config",
+        lambda chunk: SimpleNamespace(microbatch_group_size_per_vp_stage=2),
+    )
+    monkeypatch.setattr("megatron.bridge.engine.engine.check_microbatches", lambda mbs, **kwargs: None)
+    with pytest.raises(ValueError, match=nearest):
+        engine.check_microbatches(["mb"] * count)
+    engine.check_microbatches(["mb"] * 4)
 
 
 def test_value_head_engine_defaults_to_value_loss_and_rejects_export(monkeypatch):

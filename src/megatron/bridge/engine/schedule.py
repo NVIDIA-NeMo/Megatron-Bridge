@@ -31,10 +31,11 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.engine.batching import is_last_pipeline_stage
+from megatron.bridge.data.iterator_utils import make_data_iterator_list
 from megatron.bridge.engine.datum import ModelOutput, PreparedMicrobatch
 from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.training.gpt_step import _prepare_packed_padding_mask
+from megatron.bridge.training.utils.pg_utils import pipeline_stage_roles
 
 
 def model_loss_mask(microbatch: PreparedMicrobatch, mtp_target_scope: str) -> torch.Tensor:
@@ -93,9 +94,11 @@ def call_model(
         return model(labels=microbatch.target_ids, loss_mask=model_loss_mask(microbatch, mtp_target_scope), **common)
     if output_head == "value":
         # No labels: the replaced output layer returns the per-token values as "logits" [B, T, 1].
-        # Only the last pipeline stage has that layer; earlier stages return hidden states for the next.
+        # Only the model chunk that ends the pipeline has that layer; the others return hidden states for
+        # the next chunk.
         output = model(labels=None, **common)
-        return output[..., 0] if is_last_pipeline_stage(pg_collection.pp) else output
+        _, is_last = pipeline_stage_roles(model)
+        return output[..., 0] if is_last else output
     raise ValueError(f"Unknown output_head {output_head!r}.")
 
 
@@ -125,7 +128,7 @@ def _make_scoring_step(
     ) -> tuple[torch.Tensor, Callable]:
         microbatch = next(data_iterator)
         if router_replay is not None:
-            router_replay.arm_forward(microbatch)
+            router_replay.arm_forward(microbatch, model)
         raw = call_model(
             model, microbatch, pg_collection, mtp_target_scope=mtp_target_scope, mrope=mrope, output_head=output_head
         )
@@ -171,7 +174,8 @@ def run_forward_only(
                 forward_step_func=_make_scoring_step(
                     pg_collection, mtp_target_scope, mrope, output_head, router_replay
                 ),
-                data_iterator=iter(microbatches),
+                # With virtual pipeline stages: one iterator per model chunk, each over the same microbatches.
+                data_iterator=make_data_iterator_list(model, iter(microbatches)),
                 model=model,
                 num_microbatches=len(microbatches),
                 # The pack length before the CP split: the pipelined schedule divides by the CP size itself.
@@ -234,12 +238,12 @@ def run_forward_backward(
     def forward_step_func(data_iterator: Iterator[PreparedMicrobatch], chunk: MegatronModule) -> tuple:
         microbatch = next(data_iterator)
         if router_replay is not None:
-            router_replay.arm_forward(microbatch)
+            router_replay.arm_forward(microbatch, chunk)
         raw = call_model(
             chunk, microbatch, pg_collection, mtp_target_scope=mtp_target_scope, mrope=mrope, output_head=output_head
         )
         if router_replay is not None:
-            router_replay.arm_backward(microbatch)
+            router_replay.arm_backward(microbatch, chunk)
 
         def loss_func(output_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, dict]:
             loss, extra = split_loss_return(loss_method(microbatch, to_model_output(output_tensor, output_head)))
@@ -262,7 +266,8 @@ def run_forward_backward(
                     stack.enter_context(chunk.no_sync())
             schedule(
                 forward_step_func=forward_step_func,
-                data_iterator=iter(microbatches),
+                # With virtual pipeline stages: one iterator per model chunk, each over the same microbatches.
+                data_iterator=make_data_iterator_list(model, iter(microbatches)),
                 model=model,
                 num_microbatches=len(microbatches),
                 # The pack length before the CP split: the pipelined schedule divides by the CP size itself.

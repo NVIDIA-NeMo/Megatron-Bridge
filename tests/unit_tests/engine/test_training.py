@@ -394,11 +394,12 @@ class _ThreeDimModel(_RecordingModel):
         return torch.zeros(1, 4, 8)
 
 
-@pytest.mark.parametrize("stage, shape", [(1, (1, 4)), (0, (1, 4, 8))])
-def test_call_model_takes_the_value_on_the_last_pipeline_stage_only(stage, shape):
-    # Earlier stages return hidden states for the next stage; slicing them would corrupt the transfer.
+@pytest.mark.parametrize("is_last, shape", [(True, (1, 4)), (False, (1, 4, 8))])
+def test_call_model_takes_the_value_from_the_last_chunk_of_the_pipeline_only(monkeypatch, is_last, shape):
+    # The other chunks return hidden states for the next one; slicing them would corrupt the transfer.
     model = _ThreeDimModel()
-    pg_collection = SimpleNamespace(pp=SimpleNamespace(rank=lambda: stage, size=lambda: 2))
+    monkeypatch.setattr("megatron.bridge.engine.schedule.pipeline_stage_roles", lambda chunk: (False, is_last))
+    pg_collection = SimpleNamespace(pp=SimpleNamespace(rank=lambda: 1, size=lambda: 2))
     output = call_model(
         model, _rl_batch(), pg_collection, mtp_target_scope="primary", mrope=False, output_head="value"
     )

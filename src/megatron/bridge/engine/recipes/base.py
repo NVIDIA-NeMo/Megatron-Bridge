@@ -188,10 +188,18 @@ def check_supported(recipe: TrainingRecipe) -> None:
     if is_gtp_remat_active(recipe.model):
         problems.append(GTP_NOT_SUPPORTED)
     if (getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1) > 1:
-        # TODO(pp-vpp): the interleaved schedule needs one model chunk and one data iterator per virtual
-        # stage, and a microbatch count that fits microbatch_group_size_per_vp_stage.
-        if (getattr(recipe.model, "virtual_pipeline_model_parallel_size", None) or 1) > 1:
-            problems.append("virtual pipeline stages are not supported yet")
+        # Megatron runs microbatch_group_size_per_vp_stage microbatches through a virtual stage at a time
+        # and needs at least one per pipeline stage in a group.
+        group_size = getattr(recipe.model, "microbatch_group_size_per_vp_stage", None)
+        if (
+            getattr(recipe.model, "virtual_pipeline_model_parallel_size", None) is not None
+            and group_size is not None
+            and group_size < recipe.model.pipeline_model_parallel_size
+        ):
+            problems.append(
+                f"model.microbatch_group_size_per_vp_stage ({group_size}) must be at least the pipeline size "
+                f"({recipe.model.pipeline_model_parallel_size})"
+            )
         # Stages exchange each pack's hidden states. Megatron sizes the receiving buffers once per call
         # from one pack length, unless model.variable_seq_lengths has every transfer announce its shape.
         same_length = getattr(recipe, "batch_layout", "thd") != "thd" or getattr(recipe, "pad_to_max_length", False)

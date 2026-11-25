@@ -41,6 +41,7 @@ from dapo_math import to_datum, without_routing
 from grpo_vllm import chunks, consistency, load_data, parse_args, rollout_round
 from megatron.core.transformer.moe.moe_layer import MoELayer
 from megatron.core.transformer.moe.router_replay import RouterReplay, RouterReplayAction
+from sft_from_recipe import PackReplayEngine
 from vllm_rollout import VllmRollout
 
 import megatron.bridge.engine.recipes as recipes
@@ -58,6 +59,14 @@ def _gate_arguments(parser) -> None:
         default=0.0,
         help="MoE load-balancing loss coefficient for the gate (default 0: the recipe's global aux loss keeps "
         "state across calls, which makes repeated gradients differ; pass a negative value to keep the recipe's)",
+    )
+    parser.add_argument(
+        "--packs-per-call",
+        type=int,
+        default=0,
+        help="Split each call's Datums over this many packs (virtual pipeline stages need at least the pipeline "
+        "size). Skips the checks that record the policy's own routing: they need one pack per call. "
+        "Default 0: the engine's own packing",
     )
 
 
@@ -147,7 +156,9 @@ def main() -> None:
     prompts, _ = load_data(args, recipe.hf_path)
     prompts = prompts[: args.prompts_per_round]
 
-    policy = TrainingEngine.from_recipe(recipe, checkpoint_path=args.checkpoint)
+    record_own = args.packs_per_call == 0
+    engine_cls = TrainingEngine if record_own else PackReplayEngine
+    policy = engine_cls.from_recipe(recipe, checkpoint_path=args.checkpoint)
     policy.cpu()
     rollout = VllmRollout(
         recipe.hf_path,
@@ -168,6 +179,10 @@ def main() -> None:
     for index, sample in enumerate(samples):
         sample.advantage = 1.0 if index % 2 == 0 else -1.0
     datums = [to_datum(s) for s in samples]
+    if not record_own:
+        # PackReplayEngine packs by this tag: consecutive Datums alternate packs, so every call has them all.
+        for index, datum in enumerate(datums):
+            datum.sample_inputs["pack"] = index % args.packs_per_call
     plain = without_routing(datums)
     tokens = sum(d.num_tokens for d in datums)
     print_rank_0(
@@ -196,10 +211,11 @@ def main() -> None:
         "replay_vs_native_mean_diff": _mean_abs_diff(replay, native),
     }
 
-    overlap, recorded_datums = record_native_routing(policy, datums)
-    recorded_replay = timed("replay of the policy's own routing", recorded_datums)
-    report["routing_overlap_vllm_vs_native"] = overlap
-    report["own_routing_replay_vs_native_max_diff"] = _max_abs_diff(recorded_replay, native)
+    if record_own:
+        overlap, recorded_datums = record_native_routing(policy, datums)
+        recorded_replay = timed("replay of the policy's own routing", recorded_datums)
+        report["routing_overlap_vllm_vs_native"] = overlap
+        report["own_routing_replay_vs_native_max_diff"] = _max_abs_diff(recorded_replay, native)
 
     # Training path, two proofs. (a) Replaying the routing the policy itself recorded in a training
     # pass of the same packing reproduces the native gradient norm, with one call (one microbatch per
@@ -212,12 +228,13 @@ def main() -> None:
     for datum, lp in zip(datums, native):
         datum.old_logprobs = lp.cpu()
     plain = without_routing(datums)  # fresh copies so they carry old_logprobs
-    own_one = record_native_routing(policy, datums, train=True, loss_kwargs=loss_kwargs)[1]
-    own_four: list[Datum] = []
-    for chunk in chunks(datums, 4):
-        own_four.extend(record_native_routing(policy, chunk, train=True, loss_kwargs=loss_kwargs)[1])
-    report["own_routing_overlap_eval_vs_train"] = _overlap(recorded_datums, own_one)
-    report["own_routing_overlap_one_call_vs_four_calls"] = _overlap(own_one, own_four)
+    if record_own:
+        own_one = record_native_routing(policy, datums, train=True, loss_kwargs=loss_kwargs)[1]
+        own_four: list[Datum] = []
+        for chunk in chunks(datums, 4):
+            own_four.extend(record_native_routing(policy, chunk, train=True, loss_kwargs=loss_kwargs)[1])
+        report["own_routing_overlap_eval_vs_train"] = _overlap(recorded_datums, own_one)
+        report["own_routing_overlap_one_call_vs_four_calls"] = _overlap(own_one, own_four)
 
     def train(label: str, calls: list[list[Datum]]) -> float:
         """Accumulate the calls, step with lr 0; record the grad norm, the loss sum and the mean
@@ -262,20 +279,22 @@ def main() -> None:
 
     # With recompute on, the training-pass recording is the recompute's routing (it records last);
     # without recompute it is the forward's. Their overlap says whether native recompute re-routes.
-    set_moe_recompute(False)
-    try:
-        own_one_forward = record_native_routing(policy, datums, train=True, loss_kwargs=loss_kwargs)[1]
-    finally:
-        set_moe_recompute(True)
-    report["own_routing_overlap_forward_vs_recompute"] = _overlap(own_one_forward, own_one)
+    if record_own:
+        set_moe_recompute(False)
+        try:
+            own_one_forward = record_native_routing(policy, datums, train=True, loss_kwargs=loss_kwargs)[1]
+        finally:
+            set_moe_recompute(True)
+        report["own_routing_overlap_forward_vs_recompute"] = _overlap(own_one_forward, own_one)
 
     for datum, lp in zip(datums, replay):
         datum.old_logprobs = lp.cpu()
     native_one = train("native_one_call", [plain])
     train("native_one_call_repeat", [plain])
     native_four = train("native_four_calls", chunks(plain, 4))
-    recorded_one = train("own_routing_one_call", [own_one])
-    recorded_four = train("own_routing_four_calls", chunks(own_four, 4))
+    if record_own:
+        recorded_one = train("own_routing_one_call", [own_one])
+        recorded_four = train("own_routing_four_calls", chunks(own_four, 4))
     train("vllm_routing_one_call", [datums])
     replay_four = train("vllm_routing_four_calls", chunks(datums, 4))
     replay_four_repeat = train("vllm_routing_four_calls_repeat", chunks(datums, 4))
@@ -287,14 +306,19 @@ def main() -> None:
         set_moe_recompute(True)
     backward_floor = abs(replay_four - replay_four_repeat)
 
+    if record_own:
+        report["own_routing_vs_native_grad_norm_rel_diff"] = {
+            "one_call": abs(recorded_one - native_one) / max(abs(native_one), 1e-12),
+            "four_calls": abs(recorded_four - native_four) / max(abs(native_four), 1e-12),
+        }
     print_rank_0("[gate] " + json.dumps(report, indent=2))
     floor = max(report["native_repeat_max_diff"], 1e-4)
     failures = []
-    if overlap < 0.9:
+    if record_own and overlap < 0.9:
         failures.append(
             f"routing overlap {overlap:.3f} < 0.9: the prepared routing is not in the router's token order"
         )
-    if report["own_routing_replay_vs_native_max_diff"] > 2 * floor:
+    if record_own and report["own_routing_replay_vs_native_max_diff"] > 2 * floor:
         failures.append("replaying the policy's own routing does not reproduce the native logprobs")
     if report["replay_repeat_max_diff"] > floor:
         failures.append("replay is not repeatable")
@@ -304,10 +328,6 @@ def main() -> None:
     # and so are the gradient norms against native, which is therefore not an exact reference.
     if report["train_vs_score_logprob_diff_vllm_routing_one_call"] > 1e-6:
         failures.append("training forward under replay differs from the scoring forward under replay")
-    report["own_routing_vs_native_grad_norm_rel_diff"] = {
-        "one_call": abs(recorded_one - native_one) / max(abs(native_one), 1e-12),
-        "four_calls": abs(recorded_four - native_four) / max(abs(native_four), 1e-12),
-    }
     # Every router must have replayed once in the forward and once in the recompute per microbatch.
     calls = report["router_calls_vllm_routing_four_calls"]
     if calls.get("REPLAY_FORWARD", 0) != calls.get("REPLAY_BACKWARD", 0) or not calls.get("REPLAY_FORWARD"):
