@@ -697,6 +697,15 @@ def _update_model_config_funcs(
             # sync instead of once per layer and microbatch.
             enable_expert_parallel_grad_sync_in_finalize(model)
             finalize_func = finalize_model_grads_with_expert_adapter_sync
+        if (
+            getattr(model_config, "ernie_router_bias_contiguous_cp_counts", False)
+            and model_config.context_parallel_size > 1
+        ):
+            from megatron.bridge.models.ernie.modeling_ernie55.router_bias_counts import (
+                finalize_with_contiguous_cp_counts,
+            )
+
+            finalize_func = partial(finalize_with_contiguous_cp_counts, finalize_func)
         model_config.finalize_model_grads_func = partial(finalize_func, pg_collection=pg_collection)
         model_config.grad_scale_func = optimizer.scale_loss
 

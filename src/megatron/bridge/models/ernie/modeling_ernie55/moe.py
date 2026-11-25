@@ -436,6 +436,10 @@ class Ernie55SplitFeatureRouter(TopKRouter):
         mark_keep_in_fp32(self.expert_bias)
         # A zero update rate freezes the bias: no token counting and no update collective.
         self.frozen_expert_bias = config.moe_router_bias_update_rate == 0
+        if config.ernie_router_bias_contiguous_cp_counts and config.context_parallel_size > 1:
+            # Cleared at the same step boundary as local_tokens_per_expert.
+            self._ernie_cp_bias_histograms = []
+
         if self._dense_route_indices_dtype() is not None:
             raise ValueError(
                 "ERNIE 5.5 MoE: the split-feature router returns a [tokens, experts] routing map, but this "
@@ -504,13 +508,13 @@ class Ernie55SplitFeatureRouter(TopKRouter):
             padding_mask: Optional ``True``-is-padding mask over the tokens; padding is excluded from
                 the z-loss and from the token counts, as in ``TopKRouter``.
             input_ids: Unused (no hash routing).
-            packed_seq_params: Unused; ERNIE routing does not depend on sequence boundaries.
+            packed_seq_params: Physical row geometry for optional contiguous-owner bias accumulation.
 
         Returns:
             ``(probs, routing_map)``: fp32 probabilities ``[tokens, num_experts]`` with ``k`` non-zero
             entries per row, and the matching boolean map.
         """
-        del input_ids, packed_seq_params
+        del input_ids
         scores = logits.reshape(-1, self.config.num_moe_experts).float()
         if padding_mask is not None:
             padding_mask = padding_mask.reshape(-1)
@@ -528,7 +532,16 @@ class Ernie55SplitFeatureRouter(TopKRouter):
         probs = probs * self.routed_scaling_factor_param[top_indices]
         routing_probs = torch.zeros_like(scores).scatter(-1, top_indices, probs)
         routing_map = torch.zeros_like(scores, dtype=torch.bool).scatter(-1, top_indices, True)
-        if not self.frozen_expert_bias:
+        if self.config.ernie_router_bias_contiguous_cp_counts and self.config.context_parallel_size > 1:
+            if self.training and not self.frozen_expert_bias and torch.is_grad_enabled():
+                from .router_bias_counts import contiguous_owner_histogram
+
+                self._ernie_cp_bias_histograms.append(
+                    contiguous_owner_histogram(
+                        top_indices, padding_mask, packed_seq_params, self.cp_group, scores.size(1)
+                    )
+                )
+        elif not self.frozen_expert_bias:
             # Megatron-Core counts only while autograd is enabled (once per token under full recompute).
             self._apply_expert_bias(routing_map, padding_mask=padding_mask)
         return routing_probs, routing_map
