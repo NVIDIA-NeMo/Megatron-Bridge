@@ -31,49 +31,6 @@ from megatron.bridge.training.optim import (
 )
 
 
-class TestSetupOptimizerCoreRequirement:
-    """Reject unsupported Core before constructing a distributed optimizer."""
-
-    @pytest.mark.parametrize("capability", [False, None])
-    def test_rejects_old_core_before_building_optimizer(self, monkeypatch, capability):
-        from megatron.core.optimizer import DistributedOptimizer
-
-        from megatron.bridge.training.optim import setup_optimizer
-
-        if capability is None:
-            monkeypatch.delattr(DistributedOptimizer, "supports_memory_efficient_fp32_state_loading", raising=False)
-        else:
-            monkeypatch.setattr(
-                DistributedOptimizer, "supports_memory_efficient_fp32_state_loading", capability, raising=False
-            )
-        with patch("megatron.bridge.training.optim.get_megatron_optimizer") as build:
-            with pytest.raises(RuntimeError, match="NVIDIA/Megatron-LM#8837"):
-                setup_optimizer(OptimizerConfig(use_distributed_optimizer=True), SchedulerConfig(), MagicMock())
-        build.assert_not_called()
-
-    @pytest.mark.parametrize("distributed", [False, True])
-    def test_builds_optimizer_with_required_core_support(self, monkeypatch, distributed):
-        from megatron.core.optimizer import DistributedOptimizer
-
-        from megatron.bridge.training.optim import setup_optimizer
-
-        monkeypatch.setattr(
-            DistributedOptimizer, "supports_memory_efficient_fp32_state_loading", distributed, raising=False
-        )
-        model = MagicMock()
-        with (
-            patch("megatron.bridge.training.optim.get_model_config", return_value=SimpleNamespace(use_mup=False)),
-            patch("megatron.bridge.training.optim.get_megatron_optimizer") as build,
-            patch("megatron.bridge.training.optim._get_scheduler") as schedule,
-        ):
-            optimizer, scheduler = setup_optimizer(
-                OptimizerConfig(lr=0.01, use_distributed_optimizer=distributed), SchedulerConfig(), model
-            )
-        assert optimizer is build.return_value
-        assert scheduler is schedule.return_value
-        build.assert_called_once()
-
-
 class TestSetupOptimizerMuP:
     """Tests for μP optimizer scaling in setup_optimizer."""
 

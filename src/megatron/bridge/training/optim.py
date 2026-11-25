@@ -20,7 +20,6 @@ from typing import Optional, Union, cast
 
 import torch
 from megatron.core.optimizer import (
-    DistributedOptimizer,
     MegatronOptimizer,
     OptimizerConfig,
     get_megatron_optimizer,
@@ -61,19 +60,7 @@ def setup_optimizer(
 
     Returns:
         tuple containing the optimizer and scheduler
-
-    Raises:
-        RuntimeError: Distributed optimizer setup requires Megatron Core with
-            native FP32 checkpoint-state loading (NVIDIA/Megatron-LM#8837).
     """
-    if optimizer_config.use_distributed_optimizer and not getattr(
-        DistributedOptimizer, "supports_memory_efficient_fp32_state_loading", False
-    ):
-        raise RuntimeError(
-            "Distributed optimizer setup requires Megatron Core with native FP32 checkpoint-state loading "
-            "(NVIDIA/Megatron-LM#8837). Install a Core revision containing that change."
-        )
-
     if not hasattr(optimizer_config, "provide"):
         # setup_optimizer is also used by callers that construct Core's config
         # directly, without ConfigContainer validation.
