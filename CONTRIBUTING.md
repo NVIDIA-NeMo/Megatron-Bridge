@@ -14,6 +14,7 @@ First, set up the third-party modules of this repository so they can be copied i
 
 ```bash
 git submodule update --init --recursive
+bash scripts/prepare_mcore.sh
 ```
 
 Build the container:
@@ -380,6 +381,16 @@ No workflow file changes are needed — the CI matrix is generated dynamically b
 
 We use [uv](https://docs.astral.sh/uv/) for managing dependencies. For reproducible builds, our project tracks the generated `uv.lock` file in the repository.
 On a weekly basis, the CI attempts an update of the lock file to test against upstream dependencies.
+
+Package metadata requires Python 3.12 or newer without an upper bound. The uv-managed
+environment is limited to Python 3.12–3.14 because upstream GPU packages lack Python
+3.15 artifacts. Removing the package metadata bound does not establish runtime
+compatibility with newer interpreters.
+
+On Linux with Python 3.13, uv builds `nvidia-resiliency-ext` 0.7.0 from its pinned
+release commit because that release has no Python 3.13 wheel. This build requires
+the CUDA toolkit with CUPTI headers and libraries. Python 3.12 and 3.14 retain the
+published resiliency wheels, which require glibc 2.39 or newer.
 
 ### Adding a New Dependency
 

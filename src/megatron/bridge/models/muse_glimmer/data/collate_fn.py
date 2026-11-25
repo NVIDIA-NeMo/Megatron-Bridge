@@ -41,6 +41,9 @@ def muse_glimmer_collate_fn(
     examples: list[dict[str, Any]],
     processor: Any,
     *,
+    visual_keys: object = None,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
     sequence_length: int | None = None,
     pad_to_max_length: bool = False,
     pad_to_multiple_of: int = 128,
@@ -48,6 +51,7 @@ def muse_glimmer_collate_fn(
     in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, Any]:
     """Collate Muse Glimmer conversations and their THW-grid media tensors."""
+    del visual_keys, min_pixels, max_pixels
     skipped_tokens = extract_skipped_token_ids(processor)
     boundary_config = assistant_mask_boundary_config_from_markers(
         processor,

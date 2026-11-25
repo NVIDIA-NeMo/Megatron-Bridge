@@ -488,11 +488,19 @@ class Gemma4DenseSelfAttention(SelfAttention):
         key_value_states=None,
         output_gate: bool = False,
         split_qkv: bool = True,
+        *,
+        head_wise_gate: bool = False,
     ):
+        if head_wise_gate:
+            raise ValueError("Gemma4 dense attention does not support head-wise gating.")
         if self.is_kv_shared_layer:
             if not split_qkv or output_gate:
-                return super().get_query_key_value_tensors(hidden_states, key_value_states, output_gate, split_qkv)
-            query, _k, _v = super().get_query_key_value_tensors(hidden_states, key_value_states, False, True)
+                return super().get_query_key_value_tensors(
+                    hidden_states, key_value_states, output_gate=output_gate, split_qkv=split_qkv
+                )
+            query, _k, _v = super().get_query_key_value_tensors(
+                hidden_states, key_value_states, output_gate=False, split_qkv=True
+            )
             kv_source = self._kv_source_ref() if self._kv_source_ref is not None else None
             if kv_source is not None and kv_source._stored_kv is not None:
                 key, value = kv_source._stored_kv
@@ -516,7 +524,9 @@ class Gemma4DenseSelfAttention(SelfAttention):
                 key_value_states,
             )
         else:
-            result = super().get_query_key_value_tensors(hidden_states, key_value_states, output_gate, split_qkv)
+            result = super().get_query_key_value_tensors(
+                hidden_states, key_value_states, output_gate=output_gate, split_qkv=split_qkv
+            )
             if not split_qkv:
                 return result
             if output_gate:

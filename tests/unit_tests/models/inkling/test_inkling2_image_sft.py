@@ -34,6 +34,7 @@ from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
 from megatron.bridge.data.collators.registry import always_use_model_collate, resolve_model_collate
 from megatron.bridge.data.conversation_processing import tokenize_chat_example
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
+from megatron.bridge.data.energon.hf_task_encoder import HFTaskEncoder
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
 from megatron.bridge.models.inkling import Inkling2Processor
 from megatron.bridge.models.inkling.data.collate_fn import Inkling2VisualInputs, inkling2_collate_fn
@@ -509,6 +510,21 @@ class TestCollator:
             processor([_conversation(None)], reasoning_effort="none")
         with pytest.raises(ValueError, match="function name"):
             processor.render(_conversation(None), tools=[{"type": "function", "function": {"description": "x"}}])
+
+    def test_energon_task_encoder_collates_with_the_registry_collator(self, checkpoint: Path) -> None:
+        processor = Inkling2Processor.from_pretrained(checkpoint)
+        examples = [{"conversation": _conversation(None)}]
+        encoder = HFTaskEncoder(
+            processor=processor, seq_length=32, pad_to_max_length=True, min_pixels=1600, max_pixels=1600 * 64
+        )
+
+        batch = encoder.collate_fn(examples)
+
+        expected = inkling2_collate_fn(examples, processor, sequence_length=32, pad_to_max_length=True)
+        assert batch.keys() == expected.keys()
+        for key in ("input_ids", "labels", "loss_mask", "attention_mask", "position_ids"):
+            assert torch.equal(batch[key], expected[key])
+        assert batch["visual_inputs"] is None
 
     def test_text_only_batches_have_no_visual_inputs(self, checkpoint: Path) -> None:
         processor = Inkling2Processor.from_pretrained(checkpoint)

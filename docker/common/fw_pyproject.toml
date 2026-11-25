@@ -48,6 +48,7 @@ test = ["coverage>=7.8.1"]
 [tool.uv]
 prerelease = "allow"
 constraint-dependencies = [
+    "aiohttp>=3.14.4",
     "pillow>=13.0.0",
     "langgraph>=1.2.12", # Older releases cap langgraph-sdk below the security fix.
     "langgraph-sdk>=0.4.4", # GHSA-fvww-7h3r-vfhp

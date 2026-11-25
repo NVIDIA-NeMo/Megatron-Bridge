@@ -1,6 +1,7 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for MegatronMIMO parallel utilities."""
 
+import functools
 import types
 from unittest.mock import MagicMock, patch
 
@@ -325,6 +326,7 @@ def _build_two_module_setup(llm_dp, encoder_dp, *, llm_rank_offset=4, llm_size=4
 
     llm_module = MagicMock(name="llm_module")
     encoder_module = MagicMock(name="encoder_module")
+    encoder_module.parameters.side_effect = lambda: iter([torch.nn.Parameter(torch.zeros(1))])
     llm_pg = MagicMock(name="llm_pg")
     encoder_pg = MagicMock(name="encoder_pg")
 
@@ -348,6 +350,22 @@ def _build_two_module_setup(llm_dp, encoder_dp, *, llm_rank_offset=4, llm_size=4
         encoder_pg=encoder_pg,
         dp_by_grid=dp_by_grid,
     )
+
+
+def _mcore_scale_gradients(grad_data):
+    """Return Megatron-Core's DistributedDataParallel.scale_gradients over one real grad buffer.
+
+    The DDP and buffer objects carry only what scale_gradients reads, so no process
+    groups are needed, but the scale goes through MCore's own argument handling.
+    """
+    from megatron.core.distributed import DistributedDataParallel
+    from megatron.core.distributed.param_and_grad_buffer import _ParamAndGradBuffer
+
+    buffer = _ParamAndGradBuffer.__new__(_ParamAndGradBuffer)
+    buffer.grad_data = grad_data
+    buffer.extra_main_grads = []
+    ddp = types.SimpleNamespace(buffers=[buffer], expert_parallel_buffers=[])
+    return functools.partial(DistributedDataParallel.scale_gradients, ddp)
 
 
 class TestFinalizeModelGradsMultimodule:
@@ -514,4 +532,56 @@ class TestFinalizeModelGradsMultimodule:
         )
 
         s.encoder_module.scale_gradients.assert_not_called()
+        s.llm_module.scale_gradients.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("llm_dp", "encoder_dp", "num_tokens", "expected_scale"),
+        [
+            (2, 1, None, 1.0 / 2.0),  # language DP 2, encoder DP 1: encoder grads halved
+            (2, 4, None, 4.0 / 2.0),
+            (2, 4, 100, 1.0 / 100.0),  # per-token loss: encoder grads divided by the global token count
+        ],
+    )
+    @patch(f"{MODULE}.dist")
+    @patch(f"{MODULE}.is_current_rank_in_grid")
+    @patch(f"{MODULE}._get_dp_size_from_grid")
+    @patch(f"{MODULE}._finalize_model_grads")
+    def test_encoder_scaling_through_mcore_scale_gradients(
+        self, mock_finalize, mock_dp, mock_in_grid, mock_dist, llm_dp, encoder_dp, num_tokens, expected_scale, device
+    ):
+        """Encoder scaling must meet MCore's scale_gradients contract (a tensor scale), not only a Mock's."""
+        from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
+
+        s = _build_two_module_setup(llm_dp=llm_dp, encoder_dp=encoder_dp)
+        mock_in_grid.return_value = True
+        mock_dp.side_effect = lambda grid: s.dp_by_grid[id(grid)]
+        per_token = num_tokens is not None
+        s.llm_module.config.calculate_per_token_loss = per_token
+        s.encoder_module.config.calculate_per_token_loss = per_token
+        s.encoder_module.parameters.side_effect = lambda: iter([torch.nn.Parameter(torch.zeros(1, device=device))])
+        encoder_grad = torch.full((8,), 400.0, device=device)
+        s.encoder_module.scale_gradients.side_effect = _mcore_scale_gradients(encoder_grad)
+
+        finalize_model_grads_multimodule(
+            [MagicMock()],
+            None if num_tokens is None else torch.tensor(num_tokens, device=device),
+            infra=s.infra,
+            module_to_grid_tuple=s.module_to_grid_tuple,
+        )
+
+        s.encoder_module.scale_gradients.assert_called_once()
+        scale = s.encoder_module.scale_gradients.call_args.args[0]
+        assert isinstance(scale, torch.Tensor)
+        assert scale.dim() == 0
+        assert scale.dtype == torch.float32
+        assert scale.device == encoder_grad.device
+        assert scale.item() == torch.tensor(expected_scale, dtype=torch.float32).item()
+        torch.testing.assert_close(encoder_grad, torch.full((8,), 400.0 * expected_scale, device=device))
         s.llm_module.scale_gradients.assert_not_called()

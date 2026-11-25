@@ -29,7 +29,7 @@ description = "Megatron Bridge: Training Recipes for Megatron-based LLM and VLM 
 readme = "README.md"
 dynamic = ["version"]
 license = {file = "LICENSE"}
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
 authors = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
 maintainers = [
     { name = "Ananth Subramaniam", email = "ansubramania@nvidia.com" },
@@ -108,6 +108,7 @@ dependencies = [
 version = { attr = "megatron.bridge.package_info.__version__" }
 
 [tool.uv]
+environments = ["python_version < '3.15'"]
 managed = true
 # Packages that require pre-installed torch/CUDA at build time (no PEP 517 isolation).
 # mamba-ssm, causal-conv1d, and transformer-engine are optional extras ([ssm], [te])
@@ -124,12 +125,11 @@ no-build-isolation-package = [
 ]
 prerelease = "allow"
 # Transformers 5.15 still passes cls= to RobertaProcessing; this prerelease renamed it.
-# pyarrow 26 requires NumPy>=2 at import time but declares no numpy dependency, while
-# nvdlfw-inspect==0.2.1 ([tensor-inspect]) pins numpy==1.26.4.
+# pyarrow 26 requires NumPy>=2 at import time but declares no numpy dependency.
 # Keep httpx on the stable 0.28 line on every platform. With prerelease = "allow", uv otherwise
 # picks httpx 1.0.devN (with an older wandb) in whichever platform fork it resolves first, which
 # can be linux/aarch64.
-constraint-dependencies = ["tokenizers!=0.23.0rc0", "pyarrow<26", "httpx<1"]
+constraint-dependencies = ["tokenizers!=0.23.0rc0", "pyarrow<26", "httpx<1", "aiohttp>=3.14.4"]
 override-dependencies = [
     "av; sys_platform == 'never'",                          # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
     "imageio; sys_platform == 'never'",                     # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
@@ -149,11 +149,11 @@ override-dependencies = [
     "urllib3>=2.6.3",                                       # To address CVE-2026-21441
     "langchain>=0.3.28",                                    # To address CVE-2025-65106
     "langchain-core>=0.3.80",                               # To address CVE-2025-65106
-    "onnx>=1.21.0; python_version < '3.13'",                # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
-    "nvidia-cudnn-frontend==1.32.0",                       # Match MCore main (paired with flashinfer 0.7.2)
-    # Match MCore main: cuDNN Frontend 1.29 needs the newer TileLang/TVM FFI family.
-    "tilelang==0.1.12",
-    "apache-tvm-ffi==0.1.11",
+    "onnx>=1.21.0",
+    "nvidia-cudnn-frontend==1.33.0",                       # Match MCore main (paired with flashinfer 0.7.2)
+    # Match MCore main: cuDNN Frontend and FlashAttention-4 need the newer TileLang/TVM FFI family.
+    "tilelang==0.1.13",
+    "apache-tvm-ffi==0.1.12",
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'",    # Rely on system site packages install
     "fastapi<0.139.2",                                      # 0.139.2 fails with ray 2.55.1 at least
     "fast-hadamard-transform @ git+https://github.com/Dao-AILab/fast-hadamard-transform.git@v1.1.0"  # pin 1.1.0; PyPI sdist is incomplete, install from git tag (see DSv4/GLM-5 READMEs)
@@ -187,17 +187,17 @@ requires-dist = []
 # MCore pin's metadata so a lock-only operation never invokes the build backend.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.20.2+44f31bbe"
+version = "2.22.0+d05e4b83"
 requires-dist = [
     "pydantic<2.14",
     "importlib-metadata>=1.0",
     "packaging",
-    "torch>=2.1",
+    "torch>=2.8",
     "einops",
     "onnxscript",
     "onnx",
     "nvdlfw-inspect",
-    "nvidia-cudnn-frontend>=1.29.0",
+    "nvidia-cudnn-frontend>=1.31.0",
 ]
 
 [[tool.uv.dependency-metadata]]
@@ -234,6 +234,7 @@ flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
 transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "131157b5750b8578cb8efb78554f6fe6a671cc53" }
 flashinfer-python = { index = "flashinfer" }
 flashinfer-cubin = { index = "flashinfer" }
+nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "ebf0352a82ca5699148ea10bec2b8eedd121e382", marker = "sys_platform == 'linux' and python_version == '3.13'" }
 
 [project.optional-dependencies]
 bagel = [
@@ -247,7 +248,7 @@ parquet = [
     "pyarrow>=14.0.0",
 ]
 tensor-inspect = [
-    "nvdlfw-inspect==0.2.1",
+    "nvdlfw-inspect==0.2.2",
 ]
 te = [
     "megatron-core[te]",

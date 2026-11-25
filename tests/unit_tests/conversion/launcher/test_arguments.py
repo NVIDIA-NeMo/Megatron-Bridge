@@ -131,6 +131,18 @@ def test_worker_args_enable_distributed_save_by_default_for_gpu_export():
     assert worker_args[:3] == ["export", "--device", "gpu"]
 
 
+@pytest.mark.parametrize("flag", [[], ["--quantized-export"], ["--no-quantized-export"]])
+def test_worker_args_forward_an_explicit_quantized_export_choice(flag):
+    module = _load_arguments_module()
+    args = module.build_parser(include_execution=True).parse_args(
+        ["export", "--hf-model", "hf/model", "--megatron-path", "/megatron", "--hf-path", "/hf", *flag]
+    )
+
+    worker_args = module.conversion_worker_args(args)
+
+    assert [arg for arg in worker_args if arg.endswith("quantized-export")] == flag
+
+
 def test_worker_args_disable_distributed_save_for_cpu_export():
     module = _load_arguments_module()
     args = module.build_parser(include_execution=True).parse_args(
