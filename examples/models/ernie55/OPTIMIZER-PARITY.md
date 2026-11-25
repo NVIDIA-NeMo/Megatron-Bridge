@@ -73,15 +73,31 @@ export PYTHONPATH="$MCORE_BRIDGE_INT/src:$MS_SWIFT_INT"
 export CUBLAS_WORKSPACE_CONFIG=:4096:8 NVTE_ALLOW_NONDETERMINISTIC_ALGO=0 NCCL_ALGO=Ring
 export CUDA_DEVICE_MAX_CONNECTIONS=1 NCCL_NVLS_ENABLE=0 PYTORCH_ALLOC_CONF=expandable_segments:True
 capture_optimizer_swift() {
-  local capture=$1 cache=$2 log=$3 iters=2
+  local capture=$1 cache=$2 log=$3 iters=2 mode=${4:-optimizer}
   local -a recorder=("$EX/optimizer_parity_256k.py")
-  if [[ ${ERNIE_CAPTURE_NEXT_HEADS:-0} == 1 ]]; then
-    recorder+=(--next-heads)
-    iters=3
-  fi
+  local -a save_options=(--save_steps 1000000)
+  case "$mode" in
+    optimizer)
+      if [[ ${ERNIE_CAPTURE_NEXT_HEADS:-0} == 1 ]]; then
+        recorder+=(--next-heads)
+        iters=3
+      fi
+      recorder+=(swift "$capture" --)
+      ;;
+    export-step2)
+      recorder+=(--next-heads swift "$capture" --)
+      save_options=(--save_steps 2 --save_safetensors true --save_missing_weights false)
+      iters=3
+      ;;
+    reload-heads)
+      recorder=("$EX/swift_head_parity_256k.py" record "$capture" --deterministic --)
+      iters=1
+      ;;
+    *) echo "Unknown Swift capture mode: $mode" >&2; return 2 ;;
+  esac
   torchrun --nnodes=16 --nproc-per-node=4 --node-rank="$NODE_RANK" \
     --master-addr="$MASTER_ADDR" --master-port="$MASTER_PORT" \
-    "${recorder[@]}" swift "$capture" -- \
+    "${recorder[@]}" \
     --model "$SWIFT_MODEL" --model_type ernie5_5 --template ernie5_5 \
     --cached_dataset "$cache" --max_length 262144 --truncation_strategy split \
     --packing false --padding_free true --split_dataset_ratio 0 \
@@ -102,7 +118,7 @@ capture_optimizer_swift() {
     --muon_split_qkv false --muon_fp32_matmul_prec medium \
     --train_iters "$iters" --lr_decay_iters 6 --lr 1e-5 --min_lr 1e-5 --lr_warmup_iters 5 \
     --lr_decay_style constant --weight_decay 0.1 --clip_grad 1.0 --seed 42 \
-    --logging_steps 1 --save_steps 1000000 --no_save_optim true --no_save_rng true \
+    --logging_steps 1 "${save_options[@]}" --no_save_optim true --no_save_rng true \
     --output_dir "$log" --check_model false
 }
 capture_optimizer_swift "$OPT/swift-capture" "$OPT/swift-cache-64" "$OPT/swift-log"
