@@ -552,15 +552,21 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_deterministic_mode_rejects_moe_aux_loss_fusion(self, isolated_determinism_state):
-        """Deterministic mode rejects the MoE aux-loss fusion but keeps fused TopK routing."""
+        """Deterministic mode rejects MoE aux-loss fusion unless TE has a deterministic fused kernel."""
         gpt_model_cfg = create_test_gpt_config(deterministic_mode=True, cross_entropy_loss_fusion=False)
         gpt_model_cfg.moe_router_fusion = True
         gpt_model_cfg.moe_router_aux_loss_fusion = True
 
         container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
+        te_support = "megatron.core.extensions.transformer_engine.te_supports_deterministic_moe_aux_loss"
         try:
-            with pytest.raises(AssertionError, match="moe_router_aux_loss_fusion=False"):
+            with patch(te_support, return_value=False):
+                with pytest.raises(AssertionError, match="moe_router_aux_loss_fusion=False"):
+                    container._validate_and_apply_deterministic_mode()
+
+            # Transformer Engine builds with a deterministic fused aux-loss kernel keep the fusion.
+            with patch(te_support, return_value=True):
                 container._validate_and_apply_deterministic_mode()
 
             gpt_model_cfg.moe_router_aux_loss_fusion = False
@@ -4213,13 +4219,32 @@ class TestRuntimeConfigUpdate:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     @staticmethod
-    def _ncclep_binding_cfg(backend="ncclep", dispatcher="flex"):
+    def _ncclep_binding_cfg(backend="ncclep", dispatcher="flex", megakernel=None):
         from types import SimpleNamespace
 
         return SimpleNamespace(
-            model=SimpleNamespace(moe_token_dispatcher_type=dispatcher, moe_flex_dispatcher_backend=backend),
+            model=SimpleNamespace(
+                moe_token_dispatcher_type=dispatcher,
+                moe_flex_dispatcher_backend=backend,
+                moe_megakernel_backend=megakernel,
+            ),
             dist=SimpleNamespace(external_gpu_device_mapping=False),
         )
+
+    @pytest.mark.parametrize("visible", ["0,1,2,3", "5"])
+    def test_ncclep_one_gpu_per_rank_is_noop_for_moe_megakernel(self, monkeypatch, visible):
+        """The megakernel owns dispatch/combine; its symmetric-memory buffers need each rank's device index."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "2")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
+        monkeypatch.setattr("torch.cuda.is_initialized", lambda: False)
+        cfg = self._ncclep_binding_cfg(megakernel="mok")
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == visible
+        assert cfg.dist.external_gpu_device_mapping is False
 
     def test_ncclep_one_gpu_per_rank_narrows_visible_devices(self, monkeypatch):
         """NCCL EP recipes keep only the local rank's GPU and switch the trainer to device 0."""

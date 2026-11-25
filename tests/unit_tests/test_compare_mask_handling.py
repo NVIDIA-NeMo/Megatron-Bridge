@@ -141,6 +141,35 @@ class TestComparisonFailureHandling:
             nprocs=2,
         )
 
+    def test_failed_comparison_exits_without_process_group_teardown(self, monkeypatch):
+        # Rank 0 alone rejects the reference while the other ranks wait in the HF logits
+        # broadcast. A teardown on rank 0 would wait for them, so the error must end the run.
+        error = ValueError("HF reference logits were produced from different input token IDs")
+        destroy_process_group = MagicMock()
+        monkeypatch.setattr(compare, "maybe_initialize_distributed", lambda: None)
+        monkeypatch.setattr(compare, "compare_models_one_step", MagicMock(side_effect=error))
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "destroy_process_group", destroy_process_group)
+
+        with pytest.raises(ValueError) as raised:
+            compare.main(["--hf_model_path", "org/model", "--prompt", "hello"])
+
+        assert raised.value is error
+        destroy_process_group.assert_not_called()
+
+    def test_successful_comparison_tears_down_process_group(self, monkeypatch):
+        compare_models_one_step = MagicMock()
+        destroy_process_group = MagicMock()
+        monkeypatch.setattr(compare, "maybe_initialize_distributed", lambda: None)
+        monkeypatch.setattr(compare, "compare_models_one_step", compare_models_one_step)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "destroy_process_group", destroy_process_group)
+
+        compare.main(["--hf_model_path", "org/model", "--prompt", "hello", "--fail-on-mismatch"])
+
+        assert compare_models_one_step.call_args.args[0].fail_on_mismatch is True
+        destroy_process_group.assert_called_once_with()
+
     @pytest.mark.parametrize("fail_on_mismatch", [False, True])
     @pytest.mark.parametrize(
         "hf_values, megatron_values, passes",

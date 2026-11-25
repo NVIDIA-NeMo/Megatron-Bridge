@@ -1,0 +1,96 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Recipe integration contracts; no model weights or GPUs are allocated."""
+
+from unittest.mock import Mock, patch
+
+import pytest
+
+from megatron.bridge.models.qwen.qwen4_exp_bridge import Qwen4ExpBridge
+from megatron.bridge.recipes import qwen38_flash_next_sft_64gpu_gb200_bf16_config
+from megatron.bridge.training.config import ConfigContainer
+from tests.unit_tests.models.qwen.test_qwen4_exp_vlm import full_hf_config  # noqa: F401
+
+
+pytestmark = pytest.mark.unit
+
+
+def test_full_vl_recipe_roundtrip_and_weight_initialization_contract(full_hf_config, tmp_path):
+    # Mock only HF I/O. Exercise real model, dataset, optimizer and logger configs.
+    model = Qwen4ExpBridge().hf_config_to_model_config(full_hf_config)
+    bridge = Mock()
+    bridge.get_model_config.return_value = model
+    with patch(
+        "megatron.bridge.recipes.qwen_vl.qwen38_flash_next.AutoBridge.from_hf_pretrained",
+        return_value=bridge,
+    ) as load:
+        cfg = qwen38_flash_next_sft_64gpu_gb200_bf16_config(hf_path="work/cache/qwen3.8-flash-next")
+
+    revision = cfg.dataset.task_encoder.hf_processor_revision
+    load.assert_called_once_with("work/cache/qwen3.8-flash-next", revision=revision, text_only=False)
+    assert len(revision) == 40
+    assert cfg.tokenizer.hf_tokenizer_kwargs["revision"] == revision
+    assert not cfg.model.hf_model_text_only
+    assert cfg.model.vision_config["patch_size"] == cfg.dataset.task_encoder.patch_size
+    # A caller must supply pretrained_checkpoint to standard finetune; no hidden
+    # pre-wrap load or private execution object is serialized into the recipe.
+    assert cfg.checkpoint.pretrained_checkpoint is None
+    assert not cfg.model.pre_wrap_hooks
+    assert not cfg.model.perform_initialization
+    assert cfg.model.calculate_per_token_loss
+    assert not cfg.ddp.average_in_collective
+    assert cfg.ddp.grad_reduce_in_fp32 and cfg.mixed_precision.grad_reduce_in_fp32
+    assert cfg.dataset.packing_buffer_size is None
+    assert not cfg.dataset.enable_in_batch_packing
+    assert cfg.logger.log_throughput and cfg.logger.log_interval == 1
+    assert cfg.logger.tensorboard_log_interval == 1
+
+    path = tmp_path / "recipe.yaml"
+    cfg.to_yaml(str(path))
+    restored = ConfigContainer.from_yaml(str(path))
+    assert type(restored.model) is type(cfg.model)
+    assert restored.model.vision_config == cfg.model.vision_config
+    assert type(restored.dataset.task_encoder) is type(cfg.dataset.task_encoder)
+    assert restored.dataset.task_encoder.hf_processor_revision == revision
+    assert restored.logger.log_throughput
+
+    # Recipe defaults retain their training contract before and
+    # after serialization. Disabled recomputation does not activate the Core
+    # default recompute_modules list.
+    for config in (cfg, restored):
+        assert config.model.tensor_model_parallel_size == 4
+        assert config.model.expert_model_parallel_size == 64
+        assert config.model.expert_tensor_parallel_size == 1
+        assert config.model.pipeline_model_parallel_size == 1
+        assert config.model.context_parallel_size == 1
+        assert config.model.sequence_parallel
+        assert config.model.moe_token_dispatcher_type == "flex"
+        assert config.model.moe_flex_dispatcher_backend == "hybridep"
+        assert config.model.gradient_accumulation_fusion
+        assert config.model.bias_activation_fusion
+        assert config.model.moe_permute_fusion
+        assert config.model.moe_permute_fusion_into_hybridep
+        assert config.model.moe_router_fusion
+        assert not config.model.moe_shared_expert_overlap
+        assert config.model.recompute_granularity is None
+        assert config.model.cuda_graph_impl == "none"
+        assert config.train.micro_batch_size == 1
+        assert config.train.global_batch_size == 16
+        assert config.dataset.pad_to_max_length
+        assert config.dataset.seq_length == config.model.seq_length == 4096
+        assert config.model.ple_freeze_ngram_embeddings
+        assert config.model.ple_embedding_sharding == "ep"
+        assert config.train.manual_gc
+        assert config.train.manual_gc_interval == 100

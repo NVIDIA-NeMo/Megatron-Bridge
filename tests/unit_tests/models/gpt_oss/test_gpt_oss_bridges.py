@@ -276,3 +276,80 @@ def test_gate_up_mapping_preserves_expert_rows_across_etp_and_gtp(monkeypatch, b
         monkeypatch.setattr(delegate, "gather_from_tp_ranks", lambda weight: expected_tp)
         exported = mapping.megatron_to_hf(converted, module)
         assert torch.equal(exported[hf_name], hf_expert)
+
+
+def _bridge_with_sizes(hidden_size, intermediate_size):
+    bridge = GPTOSSBridge()
+    bridge.hf_pretrained = SimpleNamespace(
+        config=SimpleNamespace(hidden_size=hidden_size, intermediate_size=intermediate_size)
+    )
+    return bridge
+
+
+@pytest.mark.parametrize(("hidden_size", "intermediate_size"), [(8, 4), (6, 4)], ids=["square", "rectangular"])
+def test_bf16_gate_up_proj_imports_and_exports_exactly(monkeypatch, hidden_size, intermediate_size):
+    """A BF16 ``gate_up_proj`` imports exactly, also when hidden == 2 * intermediate makes it square."""
+    num_experts = 2
+    hf_name = "model.layers.0.mlp.experts.gate_up_proj"
+    # Hugging Face's BF16 layout [E, hidden, 2 * intermediate], with distinct values so that
+    # a transpose or a mixed-up gate/up column shows.
+    hf_gate_up = torch.arange(num_experts * hidden_size * 2 * intermediate_size, dtype=torch.float32)
+    hf_gate_up = hf_gate_up.reshape(num_experts, hidden_size, 2 * intermediate_size)
+    mapping_path = "megatron.bridge.models.conversion.param_mapping"
+    monkeypatch.setattr(f"{mapping_path}.get_pg_size", lambda group: group.size() if group is not None else 1)
+    monkeypatch.setattr(f"{mapping_path}.get_pg_rank", lambda group: group.rank() if group is not None else 0)
+
+    loaded = _bridge_with_sizes(hidden_size, intermediate_size).maybe_modify_loaded_hf_weight(
+        hf_name, {hf_name: hf_gate_up}
+    )
+
+    for expert in range(num_experts):
+        module = torch.nn.Module()
+        module.register_parameter("weight0", torch.nn.Parameter(torch.zeros(2 * intermediate_size, hidden_size)))
+        mapping = GPTOSSMLPGateUpProjMapping(f"decoder.layers.0.mlp.experts.linear_fc1.weight{expert}", hf_name)
+        mapping.set_process_groups_from_pg_collection(
+            SimpleNamespace(expt_tp=SimpleNamespace(size=lambda: 1, rank=lambda: 0))
+        )
+        # Hugging Face computes x @ gate_up_proj[e] and takes gate and up from alternating columns;
+        # Megatron's linear_fc1 weight stacks the gate rows over the up rows.
+        hf_expert = hf_gate_up[expert]
+        expected = torch.cat((hf_expert[:, ::2].t(), hf_expert[:, 1::2].t()))
+
+        converted = mapping.hf_to_megatron(loaded, module)
+
+        assert torch.equal(converted, expected)
+        monkeypatch.setattr(mapping._gated_mapping, "broadcast_from_pp_rank", lambda weight, **kwargs: weight)
+        assert torch.equal(mapping.megatron_to_hf(converted, module)[hf_name], hf_expert)
+
+
+@pytest.mark.parametrize(
+    ("projection", "hidden_size", "intermediate_size", "shape", "transposed"),
+    [
+        ("gate_up_proj", 8, 4, (2, 8, 8), True),
+        ("gate_up_proj", 6, 4, (2, 6, 8), True),
+        ("gate_up_proj", 6, 4, (2, 8, 6), False),
+        ("down_proj", 4, 4, (2, 4, 4), True),
+        ("down_proj", 6, 4, (2, 4, 6), True),
+        ("down_proj", 6, 4, (2, 6, 4), False),
+    ],
+    ids=[
+        "gate_up_square",
+        "gate_up_hf_layout",
+        "gate_up_megatron_layout",
+        "down_square",
+        "down_hf_layout",
+        "down_megatron_layout",
+    ],
+)
+def test_load_hook_gives_bf16_expert_weights_megatron_layout(
+    projection, hidden_size, intermediate_size, shape, transposed
+):
+    """BF16 expert weights in Hugging Face's layout, square ones included, are transposed to Megatron's."""
+    hf_name = f"model.layers.0.mlp.experts.{projection}"
+    weight = torch.arange(torch.Size(shape).numel(), dtype=torch.float32).reshape(shape)
+
+    loaded = _bridge_with_sizes(hidden_size, intermediate_size).maybe_modify_loaded_hf_weight(
+        hf_name, {hf_name: weight}
+    )
+
+    assert torch.equal(loaded, weight.transpose(-1, -2) if transposed else weight)

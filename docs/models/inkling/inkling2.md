@@ -210,30 +210,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-11-12</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-16</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>1.827345</dd>
+            <dd>1.827291</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>1.745319</dd>
+            <dd>1.745315</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>18,019.690 ms</dd>
+            <dd>16,240.320 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>203.270 TFLOP/s/GPU</dd>
+            <dd>225.530 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>1,818.455 tokens/s/GPU</dd>
+            <dd>2,017.694 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -249,7 +249,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Observed with 128 GB200 GPUs at TP1/PP4/EP32/ETP1 (pipeline stages of 13, 13, 12, and 10 decoder blocks; each EP32 group on eight consecutive nodes of one NVL72 rack; HybridEP dispatch; full activation recompute; compiled Inkling2 operators; expandable segments set in the environment as the example README instructs): the command warm-starts from the imported checkpoint with natural expert routing, keeps the image encoder frozen, and runs the first 50 of the recipe&#x27;s 100 steps on the RedPajama2 head_01 prefix at GBS 1024 and sequence length 4096, at the recipe&#x27;s peak LR of 3e-5 after 40 warmup steps (2.82e-5 at step 50). All 50 steps finish with finite losses and 0 skipped or NaN iterations. Caveats: run on 2026-11-12 through a private srun wrapper around scripts/training/run_recipe.py rather than train.sh, on a pre-release tree whose model code and recipe match the recorded commit. Checkpoint saving was off, so the run saved no step-50 or step-100 checkpoint and checkpoint_resume stays unverified. An earlier 100-step run of the same data and schedule on older code reached a loss of 1.7301 at step 100.
+        <p>Observed with 128 GB200 GPUs at TP1/PP2/EP32/ETP1 (pipeline stages of 26 and 22 decoder blocks, each on 16 consecutive nodes of one NVL72 rack holding two EP32 groups; HybridEP dispatch; full activation recompute; compiled Inkling2 operators; Inkling2 attention&#x27;s FlexAttention backward tiles for Blackwell; expandable segments set in the environment as the example README instructs): the command warm-starts from the imported checkpoint with natural expert routing, keeps the image encoder frozen, and runs the first 50 of the recipe&#x27;s 100 steps on the RedPajama2 head_01 prefix at GBS 1024 and sequence length 4096, at the recipe&#x27;s peak LR of 3e-5 after 40 warmup steps (2.82e-5 at step 50). All 50 steps finish with finite losses and 0 skipped or NaN iterations. Caveats: run on 2026-11-16 through a private srun wrapper around scripts/training/run_recipe.py rather than train.sh, with Transformers 5.23.0 installed over the container&#x27;s copy. Checkpoint saving was off, so the run saved no step-50 or step-100 checkpoint and checkpoint_resume stays unverified. An earlier 100-step run of the same data and schedule on older code and four pipeline stages reached a loss of 1.7301 at step 100.
 </p>
       </section>
     </article>

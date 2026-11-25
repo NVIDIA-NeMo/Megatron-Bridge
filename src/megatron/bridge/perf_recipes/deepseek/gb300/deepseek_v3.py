@@ -438,7 +438,7 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_mfsdpv2_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
@@ -473,7 +473,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.gradient_accumulation_fusion = False
 
     cfg.train.micro_batch_size = 1
-    cfg.train.global_batch_size = 1024
+    cfg.train.global_batch_size = 15360
 
     cfg.ddp.outer_dp_sharding_strategy = "optim"
     # Megatron-FSDP applies outer_dp_sharding_strategy to expert parameters as well and ignores

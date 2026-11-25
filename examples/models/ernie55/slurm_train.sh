@@ -14,9 +14,9 @@
 # limitations under the License.
 
 # ==============================================================================
-# ERNIE 5.5 training on GB300 with SLURM: fine-tune a Hugging Face checkpoint
+# ERNIE 5.5 training with SLURM: fine-tune a Hugging Face checkpoint
 #
-# Runs an ERNIE 5.5 recipe (megatron.bridge.recipes.ernie.ernie55) with the ERNIE 5.5 forward step, one srun
+# Runs an ERNIE 5.5 recipe (megatron.bridge.recipes.ernie) with the ERNIE 5.5 forward step, one srun
 # task per GPU in a Pyxis/enroot container. The default recipe is ernie55_sft_64gpu_gb300_bf16_config: the
 # production shape (16 nodes x 4 GPUs, TP1 PP1 CP64 EP64, one 262144-token row per micro-batch) starting from the
 # weights of ERNIE55_HF_PATH. A 16-node job needs a QoS that admits 16 nodes.
@@ -25,6 +25,12 @@
 #   ERNIE55_HF_PATH=/path/to/ernie55_hf DATA_PATH=/path/to/sft.jsonl \
 #   CONTAINER_IMAGE=/path/to/image.sqsh MEGATRON_LM_PATH=/path/to/Megatron-LM CONTAINER_MOUNTS="/path:/path" \
 #       sbatch --account=<account> --partition=<partition> --qos=<qos> slurm_train.sh
+#
+# On H100, the recipe is ernie55_sft_128gpu_h100_bf16_config (megatron.bridge.recipes.ernie.h100.ernie55: 16 nodes
+# x 8 GPUs, TP1 PP8 CP1 EP16, packed rows of at most 4096 tokens, about 12 to 13 hours for its 8260 steps); add
+# RECIPE and ask for 8 tasks and GPUs per node and for the time:
+#   RECIPE=ernie55_sft_128gpu_h100_bf16_config <the variables above> \
+#       sbatch --ntasks-per-node=8 --gpus-per-node=8 --time=16:00:00 --account=<account> ... slurm_train.sh
 #
 # Required env vars:
 #   CONTAINER_IMAGE       enroot/squashfs image with Megatron Bridge's dependencies
@@ -41,6 +47,9 @@
 #                         ("input_ids"/"labels") rows; synthetic rows when unset
 #   HF_TOKENIZER          tokenizer directory for text rows (default: ERNIE55_HF_PATH when it holds tokenizer.json)
 #   TRAIN_ITERS           number of training steps (default: the recipe's)
+#   EXTRA_OVERRIDES       more recipe overrides, space-separated key=value, appended after the ones above
+#                         (e.g. "checkpoint.save_optim=true")
+#   GPUS_PER_NODE         GPUs, and tasks, per node (default: the job's --ntasks-per-node, which is 4 here)
 #   CHECKPOINT_DIR        checkpoint directory, used to save AND to load, so a resubmission resumes from its last
 #                         saved step (default: $WORKSPACE/checkpoints/<RECIPE without _config>); use a new directory
 #                         for a fresh run
@@ -75,6 +84,7 @@ ERNIE55_HF_PATH=${ERNIE55_HF_PATH:-}
 DATA_PATH=${DATA_PATH:-}
 HF_TOKENIZER=${HF_TOKENIZER:-}
 TRAIN_ITERS=${TRAIN_ITERS:-}
+EXTRA_OVERRIDES=${EXTRA_OVERRIDES:-}
 RUN_NAME=${RUN_NAME:-${RECIPE%_config}}
 LOG_DIR=${LOG_DIR:-${WORKSPACE}/logs/${RUN_NAME}}
 CHECKPOINT_DIR=${CHECKPOINT_DIR:-${WORKSPACE}/checkpoints/${RUN_NAME}}
@@ -109,6 +119,9 @@ fi
 if [ -n "${TRAIN_ITERS}" ]; then
     OVERRIDES="${OVERRIDES} train.train_iters=${TRAIN_ITERS}"
 fi
+if [ -n "${EXTRA_OVERRIDES}" ]; then
+    OVERRIDES="${OVERRIDES} ${EXTRA_OVERRIDES}"
+fi
 
 # ==============================================================================
 # Environment (the recipe sets its own launch variables, such as CUDA_DEVICE_MAX_CONNECTIONS=1, at startup)
@@ -122,7 +135,7 @@ export MASTER_PORT=${MASTER_PORT:-29500}
 export MEGATRON_BRIDGE_PATH MEGATRON_LM_PATH RECIPE OVERRIDES ERNIE55_HF_PATH
 
 NUM_NODES=${SLURM_JOB_NUM_NODES}
-GPUS_PER_NODE=4
+GPUS_PER_NODE=${GPUS_PER_NODE:-${SLURM_NTASKS_PER_NODE:-4}}
 
 echo "======================================"
 echo "ERNIE 5.5: ${RECIPE}"

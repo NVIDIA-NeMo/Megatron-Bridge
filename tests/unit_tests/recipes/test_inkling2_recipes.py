@@ -273,13 +273,15 @@ def test_pretrain_recipe_contract() -> None:
     cfg = inkling2_small_pretrain_128gpu_gb200_bf16_config()
 
     model = cfg.model
-    assert (model.tensor_model_parallel_size, model.pipeline_model_parallel_size) == (1, 4)
-    # Later blocks cost more and the last stage also computes the loss, so the earlier stages hold more blocks.
-    assert [len(stage) // 2 for stage in model.hybrid_layer_pattern.split("|")] == [13, 13, 12, 10]
+    assert (model.tensor_model_parallel_size, model.pipeline_model_parallel_size) == (1, 2)
+    # Later blocks cost more and the last stage also computes the loss, so the first stage holds more blocks.
+    assert [len(stage) // 2 for stage in model.hybrid_layer_pattern.split("|")] == [26, 22]
     assert model.expert_model_parallel_size == 32
     assert (model.moe_token_dispatcher_type, model.moe_flex_dispatcher_backend) == ("flex", "hybridep")
     assert model.seq_length == cfg.dataset.seq_length == 4096
-    assert _data_parallel_size(cfg, 128) == 32
+    assert _data_parallel_size(cfg, 128) == 64
+    # Each stage's two EP32 groups reduce their expert gradients between each other.
+    assert _expert_data_parallel_size(cfg, 128) == 2
     assert (cfg.ddp.overlap_grad_reduce, cfg.ddp.overlap_param_gather) == (False, False)
     assert cfg.train.train_iters == 100
     assert cfg.train.global_batch_size == 1024

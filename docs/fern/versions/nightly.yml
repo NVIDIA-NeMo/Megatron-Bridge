@@ -13,6 +13,9 @@ navigation:
     path: ./nightly/pages/performance-summary-archive.mdx
 - section: Guides
   contents:
+  - page: Unified Megatron-LM
+    path: ./nightly/unified-megatron.mdx
+    slug: unified-megatron
   - page: Parallelisms Guide
     path: ./nightly/pages/parallelisms.mdx
   - page: Performance Tuning Guide
@@ -176,6 +179,8 @@ navigation:
   - contents:
     - page: Step-3.5-Flash
       path: ./nightly/pages/models/stepfun/step35.mdx
+    - page: Step-3.7-Flash
+      path: ./nightly/pages/models/stepfun/step37.mdx
     section: StepFun
 - section: Training and Customization
   contents:

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import nullcontext
 from unittest.mock import Mock, patch
 
 import pytest
@@ -188,6 +189,8 @@ class TestDistillationProvider:
         mock_student_model.named_modules.return_value = []
         mock_teacher_model.named_modules.return_value = []
         mock_kd_model.named_modules.return_value = []
+        # ModelOpt's MTP-freeze check hides the teacher while it scans the student.
+        mock_kd_model.hide_teacher_model.return_value = nullcontext()
 
         # Set the side effects for the model provider - student first, then teacher
         mock_mcore_gpt.side_effect = [mock_student_model, mock_teacher_model]
@@ -246,6 +249,7 @@ class TestDistillationProvider:
         student_full.language_model.config.hidden_size = teacher_full.language_model.config.hidden_size = 4096
         student_full.language_model.parameters.return_value = iter(())
         student_full.language_model.named_modules.return_value = []
+        student_full.language_model.hide_teacher_model.return_value = nullcontext()
         teacher_full.language_model.parameters.return_value = iter(())
         # The teacher's full model is built inside _convert_hook.
         teacher.provide_distributed_model = Mock(return_value=[teacher_full])

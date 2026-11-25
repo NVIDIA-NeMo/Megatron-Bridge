@@ -14,6 +14,7 @@
 
 import enum
 import functools
+import importlib
 import logging
 from unittest.mock import MagicMock, patch
 
@@ -40,6 +41,17 @@ from megatron.bridge.utils.instantiate_utils import (
     register_allowed_target_prefix,
     target_allowlist,
 )
+
+
+# NumPy 2 moved ``load`` into the private ``numpy.lib._npyio_impl`` module and ``numpy.lib.npyio``
+# no longer re-exports it. Before NumPy 2 the public alias reaches canonical-target resolution;
+# on NumPy 2 the only remaining alias is rejected earlier by the private-segment rule.
+if hasattr(importlib.import_module("numpy.lib.npyio"), "load"):
+    _NUMPY_LOAD_ALIAS = "numpy.lib.npyio.load"
+    _NUMPY_LOAD_ALIAS_ERROR = "resolves to the unsafe target"
+else:
+    _NUMPY_LOAD_ALIAS = "numpy.lib._npyio_impl.load"
+    _NUMPY_LOAD_ALIAS_ERROR = "private target path segments"
 
 
 @pytest.fixture(autouse=True)
@@ -852,15 +864,15 @@ class TestTargetPrefixValidation:
             instantiate(config)
 
     @pytest.mark.parametrize(
-        "target",
+        "target,error",
         [
-            "numpy.lib.npyio.load",
-            "torch.serialization.load",
+            pytest.param(_NUMPY_LOAD_ALIAS, _NUMPY_LOAD_ALIAS_ERROR, id=_NUMPY_LOAD_ALIAS),
+            pytest.param("torch.serialization.load", "resolves to the unsafe target", id="torch.serialization.load"),
         ],
     )
-    def test_instantiate_rejects_canonical_aliases_and_dynamic_code_helpers(self, target):
+    def test_instantiate_rejects_canonical_aliases_and_dynamic_code_helpers(self, target, error):
         """Test that aliases and dynamic-code helpers cannot bypass exact target checks."""
-        with pytest.raises(InstantiationException, match="resolves to the unsafe target"):
+        with pytest.raises(InstantiationException, match=error):
             instantiate({"_target_": target, "_call_": False})
 
     @pytest.mark.parametrize(
@@ -908,7 +920,7 @@ class TestTargetPrefixValidation:
         config = {
             "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestClass",
             "name": "safe",
-            "unused": {"_target_": "numpy.lib.npyio.load", "_call_": False},
+            "unused": {"_target_": "torch.serialization.load", "_call_": False},
         }
         with pytest.raises(InstantiationException, match="resolves to the unsafe target"):
             instantiate(config)

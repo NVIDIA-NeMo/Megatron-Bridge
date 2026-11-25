@@ -97,8 +97,8 @@ def get_default_hybrid_stack_spec(config: "HybridModelProvider") -> ModuleSpec:
     """
     if getattr(config, "transformer_impl", None) == "inference_optimized":
         return default_hybrid_inference_stack_spec
-    if getattr(config, "restore_modelopt_state", False):
-        return modelopt_hybrid_stack_spec(config)
+    # Quantized checkpoints restore into the TE spec they were quantized in: the ModelOpt spec's
+    # SequentialMLP does not match the expert quantizer keys of a TEGroupedMLP checkpoint.
     return transformer_engine_hybrid_stack_spec()
 
 

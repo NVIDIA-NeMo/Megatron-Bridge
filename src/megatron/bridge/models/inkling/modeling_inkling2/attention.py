@@ -64,6 +64,21 @@ from megatron.bridge.models.inkling.modeling_inkling2.ops import (
 _compiled_flex_attention = None
 _block_mask_cache: "OrderedDict[tuple, object]" = OrderedDict()
 
+# FlexAttention backward tiles for Blackwell (compute capability 10.x) and heads up to 128 wide. The
+# relative-logit score_mod gathers one bias per score and takes a gradient through it, which makes
+# PyTorch's default backward tiles for 128-wide heads there (64x128 and 128x64) slow. Max-autotune picks
+# these tiles at the pretraining shapes; they cut the attention backward by 44-61% at the pretraining and
+# SFT shapes, with or without context parallelism, and leave outputs and gradients bitwise identical.
+# (For heads up to 64 wide they are PyTorch's own defaults.) The forward keeps PyTorch's defaults.
+_BLACKWELL_BACKWARD_KERNEL_OPTIONS = {
+    "bwd_BLOCK_M1": 32,
+    "bwd_BLOCK_N1": 64,
+    "bwd_BLOCK_M2": 64,
+    "bwd_BLOCK_N2": 32,
+    "bwd_num_warps": 4,
+    "bwd_num_stages": 3,
+}
+
 
 def _flex_attention():
     global _compiled_flex_attention
@@ -72,6 +87,13 @@ def _flex_attention():
 
         _compiled_flex_attention = torch.compile(flex_attention, dynamic=False)
     return _compiled_flex_attention
+
+
+def _flex_kernel_options(device: torch.device, head_dim: int) -> dict | None:
+    """Return FlexAttention kernel options for ``device`` and ``head_dim``, or ``None`` for PyTorch's defaults."""
+    if torch.cuda.get_device_capability(device)[0] == 10 and head_dim <= 128:
+        return dict(_BLACKWELL_BACKWARD_KERNEL_OPTIONS)
+    return None
 
 
 def _attend_with_sink(query, key, value, sink, *, score_mod, block_mask, out_dtype):
@@ -99,7 +121,15 @@ def _attend_with_sink(query, key, value, sink, *, score_mod, block_mask, out_dty
     k = key.permute(1, 2, 0, 3).contiguous()
     v = value.permute(1, 2, 0, 3).contiguous()
     output, lse = _flex_attention()(
-        q, k, v, score_mod=score_mod, block_mask=block_mask, enable_gqa=True, scale=head_dim**-0.5, return_lse=True
+        q,
+        k,
+        v,
+        score_mod=score_mod,
+        block_mask=block_mask,
+        enable_gqa=True,
+        scale=head_dim**-0.5,
+        return_lse=True,
+        kernel_options=_flex_kernel_options(q.device, head_dim),
     )
     # Multiplying the kernel's output by the FP32 scale promotes to FP32 without keeping an
     # FP32 copy of the output for the backward pass; autograd saves the kernel's own output.

@@ -146,45 +146,35 @@ class GPTOSSBridge(MegatronModelBridge):
     ) -> torch.Tensor:
         """Load weights from HuggingFace state dict with MXFP4 dequantization support.
 
-        Per-expert ``down_proj`` is square for GPT-OSS-20B/120B (hidden == intermediate), so
-        the bridge cannot auto-detect orientation from shape alone. BF16 checkpoints (e.g.
+        Megatron's grouped expert linears expect per-expert ``linear_fc1`` weights as
+        ``(2*intermediate, hidden)`` and ``linear_fc2`` weights as ``(hidden, intermediate)``.
+        MXFP4-dequantized weights come out in that layout. BF16 checkpoints (e.g.
         ``unsloth/gpt-oss-20b-BF16``, and what ``transformers.GptOssForCausalLM`` produces at
-        init) store it as ``[E, intermediate, hidden]``, matching ``gate_up_proj``'s
-        ``[E, hidden, 2*intermediate]`` convention. MXFP4-dequantized weights come out as
-        ``[E, hidden, intermediate]``. Megatron's TE ``RowParallelGroupedLinear`` expects
-        per-expert ``(hidden, intermediate)``, so the BF16 path needs a transpose here while
-        the MXFP4 path is already aligned. Without this, BF16 imports silently store down_proj
-        in the wrong orientation and inference is broken.
-
-        gate_up_proj is handled directly in GPTOSSMLPGateUpProjMapping.hf_to_megatron via
-        _align_expert_weight_to_shape, which auto-detects the orientation difference between
-        BF16 checkpoints ([num_experts, hidden, 2*intermediate]) and MXFP4-dequantized checkpoints
-        ([num_experts, 2*intermediate, hidden]).
+        init) store the transposes: ``gate_up_proj`` as ``[E, hidden, 2*intermediate]`` and
+        ``down_proj`` as ``[E, intermediate, hidden]``. Shape alone cannot tell the two layouts
+        apart when a projection is square, as ``down_proj`` is for GPT-OSS-20B/120B
+        (hidden == intermediate) and ``gate_up_proj`` is when hidden == 2*intermediate. So a BF16
+        expert weight whose last two dimensions match Hugging Face's layout, square ones included,
+        is transposed here. Without this, BF16 imports silently store the projection in the wrong
+        orientation and inference is broken.
         """
         if isinstance(hf_param, str):
             if hf_param in hf_state_dict:
                 hf_weights = hf_state_dict[hf_param]
-                if hf_param.endswith(".mlp.experts.down_proj") and hf_weights.ndim == 3:
+                if hf_weights.ndim == 3 and hf_param.endswith((".mlp.experts.gate_up_proj", ".mlp.experts.down_proj")):
                     cfg = self.hf_pretrained.config
-                    hidden = cfg.hidden_size
-                    intermediate = cfg.intermediate_size
-                    last2 = tuple(hf_weights.shape[-2:])
-                    if last2 == (intermediate, hidden) and intermediate != hidden:
-                        # Unambiguous BF16 layout (E, intermediate, hidden); transpose to (E, hidden, intermediate).
-                        hf_weights = hf_weights.transpose(-1, -2).contiguous()
-                    elif last2 == (hidden, intermediate) and intermediate != hidden:
-                        # Already aligned with Megatron — no-op.
-                        pass
-                    elif intermediate == hidden:
-                        # Square: HF GptOssForCausalLM init produces (E, intermediate, hidden), so a plain BF16
-                        # checkpoint is in that layout. Transpose to (E, hidden, intermediate) for Megatron.
+                    if hf_param.endswith(".gate_up_proj"):
+                        hf_layout = (cfg.hidden_size, 2 * cfg.intermediate_size)
+                    else:
+                        hf_layout = (cfg.intermediate_size, cfg.hidden_size)
+                    if tuple(hf_weights.shape[-2:]) == hf_layout:
                         hf_weights = hf_weights.transpose(-1, -2).contiguous()
                 return hf_weights
             blocks_key = hf_param + "_blocks"
             scales_key = hf_param + "_scales"
             if blocks_key in hf_state_dict and scales_key in hf_state_dict:
                 hf_weights = _dequantize_mxfp4(hf_state_dict[blocks_key], hf_state_dict[scales_key])
-                # MXFP4 dequant already emits [E, hidden, intermediate] for down_proj — leave as-is.
+                # MXFP4 dequantization already emits Megatron's layout for both expert projections.
                 return hf_weights
             raise KeyError(
                 f"Cannot locate weights for '{hf_param}'. Missing both de-quantized tensor and "
@@ -350,6 +340,8 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
         target_shape = list(_get_mapping_shape(target_param))
         if not isinstance(target_param, DTensor):
             target_shape[0] *= self.tp_size
+        # The bridge's load hook already gives a BF16 weight Megatron's layout, which shape detection
+        # cannot do for a square weight; this only transposes a rectangular weight passed in directly.
         expert_weight = _align_expert_weight_to_shape(expert_weight, target_shape, "gate_up_proj")
         if self.permute_dims is not None:
             return super().hf_to_megatron(self._interleave(expert_weight), megatron_module)

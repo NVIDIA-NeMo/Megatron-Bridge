@@ -1333,12 +1333,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-if __name__ == "__main__":
-    args = build_parser().parse_args()
+def main(argv: list[str] | None = None) -> None:
+    """Run the comparison and tear down the process group once it has succeeded.
+
+    An error can be raised on one rank only, for example when rank 0 rejects an HF
+    reference produced from other input IDs, while the other ranks wait in a collective.
+    Destroying the process group on that rank can then wait for those ranks forever, as
+    ProcessGroupNCCL2 does, so the error is left to end the process instead, and torchrun
+    then stops the remaining ranks.
+
+    Args:
+        argv: Command-line arguments. Defaults to ``sys.argv[1:]``.
+    """
+    args = build_parser().parse_args(argv)
 
     maybe_initialize_distributed()
-    try:
-        compare_models_one_step(args)
-    finally:
-        if torch.distributed.is_initialized():
-            torch.distributed.destroy_process_group()
+    compare_models_one_step(args)
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
+
+
+if __name__ == "__main__":
+    main()

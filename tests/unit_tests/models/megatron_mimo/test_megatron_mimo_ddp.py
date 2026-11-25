@@ -1,6 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for MegatronMIMO DDP wrapping utilities."""
 
+import dataclasses
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -232,6 +233,61 @@ class TestWrapMegatronMIMOModelDistributed:
             )
 
         mock_ddp.assert_called_once()
+
+    @pytest.mark.parametrize("per_token_module", ["language", "images"])
+    @patch("megatron.core.distributed.DistributedDataParallel")
+    @patch("torch.distributed.get_rank")
+    def test_per_token_module_does_not_average_in_collective(self, mock_get_rank, mock_ddp, per_token_module):
+        """MCore's DDP rejects average_in_collective under per-token loss; other modules keep the shared config."""
+        mock_get_rank.return_value = 1
+        model = self._create_mock_megatron_mimo_model(has_language_model=True, modality_names=["images"])
+        language_model = model.language_model
+        language_model.config.calculate_per_token_loss = per_token_module == "language"
+        model.modality_submodules["images"].encoders["encoder"].config.calculate_per_token_loss = (
+            per_token_module == "images"
+        )
+        ddp_config = DistributedDataParallelConfig(average_in_collective=True, grad_reduce_in_fp32=True)
+        parallelism = self._create_megatron_mimo_parallelism_config(
+            {"language": {"dp": 2, "rank_offset": 1}, "images": {"dp": 3, "rank_offset": 0}}
+        )
+        grids = {
+            "language": self._create_mock_grid(rank_offset=1, size=2),
+            "images": self._create_mock_grid(rank_offset=0, size=3),
+        }
+
+        wrap_megatron_mimo_model_distributed(
+            model, ddp_config, parallelism, grids, {"language": MagicMock(), "images": MagicMock()}
+        )
+
+        assert mock_ddp.call_args_list[0].kwargs["module"] is language_model
+        configs = dict(zip(["language", "images"], (call.kwargs["ddp_config"] for call in mock_ddp.call_args_list)))
+        other_module = "images" if per_token_module == "language" else "language"
+        assert configs[other_module] is ddp_config
+        assert configs[per_token_module] == dataclasses.replace(ddp_config, average_in_collective=False)
+        assert ddp_config.average_in_collective
+
+    @pytest.mark.parametrize("average_in_collective", [True, False])
+    @patch("megatron.core.distributed.DistributedDataParallel")
+    @patch("torch.distributed.get_rank")
+    def test_per_token_override_is_logged_by_module_first_rank(self, mock_get_rank, mock_ddp, average_in_collective):
+        """The override is logged once, on the module grid's first rank, and only when it changes the config."""
+        mock_get_rank.return_value = 1
+        model = self._create_mock_megatron_mimo_model(has_language_model=True)
+        model.language_model.config.calculate_per_token_loss = True
+        ddp_config = DistributedDataParallelConfig(average_in_collective=average_in_collective)
+        parallelism = self._create_megatron_mimo_parallelism_config({"language": {"dp": 2, "rank_offset": 1}})
+        grids = {"language": self._create_mock_grid(rank_offset=1, size=2)}
+
+        with patch("megatron.bridge.models.megatron_mimo.megatron_mimo_ddp.log_single_rank") as log:
+            wrap_megatron_mimo_model_distributed(model, ddp_config, parallelism, grids, {"language": MagicMock()})
+
+        if average_in_collective:
+            log.assert_called_once()
+            assert log.call_args.kwargs["rank"] == 1
+            assert "'language'" in log.call_args.args[2]
+        else:
+            log.assert_not_called()
+            assert mock_ddp.call_args.kwargs["ddp_config"] is ddp_config
 
     @pytest.mark.parametrize("module_name,rank", [("language", 0), ("images", 2)])
     @patch("megatron.core.optimizer.layer_wise_optimizer.tag_params_for_buffer_routing")
