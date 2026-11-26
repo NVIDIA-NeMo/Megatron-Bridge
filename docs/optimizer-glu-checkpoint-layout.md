@@ -26,3 +26,11 @@ Interleaved native checkpoints require `torch_dist`; FSDP/DTensor and GTP layout
 conversion is outside this change. The two-GPU Core tests exercise BF16 Adam,
 both gather modes and subsequent updates. FP8/FP4 fused kernel execution and
 large-scale checkpoint memory have not been validated by those tests.
+
+If the original Hugging Face checkpoint is available and its weights are the ones
+you want to initialize from, import it again with the updated AutoBridge writer.
+This creates a marked model checkpoint. It starts a new optimizer and cannot
+recover later training updates. For a trained checkpoint, keep the original
+reader available for full resume until model rows, master weights and both Adam
+moments can all be verified. Adding a model layout marker alone cannot establish
+the optimizer layout.

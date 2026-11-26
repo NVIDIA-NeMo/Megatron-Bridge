@@ -469,3 +469,11 @@ The older direct Core factory split runtime rows without canonicalizing them;
 a configuration's interleave size alone cannot establish disk order. Recover
 ambiguous checkpoints with their original writer and verify model/master/moment
 rows before rewriting them. A model-only request does not make unknown rows safe.
+
+If the original Hugging Face checkpoint is available and its weights are the ones
+you want to initialize from, import it again with the updated AutoBridge writer.
+This creates a marked model checkpoint. It starts a new optimizer and cannot
+recover later training updates. For a trained checkpoint, keep the original
+reader available for full resume until model rows, master weights and both Adam
+moments can all be verified. Adding a model layout marker alone cannot establish
+the optimizer layout.
