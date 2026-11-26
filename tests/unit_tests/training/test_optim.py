@@ -14,7 +14,6 @@
 
 """Tests for setup_optimizer in optim.py."""
 
-import builtins
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -25,10 +24,8 @@ from megatron.core.optimizer import OptimizerConfig, ParamGroupOverride, ParamKe
 from megatron.bridge.peft.lora import get_lora_plus_config_overrides
 from megatron.bridge.training.config import OptimizerConfigOverrideProvider, SchedulerConfig
 from megatron.bridge.training.optim import (
-    hybrid_optimizer_state_loading,
     memory_efficient_fp32_optimizer_state_loading,
     memory_efficient_precision_aware_optimizer_state_checkpointing,
-    sync_hybrid_device_optimizer_fp32_master_copies,
 )
 
 
@@ -159,10 +156,6 @@ class TestSetupOptimizerMuP:
         mock_get_model_config.assert_called_once_with(model1)
 
 
-class _FakeHDO:
-    """Stand-in for HybridDeviceOptimizer used to satisfy the isinstance check."""
-
-
 class _FakeFusedAdam(torch.optim.Optimizer):
     """CPU stand-in for TE FusedAdam with an observable override loader."""
 
@@ -203,33 +196,16 @@ class _FakeFusedAdam(torch.optim.Optimizer):
         return self.state[param][state_name].float() * multiplier
 
 
-class _FakeParamRange:
-    def __init__(self, start: int, end: int):
-        self.start = start
-        self.end = end
-
-
 class _FakeDistribOpt:
-    """Stand-in for DistributedOptimizer wrapping an HDO-like inner optimizer."""
+    """Stand-in for DistributedOptimizer wrapping the test optimizer."""
 
     def __init__(self, *, model_param: torch.Tensor, shard_main_param: torch.Tensor | None, inner: object):
         self.optimizer = inner
         self.model_float16_groups = [[model_param]]
         self.shard_fp32_from_float16_groups = [[shard_main_param]]
-        self._numel = model_param.numel()
         self.is_stub_optimizer = False
         self.ddp_config = SimpleNamespace(use_megatron_fsdp=False)
         self.config = SimpleNamespace(use_precision_aware_optimizer=False, optimizer_cpu_offload=False)
-
-    def _get_model_param_range_map(self, _param: torch.Tensor) -> dict:
-        return {"param": _FakeParamRange(0, self._numel)}
-
-
-class _PlainDistribOpt:
-    """Stand-in for a DistributedOptimizer that does not wrap an HDO."""
-
-    def __init__(self) -> None:
-        self.optimizer = object()
 
 
 class _ChainedOpt:
@@ -628,77 +604,7 @@ class TestMemoryEfficientFp32OptimizerStateLoading:
             assert patched == 0
 
 
-class TestSyncHybridDeviceOptimizerFp32MasterCopies:
-    """Tests for the post-load FP32 master sync workaround helper."""
-
-    def test_none_optimizer_is_noop(self):
-        """A ``None`` optimizer is a no-op and returns ``False``."""
-        assert sync_hybrid_device_optimizer_fp32_master_copies(None) is False
-
-    @pytest.mark.parametrize("step", [0, 50])
-    @pytest.mark.parametrize("chained", [False, True])
-    def test_resume_preserves_master_precision_and_adam_update(self, step, chained):
-        """A resumed update uses saved FP32 masters and moments, including at step zero."""
-        from types import MethodType
-
-        from megatron.core.optimizer.cpu_offloading.hybrid_optimizer import HybridDeviceOptimizer
-
-        saved_master = torch.tensor([1.003, -0.997], dtype=torch.float32)
-        model_param = saved_master.to(torch.bfloat16)
-        working = torch.nn.Parameter(torch.zeros_like(saved_master))
-        adam = torch.optim.AdamW([working], lr=0.01)
-        saved_state = {
-            "master_param": saved_master.clone(),
-            "exp_avg": torch.tensor([0.2, -0.3]),
-            "exp_avg_sq": torch.tensor([0.4, 0.5]),
-            "step": torch.tensor(1.0),  # LocalNonpersistentObject from Core's loading scaffold.
-        }
-        inner = _FakeHDO()
-        inner.state = {model_param: saved_state}
-        inner.param_groups = [{"params": [model_param], "step": step}]
-        inner.param_update_in_fp32 = True
-        inner.sub_optimizers = [adam]
-        # Mirror a CPU-only HybridDeviceOptimizer: Core identifies the GPU owner by identity.
-        inner.cpu_optimizers = [adam]
-        inner.gpu_optimizer = None
-        inner.inner_param_to_orig_param = {working: model_param}
-        inner.param_to_inner_param = {model_param: working}
-        inner.param_to_fp32_param = {model_param: working}
-        inner.defaults = {"cpu_optimizer_cls": torch.optim.AdamW}
-        for name in (
-            "_sync_hdo_state_to_sub_optimizers",
-            "_sync_hdo_param_groups_to_sub_optimizers",
-            "_update_fp32_params_by_new_state",
-            "_move_new_state_to_right_device",
-        ):
-            setattr(inner, name, MethodType(getattr(HybridDeviceOptimizer, name), inner))
-        wrapped = _FakeDistribOpt(model_param=model_param, shard_main_param=working, inner=inner)
-        optimizer = _ChainedOpt([_PlainDistribOpt(), wrapped]) if chained else wrapped
-
-        expected_param = torch.nn.Parameter(saved_master.clone())
-        expected_adam = torch.optim.AdamW([expected_param], lr=0.01)
-        expected_adam.state[expected_param] = {
-            key: value.clone() for key, value in saved_state.items() if key != "master_param"
-        }
-        expected_adam.state[expected_param]["step"].fill_(step)
-        with patch("megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer", _FakeHDO):
-            assert sync_hybrid_device_optimizer_fp32_master_copies(optimizer)
-
-        assert torch.equal(working, saved_master)
-        assert "step" not in inner.param_groups[0]
-        assert adam.param_groups[0]["step"] == step
-        assert adam.state[working]["step"].item() == step
-        assert not torch.equal(working, model_param.float())
-        assert adam.state[working]["exp_avg"] is saved_state["exp_avg"]
-        assert adam.state[working]["exp_avg_sq"] is saved_state["exp_avg_sq"]
-        working.grad = torch.tensor([0.7, -0.1])
-        expected_param.grad = working.grad.clone()
-        adam.step()
-        expected_adam.step()
-        assert torch.equal(working, expected_param)
-        for key in ("step", "exp_avg", "exp_avg_sq"):
-            assert torch.equal(adam.state[working][key], expected_adam.state[expected_param][key])
-
+class TestHybridOptimizerCheckpointResume:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires mixed CPU/GPU Adam")
     @pytest.mark.parametrize("precision_aware", [False, True])
     @pytest.mark.parametrize("sharding_type", ["dp_reshardable", "fully_sharded_model_space"])
@@ -801,15 +707,9 @@ class TestSyncHybridDeviceOptimizerFp32MasterCopies:
                 index: {key: tensors[key] for key in ("param", "exp_avg", "exp_avg_sq")}
                 for index, tensors in enumerate(saved_tensors)
             }
-        with hybrid_optimizer_state_loading(resumed):
-            resumed.load_state_dict(
-                {**saved_common, "param_state_sharding_type": sharding_type, "param_state": param_state}
-            )
-        assert "_set_main_param_and_optimizer_states" not in resumed.__dict__
-        assert sync_hybrid_device_optimizer_fp32_master_copies(resumed)
-        # Direct checkpoint loading synchronizes first; setup may invoke the
-        # helper again. The second call must preserve the same restored state.
-        assert sync_hybrid_device_optimizer_fp32_master_copies(resumed)
+        resumed.load_state_dict(
+            {**saved_common, "param_state_sharding_type": sharding_type, "param_state": param_state}
+        )
         for param, expected in zip(resumed_params, saved_tensors):
             actual = resumed._get_main_param_and_optimizer_states(param)
             for key in ("param", "exp_avg", "exp_avg_sq"):
@@ -822,8 +722,6 @@ class TestSyncHybridDeviceOptimizerFp32MasterCopies:
         for step in range(51, 54):
             update(params, reference, step)
             update(resumed_params, resumed, step)
-            if step == 51:
-                assert sync_hybrid_device_optimizer_fp32_master_copies(resumed)
             for expected, actual in zip(params, resumed_params):
                 assert torch.equal(expected, actual)
                 expected_state = reference.optimizer.state[expected]
@@ -834,142 +732,6 @@ class TestSyncHybridDeviceOptimizerFp32MasterCopies:
                 assert all(group["step"] == step for group in wrapped.optimizer.gpu_optimizer.param_groups)
                 for cpu_optimizer in wrapped.optimizer.cpu_optimizers:
                     assert all(state["step"].item() == step for state in cpu_optimizer.state.values())
-
-        with pytest.raises(RuntimeError, match="interrupted checkpoint load"):
-            with hybrid_optimizer_state_loading(resumed):
-                raise RuntimeError("interrupted checkpoint load")
-        assert "_set_main_param_and_optimizer_states" not in resumed.__dict__
-
-    def test_walks_all_three_fp32_levels(self):
-        """The helper refreshes level-1 shard, level-2 CPU clone, and level-3 working copy."""
-        model_param = torch.full((4,), 1.0, dtype=torch.bfloat16)
-        shard_main_param = torch.zeros(4, dtype=torch.float32)
-        cpu_clone = torch.zeros(4, dtype=torch.float32)
-        fp32_working = torch.zeros(4, dtype=torch.float32)
-
-        inner = _FakeHDO()
-        inner.gpu_params_map_cpu_copy = {model_param: cpu_clone}
-
-        update_calls: list[bool] = []
-
-        def _fake_update_fp32() -> None:
-            update_calls.append(True)
-            fp32_working.data.copy_(model_param.data)
-
-        inner.update_fp32_param_by_new_param = _fake_update_fp32
-
-        distrib_opt = _FakeDistribOpt(
-            model_param=model_param,
-            shard_main_param=shard_main_param,
-            inner=inner,
-        )
-
-        with patch(
-            "megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer",
-            _FakeHDO,
-        ):
-            synced = sync_hybrid_device_optimizer_fp32_master_copies(distrib_opt)
-
-        ones = torch.ones(4, dtype=torch.float32)
-        assert synced is True
-        assert torch.allclose(shard_main_param, ones)
-        assert torch.allclose(cpu_clone, ones)
-        assert update_calls == [True]
-        assert torch.allclose(fp32_working, ones)
-
-    def test_no_op_when_inner_is_not_hdo(self):
-        """A DistributedOptimizer that does not wrap an HDO is left untouched."""
-        with patch(
-            "megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer",
-            _FakeHDO,
-        ):
-            assert sync_hybrid_device_optimizer_fp32_master_copies(_PlainDistribOpt()) is False
-
-    def test_import_error_is_noop(self):
-        """Missing HybridDeviceOptimizer support is a no-op."""
-        original_import = builtins.__import__
-
-        def _raise_for_hdo(
-            name: str,
-            globals_: dict[str, object] | None = None,
-            locals_: dict[str, object] | None = None,
-            fromlist: tuple[str, ...] = (),
-            level: int = 0,
-        ) -> object:
-            if name == "megatron.core.optimizer.cpu_offloading.hybrid_optimizer":
-                raise ImportError("HybridDeviceOptimizer unavailable")
-            return original_import(name, globals_, locals_, fromlist, level)
-
-        with patch("builtins.__import__", side_effect=_raise_for_hdo):
-            assert sync_hybrid_device_optimizer_fp32_master_copies(_PlainDistribOpt()) is False
-
-    def test_chained_optimizer_walks_each_sub_opt(self):
-        """A ChainedOptimizer dispatches to every sub-optimizer, syncing HDO ones."""
-        model_param = torch.full((2,), 7.0, dtype=torch.bfloat16)
-        shard_main_param = torch.zeros(2, dtype=torch.float32)
-
-        # No level-2/level-3 attrs: helper should still sync level 1 and return True.
-        hdo_distrib_opt = _FakeDistribOpt(
-            model_param=model_param,
-            shard_main_param=shard_main_param,
-            inner=_FakeHDO(),
-        )
-        chained = _ChainedOpt([_PlainDistribOpt(), hdo_distrib_opt])
-
-        with patch(
-            "megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer",
-            _FakeHDO,
-        ):
-            synced = sync_hybrid_device_optimizer_fp32_master_copies(chained)
-
-        assert synced is True
-        assert torch.allclose(shard_main_param, torch.full((2,), 7.0, dtype=torch.float32))
-
-    def test_skips_none_shard_main_param(self):
-        """Level-1 entries with a ``None`` shard_main_param are skipped without raising."""
-        model_param = torch.full((4,), 3.0, dtype=torch.bfloat16)
-        distrib_opt = _FakeDistribOpt(
-            model_param=model_param,
-            shard_main_param=None,
-            inner=_FakeHDO(),
-        )
-
-        with patch(
-            "megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer",
-            _FakeHDO,
-        ):
-            synced = sync_hybrid_device_optimizer_fp32_master_copies(distrib_opt)
-
-        assert synced is True
-
-    @pytest.mark.unit
-    @pytest.mark.parametrize("has_hdo", [False, True])
-    def test_nested_chained_optimizers(self, has_hdo):
-        """Nested Muon-style chains skip non-HDO leaves and sync every HDO leaf."""
-        from megatron.core.optimizer.optimizer import ChainedOptimizer
-
-        model_params = [torch.full((2,), value, dtype=torch.bfloat16) for value in (3.0, 7.0)]
-        masters = [torch.zeros(2, dtype=torch.float32) for _ in model_params]
-        leaves = [
-            _FakeDistribOpt(model_param=param, shard_main_param=master, inner=_FakeHDO())
-            if has_hdo
-            else _PlainDistribOpt()
-            for param, master in zip(model_params, masters)
-        ]
-        nested = object.__new__(ChainedOptimizer)
-        nested.chained_optimizers = [_PlainDistribOpt(), leaves[1]]
-        optimizer = object.__new__(ChainedOptimizer)
-        optimizer.chained_optimizers = [leaves[0], nested]
-
-        with patch(
-            "megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer",
-            _FakeHDO,
-        ):
-            assert sync_hybrid_device_optimizer_fp32_master_copies(optimizer) is has_hdo
-
-        for param, master in zip(model_params, masters):
-            expected = param.float() if has_hdo else torch.zeros_like(master)
-            assert torch.equal(master, expected)
 
 
 class TestGetLoraPlusConfigOverrides:

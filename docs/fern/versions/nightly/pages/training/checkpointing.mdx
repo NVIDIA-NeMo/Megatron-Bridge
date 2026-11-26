@@ -114,7 +114,7 @@ For model-weight initialization without optimizer, RNG, dataloader, or scheduler
 - A native Megatron iteration directory such as `/checkpoints/my_model/iter_0001000/` that directly contains the checkpoint payload.
 - A local Hugging Face full-model directory containing `config.json` and model weight files. Remote Hugging Face model IDs are not accepted as checkpoint paths.
 
-`checkpoint.pretrained_checkpoint` does not load optimizer, RNG, dataloader, or scheduler state. Use `checkpoint.load` for full native Megatron resume.
+`checkpoint.pretrained_checkpoint` does not load optimizer, RNG, dataloader, or scheduler state. Use `checkpoint.load` for full native Megatron resume. When optimizer CPU offload is enabled, the default loader refreshes the CPU working weights from the loaded model, including for FP32 models. A custom checkpoint manager that loads model weights directly must call `optimizer.reload_model_params()` after a weights-only load if it uses CPU offload.
 
 **PEFT note:** The `ckpt_step` parameter applies only to the `checkpoint.load` path, which is the adapter checkpoint when resuming PEFT. It does not select an iteration under `checkpoint.pretrained_checkpoint`. To use a specific frozen base checkpoint for PEFT, point `checkpoint.pretrained_checkpoint` directly at that `iter_N` directory.
 
