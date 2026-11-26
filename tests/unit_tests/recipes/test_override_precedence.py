@@ -106,7 +106,7 @@ def _apply(recipe, cli_overrides=None, args_overrides=None, run_post=True, num_g
     return recipe
 
 
-def _minimal_cuda_graph_recipe():
+def _minimal_cuda_graph_recipe() -> SimpleNamespace:
     """Return the config surface used by the CUDA graph override helper."""
     return SimpleNamespace(
         model=SimpleNamespace(
@@ -389,6 +389,54 @@ class TestGbsPrecedence:
 
 
 class TestCudaGraphOverrides:
+    @pytest.mark.unit
+    @pytest.mark.parametrize("scope", [None, [], ["full_iteration"]])
+    def test_full_iteration_impl_clears_inherited_scopes(self, scope: list[str] | None) -> None:
+        """Selecting full-iteration capture replaces a recipe's per-layer scopes."""
+        from utils.overrides import _set_cuda_graph_overrides
+
+        recipe = _minimal_cuda_graph_recipe()
+        recipe.model.cuda_graph_impl = "transformer_engine"
+        recipe.model.cuda_graph_modules = ["attn"]
+        recipe.model.cuda_graph_scope = ["mlp"]
+
+        recipe = _set_cuda_graph_overrides(recipe, cuda_graph_impl="full_iteration", cuda_graph_scope=scope)
+
+        assert recipe.model.cuda_graph_impl == "full_iteration"
+        assert recipe.model.cuda_graph_modules == []
+        assert recipe.model.cuda_graph_scope is None
+        assert recipe.model.use_te_rng_tracker is True
+        assert recipe.rng.te_rng_tracker is True
+        assert recipe.rerun_state_machine.check_for_nan_in_loss is False
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("scope", ["attn", ["full_iteration", "attn"]])
+    def test_full_iteration_impl_rejects_per_layer_scopes(self, scope: str | list[str]) -> None:
+        """Explicit per-layer scopes conflict with full-iteration capture."""
+        from utils.overrides import _set_cuda_graph_overrides
+
+        with pytest.raises(ValueError, match="full_iteration CUDA graph implementation cannot be combined"):
+            _set_cuda_graph_overrides(
+                _minimal_cuda_graph_recipe(), cuda_graph_impl="full_iteration", cuda_graph_scope=scope
+            )
+
+    @pytest.mark.unit
+    def test_full_iteration_impl_preserves_legacy_scope_with_empty_override(self) -> None:
+        """An empty scope must not undo full-iteration enablement on older MCore."""
+        from megatron.core.transformer.enums import CudaGraphScope
+        from utils.overrides import _set_cuda_graph_overrides
+
+        recipe = _minimal_cuda_graph_recipe()
+        del recipe.model.cuda_graph_modules
+
+        recipe = _set_cuda_graph_overrides(recipe, cuda_graph_impl="full_iteration", cuda_graph_scope=[])
+
+        assert recipe.model.cuda_graph_impl == "local"
+        assert recipe.model.cuda_graph_scope == [CudaGraphScope.full_iteration]
+        assert recipe.model.use_te_rng_tracker is True
+        assert recipe.rng.te_rng_tracker is True
+        assert recipe.rerun_state_machine.check_for_nan_in_loss is False
+
     def test_none_with_explicit_empty_scope_clears_stale_modules(self):
         """Disabled graphs use the current MCore representation."""
         from utils.overrides import _set_cuda_graph_overrides
