@@ -458,6 +458,12 @@ class SchedulerConfig(MTrainSchedulerConfig):
             start = end = optimizer.weight_decay
         if start is None or end is None or start != end or not 0 <= start < float("inf"):
             raise ValueError("Constant weight decay requires equal, finite, nonnegative bounds.")
+        if optimizer.weight_decay != start:
+            warnings.warn(
+                f"optimizer.weight_decay={optimizer.weight_decay} is overridden by the constant scheduler "
+                f"bounds. Applying weight_decay={start}. Set both scheduler bounds to change it.",
+                stacklevel=2,
+            )
         optimizer.weight_decay = start
         self.start_weight_decay = start
         self.end_weight_decay = end

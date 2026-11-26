@@ -118,7 +118,8 @@ These scheduling options control how the weight decay coefficient changes over t
 ### Constant weight decay in portable recipes
 
 For a constant schedule, explicit equal scheduler bounds determine the value Bridge
-applies. Recipe helpers and final configuration validation now set
+applies. Helpers preserve the declared recipe values so callers can override them.
+Final configuration validation warns when the values differ and sets
 `optimizer.weight_decay` to that same value. For example, the historical
 `0.1 / 0.033 / 0.033` configuration becomes `0.033 / 0.033 / 0.033`, so it also
 passes Megatron-LM validation. Existing `wd_mult` rules retain the same effective

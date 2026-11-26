@@ -37,6 +37,8 @@ def test_constant_recipe_config_preserves_effective_decay(effective):
         start_weight_decay=effective,
         end_weight_decay=effective,
     )
+    assert optimizer.weight_decay == 0.1
+    scheduler.normalize_weight_decay(optimizer)
     assert optimizer.weight_decay == effective
     MLMSchedulerConfig(start_weight_decay=effective, end_weight_decay=effective).validate_run(
         train_iters=10,
@@ -75,7 +77,8 @@ def test_late_recipe_override_is_normalized_by_validation(monkeypatch):
     config.model.hidden_size = 128
     config.model.num_attention_heads = 4
     config.scheduler.start_weight_decay = config.scheduler.end_weight_decay = 0.02
-    runtime_config_update(config)
+    with pytest.warns(UserWarning, match=r"optimizer.weight_decay=.*Applying weight_decay=0.02"):
+        runtime_config_update(config)
     config.validate()
     assert config.optimizer.weight_decay == 0.02
 
@@ -106,7 +109,7 @@ class TestOptimizerUtils:
 
         assert isinstance(optim_cfg, OptimizerConfig)
         assert optim_cfg.lr == 3e-4
-        assert optim_cfg.weight_decay == 0.033
+        assert optim_cfg.weight_decay == 0.01
         assert optim_cfg.adam_eps == 1e-8
         assert optim_cfg.adam_beta2 == 0.98
         assert optim_cfg.bf16 is True
@@ -125,7 +128,7 @@ class TestOptimizerUtils:
 
         assert isinstance(optim_cfg, OptimizerConfig)
         assert optim_cfg.lr == 3e-4
-        assert optim_cfg.weight_decay == 0.033
+        assert optim_cfg.weight_decay == 0.01
         assert optim_cfg.muon_extra_scale_factor == 1.01
         assert optim_cfg.muon_nesterov is False
         assert optim_cfg.muon_momentum == 0.98
@@ -147,7 +150,7 @@ class TestOptimizerUtils:
 
         assert isinstance(optim_cfg, OptimizerConfig)
         assert optim_cfg.lr == 3e-4
-        assert optim_cfg.weight_decay == 0.033
+        assert optim_cfg.weight_decay == 0.01
         assert optim_cfg.lion_beta2 == 0.95
         assert optim_cfg.muon_scalar_optimizer == "lion"
         assert optim_cfg.muon_extra_scale_factor == 1.01
@@ -207,7 +210,7 @@ class TestOptimizerUtils:
         assert isinstance(optim_cfg, OptimizerConfig)
         assert optim_cfg.lr == 1e-4
         assert optim_cfg.min_lr == 1e-5
-        assert optim_cfg.weight_decay == 0.033
+        assert optim_cfg.weight_decay == 0.1
         assert optim_cfg.adam_beta2 == 0.95
         assert optim_cfg.bf16 is True
         assert optim_cfg.use_distributed_optimizer is True

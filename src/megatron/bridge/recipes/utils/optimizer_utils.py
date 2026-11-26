@@ -94,7 +94,6 @@ def distributed_muon_with_cosine_annealing(
         lion_beta2=lion_beta2,
         clip_grad=clip_grad,
     )
-    scheduler.normalize_weight_decay(optimizer)
     return optimizer, scheduler
 
 
@@ -165,7 +164,6 @@ def distributed_fused_adam_with_cosine_annealing(
         override_opt_param_scheduler=True,
     )
 
-    scheduler.normalize_weight_decay(optimizer)
     return optimizer, scheduler
 
 
@@ -227,5 +225,4 @@ def distributed_fused_adam_with_cosine_annealing_samples(
         override_opt_param_scheduler=True,
     )
 
-    scheduler.normalize_weight_decay(optimizer)
     return optimizer, scheduler
