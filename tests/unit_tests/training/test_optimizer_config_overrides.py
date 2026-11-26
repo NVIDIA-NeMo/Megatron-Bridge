@@ -522,7 +522,7 @@ def test_lora_legacy_groups_resume_without_changing_parameter_order(single_rank_
     )
     restored, opt2, sched2, new_groups = build(adopted)
     assert old_groups == new_groups
-    checkpoint = torch.load(path, weights_only=False)
+    checkpoint = torch.load(path, weights_only=True)
     restored.load_state_dict(checkpoint["model"])
     opt2.load_state_dict(checkpoint["optimizer"])
     sched2.load_state_dict(checkpoint["scheduler"])

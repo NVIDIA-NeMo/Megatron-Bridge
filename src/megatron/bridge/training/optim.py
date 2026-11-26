@@ -132,7 +132,9 @@ def setup_optimizer(
                 f"applied {len(mup_overrides)} optimizer param-group override(s)."
             )
 
-    validate_lora_plus_warmup(config_overrides, optimizer_config, scheduler_config.lr_warmup_init)
+    validate_lora_plus_warmup(
+        config_overrides, optimizer_config, scheduler_config.lr_warmup_init, require_adapter_selector=False
+    )
 
     # Bridge's existing builder does not apply these inherited MLM-only settings.
     # Preserve that behavior here; the shared MLM entry point supports them directly.
