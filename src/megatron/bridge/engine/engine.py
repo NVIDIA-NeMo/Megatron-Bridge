@@ -74,6 +74,7 @@ from megatron.bridge.engine.offload import HostState, check_movable, offload_to_
 from megatron.bridge.engine.optim import finalize_and_step, zero_gradients
 from megatron.bridge.engine.recipes.base import TrainingRecipe, data_parallel_size, finalize_recipe, is_multimodal
 from megatron.bridge.engine.recipes.registry import apply_recipe_overrides, resolve_recipe
+from megatron.bridge.engine.refit import RefitHandle, RefitPlan, RefitSender, RolloutLayout
 from megatron.bridge.engine.router_replay import RouterReplayState
 from megatron.bridge.engine.schedule import run_forward_backward, run_forward_only, uses_mrope
 from megatron.bridge.engine.value_head import apply_value_head_model_settings, make_value_head_hook
@@ -121,6 +122,8 @@ _RESERVED_METHODS = frozenset(
         "load_state",
         "wait_for_save",
         "export",
+        "connect_rollout",
+        "refit",
         "cuda",
         "cpu",
         "close",
@@ -408,6 +411,8 @@ class TrainingEngine:
         self._step = 0
         self._window = AccumulationWindow()
         self._pending_save: CheckpointHandle | None = None
+        self._refit_sender: RefitSender | None = None
+        self._pending_refit: RefitHandle | None = None
         self._export_state: ExportState | None = None
         self._warned_unscaled_aux = False
         self._host_state = HostState()
@@ -759,6 +764,7 @@ class TrainingEngine:
         self._activate()
         if not self._window.is_open:
             raise RuntimeError("optim_step called without a preceding forward_backward.")
+        self._wait_pending_refit()
         if self._runtime.topology.pp > 1:
             # Only the last stage counted the window; every stage must divide by the same totals.
             window = self._window
@@ -948,6 +954,7 @@ class TrainingEngine:
         self._require_resident("load_state")
         self._require_closed_window("load_state")
         self._wait_pending_save()
+        self._wait_pending_refit()
         step, user_state = load_engine_state(self._recipe, self._model, self._optimizer, path=path, peft=self._peft)
         self._step = step
         return user_state
@@ -1023,6 +1030,76 @@ class TrainingEngine:
             )
         return export_hf_weights(self._export_state, self._model, path=path, streaming=streaming)
 
+    def connect_rollout(
+        self,
+        address: str,
+        port: int,
+        layout: RolloutLayout,
+        *,
+        bucket_bytes: int = 1 << 30,
+        timeout_s: float = 1800,
+    ) -> RefitPlan:
+        """Connect to rollout ranks on other GPUs for ``refit``; see ``megatron.bridge.engine.refit``.
+
+        Collective over the trainer ranks, then waits for the ``layout.world_size`` rollout ranks to build
+        their ``RefitReceiver``. Rank 0 hosts the rendezvous store at ``address:port``. Linear weights whose
+        local shard is a canonical HF view go shard-to-shard; the rest go through this engine's export
+        (once here, to learn their names and shapes). A LoRA engine sends everything through the export,
+        merged. Connecting ends with one warm-up refit, which the rollout drains in its constructor.
+
+        Args:
+            address: Host of rank 0, reachable from every rollout rank.
+            port: Free port on that host for the rendezvous store.
+            layout: How the rollout ranks hold the weights; the rollout passes the same value.
+            bucket_bytes: Bytes per submission group; the receiver stages at most this much at once.
+            timeout_s: Rendezvous timeout.
+
+        Returns:
+            The plan, also handed to the rollout.
+        """
+        self._require_open()
+        self._require_resident("connect_rollout")
+        if self._output_head == "value":
+            raise NotImplementedError("refit of a value-head engine is not supported (no HF layout).")
+        if self._refit_sender is not None:
+            raise RuntimeError("connect_rollout was already called on this engine.")
+        if self._export_state is None:
+            self._export_state = make_export_state(self._recipe)
+        self._refit_sender = RefitSender(
+            self._model,
+            self._export_state,
+            self._runtime.pg_collection,
+            address=address,
+            port=port,
+            layout=layout,
+            bucket_bytes=bucket_bytes,
+            merged_adapters=self._peft is not None,
+            timeout_s=timeout_s,
+        )
+        return self._refit_sender.plan
+
+    def refit(self, *, timeout_s: float | None = None) -> RefitHandle:
+        """Send the current weights to the connected rollout; returns once the transfer is enqueued.
+
+        Collective over the trainer and the rollout ranks (each calls ``RefitReceiver.receive``). The
+        transfer runs on a side stream and reads the parameters in place: ``optim_step``, ``load_state``,
+        ``cpu`` and ``close`` order themselves after it, so the weights cannot change underneath it.
+        With ``timeout_s``, a refit not complete that long after it starts (a rollout rank died) aborts the
+        channel and raises ``TimeoutError`` from this call or from the handle's ``synchronize``.
+        """
+        self._require_open()
+        self._require_resident("refit")
+        if self._refit_sender is None:
+            raise RuntimeError("refit needs connect_rollout first.")
+        self._wait_pending_refit()
+        self._pending_refit = self._refit_sender.send(timeout_s)
+        return self._pending_refit
+
+    def _wait_pending_refit(self) -> None:
+        if self._pending_refit is not None:
+            self._pending_refit.wait()
+            self._pending_refit = None
+
     # ---- placement ----------------------------------------------------------------------------
 
     def cuda(self) -> TrainingEngine:
@@ -1049,6 +1126,7 @@ class TrainingEngine:
         if self._resident:
             check_movable(self._recipe, self._optimizer)
             self._wait_pending_save()
+            self._wait_pending_refit()
             self._offloaded_bytes = offload_to_cpu(
                 self._model, self._optimizer, self._host_state, keep_gradients=self._window.is_open
             )
@@ -1145,6 +1223,12 @@ class TrainingEngine:
         if self._closed:
             return
         self._wait_pending_save()
+        if self._pending_refit is not None:
+            self._pending_refit.synchronize()
+            self._pending_refit = None
+        if self._refit_sender is not None:
+            self._refit_sender.close()
+            self._refit_sender = None
         if self._async_checkpoint_state is not None:
             stop_async_checkpoint_worker(self._async_checkpoint_state)
             self._async_checkpoint_state = None

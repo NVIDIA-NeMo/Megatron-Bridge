@@ -159,6 +159,21 @@ Knobs:
   a job time limit (save, exit) so a chained job can resume; the W&B run id is the run name, so chained
   jobs append to one run.
 
+- `--rollout-world N` runs vllm on N GPUs of its own instead of colocated: start
+  `vllm_remote_rollout.py` once per rollout GPU next to the trainer. The weight refresh is a refit through
+  the refit API (`connect_rollout` once, `refit()` every round, enqueued so the policy's scoring overlaps
+  the transfer), the policy stays resident, and prompts and samples go through a TCP store on rank 0
+  (`--rollout-port + 1`). The rollout's `--max-model-len` must cover `--max-prompt-tokens` plus
+  `--max-tokens`; pass `--rollout-address <rank 0 host>` (trainer) and `--address` (rollout) across
+  nodes. `--router-replay` and `--measure-merge-every` need the colocated rollout.
+
+  ```bash
+  CUDA_VISIBLE_DEVICES=0,1,2,3 ... -m torch.distributed.run --nproc-per-node 4 grpo_vllm.py \
+      <arguments above> --rollout-world 4 --rollout-port 29600 &
+  for r in 0 1 2 3; do CUDA_VISIBLE_DEVICES=$((r + 4)) python vllm_remote_rollout.py --rank $r \
+      --rollout-world 4 --port 29600 --hf-path <hf path> --max-model-len 128064 & done; wait
+  ```
+
 Each round prints one JSON line (`[grpo] {...}`) with reward, accuracy, response length, truncation,
 train-versus-vllm logprob agreement, clip and TIS fractions, grad norms, timings and the held-out
 numbers, mirrored to W&B when a project is given.
@@ -191,6 +206,9 @@ the reference with `forward_only(disable_adapters=True)`, after the critic's upd
   `without_routing` strips the field for engines that should route natively).
 - `dapo_math_reward.py`: verl's DAPO scorer, copied unchanged (Minerva-style `Answer:` extraction
   first, then the last `\boxed{}`).
+- `vllm_remote_rollout.py`: vllm on its own GPUs. `RemoteVllmRollout` is the trainer's drop-in for
+  `VllmRollout` (refresh by refit, generation through a TCP store on rank 0); run as a script, it is one
+  rollout rank (a TP-1 vllm engine that loads each refit with `reload_weights`).
 - `vllm_rollout.py`: vllm 0.29 in the training process (`distributed_executor_backend="external_launcher"`,
   one data-parallel replica per rank, `async_scheduling=False`), weight refresh through the runner's
   layerwise reload from `engine.export(streaming=True)`, sleep level 2 between rounds, and sharded
