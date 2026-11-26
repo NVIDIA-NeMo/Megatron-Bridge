@@ -788,7 +788,7 @@ def wildcard_match(pattern: str, key: Optional[str]) -> Optional[bool]:
     """
     if key is None:
         return None
-    regex_pattern = re.compile("^" + pattern.replace("*", "(.*)") + "$")
+    regex_pattern = re.compile("^" + pattern.replace(".", r"\.").replace("*", "(.*)") + "$")
     match = regex_pattern.match(key)
     return match is not None
 
