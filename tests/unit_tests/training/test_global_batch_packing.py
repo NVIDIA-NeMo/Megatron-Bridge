@@ -108,6 +108,57 @@ def test_enabled_flags():
     assert not global_batch_packing.dynamic_context_parallel_enabled(Mock())
 
 
+def _fixed_thd_model(**overrides):
+    fields = {
+        "experimental_attention_variant": "dsv4_hybrid",
+        "pad_packed_seq_alignment": "max",
+        "cuda_graph_thd_max_packed_sequences": 8,
+        "attention_cp_layout": "contiguous",
+        "linear_cp_layout": "contiguous",
+    }
+    fields.update(overrides)
+    return _model(**fields)
+
+
+@pytest.mark.parametrize(
+    "overrides, online_packing",
+    [
+        ({}, False),
+        ({"experimental_attention_variant": None}, True),
+        ({"sequence_packing_scheduler": "default_dynamic_cp"}, True),
+        ({"pad_packed_seq_alignment": "cp"}, True),
+        ({"dynamic_context_parallel": True}, True),
+    ],
+)
+def test_only_fixed_thd_dsv4_bypasses_online_scheduler(overrides, online_packing):
+    model = _fixed_thd_model(**overrides)
+
+    assert global_batch_packing.global_batch_packing_enabled(model) is online_packing
+    assert global_batch_packing.fixed_thd_dsv4_packing_enabled(model) is not online_packing
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"cuda_graph_thd_max_packed_sequences": None},
+        {"cuda_graph_thd_max_packed_sequences": 0},
+        {"cuda_graph_thd_max_packed_sequences": 1},
+        {"cuda_graph_thd_max_packed_sequences": True},
+        {"cuda_graph_thd_max_packed_sequences": 8.0},
+        {"cuda_graph_thd_max_packed_sequences": "8"},
+        {"attention_cp_layout": None},
+        {"attention_cp_layout": "zigzag"},
+        {"linear_cp_layout": None},
+        {"linear_cp_layout": "zigzag"},
+    ],
+)
+def test_fixed_thd_requires_metadata_capacity_and_contiguous_layouts(overrides):
+    model = _fixed_thd_model(**overrides)
+
+    assert global_batch_packing.global_batch_packing_enabled(model)
+    assert not global_batch_packing.fixed_thd_dsv4_packing_enabled(model)
+
+
 def test_wrap_passes_iterator_only_on_tp_rank_zero(monkeypatch):
     calls = []
 
