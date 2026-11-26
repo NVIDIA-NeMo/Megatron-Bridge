@@ -70,6 +70,11 @@ def reject_document_masks(
         )
 
 
+# Logit of the padded vocabulary rows: finite, so that consumers computing ``p * logit`` over the vocabulary (entropy,
+# KL) get 0 for them rather than ``0 * -inf = NaN``, and far enough below any real logit that softmax gives them 0.
+_MASKED_LOGIT = -1e30
+
+
 class Inkling2OutputLayerMixin(nn.Module):
     """Soft-cap the logits and exclude the padded vocabulary rows from the softmax."""
 
@@ -86,7 +91,7 @@ class Inkling2OutputLayerMixin(nn.Module):
                 start = torch.distributed.get_rank(self.tp_group) * local
             if start + local > unpadded:
                 columns = torch.arange(start, start + local, device=output.device)
-                output = output.masked_fill(columns >= unpadded, float("-inf"))
+                output = output.masked_fill(columns >= unpadded, _MASKED_LOGIT)
         return output, bias
 
 

@@ -57,11 +57,17 @@ from megatron.bridge.models.inkling.modeling_inkling2.ops import (
     dynamic_short_conv,
     l2_clip,
     length_scaling_tau,
+    raise_recompile_limits,
     static_short_conv,
 )
 
 
 _compiled_flex_attention = None
+# FlexAttention compiles once per (sequence length, window, grad mode), since Dynamo specializes on the mask's
+# closure. Variable-length batches (RL rollouts, unpacked SFT) are padded to a bucketed length, which bounds the
+# number of compiled kernels: steps of _FLEX_BLOCK up to _FLEX_BUCKET tokens, then steps of _FLEX_BUCKET.
+_FLEX_BLOCK = 128
+_FLEX_BUCKET = 1024
 _block_mask_cache: "OrderedDict[tuple, object]" = OrderedDict()
 
 # FlexAttention backward tiles for Blackwell (compute capability 10.x) and heads up to 128 wide. The
@@ -85,6 +91,7 @@ def _flex_attention():
     if _compiled_flex_attention is None:
         from torch.nn.attention.flex_attention import flex_attention
 
+        raise_recompile_limits()
         _compiled_flex_attention = torch.compile(flex_attention, dynamic=False)
     return _compiled_flex_attention
 
@@ -145,6 +152,12 @@ def packed_cu_seqlens(packed_seq_params: PackedSeqParams | None) -> torch.Tensor
         raise ValueError(f"Inkling2 supports packed sequences only in THD format, got {packed_seq_params.qkv_format}")
     padded = getattr(packed_seq_params, "cu_seqlens_q_padded", None)
     return padded if padded is not None else packed_seq_params.cu_seqlens_q
+
+
+def flex_padded_length(seq_len: int) -> int:
+    """The bucketed length FlexAttention runs ``seq_len`` tokens at (see ``_FLEX_BUCKET``)."""
+    step = _FLEX_BLOCK if seq_len <= _FLEX_BUCKET else _FLEX_BUCKET
+    return -(-seq_len // step) * step
 
 
 def _block_mask(seq_len: int, window: int | None, docs: torch.Tensor, cache_key: tuple):
@@ -216,9 +229,20 @@ def relative_sink_attention(
         bias = rel_logits[b, h, q_idx, torch.clamp(distance, 0, extent - 1)]
         return score + torch.where((distance >= 0) & (distance < extent), bias.to(score.dtype), 0.0)
 
+    # Pad to the bucketed length; the padded tokens form a document of their own, so no real token sees them.
+    padded = flex_padded_length(seq_len)
+    if padded != seq_len:
+        pad = padded - seq_len
+        query, key, value = (F.pad(x, (0, 0, 0, 0, 0, 0, 0, pad)) for x in (query, key, value))
+        rel_logits = F.pad(rel_logits, (0, 0, 0, pad))
+        sink = F.pad(sink, (0, pad))
+        docs = torch.cat((docs, docs.new_full((pad,), -1)))
     cache_key = () if cu_seqlens is None else tuple(cu_seqlens.tolist())
-    block_mask = _block_mask(seq_len, window, docs, cache_key)
-    return _attend_with_sink(query, key, value, sink, score_mod=score_mod, block_mask=block_mask, out_dtype=out_dtype)
+    block_mask = _block_mask(padded, window, docs, cache_key)
+    output = _attend_with_sink(
+        query, key, value, sink, score_mod=score_mod, block_mask=block_mask, out_dtype=out_dtype
+    )
+    return output[:seq_len]
 
 
 def _context_parallel_block_mask(layout: ContextParallelLayout, window: int | None, query_len: int):
