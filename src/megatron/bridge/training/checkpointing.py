@@ -2897,6 +2897,14 @@ def _load_hf_pretrained_checkpoint(
     return 0, 0
 
 
+def _raise_missing_resume_state(checkpoint_name: str, section: str) -> None:
+    raise RuntimeError(
+        f"Checkpoint {checkpoint_name} is missing {section} state requested by load_optim=True. "
+        "Set checkpoint.load_optim=False to keep the saved training step with a fresh optimizer and scheduler, "
+        "or checkpoint.finetune=True to start from step zero."
+    )
+
+
 def _load_checkpoint_from_path(
     load_dir: str,
     state: GlobalState,
@@ -2971,27 +2979,49 @@ def _load_checkpoint_from_path(
             is_megatron_mimo=False,
             pg_collection=pg_collection,
         )
+    else:
+        raise NotImplementedError(
+            f"Checkpoint format '{ckpt_format}' is not supported. Supported formats are: 'torch_dist', 'fsdp_dtensor'"
+        )
+
+    if state_dict is None:
+        return 0, 0
+
+    restore_optim = not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim
+    gen_sd_optim = optimizer if restore_optim else None
+    gen_sd_opt_param_scheduler = opt_param_scheduler if restore_optim else None
+    needs_optimizer = gen_sd_optim is not None and not getattr(gen_sd_optim, "is_stub_optimizer", False)
+
+    if ckpt_type == CheckpointType.LOCAL:
+        # The initial metadata-only pass cannot reveal the saved optimizer schema.
+        # Load once and retain the tensor-aware object for the reconstruction pass.
+        checkpointing_context = dict(checkpointing_context or {})
+        local_checkpoint = checkpointing_context["local_checkpoint_manager"].load()
+        checkpointing_context["_preloaded_local_checkpoint"] = local_checkpoint
+        state_dict = dict(local_checkpoint[0].common_state_dict)
+        # The current save policy says nothing about the checkpoint we are loading.
+        saved_sections = state_dict.keys() | local_checkpoint[0].sharded_state_dict.keys()
+        if (
+            needs_optimizer
+            and "optimizer" not in saved_sections
+            and not isinstance(optimizer, LayerWiseDistributedOptimizer)
+        ):
+            _raise_missing_resume_state(checkpoint_name, "optimizer")
+        if gen_sd_opt_param_scheduler is not None and saved_sections.isdisjoint(
+            {"lr_scheduler", "opt_param_scheduler"}
+        ):
+            _raise_missing_resume_state(checkpoint_name, "scheduler")
 
     # Step 2: Initialize scaffolding
     load_kwargs = {}
     ignore_rng_state = False
-    ignore_optimizer_state = False
     ignore_rerun_state = True
     load_dp_rng_states = False
     run_config = None  # Initialize for later use
 
     # Step 3: Format-specific preparation
     if ckpt_format == "torch_dist":
-        if state_dict is None:
-            return 0, 0
-
         if ckpt_type == CheckpointType.LOCAL:
-            # The initial metadata-only pass cannot reveal the saved optimizer schema.
-            # Load once and retain the tensor-aware object for the reconstruction pass.
-            checkpointing_context = dict(checkpointing_context or {})
-            local_checkpoint = checkpointing_context["local_checkpoint_manager"].load()
-            checkpointing_context["_preloaded_local_checkpoint"] = local_checkpoint
-            state_dict = dict(local_checkpoint[0].common_state_dict)
             # Local checkpoints don't contain run_config.yaml and checkpoint_name
             # is a CkptID tuple, not a string path.  Use current config — local
             # checkpoints always resume with the same parallelism.
@@ -3005,7 +3035,6 @@ def _load_checkpoint_from_path(
                     ),
                 },
                 "checkpoint": {
-                    "save_optim": cfg.checkpoint.save_optim,
                     "save_rng": cfg.checkpoint.save_rng,
                     "save_rng_state_per_dp_rank": cfg.checkpoint.save_rng_state_per_dp_rank,
                     "fully_parallel_save": cfg.checkpoint.fully_parallel_save,
@@ -3019,6 +3048,11 @@ def _load_checkpoint_from_path(
             else:
                 print_rank_0("run_config.yaml not found, extracting config from legacy Megatron-LM checkpoint")
                 run_config = _extract_megatron_lm_args_from_state_dict(state_dict)
+
+            if (needs_optimizer or gen_sd_opt_param_scheduler is not None) and not run_config["checkpoint"][
+                "save_optim"
+            ]:
+                _raise_missing_resume_state(checkpoint_name, "optimizer/scheduler")
 
         load_dp_rng_states = _checkpoint_has_per_dp_rng_states(run_config)
 
@@ -3079,54 +3113,38 @@ def _load_checkpoint_from_path(
             sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
         print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
 
-        # Determine if optimizer state will be loaded
-        if (
-            not release
-            and not cfg.checkpoint.finetune
-            and cfg.checkpoint.load_optim
-            and run_config["checkpoint"]["save_optim"]
-        ):
-            gen_sd_optim = optimizer
-            gen_sd_opt_param_scheduler = opt_param_scheduler
-
-            if use_distributed_optimizer:
-                if sharded_sd_metadata is None:
-                    sharded_sd_metadata = {
-                        "distrib_optim_sharding_type": (
-                            "fully_sharded_model_space"
-                            if not cfg.optimizer.use_distributed_optimizer
-                            or run_config["checkpoint"]["fully_parallel_save"]
-                            else "dp_zero_gather_scatter"
-                        ),
-                    }
-                # Older mixed-optimizer checkpoints omitted this key and used
-                # DistributedOptimizer's model-space default.
-                sharding_type = sharded_sd_metadata.get("distrib_optim_sharding_type", "fully_sharded_model_space")
-                # Compact LayerWise state is stored in model space even when the
-                # shared metadata says dp_reshardable. Apply tensor-sharded
-                # restrictions only if either side actually uses DistOpt state.
-                has_tensor_sharded_state = (
-                    cfg.optimizer.use_distributed_optimizer
-                    or _has_distributed_optimizer(optimizer)
-                    or _has_distributed_optimizer_state(state_dict.get("optimizer", {}))
-                    or run_config.get("optimizer", {}).get("use_distributed_optimizer", False)
+        if restore_optim and use_distributed_optimizer:
+            if sharded_sd_metadata is None:
+                sharded_sd_metadata = {
+                    "distrib_optim_sharding_type": (
+                        "fully_sharded_model_space"
+                        if not cfg.optimizer.use_distributed_optimizer
+                        or run_config["checkpoint"]["fully_parallel_save"]
+                        else "dp_zero_gather_scatter"
+                    ),
+                }
+            # Older mixed-optimizer checkpoints omitted this key and used
+            # DistributedOptimizer's model-space default.
+            sharding_type = sharded_sd_metadata.get("distrib_optim_sharding_type", "fully_sharded_model_space")
+            # Compact LayerWise state is stored in model space even when the
+            # shared metadata says dp_reshardable. Apply tensor-sharded
+            # restrictions only if either side actually uses DistOpt state.
+            has_tensor_sharded_state = (
+                cfg.optimizer.use_distributed_optimizer
+                or _has_distributed_optimizer(optimizer)
+                or _has_distributed_optimizer_state(state_dict.get("optimizer", {}))
+                or run_config.get("optimizer", {}).get("use_distributed_optimizer", False)
+            )
+            if (
+                not tp_pp_match
+                and has_tensor_sharded_state
+                and sharding_type not in DistributedOptimizer.checkpoint_fully_reshardable_formats
+            ):
+                raise RuntimeError(
+                    f"{mismatch_msg}: not supported for DistributedOptimizer with sharding type"
+                    f" {sharding_type}."
+                    f" Please use `checkpoint_config.fully_parallel_save=True` for checkpoint saving."
                 )
-                if (
-                    not tp_pp_match
-                    and has_tensor_sharded_state
-                    and sharding_type not in DistributedOptimizer.checkpoint_fully_reshardable_formats
-                ):
-                    raise RuntimeError(
-                        f"{mismatch_msg}: not supported for DistributedOptimizer with sharding type"
-                        f" {sharding_type}."
-                        f" Please use `checkpoint_config.fully_parallel_save=True` for checkpoint saving."
-                    )
-        else:
-            gen_sd_optim = None
-            gen_sd_opt_param_scheduler = None
-            if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim:
-                ignore_optimizer_state = True
-                print_rank_0("Optimizer state was not saved in the torch-dist checkpoint; using a fresh optimizer")
 
         # Determine if rerun state will be loaded
         if tp_pp_match and not release and not cfg.checkpoint.finetune and "rerun_state_machine" in state_dict:
@@ -3181,9 +3199,6 @@ def _load_checkpoint_from_path(
 
     elif ckpt_format == "fsdp_dtensor":
         # Handle fsdp_dtensor format
-        if state_dict is None:
-            return 0, 0
-
         tp_pp_match = True
         # Older FSDP checkpoints do not have run_config.yaml. Preserve their historical restore
         # behavior by falling back to the active run's RNG layout policy. New checkpoints use the
@@ -3212,9 +3227,7 @@ def _load_checkpoint_from_path(
 
         # Decide what sections to load based on metadata and config
         gen_sd_rerun_state = {}
-        gen_sd_opt_param_scheduler = None
         gen_sd_rng_state = None
-        gen_sd_optim = None
         if not cfg.checkpoint.finetune:
             if "rerun_state_machine" in state_dict_metadata:
                 gen_sd_rerun_state = get_rerun_state_machine().state_dict(
@@ -3228,13 +3241,15 @@ def _load_checkpoint_from_path(
                     f"(TP, PP) mismatch after resume ({run_tp_pp} vs {ckpt_tp_pp} from checkpoint): "
                     "RNG state will be ignored"
                 )
-            checkpoint_saved_optimizer = run_config is None or run_config.get("checkpoint", {}).get("save_optim", True)
-            if cfg.checkpoint.load_optim and checkpoint_saved_optimizer:
-                gen_sd_optim = optimizer
-                gen_sd_opt_param_scheduler = opt_param_scheduler
-            elif cfg.checkpoint.load_optim:
-                ignore_optimizer_state = True
-                print_rank_0("Optimizer state was not saved in the FSDP checkpoint; using a fresh optimizer")
+
+        if ckpt_type != CheckpointType.LOCAL and (needs_optimizer or gen_sd_opt_param_scheduler is not None):
+            # DCP partial loading leaves absent sections at their initialized values. Check
+            # the on-disk index, including for older checkpoints without run_config.yaml.
+            saved_sections = {key.partition(".")[0] for key in state_dict_metadata}
+            if needs_optimizer and "optimizer" not in saved_sections:
+                _raise_missing_resume_state(checkpoint_name, "optimizer")
+            if gen_sd_opt_param_scheduler is not None and "opt_param_scheduler" not in saved_sections:
+                _raise_missing_resume_state(checkpoint_name, "scheduler")
 
         optim_sd_kwargs = dict(
             metadata=_build_sharded_state_dict_metadata(use_distributed_optimizer, cfg.checkpoint),
@@ -3257,11 +3272,6 @@ def _load_checkpoint_from_path(
         # Store model reference for preprocessing during load
         state_dict["_model"] = model
         load_kwargs["sharded_state_dict"] = state_dict
-    else:
-        # Unsupported checkpoint format
-        raise NotImplementedError(
-            f"Checkpoint format '{ckpt_format}' is not supported. Supported formats are: 'torch_dist', 'fsdp_dtensor'"
-        )
 
     # Apply PEFT resume filtering (common across all checkpoint formats)
     is_peft_resume = (
@@ -3389,7 +3399,7 @@ def _load_checkpoint_from_path(
     print_rank_0(f" checkpoint version {checkpoint_version}")
 
     # Load optimizer and scheduler
-    if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim and not ignore_optimizer_state:
+    if restore_optim:
         try:
             restore_lr_bounds = cfg.scheduler.override_opt_param_scheduler and not skip_load_to_model_and_opt
             # The optimizer's groups still hold the LR bounds built from the current config; the
