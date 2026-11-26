@@ -271,11 +271,11 @@ def _build_llm_rope_positions(
     st = 0
     remain_images, remain_videos = image_nums, video_nums
     for _ in range(image_nums + video_nums):
-        if image_token_id in input_tokens and remain_images > 0:
+        if remain_images > 0 and image_token_id in input_tokens:
             ed_image = input_tokens.index(image_token_id, st)
         else:
             ed_image = len(input_tokens) + 1
-        if video_token_id in input_tokens and remain_videos > 0:
+        if remain_videos > 0 and video_token_id in input_tokens:
             ed_video = input_tokens.index(video_token_id, st)
         else:
             ed_video = len(input_tokens) + 1
