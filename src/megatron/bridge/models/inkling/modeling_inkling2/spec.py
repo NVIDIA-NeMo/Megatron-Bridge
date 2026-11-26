@@ -32,6 +32,7 @@ from megatron.bridge.models.inkling.modeling_inkling2.layers import (
     Inkling2MoELayer,
     Inkling2SiTU,
 )
+from megatron.bridge.models.inkling.modeling_inkling2.loop import Inkling2LoopStack
 
 
 def _with_situ_activation(builder):
@@ -65,7 +66,8 @@ def build_inkling2_hybrid_stack_spec(config) -> ModuleSpec:
         use_te=True, num_experts=config.num_moe_experts, moe_grouped_gemm=config.moe_grouped_gemm
     )
     return ModuleSpec(
-        module=HybridStack,
+        # Runs HybridStack's forward unless the config is looped (Inkling 2 Mini).
+        module=Inkling2LoopStack,
         submodules=HybridStackSubmodules(
             attention_layer=ModuleSpec(
                 module=Inkling2AttentionLayer,
