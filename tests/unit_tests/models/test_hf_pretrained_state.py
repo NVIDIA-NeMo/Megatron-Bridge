@@ -126,6 +126,74 @@ def test_save_generator_strict_false_writes_nested_partial_shard(tmp_path) -> No
     assert index_data["weight_map"] == {"model.present": shard_filename}
 
 
+def test_save_generator_strict_drains_the_generator_before_raising(tmp_path) -> None:
+    """Strict mode must still pull the generator dry.
+
+    ``save_generator`` says it itself: the ranks that are not writing sit in
+    ``for _ in generator: pass`` to drive their side of the export collectives.
+    Leaving the generator mid-stream on the writing rank blocks them until the
+    process-group timeout instead of failing.
+    """
+    shard_filename = "model-00001-of-00001.safetensors"
+    _write_safetensors_index(
+        tmp_path,
+        {
+            "model.first": shard_filename,
+            "model.second": shard_filename,
+        },
+    )
+    source = SafeTensorsStateSource(tmp_path)
+    output_path = tmp_path / "output"
+    pulled: list[str] = []
+
+    def generator() -> Iterator[tuple[str, torch.Tensor]]:
+        pulled.append("model.first")
+        yield "model.first", torch.ones(1)
+        pulled.append("surprise.weight")
+        yield "surprise.weight", torch.ones(1)
+        pulled.append("model.second")
+        yield "model.second", torch.ones(1)
+
+    with pytest.raises(KeyError, match="surprise.weight"):
+        source.save_generator(generator(), output_path, strict=True)
+
+    assert pulled == ["model.first", "surprise.weight", "model.second"]
+    # Nothing is written past the first unexpected key, as raising on it did.
+    assert not (output_path / shard_filename).exists()
+
+
+def test_distributed_save_generator_strict_drains_the_generator(tmp_path, monkeypatch) -> None:
+    """Same invariant on the distributed path, where every rank both produces and
+    consumes the generator. The strict-mode check already aggregates per-rank
+    status "so all ranks raise consistently (avoids hangs on the trailing
+    barriers)", and the error it raises says the ranks drained the generator."""
+    shard_filename = "model-00001-of-00001.safetensors"
+    _write_safetensors_index(
+        tmp_path,
+        {
+            "model.first": shard_filename,
+            "model.second": shard_filename,
+        },
+    )
+    _mock_single_rank_distributed(monkeypatch)
+    source = SafeTensorsStateSource(tmp_path)
+    output_path = tmp_path / "output"
+    pulled: list[str] = []
+
+    def generator() -> Iterator[tuple[str, torch.Tensor]]:
+        pulled.append("model.first")
+        yield "model.first", torch.ones(1)
+        pulled.append("surprise.weight")
+        yield "surprise.weight", torch.ones(1)
+        pulled.append("model.second")
+        yield "model.second", torch.ones(1)
+
+    with pytest.raises(RuntimeError, match="drained the tensor generator"):
+        source.save_generator(generator(), output_path, strict=True, distributed_save=True)
+
+    assert pulled == ["model.first", "surprise.weight", "model.second"]
+
+
 @pytest.mark.parametrize("distributed_save", [False, True])
 def test_save_generator_recomputes_index_total_size(tmp_path, monkeypatch, distributed_save: bool) -> None:
     first_shard = "model-00001-of-00002.safetensors"
