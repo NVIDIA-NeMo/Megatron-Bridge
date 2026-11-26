@@ -157,94 +157,17 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8sc_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 64× H100, BF16 (1024-GPU layout with legacy-scaled GBS)."""
-    cfg = deepseek_v3_pretrain_1024gpu_h100_bf16_config()
-    cfg.train.global_batch_size = 1024
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
-        # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-    }
-    return cfg
-
-
-def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 64× H100, FP8 current-scaling (standard tensorwise)."""
-    cfg = deepseek_v3_pretrain_config()
-    cfg.mixed_precision = _perf_precision("fp8_cs")
-    _deepseek_v3_common(cfg)
-
-    cfg.model.tensor_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_size = 8
-    cfg.model.virtual_pipeline_model_parallel_size = 4
-    cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
-    cfg.model.sequence_parallel = True
-    cfg.train.global_batch_size = 16384
-    cfg.train.micro_batch_size = 1
-
-    cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
-
-    cfg.ddp.overlap_grad_reduce = False
-    cfg.comm_overlap.overlap_grad_reduce = False
-
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|(tt|)*30mL")
-
-    _benchmark_common(cfg)
-    cfg.train.global_batch_size = 1024
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
-        # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-    }
-    return cfg
-
-
 def deepseek_v3_pretrain_64gpu_h100_bf16_proxy_config() -> ConfigContainer:
     """DeepSeek V3 BF16 debugging proxy: 13 decoder layers on 64 H100 GPUs.
 
     Three leading dense layers, ten MoE layers, one MTP layer, TP=2, EP=64 and
     GBS=1024/MBS=1. PP=1 without virtual pipelining gives dense DP=32, expert
     DP=1 and 32 microbatches. Other settings follow
-    ``deepseek_v3_pretrain_64gpu_h100_bf16_config``. This reduced-depth benchmark
+    ``deepseek_v3_pretrain_1024gpu_h100_bf16_config``. This reduced-depth benchmark
     does not establish at-scale throughput, memory fit or convergence.
     """
-    cfg = deepseek_v3_pretrain_64gpu_h100_bf16_config()
+    cfg = deepseek_v3_pretrain_1024gpu_h100_bf16_config()
+    cfg.train.global_batch_size = 1024
     cfg.model.num_layers = 13
     cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
     cfg.model.pipeline_model_parallel_size = 1
@@ -283,10 +206,11 @@ def deepseek_v3_pretrain_64gpu_h100_fp8cs_proxy_config() -> ConfigContainer:
     Three leading dense layers, ten MoE layers, one MTP layer, TP=2, EP=64 and
     GBS=1024/MBS=1. PP=1 without virtual pipelining gives dense DP=32, expert
     DP=1 and 32 microbatches. Other settings follow
-    ``deepseek_v3_pretrain_64gpu_h100_fp8cs_config``. This reduced-depth benchmark
+    ``deepseek_v3_pretrain_1024gpu_h100_fp8cs_config``. This reduced-depth benchmark
     does not establish at-scale throughput, memory fit or convergence.
     """
-    cfg = deepseek_v3_pretrain_64gpu_h100_fp8cs_config()
+    cfg = deepseek_v3_pretrain_1024gpu_h100_fp8cs_config()
+    cfg.train.global_batch_size = 1024
     cfg.model.num_layers = 13
     cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
     cfg.model.pipeline_model_parallel_size = 1
