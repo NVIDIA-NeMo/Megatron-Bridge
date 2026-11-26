@@ -71,8 +71,10 @@ Use `deepseek_v3_pretrain_64gpu_h100_bf16_proxy_config` or
 performance launcher. These mock-data debugging benchmarks have 3 dense + 10 MoE decoder layers and
 one MTP layer, with PP=1 and no virtual pipeline or explicit stage layout, TP=2, EP=64, GBS=1024 and
 MBS=1. Thus dense DP=32, expert DP=1, and there are 32 microbatches per iteration. Other settings and
-the process environment follow the 64-GPU H100 parent recipes. The reduced depth means these proxies
+the process environment follow the 1024-GPU H100 recipes. The reduced depth means these proxies
 are not convergence-equivalent to the full model or a direct predictor of its end-to-end throughput.
+They are the only 64-GPU H100 DeepSeek V3 recipes: the full-depth model does not fit on 64 H100 GPUs,
+so use the 1024-GPU H100 recipes for full-depth runs.
 
 ## Setup Instructions
 
