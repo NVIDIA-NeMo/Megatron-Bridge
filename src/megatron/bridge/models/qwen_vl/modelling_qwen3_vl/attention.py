@@ -82,7 +82,7 @@ class Qwen3VLSelfAttention(SelfAttention):
         context = torch.einsum("bhst,tbhd->sbhd", probs, value)
         return context.reshape(context.shape[0], context.shape[1], -1).contiguous()
 
-    def forward(
+    def _forward(
         self,
         hidden_states: Tensor,
         attention_mask: Tensor,
@@ -100,6 +100,12 @@ class Qwen3VLSelfAttention(SelfAttention):
     ) -> tuple[Tensor, Tensor]:
         """
         Perform a forward pass through the attention module.
+
+        Renamed from ``forward`` so the inherited ``Attention.forward`` (base class)
+        dispatcher picks this up and applies whole-attention-block checkpointing when
+        ``"attention"`` is in ``recompute_modules``. Do not rename back to ``forward``
+        without re-adding that dispatch logic here — this class previously bypassed it
+        entirely because it defined its own ``forward``.
 
         Args:
             hidden_states (Tensor): Hidden states.
