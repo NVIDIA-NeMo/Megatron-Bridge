@@ -18,6 +18,7 @@ from contextlib import ExitStack, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -141,6 +142,75 @@ def test_quantized_resume_requires_successful_main_parameter_restore(
         scheduler.step.assert_not_called()
     if expected:
         assert events == ["optimizer", "scheduler", "quantize"]
+
+
+@pytest.mark.parametrize("mode", ["resume", "no_load_optim", "finetune"])
+def test_loading_optimizer_is_independent_of_future_save_policy(
+    load_checkpoint_fixtures: dict[str, Any], mode: str
+) -> None:
+    fixtures = load_checkpoint_fixtures
+    cfg, state = fixtures["mock_cfg"], fixtures["mock_state"]
+    cfg.peft = None
+    cfg.checkpoint.save_optim = False
+    cfg.checkpoint.load_optim = mode != "no_load_optim"
+    cfg.checkpoint.finetune = mode == "finetune"
+    cfg.checkpoint.load_rng = cfg.checkpoint.save_rng = False
+    cfg.scheduler.override_opt_param_scheduler = False
+    cfg.ddp.fp8_param_gather = cfg.ddp.fp4_param_gather = False
+    state.train_state = TrainState(step=3, consumed_train_samples=48)
+    model = fixtures["mock_model"]
+    model[0].sharded_state_dict.return_value = {"weight": torch.ones(1)}
+    model[0].hide_loss_modules.return_value = nullcontext()
+    optimizer, scheduler = fixtures["mock_optimizer"], fixtures["mock_scheduler"]
+    optimizer.is_stub_optimizer = False
+    optimizer.sharded_state_dict.return_value = {"state": {"step": 3}}
+    scheduler.state_dict.return_value = {"num_steps": 48}
+    payload = {
+        "checkpoint_version": 3.0,
+        "model": {},
+        "optimizer": {"step": 3},
+        "opt_param_scheduler": {"num_steps": 48},
+    }
+    with ExitStack() as stack:
+        replacements = {
+            "is_hf_checkpoint_dir": False,
+            "is_checkpoint_iteration_directory": True,
+            "file_exists": True,
+            "read_run_config": {
+                "model": {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1},
+                "checkpoint": {"save_optim": True, "save_rng": False, "fully_parallel_save": False},
+            },
+            "read_train_state": state.train_state,
+            "update_num_microbatches": None,
+            "_get_model_glu_interleave_sizes": (None, None),
+            "_load_model_state_dict": None,
+            "unwrap_model": model,
+            "_load_base_checkpoint": (
+                payload,
+                "/checkpoints/iter_0000003",
+                False,
+                checkpointing.CheckpointType.GLOBAL,
+            ),
+        }
+        for name, value in replacements.items():
+            stack.enter_context(patch.object(checkpointing, name, return_value=value))
+        stack.enter_context(patch.object(checkpointing.dist_checkpointing, "load_content_metadata", return_value={}))
+        stack.enter_context(patch.object(torch.distributed, "is_initialized", return_value=False))
+        for logger in (checkpointing.wandb_utils, checkpointing.mlflow_utils, checkpointing.comet_utils):
+            stack.enter_context(patch.object(logger, "on_load_checkpoint_success"))
+        checkpointing._load_checkpoint_from_path(
+            "/checkpoints", state, model, optimizer, scheduler, pg_collection=Mock()
+        )
+
+    if mode == "resume":
+        optimizer.sharded_state_dict.assert_called_once()
+        optimizer.load_state_dict.assert_called_once_with(payload["optimizer"])
+        scheduler.load_state_dict.assert_called_once_with(payload["opt_param_scheduler"])
+    else:
+        optimizer.sharded_state_dict.assert_not_called()
+        optimizer.load_state_dict.assert_not_called()
+        scheduler.load_state_dict.assert_not_called()
+    assert cfg.checkpoint.save_optim is False
 
 
 def test_scheduler_runtime_override_changes_next_lr_and_preserves_multipliers():

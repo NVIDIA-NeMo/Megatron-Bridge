@@ -5430,8 +5430,10 @@ class TestFSDPDTensorFunctionality:
             )
 
     @pytest.mark.parametrize("cpu_staging", [False, True])
-    def test_generate_state_dict_includes_optimizer_scaffold_when_loading(self, cpu_staging):
-        """Load-time optimizer scaffolding should not depend on save_optim."""
+    @pytest.mark.parametrize("ckpt_format", ["torch_dist", "fsdp_dtensor"])
+    @pytest.mark.parametrize("is_loading", [False, True])
+    def test_generate_state_dict_includes_optimizer_scaffold_when_loading(self, cpu_staging, ckpt_format, is_loading):
+        """Disabling future saves still permits loading optimizer and scheduler state."""
         from unittest.mock import Mock
 
         from megatron.bridge.training.checkpointing import generate_state_dict
@@ -5439,6 +5441,7 @@ class TestFSDPDTensorFunctionality:
 
         mock_model = Mock()
         mock_model.sharded_state_dict.return_value = {"test_param": torch.tensor([1.0])}
+        mock_model.state_dict_for_save_checkpoint.return_value = {"test_param": torch.tensor([1.0])}
         mock_optimizer = Mock()
         mock_optimizer.is_stub_optimizer = False
         mock_optimizer.sharded_state_dict.return_value = {"optimizer": {"param_groups": []}}
@@ -5446,7 +5449,7 @@ class TestFSDPDTensorFunctionality:
         mock_scheduler.state_dict.return_value = {"scheduler": "state"}
 
         ckpt_cfg = CheckpointConfig(
-            ckpt_format="torch_dist",
+            ckpt_format=ckpt_format,
             save_optim=False,
             save_rng=False,
             stage_precision_aware_optimizer_state_on_cpu=cpu_staging,
@@ -5461,15 +5464,24 @@ class TestFSDPDTensorFunctionality:
                 opt_param_scheduler=mock_scheduler,
                 rng_state=None,
                 optim_sd_kwargs={
-                    "is_loading": True,
+                    "is_loading": is_loading,
                     "metadata": {"distrib_optim_sharding_type": "dp_zero_gather_scatter"},
                 },
             )
 
-        assert result["optimizer"] == {"optimizer": {"param_groups": []}}
-        assert result["opt_param_scheduler"] == {"scheduler": "state"}
-        mock_cpu_staging.assert_called_once_with(mock_optimizer, enabled=cpu_staging)
-        mock_optimizer.sharded_state_dict.assert_called_once()
+        assert ckpt_cfg.save_optim is False
+        if is_loading:
+            assert result["optimizer"] == {"optimizer": {"param_groups": []}}
+            assert result["opt_param_scheduler"] == {"scheduler": "state"}
+            mock_cpu_staging.assert_called_once_with(mock_optimizer, enabled=cpu_staging)
+            mock_optimizer.sharded_state_dict.assert_called_once()
+            assert mock_optimizer.sharded_state_dict.call_args.kwargs["is_loading"] is True
+        else:
+            assert "optimizer" not in result
+            assert "opt_param_scheduler" not in result
+            mock_cpu_staging.assert_not_called()
+            mock_optimizer.sharded_state_dict.assert_not_called()
+            mock_scheduler.state_dict.assert_not_called()
 
     @pytest.mark.parametrize("ckpt_format", ["torch_dist", "fsdp_dtensor"])
     @pytest.mark.parametrize(

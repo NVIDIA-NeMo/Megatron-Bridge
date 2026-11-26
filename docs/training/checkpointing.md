@@ -60,6 +60,11 @@ Asynchronous saving allows training to continue while checkpoint data is persist
 | `exit_on_missing_checkpoint` | `bool` | `False` | Exit if specified checkpoint is not found instead of random initialization |
 | `dist_ckpt_strictness` | `Literal[...]` | `"assume_ok_unexpected"` | Handling of key mismatches during distributed checkpoint load |
 
+Saving and loading optimizer state are independent policies. On a normal resume from a
+complete checkpoint, `save_optim=False` with `load_optim=True` restores the optimizer and
+scheduler state, then omits both from subsequent saves. Use `load_optim=False` or finetuning
+when you intend to start with fresh optimizer state.
+
 ### Loading Specific Checkpoint Iterations
 
 By default, `checkpoint.load` loads the **latest checkpoint** available in the specified base directory by reading from the tracker file (`latest_train_state.pt`). You can explicitly load from a specific checkpoint iteration using the `ckpt_step` parameter.
