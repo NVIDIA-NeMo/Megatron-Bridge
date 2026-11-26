@@ -15,7 +15,6 @@
 """Shared Core override composition and compatibility with Bridge providers."""
 
 from dataclasses import dataclass
-from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -128,6 +127,18 @@ def test_mapping_and_callable_match_mlm_group_policy(single_rank_group, mode, cu
     assert actual[id(context.model[0].weight)]["max_lr"] == (0.004 if custom else 0.001)
 
 
+@pytest.mark.parametrize("override", [{"max_lr": 0.001}, {"wd_mult": 1.0}])
+def test_noop_recipe_override_preserves_checkpoint_group_identity(single_rank_group, override):
+    from megatron.core.optimizer.optimizer import get_param_group_identifier_tuple
+
+    context = _context()
+    context.model[0].register_parameter("second_weight", torch.nn.Parameter(torch.ones(4, 4)))
+    resolved = _resolve_optimizer_config_overrides(context, None, {ParamKey(name="weight"): override}, "extend")
+    groups = _get_param_groups(context.model, context.optimizer_config, resolved)
+    identities = [get_param_group_identifier_tuple(group) for group in groups]
+    assert len(groups) == len(set(identities)) == 2
+
+
 @pytest.mark.parametrize("result", [None, {}])
 def test_legacy_provider_empty_result_keeps_its_replacement_semantics(result):
     provider = Mock()
@@ -175,7 +186,7 @@ def test_custom_provider_and_new_policy_are_not_silently_combined(mode, custom):
 
 @pytest.mark.parametrize("custom", [lambda **kwargs: None, {"weight": {"max_lr": 0.1}}])
 def test_invalid_hook_fails_before_optimizer_creation(custom):
-    with pytest.raises(TypeError, match="ParamKey-to-override"):
+    with pytest.raises(TypeError, match="ParamKey"):
         _resolve_optimizer_config_overrides(_context(), None, custom, "extend")
     with pytest.raises(ValueError, match="Unknown optimizer override mode"):
         _resolve_optimizer_config_overrides(_context(), None, {}, "last_wins")
@@ -252,12 +263,13 @@ def test_new_callable_receives_model_chunks_for_single_module_callers():
 def test_mup_does_not_silently_overwrite_identical_selector():
     context = _context()
     key = ParamKey(name="weight")
+    context.model[0].config.use_mup = True
+    context.model[0].config.mup_width_mult = 2.0
     with (
         patch(
-            "megatron.bridge.training.optim.get_model_config",
-            return_value=SimpleNamespace(use_mup=True, mup_width_mult=2.0),
+            "megatron.training.config.optimizer_config.get_mup_config_overrides",
+            return_value={key: {"max_lr": 0.0005}},
         ),
-        patch("megatron.bridge.training.optim.get_mup_config_overrides", return_value={key: {"max_lr": 0.0005}}),
         patch("megatron.training.optim.get_megatron_optimizer") as factory,
         pytest.raises(ValueError, match="Conflicting optimizer overrides"),
     ):
