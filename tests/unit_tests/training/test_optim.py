@@ -1146,7 +1146,7 @@ class TestLoraPlusWarmupValidation:
 
     @pytest.mark.parametrize("initial_lr", [0.0, 3e-5])
     @pytest.mark.parametrize("key_form", ["a_only", "b_only", "tuple", "name_and_attr"])
-    def test_standard_adapter_policy_is_distinguished_from_general_selectors(self, key_form, initial_lr):
+    def test_named_adapter_bounds_apply_across_selector_forms(self, key_form, initial_lr):
         overrides = {}
         for group, lr in [("in", 3e-4), ("out", 4.8e-3)]:
             if (key_form == "a_only" and group == "out") or (key_form == "b_only" and group == "in"):
@@ -1159,7 +1159,7 @@ class TestLoraPlusWarmupValidation:
             else:
                 key = ParamKey(name=name)
             overrides[key] = ParamGroupOverride(max_lr=lr if key_form != "a_only" else 1e-4)
-        if initial_lr and key_form in ("a_only", "b_only"):
+        if initial_lr:
             with pytest.raises(ValueError, match=r"LoRA\+.*lr_warmup_init=0"):
                 self._setup(lambda cfg: overrides, initial_lr=initial_lr)
         else:
