@@ -45,9 +45,9 @@ SGD continue to use their ordinary distributed optimizer. To run replicated
 Muon, disable both distributed optimizer flags and the DDP distributed flag.
 
 Parameter-gather overlap can be configured through `CommOverlapConfig` for
-layer-wise Muon. The current Core implementation requires one distributed
-optimizer instance and does not support `overlap_param_gather_with_optimizer_step`
-or either FSDP implementation with Muon.
+layer-wise Muon. Both compact and shard-aligned layer-wise DDP layouts require
+`ddp.num_distributed_optimizer_instances=1`. Bridge validates this setting before model construction.
+Bridge also rejects optimizer-step parameter-gather overlap with layer-wise Muon and emerging optimizers with FSDP.
 
 Runtime setup applies explicit communication-overlap overrides before validating
 the effective optimizer settings. For LayerWise optimizers, an unspecified

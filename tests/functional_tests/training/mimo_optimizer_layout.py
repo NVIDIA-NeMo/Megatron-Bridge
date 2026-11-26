@@ -142,7 +142,9 @@ def build(
     ddp = DistributedDataParallelConfig(
         grad_reduce_in_fp32=True, overlap_grad_reduce=overlap, overlap_param_gather=overlap
     )
-    _validate_and_sync_distributed_optimizer_settings(SimpleNamespace(optimizer=optimizer_config, ddp=ddp))
+    _validate_and_sync_distributed_optimizer_settings(
+        SimpleNamespace(optimizer=optimizer_config, ddp=ddp, dist=SimpleNamespace(use_torch_fsdp2=False))
+    )
     if default_layout:
         # Direct wrapper callers can retain the ordinary DDP flag. The omitted
         # layout option must still select compact LayerWise buffers safely.

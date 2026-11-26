@@ -22,6 +22,9 @@ The `OptimizerConfig` contains all parameters for the optimization algorithm and
 | `bf16` | `bool` | Use BF16 precision for training |
 | `fp16` | `bool` | Use FP16 precision for training |
 
+Both compact and shard-aligned layer-wise DDP layouts require
+`ddp.num_distributed_optimizer_instances=1`. Bridge validates this setting before model construction.
+
 ## SchedulerConfig
 
 The `SchedulerConfig` controls learning rate scheduling and weight decay progression throughout training.
