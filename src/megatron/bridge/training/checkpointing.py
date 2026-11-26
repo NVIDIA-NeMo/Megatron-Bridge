@@ -17,6 +17,7 @@
 import contextlib
 import gc
 import inspect
+import json
 import os
 import random
 import shutil
@@ -38,6 +39,7 @@ import torch.nn.functional as F
 from megatron.core import dist_checkpointing, tensor_parallel
 from megatron.core.dist_checkpointing.dict_utils import nested_values
 from megatron.core.dist_checkpointing.glu import (
+    convert_glu_model_state,
     glu_checkpoint_metadata,
     glu_runtime_layout,
     validate_glu_checkpoint_layout,
@@ -1408,14 +1410,17 @@ def save_checkpoint(
     # Collect cfg, model, RNG.
     use_distributed_optimizer = _uses_distributed_optimizer(cfg.optimizer, optimizer)
     sharded_sd_metadata = _build_sharded_state_dict_metadata(use_distributed_optimizer, ckpt_cfg)
-    glu_model_config = get_model_config(model[0]) if model else cfg.model
+    glu_model_config = model if model else cfg.model
     _validate_native_glu_backend(glu_model_config, ckpt_format)
     sharded_sd_metadata.update(
         glu_checkpoint_metadata(
             glu_model_config,
             optimizer_uses_model_layout=(
-                not use_distributed_optimizer
-                or sharded_sd_metadata.get("distrib_optim_sharding_type") == "fully_reshardable"
+                ckpt_format == "torch_dist"
+                and (
+                    not use_distributed_optimizer
+                    or sharded_sd_metadata.get("distrib_optim_sharding_type") == "fully_reshardable"
+                )
             ),
         )
     )
@@ -2269,7 +2274,9 @@ def generate_state_dict(
     return state_dict
 
 
-def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], model: MegatronModule) -> dict[str, Any]:
+def preprocess_fsdp_dtensor_state_dict(
+    cfg, raw_state_dict: dict[str, Any], model: MegatronModule, *, is_loading=False
+) -> dict[str, Any]:
     """Preprocess FSDP DTensor state dict before saving.
 
     Handles:
@@ -2292,6 +2299,11 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
     from megatron.core.utils import get_model_config
 
     state_dict = raw_state_dict.copy()
+    if not is_loading:
+        state_dict["model"] = convert_glu_model_state(state_dict["model"], model, interleave=False)
+        state_dict["glu_checkpoint_metadata_json"] = json.dumps(
+            glu_checkpoint_metadata([model], optimizer_uses_model_layout=False)
+        )
     handle_fp8_extra_state_case(state_dict["model"])
 
     model_config = get_model_config(model)
@@ -2449,7 +2461,7 @@ def _load_model_weights_from_checkpoint(
     validate_glu_checkpoint_layout(
         sharded_sd_metadata,
         source_config=saved_model_config,
-        target_config=get_model_config(model[0]),
+        target_config=model,
         loading_optimizer=False,
     )
 
@@ -2577,10 +2589,11 @@ def load_checkpoint(
 def _validate_native_glu_backend(model_config: Any, ckpt_format: str) -> None:
     """Require the Core factory path for native interleaved GLU checkpoints."""
     layout = glu_runtime_layout(model_config)
-    if ckpt_format != "torch_dist" and any(layout[k] is not None for k in ("routed", "shared", "dense")):
+    if ckpt_format not in ("torch_dist", "fsdp_dtensor") and any(
+        layout[k] is not None for k in ("routed", "shared", "dense")
+    ):
         raise NotImplementedError(
-            "Interleaved GLU model/optimizer checkpoints require torch_dist Core factories; "
-            "FSDP/DTensor checkpoint layout conversion is not supported."
+            "Interleaved GLU checkpoints require torch_dist factories or fsdp_dtensor conversion."
         )
 
 
@@ -2695,7 +2708,7 @@ def _load_checkpoint_from_path(
     ckpt_format = cfg.checkpoint.ckpt_format
     use_distributed_optimizer = _uses_distributed_optimizer(cfg.optimizer, optimizer)
 
-    _validate_native_glu_backend(get_model_config(model[0]), ckpt_format)
+    _validate_native_glu_backend(model, ckpt_format)
 
     # HuggingFace-format directories are only honored for pretrained model
     # initialization.  Resume training via ``checkpoint.load`` should use a
@@ -2903,7 +2916,7 @@ def _load_checkpoint_from_path(
         validate_glu_checkpoint_layout(
             state_dict.get("glu_checkpoint_metadata") if ckpt_type == CheckpointType.LOCAL else sharded_sd_metadata,
             source_config=run_config.get("model") if ckpt_type != CheckpointType.LOCAL else None,
-            target_config=get_model_config(model[0]),
+            target_config=model,
             loading_optimizer=gen_sd_optim is not None,
         )
         sharded_sd_metadata["dp_cp_group"] = _checkpoint_dp_cp_group(pg_collection)
@@ -3923,7 +3936,7 @@ def load_fsdp_dtensor_checkpoint(
     # This applies the same transformations (expert parameter reindexing, SWiGLU, FP8)
     # that were applied during save, ensuring keys match
     model = state_dict.pop("_model")
-    state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model[0])
+    state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model[0], is_loading=True)
 
     checkpoint_name = (
         checkpoint_path_override
@@ -3932,6 +3945,19 @@ def load_fsdp_dtensor_checkpoint(
     )
 
     fs_storage_reader = _get_filesystem_reader(checkpoint_name)
+    glu_metadata = {}
+    if "glu_checkpoint_metadata_json" in fs_storage_reader.read_metadata().state_dict_metadata:
+        holder = {"glu_checkpoint_metadata_json": ""}
+        torch.distributed.checkpoint.load_state_dict(holder, storage_reader=fs_storage_reader, no_dist=True)
+        glu_metadata = json.loads(holder["glu_checkpoint_metadata_json"])
+    saved_config_path = get_checkpoint_run_config_filename(checkpoint_name)
+    saved_model_config = read_run_config(saved_config_path).get("model") if file_exists(saved_config_path) else None
+    validate_glu_checkpoint_layout(
+        glu_metadata,
+        source_config=saved_model_config,
+        target_config=model,
+        loading_optimizer=raw_optimizer_state_dict is not None,
+    )
 
     # Configure partial loading based on strict_fsdp_dtensor_load setting
     allow_partial_load = not getattr(ckpt_cfg, "strict_fsdp_dtensor_load", False)
@@ -3965,7 +3991,7 @@ def load_fsdp_dtensor_checkpoint(
         state_dict["optimizer"] = raw_optimizer_state_dict
 
     if raw_model_state_dict is not None:
-        state_dict["model"] = raw_model_state_dict
+        state_dict["model"] = convert_glu_model_state(raw_model_state_dict, model[0], interleave=True)
 
     return state_dict, checkpoint_name, release, CheckpointType.FSDP_DTENSOR
 
