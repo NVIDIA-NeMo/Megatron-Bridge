@@ -80,6 +80,8 @@ def _routed_experts(completion, prompt_len: int, response_len: int, moe_layers: 
 class VllmRollout:
     """vllm 0.29 ``LLM`` built over the already-initialized torch.distributed world (external_launcher)."""
 
+    colocated = True
+
     def __init__(
         self,
         hf_path: str,

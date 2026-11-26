@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""GRPO with truncated importance sampling on DAPO-Math, vllm colocated with the policy engine.
+"""GRPO with truncated importance sampling on DAPO-Math, vllm colocated with the policy or on its own GPUs.
 
 Per round: refresh vllm's weights from the policy (round 0 uses the HF weights the checkpoint was
 converted from), offload the policy, sample ``group_size`` responses per prompt, score them with the
@@ -20,6 +20,10 @@ DAPO rule, normalize rewards within each group, bring the policy back, record it
 ``calls_per_step`` forward_backward calls). The ratio denominator is the policy before the round; the
 truncated importance weight ``min(exp(old - rollout), tis_coef)`` corrects for vllm's sampling
 distribution. Everything runs on every rank; vllm generates per rank and the samples are gathered.
+
+With ``--rollout-world N`` vllm runs instead on N GPUs of its own (``vllm_remote_rollout.py``, one
+process per GPU, started separately): the refresh is a refit through ``TrainingEngine.refit`` and the
+policy is never offloaded. The rest of the round is the same.
 """
 
 import argparse
@@ -30,6 +34,7 @@ import time
 import torch
 from dapo_math import Sample, group_advantages, load_prompts, response_slice, score, to_datum, without_routing
 from transformers import AutoTokenizer
+from vllm_remote_rollout import RemoteVllmRollout
 from vllm_rollout import VllmRollout
 
 import megatron.bridge.engine.recipes as recipes
@@ -239,18 +244,22 @@ def measure_merge(
 
 
 def rollout_round(
-    rollout: VllmRollout, policy: TrainingEngine, prompts, args, *, eval_prompts=None
+    rollout: VllmRollout | RemoteVllmRollout, policy: TrainingEngine, prompts, args, *, eval_prompts=None
 ) -> tuple[list[Sample], dict[str, float]]:
     """Refresh weights (policy resident), offload the policy, generate, sleep vllm, score and normalize.
+
+    A ``RemoteVllmRollout`` keeps the policy resident; its refresh only enqueues the refit, and ``sleep`` and
+    ``wake_kv_cache`` do nothing.
 
     The refresh runs every round, including the first: ``sleep(level=2)`` discards vllm's weights, so
     they must be rewritten from the policy before each generation. With ``eval_prompts`` the held-out
     set is sampled too, with the same weights, and its statistics are returned under ``eval_*``.
     """
     rollout.refresh_from(policy)
-    policy.cpu()
-    print_rank_0("[round] policy offloaded; waking vllm's KV cache")
-    rollout.wake_kv_cache()
+    if rollout.colocated:
+        policy.cpu()
+        print_rank_0("[round] policy offloaded; waking vllm's KV cache")
+        rollout.wake_kv_cache()
     print_rank_0(f"[round] generating {args.group_size} samples for each of {len(prompts)} prompts")
     samples = rollout.generate(
         prompts, group_size=args.group_size, max_tokens=args.max_tokens, temperature=args.temperature
@@ -459,19 +468,36 @@ def measure_this_round(args, round_index: int) -> bool:
     return round_index % args.measure_merge_every == 0 or round_index == args.rounds - 1
 
 
-def main() -> None:
-    """Entry point."""
-    logging.basicConfig(level=logging.INFO)
-    args = parse_args()
-    if args.measure_merge_every and not (args.lora_rank and args.merge_dir and args.base_model_name_or_path):
-        raise SystemExit("--measure-merge-every needs --lora-rank, --merge-dir and --base-model-name-or-path")
-    policy = build_engine(args)
-    merge_dir = merge_run_dir(args.merge_dir) if args.measure_merge_every else None
-    if merge_dir is not None:
-        print_rank_0(f"[merge] this run's measurement exports go to {merge_dir}")
-    hf_path = policy.recipe.hf_path  # tokenizer and vllm weights; the same for both construction paths
-    prompts, eval_prompts = load_data(args, hf_path)
+def _placement_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--rollout-world",
+        type=int,
+        default=0,
+        help="Run vllm on this many GPUs of its own (vllm_remote_rollout.py) instead of colocated (0: colocated)",
+    )
+    parser.add_argument("--rollout-address", default="127.0.0.1", help="Host of rank 0, reachable from the rollout")
+    parser.add_argument("--rollout-port", type=int, default=29600, help="Refit rendezvous port; commands use +1")
+    parser.add_argument("--refit-bucket-mb", type=int, default=1024, help="Refit submission group size in MiB")
+    parser.add_argument("--refit-timeout", type=float, default=600.0, help="Seconds one refit may take")
+    parser.add_argument(
+        "--rollout-timeout", type=float, default=4 * 3600.0, help="Seconds the two sides wait for each other"
+    )
 
+
+def build_rollout(args: argparse.Namespace, policy: TrainingEngine, hf_path: str) -> VllmRollout | RemoteVllmRollout:
+    """``RemoteVllmRollout`` with ``--rollout-world``, else a colocated ``VllmRollout`` left asleep; policy resident."""
+    if args.rollout_world:
+        if args.router_replay or args.measure_merge_every:
+            raise SystemExit("--router-replay and --measure-merge-every need the colocated rollout")
+        return RemoteVllmRollout(
+            policy,
+            address=args.rollout_address,
+            port=args.rollout_port,
+            world_size=args.rollout_world,
+            bucket_bytes=args.refit_bucket_mb << 20,
+            refit_timeout_s=args.refit_timeout,
+            store_timeout_s=args.rollout_timeout,
+        )
     policy.cpu()  # vllm measures free memory at construction
     rollout = VllmRollout(
         hf_path,
@@ -483,10 +509,27 @@ def main() -> None:
     )
     rollout.sleep()
     policy.cuda()
+    return rollout
+
+
+def main() -> None:
+    """Entry point."""
+    logging.basicConfig(level=logging.INFO)
+    args = parse_args(_placement_arguments)
+    if args.measure_merge_every and not (args.lora_rank and args.merge_dir and args.base_model_name_or_path):
+        raise SystemExit("--measure-merge-every needs --lora-rank, --merge-dir and --base-model-name-or-path")
+    policy = build_engine(args)
+    merge_dir = merge_run_dir(args.merge_dir) if args.measure_merge_every else None
+    if merge_dir is not None:
+        print_rank_0(f"[merge] this run's measurement exports go to {merge_dir}")
+    hf_path = policy.recipe.hf_path  # tokenizer and vllm weights; the same for both construction paths
+    prompts, eval_prompts = load_data(args, hf_path)
+
+    rollout = build_rollout(args, policy, hf_path)
     engines = {"policy": policy}
     first_round = resume_round(engines, args)
     logger = RunLogger(args, "grpo")
-    print_rank_0("[setup] vllm asleep, policy resident; starting rounds")
+    print_rank_0("[setup] rollout ready, policy resident; starting rounds")
 
     last_round_seconds = None
     for round_index in range(first_round, args.rounds):
@@ -511,6 +554,8 @@ def main() -> None:
         if args.save_every and (round_index + 1) % args.save_every == 0 and round_index + 1 < args.rounds:
             save_round(engines, args, round_index + 1)
     logger.finish()
+    if not rollout.colocated:
+        rollout.close()
     policy.close()
     print_rank_0("GRPO EXAMPLE PASSED")
     torch.distributed.barrier()

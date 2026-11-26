@@ -26,7 +26,7 @@ Both routes are ``nccl.m2n`` reshard calls on one NCCL communicator spanning tra
 rollout ranks ``[M, M + N)``. Calls are recorded in groups of about ``bucket_bytes``, which the library
 packs into few transfers, on a side stream: ``send`` and ``receive`` return once everything is enqueued.
 The trainer builds the plan (entry order, buckets, meshes) once and hands it to the rollout through the
-rendezvous store, so both sides issue identical calls with no per-refit metadata exchange.
+rendezvous store, so both sides issue identical atoms (``RefitPlan.atoms``) with no per-refit metadata exchange.
 
 This module imports only torch (and nccl4py when connecting), so a rollout process without Megatron can
 load this file by path (``importlib.util.spec_from_file_location``); the plan crosses as plain JSON.
@@ -108,6 +108,25 @@ class RefitEntry:
 
 
 @dataclass(frozen=True)
+class RefitAtom:
+    """One ``nccl.m2n`` reshard: ``entry`` from one source row to one block of rollout ranks.
+
+    Attributes:
+        entry: The tensor.
+        src: The source row, as a one-row rank grid, split along ``src_dim`` (``None``: held whole).
+        src_dim: Split dim of the source row.
+        dst: The destination block; several rows when a tensor-parallel rollout splits along ``dst_dim``.
+        dst_dim: Split dim within each destination row (``None``: every rank receives it whole).
+    """
+
+    entry: RefitEntry
+    src: Mesh
+    src_dim: int | None
+    dst: Mesh
+    dst_dim: int | None
+
+
+@dataclass(frozen=True)
 class RefitPlan:
     """Every tensor a refit moves, in issue order, and the sizes of the two sides."""
 
@@ -120,6 +139,77 @@ class RefitPlan:
     def num_buckets(self) -> int:
         """Number of submission groups."""
         return self.entries[-1].bucket + 1 if self.entries else 0
+
+    def atoms(self) -> list[list[RefitAtom]]:
+        """Per bucket, the atoms every rank issues, in order; both sides derive the same list.
+
+        Each destination block reads from one source row; blocks rotate over the replicas to spread the load.
+        """
+        buckets: list[list[RefitAtom]] = [[] for _ in range(self.num_buckets)]
+        for entry in self.entries:
+            for i, (dst, dst_dim) in enumerate(self._targets(entry)):
+                src = entry.sources[i % len(entry.sources)]
+                buckets[entry.bucket].append(RefitAtom(entry, (src,), entry.split_dim, dst, dst_dim))
+        return buckets
+
+    def _targets(self, entry: RefitEntry) -> list[tuple[Mesh, int | None]]:
+        """Destination blocks of ``entry``: contiguous blocks of rollout ranks, each with its split dim."""
+        offset, layout = self.trainer_world_size, self.layout
+        ranks = tuple(range(offset, offset + layout.world_size))
+        if entry.expert is not None and layout.expert_parallel_size > 1:
+            owner = entry.expert // (self.num_experts // layout.expert_parallel_size)
+            return [
+                (((offset + r,),), None) for r in range(layout.world_size) if r % layout.expert_parallel_size == owner
+            ]
+        tp = layout.tensor_parallel_size
+        if entry.reshard and entry.tp_dim is not None and tp > 1:
+            return [(tuple(ranks[i : i + tp] for i in range(0, len(ranks), tp)), entry.tp_dim)]
+        return [((ranks,), None)]
+
+    def encode(self) -> bytes:
+        """Serialize for the rollout; plain JSON rather than pickle, so no Megatron class is needed to read it."""
+        entries = [
+            [
+                e.name,
+                e.shape,
+                str(e.dtype).removeprefix("torch."),
+                e.sources,
+                e.split_dim,
+                e.tp_dim,
+                e.expert,
+                e.reshard,
+                e.bucket,
+            ]
+            for e in self.entries
+        ]
+        return json.dumps(
+            {
+                "trainers": self.trainer_world_size,
+                "layout": asdict(self.layout),
+                "experts": self.num_experts,
+                "entries": entries,
+            }
+        ).encode()
+
+    @classmethod
+    def decode(cls, data: bytes) -> RefitPlan:
+        """Inverse of ``encode``."""
+        raw = json.loads(data)
+        entries = tuple(
+            RefitEntry(
+                name,
+                tuple(shape),
+                getattr(torch, dtype),
+                tuple(map(tuple, sources)),
+                split,
+                tp_dim,
+                expert,
+                reshard,
+                bucket,
+            )
+            for name, shape, dtype, sources, split, tp_dim, expert, reshard, bucket in raw["entries"]
+        )
+        return cls(raw["trainers"], RolloutLayout(**raw["layout"]), raw["experts"], entries)
 
 
 class _Watchdog:
@@ -188,42 +278,7 @@ class RefitHandle:
             raise self.watchdog.error()
 
 
-# ---- geometry: both sides derive identical calls from the same plan -------------------------------
-
-
-@dataclass(frozen=True)
-class _Call:
-    entry: RefitEntry
-    src: Mesh
-    src_dim: int | None
-    dst: Mesh
-    dst_dim: int | None
-
-
-def _targets(entry: RefitEntry, plan: RefitPlan) -> list[tuple[Mesh, int | None]]:
-    """Destination meshes of ``entry``: contiguous blocks of rollout ranks, each with its split dim."""
-    offset, layout = plan.trainer_world_size, plan.layout
-    ranks = tuple(range(offset, offset + layout.world_size))
-    if entry.expert is not None and layout.expert_parallel_size > 1:
-        owner = entry.expert // (plan.num_experts // layout.expert_parallel_size)
-        return [(((offset + r,),), None) for r in range(layout.world_size) if r % layout.expert_parallel_size == owner]
-    tp = layout.tensor_parallel_size
-    if entry.reshard and entry.tp_dim is not None and tp > 1:
-        return [(tuple(ranks[i : i + tp] for i in range(0, len(ranks), tp)), entry.tp_dim)]
-    return [((ranks,), None)]
-
-
-def plan_calls(plan: RefitPlan) -> list[list[_Call]]:
-    """Per bucket, the reshard calls every rank records, in order.
-
-    Each destination block reads from one source row; blocks rotate over the replicas to spread the load.
-    """
-    buckets: list[list[_Call]] = [[] for _ in range(plan.num_buckets)]
-    for entry in plan.entries:
-        for i, (dst, dst_dim) in enumerate(_targets(entry, plan)):
-            src = entry.sources[i % len(entry.sources)]
-            buckets[entry.bucket].append(_Call(entry, (src,), entry.split_dim, dst, dst_dim))
-    return buckets
+# ---- geometry: shapes and M2N descriptors of one rank -------------------------------
 
 
 def _local_shape(shape: tuple[int, ...], mesh: Mesh, dim: int | None) -> tuple[int, ...]:
@@ -245,12 +300,11 @@ class _Side:
 
 
 class _Channel:
-    """The communicator, the M2N handle, the refit stream and the compiled calls of one rank."""
+    """The communicator, the M2N handle, the refit stream and the compiled atoms of one rank."""
 
-    def __init__(self, plan: RefitPlan, rank: int, comm: Any, store: Any) -> None:
+    def __init__(self, plan: RefitPlan, rank: int, comm, store: Any) -> None:
         from nccl import m2n
 
-        self._m2n = m2n
         self.plan = plan
         self.rank = rank
         self.comm = comm
@@ -258,10 +312,42 @@ class _Channel:
         self.handle = m2n.init()
         self.aborted = False
         self.stream = torch.cuda.Stream()
-        self.buckets = [[self._compile(call) for call in calls] for calls in plan_calls(plan)]
+        self.buckets = [[self._compile(atom) for atom in atoms] for atoms in plan.atoms()]
 
-    def _compile(self, call: _Call) -> tuple[RefitEntry, _Side, _Side]:
-        m2n, entry = self._m2n, call.entry
+    @classmethod
+    def connect(cls, address: str, port: int, rank: int, *, plan: RefitPlan | None, timeout_s: float) -> _Channel:
+        """Rendezvous through the trainer rank 0's TCP store and build the M+N communicator.
+
+        The trainer's rank 0 (``plan`` given and ``rank == 0``) hosts the store and publishes the plan and
+        the NCCL id; every other rank reads them. A rollout rank passes ``plan=None`` and its rollout index.
+
+        Both ends then run one full warm-up refit (``RefitSender`` / ``RefitReceiver`` constructors). The
+        first M2N group registers its NCCL windows, mapping every peer's memory with driver calls
+        (cuMemMap) an abort cannot interrupt; after the warm-up, a peer that dies during ``refit()`` leaves
+        only abortable work, so the caller gets ``TimeoutError``.
+        """
+        from nccl.core.communicator import Communicator
+        from nccl.core.utils import UniqueId, get_unique_id
+
+        is_master = plan is not None and rank == 0
+        store = torch.distributed.TCPStore(
+            address, port, is_master=is_master, timeout=timedelta(seconds=timeout_s), wait_for_workers=False
+        )
+        if is_master:
+            store.set("refit/plan", plan.encode())
+            store.set("refit/nccl_id", get_unique_id().as_bytes)
+        if plan is None:
+            plan = RefitPlan.decode(store.get("refit/plan"))
+            rank += plan.trainer_world_size
+        unique_id = UniqueId.from_bytes(store.get("refit/nccl_id"))
+        world_size = plan.trainer_world_size + plan.layout.world_size
+        comm = Communicator.init(nranks=world_size, rank=rank, unique_id=unique_id)
+        return cls(plan, rank, comm, store)
+
+    def _compile(self, atom: RefitAtom) -> tuple[RefitEntry, _Side, _Side]:
+        from nccl import m2n
+
+        entry = atom.entry
 
         def side(mesh: Mesh, dim: int | None) -> _Side:
             inner = m2n.Shard(dim) if dim is not None else m2n.Replicate()
@@ -277,11 +363,12 @@ class _Channel:
                 member=any(self.rank in row for row in mesh),
             )
 
-        return entry, side(call.src, call.src_dim), side(call.dst, call.dst_dim)
+        return entry, side(atom.src, atom.src_dim), side(atom.dst, atom.dst_dim)
 
     def issue(self, bucket: int, sources: dict[str, torch.Tensor], destinations: dict[str, torch.Tensor]) -> None:
-        """Record one bucket's calls as one group; the dicts hold this rank's buffers by HF name."""
-        m2n = self._m2n
+        """Record one bucket's atoms as one group; the dicts hold this rank's buffers by HF name."""
+        from nccl import m2n
+
         with m2n.group():
             for entry, src, dst in self.buckets[bucket]:
                 descriptors = []
@@ -330,79 +417,6 @@ class _Channel:
         self.handle.destroy()
         if not self.aborted:
             self.comm.destroy()
-
-
-def _encode_plan(plan: RefitPlan) -> bytes:
-    # Plain JSON rather than pickle, so the rollout can load this file without the megatron.bridge package.
-    entries = [
-        [
-            e.name,
-            e.shape,
-            str(e.dtype).removeprefix("torch."),
-            e.sources,
-            e.split_dim,
-            e.tp_dim,
-            e.expert,
-            e.reshard,
-            e.bucket,
-        ]
-        for e in plan.entries
-    ]
-    return json.dumps(
-        {
-            "trainers": plan.trainer_world_size,
-            "layout": asdict(plan.layout),
-            "experts": plan.num_experts,
-            "entries": entries,
-        }
-    ).encode()
-
-
-def _decode_plan(data: bytes) -> RefitPlan:
-    raw = json.loads(data)
-    entries = tuple(
-        RefitEntry(
-            name,
-            tuple(shape),
-            getattr(torch, dtype),
-            tuple(map(tuple, sources)),
-            split,
-            tp_dim,
-            expert,
-            reshard,
-            bucket,
-        )
-        for name, shape, dtype, sources, split, tp_dim, expert, reshard, bucket in raw["entries"]
-    )
-    return RefitPlan(raw["trainers"], RolloutLayout(**raw["layout"]), raw["experts"], entries)
-
-
-# Warm-up: both ends run one full refit while connecting. The first M2N group registers its NCCL
-# windows, mapping every peer's memory with driver calls (cuMemMap) an abort cannot interrupt; after the
-# warm-up, a peer that dies during refit() leaves only abortable work, so the caller gets TimeoutError.
-def _connect(address: str, port: int, rank: int, *, plan: RefitPlan | None, timeout_s: float) -> _Channel:
-    """Rendezvous through the trainer rank 0's TCP store and build the M+N communicator.
-
-    The trainer's rank 0 (``plan`` given and ``rank == 0``) hosts the store and publishes the plan and the
-    NCCL id; every other rank reads them. A rollout rank passes ``plan=None`` and its rollout index.
-    """
-    from nccl.core.communicator import Communicator
-    from nccl.core.utils import UniqueId, get_unique_id
-
-    is_master = plan is not None and rank == 0
-    store = torch.distributed.TCPStore(
-        address, port, is_master=is_master, timeout=timedelta(seconds=timeout_s), wait_for_workers=False
-    )
-    if is_master:
-        store.set("refit/plan", _encode_plan(plan))
-        store.set("refit/nccl_id", get_unique_id().as_bytes)
-    if plan is None:
-        plan = _decode_plan(store.get("refit/plan"))
-        rank += plan.trainer_world_size
-    unique_id = UniqueId.from_bytes(store.get("refit/nccl_id"))
-    world_size = plan.trainer_world_size + plan.layout.world_size
-    comm = Communicator.init(nranks=world_size, rank=rank, unique_id=unique_id)
-    return _Channel(plan, rank, comm, store)
 
 
 # ---- trainer side ------------------------------------------------------------------------------------
@@ -538,8 +552,8 @@ class RefitSender:
         if layout.expert_parallel_size > 1 and num_experts % layout.expert_parallel_size:
             raise ValueError(f"{num_experts} experts do not split over {layout.expert_parallel_size} ranks.")
         plan = RefitPlan(world_size, layout, num_experts, entries)
-        self._channel = _connect(address, port, torch.distributed.get_rank(), plan=plan, timeout_s=timeout_s)
-        self.send(timeout_s).synchronize()  # warm-up: see the note above _connect
+        self._channel = _Channel.connect(address, port, torch.distributed.get_rank(), plan=plan, timeout_s=timeout_s)
+        self.send(timeout_s).synchronize()  # warm-up: see _Channel.connect
 
     @property
     def plan(self) -> RefitPlan:
@@ -575,8 +589,8 @@ class RefitSender:
     def _issue(self) -> None:
         channel, current = self._channel, torch.cuda.current_stream()
         exported = self._export()
-        for bucket, calls in enumerate(channel.buckets):
-            entries = list(dict.fromkeys(entry for entry, _, _ in calls))
+        for bucket, atoms in enumerate(channel.buckets):
+            entries = list(dict.fromkeys(entry for entry, _, _ in atoms))
             buffers: dict[str, torch.Tensor] = {}
             for entry in entries:
                 if entry.reshard:
@@ -612,19 +626,21 @@ class RefitReceiver:
     discarded).
 
     Args:
-        address: Rendezvous host, the trainer's rank 0, as given to ``connect_rollout``.
-        port: Rendezvous port, as given to ``connect_rollout``.
+        trainer_addr: Rendezvous host, the trainer's rank 0, as given to ``connect_rollout``.
+        trainer_port: Rendezvous port, as given to ``connect_rollout``.
         rank: This rank's index among the rollout ranks, ``0 <= rank < layout.world_size``.
         layout: The rollout layout; must equal the trainer's.
         timeout_s: Rendezvous timeout.
     """
 
-    def __init__(self, address: str, port: int, rank: int, layout: RolloutLayout, *, timeout_s: float = 1800) -> None:
-        self._channel = _connect(address, port, rank, plan=None, timeout_s=timeout_s)
+    def __init__(
+        self, trainer_addr: str, trainer_port: int, rank: int, layout: RolloutLayout, *, timeout_s: float = 1800
+    ) -> None:
+        self._channel = _Channel.connect(trainer_addr, trainer_port, rank, plan=None, timeout_s=timeout_s)
         if self.plan.layout != layout:
             self.close()
             raise ValueError(f"The trainer planned for {self.plan.layout}; this rollout is {layout}.")
-        # Warm-up (see the note above _connect). Holding every staged tensor until the end also grows the
+        # Warm-up (see _Channel.connect). Holding every staged tensor until the end also grows the
         # caching allocator to a full refit, so the first real receive does not pay for fresh cudaMalloc.
         warm_up = list(self.receive(timeout_s=timeout_s))
         self.synchronize()
@@ -637,7 +653,7 @@ class RefitReceiver:
 
     def local_entries(self) -> list[tuple[RefitEntry, tuple[int, ...]]]:
         """Entries this rank receives, with the local shape each arrives in (its TP shard, or whole)."""
-        return [(entry, dst.shape) for calls in self._channel.buckets for entry, _, dst in calls if dst.member]
+        return [(entry, dst.shape) for atoms in self._channel.buckets for entry, _, dst in atoms if dst.member]
 
     def receive(
         self, destination: Destination | None = None, *, timeout_s: float | None = None
@@ -663,10 +679,10 @@ class RefitReceiver:
         """
         channel, current = self._channel, torch.cuda.current_stream()
         with channel.guarded(timeout_s) as watchdog:
-            for bucket, calls in enumerate(channel.buckets):
+            for bucket, atoms in enumerate(channel.buckets):
                 buffers: dict[str, torch.Tensor] = {}
                 staged: list[tuple[RefitEntry, torch.Tensor]] = []
-                for entry, _, dst in calls:
+                for entry, _, dst in atoms:
                     if not dst.member:
                         continue
                     buffer = destination(entry, dst.shape) if destination is not None else None

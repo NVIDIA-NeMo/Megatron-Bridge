@@ -19,10 +19,7 @@ from megatron.bridge.engine.refit import (
     RefitPlan,
     RolloutLayout,
     _assign_buckets,
-    _decode_plan,
-    _encode_plan,
     _reshard_entries,
-    plan_calls,
 )
 
 
@@ -51,28 +48,28 @@ def test_plan_merges_shards_into_replica_rows_and_targets_the_rollout_layout():
     assert dense.shape == (16, 16) and dense.sources == ((0, 1), (2, 3)) and dense.split_dim == 0
     assert expert0.sources == ((0,),) and expert0.split_dim is None and expert0.expert == 0
     # The rollout rebuilds the plan from JSON; it must issue exactly what the trainer planned.
-    assert _decode_plan(_encode_plan(plan)) == plan
+    assert RefitPlan.decode(plan.encode()) == plan
     # Reshard and collective entries never share a bucket.
     assert [entry.bucket for entry in plan.entries] == [0, 0, 0, 0, 0, 1]
 
-    calls = plan_calls(plan)
+    atoms = plan.atoms()
     by_name = {}
-    for call in calls[0] + calls[1]:
-        by_name.setdefault(call.entry.name, []).append(call)
+    for atom in atoms[0] + atoms[1]:
+        by_name.setdefault(atom.entry.name, []).append(atom)
     # Rollout ranks are 4..7: TP2 splits the dense weight along the trainer's TP dim over [4,5] and [6,7].
-    (dense_call,) = by_name["mlp.gate_proj.weight"]
-    assert dense_call.dst == ((4, 5), (6, 7)) and dense_call.dst_dim == 0
+    (dense_atom,) = by_name["mlp.gate_proj.weight"]
+    assert dense_atom.dst == ((4, 5), (6, 7)) and dense_atom.dst_dim == 0
     # EP4 places expert e whole on rollout rank e.
-    assert [(c.dst, c.dst_dim) for c in by_name["experts.3.down_proj.weight"]] == [(((7,),), None)]
+    assert [(a.dst, a.dst_dim) for a in by_name["experts.3.down_proj.weight"]] == [(((7,),), None)]
     # Collective tensors go whole to every rollout rank.
-    (embed_call,) = by_name["embed.weight"]
-    assert embed_call.dst == ((4, 5, 6, 7),) and embed_call.dst_dim is None
+    (embed_atom,) = by_name["embed.weight"]
+    assert embed_atom.dst == ((4, 5, 6, 7),) and embed_atom.dst_dim is None
 
 
 def test_replicated_expert_targets_rotate_over_source_replicas():
-    # Rollout EP2 over 4 ranks: expert 3 lives on rollout ranks 1 and 3, one call per contiguous block.
+    # Rollout EP2 over 4 ranks: expert 3 lives on rollout ranks 1 and 3, one atom per contiguous block.
     plan = _plan(RolloutLayout(world_size=4, expert_parallel_size=2))
-    calls = [call for bucket in plan_calls(plan) for call in bucket if call.entry.name == "experts.3.down_proj.weight"]
-    assert [call.dst for call in calls] == [((5,),), ((7,),)]
-    dense = [call for bucket in plan_calls(plan) for call in bucket if call.entry.name == "mlp.gate_proj.weight"]
-    assert [call.src for call in dense] == [((0, 1),)] and dense[0].dst == ((4, 5, 6, 7),)
+    atoms = [atom for bucket in plan.atoms() for atom in bucket if atom.entry.name == "experts.3.down_proj.weight"]
+    assert [atom.dst for atom in atoms] == [((5,),), ((7,),)]
+    dense = [atom for bucket in plan.atoms() for atom in bucket if atom.entry.name == "mlp.gate_proj.weight"]
+    assert [atom.src for atom in dense] == [((0, 1),)] and dense[0].dst == ((4, 5, 6, 7),)

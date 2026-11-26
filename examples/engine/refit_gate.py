@@ -122,6 +122,7 @@ def run_trainer(args: argparse.Namespace) -> None:
     model.expert_model_parallel_size = args.ep
     model.expert_tensor_parallel_size = 1
     model.pipeline_model_parallel_size = args.pp
+    model.variable_seq_lengths = args.pp > 1
     model.seq_length = 512
     model.pipeline_dtype = torch.bfloat16
     recipe = _rl_recipe(model, env_vars={}, pad_to_max_length=False, hf_path=args.hf_path, hf_revision=None)
