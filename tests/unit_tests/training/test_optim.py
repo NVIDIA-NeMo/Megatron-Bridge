@@ -990,9 +990,9 @@ class TestGetLoraPlusConfigOverrides:
                 return val
         return None
 
-    @pytest.mark.parametrize("ratio", [0, -1, -0.5])
+    @pytest.mark.parametrize("ratio", [0, -1, -0.5, float("nan"), float("inf")])
     def test_non_positive_ratio_raises(self, ratio):
-        with pytest.raises(ValueError, match="lora_plus_ratio must be > 0"):
+        with pytest.raises(ValueError, match=r"LoRA\+ ratio must be finite and positive"):
             get_lora_plus_config_overrides(self._make_config(), ratio)
 
     def test_a_keeps_base_lr(self):
@@ -1146,7 +1146,7 @@ class TestLoraPlusWarmupValidation:
 
     @pytest.mark.parametrize("initial_lr", [0.0, 3e-5])
     @pytest.mark.parametrize("key_form", ["a_only", "b_only", "tuple", "name_and_attr"])
-    def test_equivalent_named_overrides(self, key_form, initial_lr):
+    def test_named_adapter_bounds_apply_across_selector_forms(self, key_form, initial_lr):
         overrides = {}
         for group, lr in [("in", 3e-4), ("out", 4.8e-3)]:
             if (key_form == "a_only" and group == "out") or (key_form == "b_only" and group == "in"):
@@ -1192,12 +1192,17 @@ class TestLoraPlusWarmupValidation:
         self._setup(lambda cfg: overrides, initial_lr=3e-5)
 
     def test_conflicting_matching_overrides_keep_native_error(self):
+        from megatron.core.optimizer import _get_param_groups
+
         overrides = {
             ParamKey(name="*.weight"): ParamGroupOverride(max_lr=3e-4),
             ParamKey(name="*.linear_out.weight"): ParamGroupOverride(max_lr=1e-3),
         }
+        model = torch.nn.Module()
+        model.adapter = torch.nn.Module()
+        model.adapter.linear_out = torch.nn.Linear(4, 4, bias=False)
         with pytest.raises(ValueError, match="Conflicting overrides for max_lr"):
-            self._setup(lambda cfg: overrides, initial_lr=3e-5)
+            _get_param_groups([model], OptimizerConfig(lr=3e-4), overrides)
 
     def test_distinct_minimum_rates_are_rejected(self):
         overrides = {

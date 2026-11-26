@@ -16,7 +16,6 @@ import logging
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from copy import copy
-from fnmatch import fnmatch
 from types import MethodType
 from typing import Literal, Optional, Union, cast
 
@@ -25,16 +24,19 @@ import torch
 from megatron.core.optimizer import (
     MegatronOptimizer,
     OptimizerConfig,
-    ParamKey,
     get_mup_config_overrides,
-    get_standard_config_overrides,
     merge_config_overrides,
 )
-from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler, combine_param_group_overrides
+from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.utils import get_model_config, unwrap_model
-from megatron.training.config.optimizer_config import OptimizerConfigOverrideHook, OptimizerConfigOverrides
+from megatron.core.utils import get_model_config
+from megatron.training.config.optimizer_config import (
+    OptimizerConfigOverrideHook,
+    OptimizerConfigOverrides,
+    build_optimizer_config_overrides,
+    validate_lora_plus_warmup,
+)
 
 from megatron.bridge.training.config import (
     OptimizerConfigOverrideProvider,
@@ -68,22 +70,7 @@ def _resolve_optimizer_config_overrides(
             "custom providers already return a complete policy."
         )
     model_chunks = context.model if isinstance(context.model, list) else [context.model]
-    resolved = (
-        overrides(optimizer_config=context.optimizer_config, model=model_chunks) if callable(overrides) else overrides
-    )
-    if resolved is None and overrides is None:
-        resolved = {}
-    if not isinstance(resolved, dict) or any(not isinstance(key, ParamKey) for key in resolved):
-        raise TypeError("Optimizer override hooks must return a ParamKey-to-override dictionary.")
-    if resolved or mode == "replace":
-        from megatron.core.models.mimo.model.base import MimoModel
-
-        unwrapped = unwrap_model(context.model)
-        first_chunk = unwrapped[0] if isinstance(unwrapped, list) else unwrapped
-        if isinstance(first_chunk, MimoModel):
-            raise NotImplementedError("MIMO optimizer overrides must be configured per module.")
-    standard = get_standard_config_overrides(context.optimizer_config) if mode == "extend" else {}
-    return merge_config_overrides(standard, resolved)
+    return build_optimizer_config_overrides(context.optimizer_config, model_chunks, overrides, mode=mode)
 
 
 def setup_optimizer(
@@ -127,7 +114,12 @@ def setup_optimizer(
     # Apply μP optimizer scaling if enabled on the model config.
     model_chunks = model if isinstance(model, list) else [model]
     model_config = get_model_config(model_chunks[0])
-    if getattr(model_config, "use_mup", False):
+    # The shared builder already composes muP for the new mapping API.
+    if (
+        optimizer_config_overrides is None
+        and optimizer_config_overrides_mode == "extend"
+        and getattr(model_config, "use_mup", False)
+    ):
         mup_overrides = get_mup_config_overrides(
             config=optimizer_config,
             mup_width_mult=model_config.mup_width_mult,
@@ -140,31 +132,14 @@ def setup_optimizer(
                 f"applied {len(mup_overrides)} optimizer param-group override(s)."
             )
 
-    # Check name-based LoRA+ overrides without depending on rank-local parameters.
-    # MCore scales peak/minimum rates but uses one shared initial rate during warmup.
-    if config_overrides and scheduler_config.lr_warmup_init != 0:
-
-        def effective_lr_bounds(param_name: str) -> tuple[float | None, float | None]:
-            override = combine_param_group_overrides(
-                [
-                    value
-                    for key, value in config_overrides.items()
-                    if any(
-                        fnmatch(param_name, name) for name in ((key.name,) if isinstance(key.name, str) else key.name)
-                    )
-                ]
-            )
-            return override.get("max_lr", optimizer_config.lr), override.get("min_lr", optimizer_config.min_lr)
-
-        if effective_lr_bounds("adapter.linear_in.weight") != effective_lr_bounds("adapter.linear_out.weight"):
-            raise ValueError(
-                "LoRA+ with different A/B learning rates requires SchedulerConfig.lr_warmup_init=0. "
-                "A nonzero warmup initial learning rate breaks the LoRA+ ratio. "
-                "Set lr_warmup_init=0 or lora_plus_ratio=1."
-            )
+    validate_lora_plus_warmup(
+        config_overrides, optimizer_config, scheduler_config.lr_warmup_init, require_adapter_selector=False
+    )
 
     # Bridge's existing builder does not apply these inherited MLM-only settings.
     # Preserve that behavior here; the shared MLM entry point supports them directly.
+    if scheduler_config.step_lr_rescale_schedule or scheduler_config.step_lr_rescale_warmup_samples:
+        G_LOGGER.warning("Bridge ignores step_lr_rescale_schedule and step_lr_rescale_warmup_samples.")
     scheduler_config = copy(scheduler_config)
     scheduler_config.step_lr_rescale_schedule = None
     scheduler_config.step_lr_rescale_warmup_samples = 0
