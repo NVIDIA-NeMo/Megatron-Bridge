@@ -65,14 +65,16 @@ Megatron checkpoint. Paths under `work/` are user-managed inputs:
   dataset.dataset_root=work/data/bagel-wds \
   dataset.bagel_repo=work/dependencies/Bagel \
   dataset.tokenizer_model=work/models/BAGEL-7B-MoT \
-  checkpoint.load=work/checkpoints/bagel-mcore-init \
-  dataset.dataloader_load=work/checkpoints/bagel-mcore-init
+  checkpoint.load=null checkpoint.pretrained_checkpoint=work/checkpoints/bagel-mcore-init \
+  checkpoint.load_optim=false checkpoint.load_rng=false
 ```
 
 Use `bagel_7b_pretrain_8gpu_h100_bf16_config` for the 8-GPU pretraining
 configuration or `bagel_7b_finetune_8gpu_h100_bf16_config` for fine-tuning.
 The lower-level `pretrain_bagel.py` example additionally supports initializing
-from a native BAGEL checkpoint and recording loss-alignment traces.
+from a native BAGEL checkpoint and recording loss-alignment traces. Use
+`--pretrained-checkpoint` for converted Megatron weights and `--mcore-checkpoint`
+for a full training resume, including optimizer, RNG and data position.
 
 The standard `throughput/tflops/device` logger uses official BAGEL's Qwen2
 formula with the data-parallel-global packed sequence length and sum of squared

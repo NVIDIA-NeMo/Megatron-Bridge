@@ -43,7 +43,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tokenizer-model", type=Path, required=True)
     checkpoint = parser.add_mutually_exclusive_group(required=True)
     checkpoint.add_argument("--native-model-checkpoint", type=Path)
-    checkpoint.add_argument("--mcore-checkpoint", type=Path)
+    checkpoint.add_argument("--mcore-checkpoint", type=Path, help="Resume a full Megatron training checkpoint.")
+    checkpoint.add_argument("--pretrained-checkpoint", type=Path, help="Initialize from converted Megatron weights.")
     parser.add_argument("--official-ema", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train-iters", type=int, default=1)
@@ -134,6 +135,11 @@ def main() -> None:
         cfg.model.native_model_seed = args.seed * world_size
         cfg.model.native_world_size = world_size
         cfg.model.validate_native_checkpoint_metadata = not args.official_ema
+    elif args.pretrained_checkpoint is not None:
+        cfg.checkpoint.load = None
+        cfg.checkpoint.pretrained_checkpoint = str(args.pretrained_checkpoint.resolve())
+        cfg.checkpoint.load_optim = False
+        cfg.checkpoint.load_rng = False
     else:
         checkpoint = args.mcore_checkpoint.resolve()
         cfg.checkpoint.load = str(checkpoint)
