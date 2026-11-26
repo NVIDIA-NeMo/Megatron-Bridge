@@ -1,13 +1,203 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for MegatronMIMO builder utilities."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import EXPERT_VIEW_NAME, build_hypercomm_grids
+import pytest
+import torch
+import torch.distributed as dist
+
+from megatron.bridge.models.megatron_mimo import megatron_mimo_builder
+from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
+    EXPERT_VIEW_NAME,
+    _lazy_nccl_pg_options,
+    build_hypercomm_grids,
+    populate_embedding_and_position_groups,
+)
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
 )
+
+
+class _NcclOptions:
+    """Stand-in for ``ProcessGroupNCCL.Options`` on PyTorch builds that have ``lazy_init``."""
+
+    def __init__(self):
+        self.lazy_init = False
+
+
+class _NcclOptionsWithoutLazyInit:
+    """Stand-in for ``ProcessGroupNCCL.Options`` on PyTorch builds without ``lazy_init``."""
+
+
+class _Nccl2Backend:
+    """Stand-in for the ProcessGroupNCCL2 backend class."""
+
+
+class _LegacyNcclBackend:
+    """Stand-in for the legacy ProcessGroupNCCL backend class."""
+
+
+class _DebugWrapper:
+    """Stand-in for the wrapper TORCH_DISTRIBUTED_DEBUG=DETAIL puts around backends."""
+
+    def __init__(self, wrapped_pg):
+        self.wrapped_pg = wrapped_pg
+
+
+class _DefaultGroup:
+    """Stand-in for the default process group."""
+
+    def __init__(self, bound_device_id, backend):
+        self.bound_device_id = bound_device_id
+        self._backend = backend
+
+    def _get_backend(self, device):
+        assert device == self.bound_device_id
+        return self._backend
+
+
+def _fake_dist(
+    *,
+    initialized=True,
+    backend="nccl",
+    bound_device_id="cuda:0",
+    default_backend=None,
+    has_nccl2=True,
+    options_cls=_NcclOptions,
+):
+    """Minimal ``torch.distributed`` stand-in for ``_lazy_nccl_pg_options``."""
+    fake = SimpleNamespace(
+        is_initialized=lambda: initialized,
+        get_backend=lambda: backend,
+        Backend=SimpleNamespace(NCCL="nccl"),
+        group=SimpleNamespace(
+            WORLD=_DefaultGroup(bound_device_id, _Nccl2Backend() if default_backend is None else default_backend)
+        ),
+        ProcessGroupNCCL=SimpleNamespace(Options=options_cls),
+        distributed_c10d=SimpleNamespace(_ProcessGroupWrapper=_DebugWrapper),
+    )
+    if has_nccl2:
+        fake.ProcessGroupNCCL2 = _Nccl2Backend
+    return fake
+
+
+class TestLazyNcclPgOptions:
+    """Test cases for _lazy_nccl_pg_options()."""
+
+    def test_device_bound_nccl2_default_group_gets_new_lazy_options_per_call(self):
+        """Eager-split setups get lazy_init options, and every group gets its own object."""
+        with patch.object(megatron_mimo_builder, "dist", _fake_dist()):
+            first = _lazy_nccl_pg_options()
+            second = _lazy_nccl_pg_options()
+
+        assert isinstance(first, _NcclOptions)
+        assert first.lazy_init is True
+        assert second.lazy_init is True
+        assert second is not first
+
+    def test_debug_wrapped_nccl2_default_group_gets_lazy_options(self):
+        """TORCH_DISTRIBUTED_DEBUG=DETAIL wrappers around the NCCL2 backend do not turn lazy init off."""
+        fake_dist = _fake_dist(default_backend=_DebugWrapper(_DebugWrapper(_Nccl2Backend())))
+        with patch.object(megatron_mimo_builder, "dist", fake_dist):
+            options = _lazy_nccl_pg_options()
+
+        assert options is not None
+        assert options.lazy_init is True
+
+    @pytest.mark.parametrize(
+        "fake_dist",
+        [
+            _fake_dist(initialized=False),
+            _fake_dist(backend="gloo"),
+            _fake_dist(bound_device_id=None),
+            _fake_dist(default_backend=_LegacyNcclBackend()),
+            _fake_dist(has_nccl2=False),
+            _fake_dist(options_cls=_NcclOptionsWithoutLazyInit),
+        ],
+        ids=[
+            "not-initialized",
+            "gloo-default-group",
+            "not-device-bound",
+            "legacy-nccl-backend",
+            "no-nccl2-backend",
+            "no-lazy-init-option",
+        ],
+    )
+    def test_default_options_otherwise(self, fake_dist):
+        """Groups keep default options unless they would be split eagerly by ProcessGroupNCCL2 with lazy_init."""
+        with patch.object(megatron_mimo_builder, "dist", fake_dist):
+            assert _lazy_nccl_pg_options() is None
+
+
+def _unwrap_debug_wrapper(backend):
+    """Return the backend inside any TORCH_DISTRIBUTED_DEBUG=DETAIL wrappers."""
+    debug_wrapper = getattr(dist.distributed_c10d, "_ProcessGroupWrapper", None)
+    while debug_wrapper is not None and isinstance(backend, debug_wrapper):
+        backend = backend.wrapped_pg
+    return backend
+
+
+@pytest.mark.run_only_on("GPU")
+def test_mimo_groups_use_lazy_nccl2_communicators(tmp_path):
+    """With a real ProcessGroupNCCL2 default group, every MIMO group is created lazily and works on first use."""
+    if dist.is_initialized():
+        pytest.skip("this test owns a single-rank default process group")
+    device = torch.device("cuda", 0)
+    torch.cuda.set_device(device)
+    dist.init_process_group(
+        "nccl", init_method=(tmp_path / "rendezvous").as_uri(), rank=0, world_size=1, device_id=device
+    )
+    try:
+        nccl2_backend = getattr(dist, "ProcessGroupNCCL2", None)
+        default_backend = _unwrap_debug_wrapper(dist.group.WORLD._get_backend(device))
+        if (
+            nccl2_backend is None
+            or not isinstance(default_backend, nccl2_backend)
+            or not hasattr(dist.ProcessGroupNCCL.Options(), "lazy_init")
+        ):
+            pytest.skip("default group is not a ProcessGroupNCCL2 group with lazy_init support")
+        assert _lazy_nccl_pg_options() is not None
+        grid = build_hypercomm_grids(
+            MegatronMIMOParallelismConfig(
+                module_parallelisms={"language": ModuleParallelismConfig(data_parallel_size=1)}
+            )
+        )["language"]
+        groups = [grid.get_pg(dims) for dims in (["tp"], ["dp"], ["pp"], ["tp", "cp", "dp", "pp"])]
+        groups += [grid.get_pg(dims, view=EXPERT_VIEW_NAME) for dims in (["ep"], ["expt_tp", "ep", "pp"])]
+        groups += list(populate_embedding_and_position_groups(grid.get_rank_enum(["pp"])))
+
+        assert all(_unwrap_debug_wrapper(group._get_backend(device)).options.lazy_init for group in groups)
+
+        tensor = torch.full((4,), 3.0, device=device)
+        dist.all_reduce(tensor, group=grid.get_pg(["dp"]))
+        torch.cuda.synchronize(device)
+        assert torch.equal(tensor, torch.full((4,), 3.0, device=device))
+    finally:
+        dist.destroy_process_group()
+
+
+class TestPopulateEmbeddingAndPositionGroups:
+    """Test cases for populate_embedding_and_position_groups()."""
+
+    @patch("torch.distributed.get_rank", return_value=0)
+    @patch("torch.distributed.new_group")
+    def test_embedding_groups_are_created_with_lazy_options(self, mock_new_group, _mock_get_rank):
+        """Position and word embedding groups get their own lazy NCCL options."""
+        mock_new_group.side_effect = lambda ranks, pg_options: MagicMock(name=f"group{ranks}")
+
+        with patch.object(megatron_mimo_builder, "_lazy_nccl_pg_options", side_effect=lambda: object()):
+            pos_embd_pg, embd_pg = populate_embedding_and_position_groups([[0, 1, 2, 3]])
+
+        assert [call.kwargs["ranks"] for call in mock_new_group.call_args_list] == [[0], [0, 3]]
+        pos_embd_options, embd_options = (call.kwargs["pg_options"] for call in mock_new_group.call_args_list)
+        assert pos_embd_options is not None
+        assert embd_options is not None
+        assert pos_embd_options is not embd_options
+        assert pos_embd_pg is not None
+        assert embd_pg is not None
 
 
 class TestBuildHypercommGrids:
@@ -163,7 +353,7 @@ class TestBuildHypercommGrids:
         mock_grid = MagicMock()
         create_pg_calls = []
 
-        def track_create_pg(dims, *, view=None):
+        def track_create_pg(dims, *, view=None, pg_options=None):
             create_pg_calls.append((dims, view))
             return MagicMock()
 
@@ -188,6 +378,30 @@ class TestBuildHypercommGrids:
         assert (["expt_dp"], EXPERT_VIEW_NAME) in create_pg_calls
         assert (["expt_tp", "ep"], EXPERT_VIEW_NAME) in create_pg_calls
         assert (["expt_tp", "ep", "pp"], EXPERT_VIEW_NAME) in create_pg_calls
+
+    @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
+    def test_build_creates_every_group_with_its_own_lazy_options(self, mock_grid_class):
+        """Every grid group, dense and expert view, is created with a separate lazy NCCL options object."""
+        megatron_mimo_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    pipeline_model_parallel_size=2,
+                    data_parallel_size=2,
+                ),
+            }
+        )
+        mock_grid = MagicMock()
+        mock_grid.create_pg = MagicMock(return_value=MagicMock())
+        mock_grid_class.return_value = mock_grid
+
+        with patch.object(megatron_mimo_builder, "_lazy_nccl_pg_options", side_effect=lambda: object()):
+            build_hypercomm_grids(megatron_mimo_config)
+
+        options = [call.kwargs["pg_options"] for call in mock_grid.create_pg.call_args_list]
+        assert len(options) == 14
+        assert all(option is not None for option in options)
+        assert len({id(option) for option in options}) == len(options)
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_registers_non_default_language_expert_view(self, mock_grid_class):
