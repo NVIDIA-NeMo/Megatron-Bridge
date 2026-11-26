@@ -170,6 +170,38 @@ run_arm moon_varlen true '++model.moe_megakernel_backend_config.max_local_tokens
 
 MoK reserves the communication buffers on first use and processes each microbatch at its actual token count. All ranks in the EP group use the same capacity and the same local token count on each invocation. Both values must be at least 512 and divisible by 256. For a different TP1 recipe, divide the maximum combined padded length across the rows in one microbatch by CP and round the capacity up to a supported size. Gradient accumulation does not enter this bound. The workspace capacity can be set independently of `macrobatch_size`, which controls kernel scheduling.
 
+**Reproduce the variable-length throughput check.** From the single-document fixture in step 3, write one JSONL line per sample. Each group of four consecutive lines has the same length so the four DP replicas agree on the MoK input shape. The eight groups form one optimizer update (GBS32, microbatch 1, GA8):
+
+```bash
+python - "$DATA/single.jsonl" "$DATA/variable.jsonl" <<'PY'
+import json, sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text())
+assert len(source["input_ids"]) == len(source["labels"]) == 262144
+with Path(sys.argv[2]).open("x") as stream:
+    for length in (131072, 196608, 262144, 131072, 196608, 262144, 131072, 262144):
+        row = {key: source[key][:length] for key in ("input_ids", "labels")}
+        stream.write((json.dumps(row, separators=(",", ":")) + "\n") * 4)
+PY
+export DOCS=1 INPUT=$DATA/variable.jsonl
+variable_args=(dataset.pack=false dataset.dataloader_type=single train.train_iters=9)
+# Use the original wheel from step 1 for the first run and the workspace-fix wheel for the second.
+run_arm variable_original true "${variable_args[@]}"
+run_arm variable_capacity true "${variable_args[@]}" '++model.moe_megakernel_backend_config.max_local_tokens=16384'
+```
+
+The single-document loader preserves file order and repeats the 32 rows each update. After CP16 zigzag splitting, each GPU sees 8,192, 12,288, 16,384, 8,192, 12,288, 16,384, 8,192 and 16,384 positions. For physical tokens/s/GPU, divide **98,304** by the mean measured step time in seconds. The fixed 256K control uses **131,072** positions/GPU/update. The `summarize` command in step 5 assumes the fixed 256K numerator.
+
+Each pair ran once on the same allocation of 64 GB300 GPUs with BF16 MoK + MoonEP and full recomputation. Throughput includes every update in the listed window.
+
+| Input row lengths | Updates | Original workspace (tokens/s/GPU) | Fixed capacity of 16,384 (tokens/s/GPU) | Change |
+|---|---:|---:|---:|---:|
+| 256K | 4–12 | 3,755.42 | 3,741.90 | −0.36% |
+| 128K, 192K, 256K | 4–9 | 3,659.41 | 3,727.37 | +1.86% |
+
+Across the six measured variable-length updates, step times ranged from 25.70 to 28.68 seconds with the original workspace and from 25.86 to 27.04 seconds with fixed capacity.
+
 ### 4b. Reproduce the two MoonEP-enabled arms in the throughput and memory table
 
 Prepare a separate checkout **once on the shared workspace** for the retain-source baseline. Both checkouts begin at the same verified MCore commit. Reverse just the release commit in the baseline checkout. It removes one runtime assignment and the corresponding unit-test assertion. All packed attention, MoK, MoonEP, CUDA-head and other source changes are shared between the arms. The normal checkout used in step 4 stays intact.
