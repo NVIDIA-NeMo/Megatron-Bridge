@@ -149,7 +149,17 @@ def test_legacy_providers_adapt_as_complete_mappings(single_rank_group, kind):
         bridge = _resolve_optimizer_config_overrides(context, provider, None, "extend")
     mlm = build_optimizer_config_overrides(context.optimizer_config, context.model, bridge, mode="replace")
     actual = _policy_by_parameter(context, bridge)
-    assert actual == _policy_by_parameter(context, mlm)
+    normalized = _policy_by_parameter(context, mlm)
+    for param_id, policy in actual.items():
+        assert {k: v for k, v in policy.items() if k != "default_config"} == {
+            k: v for k, v in normalized[param_id].items() if k != "default_config"
+        }
+        # New mappings omit redundant base-LR overrides; legacy providers preserve
+        # their existing group structure and logging classification for resume.
+        if policy["default_config"] != normalized[param_id]["default_config"]:
+            assert kind == "lora"
+            assert policy["max_lr"] == context.optimizer_config.lr
+            assert normalized[param_id]["default_config"] is True
     assert actual[id(context.model[0].bias)]["wd_mult"] == 0.0
     if kind == "lsq":
         assert actual[id(context.model[0].scale_amax_pre)]["max_lr"] == 0.008
