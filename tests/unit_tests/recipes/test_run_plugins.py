@@ -183,6 +183,8 @@ def create_test_config(**kwargs):
         ),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer"),
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save_interval=2000,
             save="/tmp/checkpoints",
             ckpt_format="torch_dist",

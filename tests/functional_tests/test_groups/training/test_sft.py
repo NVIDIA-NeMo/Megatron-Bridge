@@ -324,6 +324,7 @@ class TestSupervisedFinetuning:
                 eval_iters=0,
             ),
             optimizer=OptimizerConfig(
+                use_layer_wise_param_layout=False,
                 optimizer="adam",
                 bf16=True,
                 fp16=False,
@@ -374,6 +375,8 @@ class TestSupervisedFinetuning:
                 vocab_size=10000,
             ),
             checkpoint=CheckpointConfig(
+                use_persistent_ckpt_worker=True,
+                strict_fsdp_dtensor_load=False,
                 save_interval=train_iters,
                 save=checkpoint_dir,
                 pretrained_checkpoint=pretrained_checkpoint,

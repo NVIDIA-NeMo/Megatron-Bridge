@@ -145,6 +145,7 @@ class TestDoRAFinetune:
     def _create_optimizer_config(self, lr=3e-3):
         """Create an optimizer configuration."""
         return OptimizerConfig(
+            use_layer_wise_param_layout=False,
             optimizer="adam",
             bf16=True,
             fp16=False,
@@ -227,6 +228,8 @@ class TestDoRAFinetune:
     def _create_checkpoint_config(self, save_interval, save_dir, pretrained_checkpoint=None, load_dir=None):
         """Create a checkpoint configuration."""
         return CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             save_interval=save_interval,
             save=save_dir,
             pretrained_checkpoint=pretrained_checkpoint,

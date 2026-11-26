@@ -76,7 +76,7 @@ class TestMcoreWanPretrain:
             "checkpoint.save_interval=200",
             "optimizer.lr=5e-6",
             "optimizer.min_lr=5e-6",
-            "train.eval_iters=0",
+            "validation.eval_iters=0",
             "train.train_iters=10",
             "scheduler.lr_decay_style=constant",
             "scheduler.lr_warmup_iters=0",

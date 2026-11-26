@@ -18,7 +18,10 @@ pytestmark = pytest.mark.unit
 
 def _optimizer_tree(*, distributed: bool = True, active: bool = True):
     config = OptimizerConfig(
-        optimizer="muon", use_distributed_optimizer=False, use_layer_wise_distributed_optimizer=True
+        use_layer_wise_param_layout=False,
+        optimizer="muon",
+        use_distributed_optimizer=False,
+        use_layer_wise_distributed_optimizer=True,
     )
     layer_wise = Mock(
         spec=LayerWiseDistributedOptimizer, config=config, model_chunks=[], _optimizer_state_offloader=None
@@ -52,7 +55,8 @@ def test_layer_wise_only_and_inactive_components_do_not_enable_distopt(distribut
 def test_checkpoint_metadata_follows_actual_optimizer_tree(distributed):
     optimizer, *_ = _optimizer_tree(distributed=distributed)
     metadata = checkpointing._build_sharded_state_dict_metadata(
-        checkpointing._uses_distributed_optimizer(optimizer.config, optimizer), CheckpointConfig()
+        checkpointing._uses_distributed_optimizer(optimizer.config, optimizer),
+        CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False),
     )
     assert metadata["distrib_optim_sharding_type"] == "dp_reshardable"
 
@@ -66,7 +70,8 @@ def test_runtime_tree_recovers_metadata_when_shared_config_is_stale():
 def test_mixed_metadata_selects_distopt_dp_reshardable_handler():
     mimo, _, _, dist_opt = _optimizer_tree()
     metadata = checkpointing._build_sharded_state_dict_metadata(
-        checkpointing._has_distributed_optimizer(mimo), CheckpointConfig()
+        checkpointing._has_distributed_optimizer(mimo),
+        CheckpointConfig(use_persistent_ckpt_worker=True, strict_fsdp_dtensor_load=False),
     )
     dist_opt.ddp_config = SimpleNamespace(use_megatron_fsdp=False)
     dist_opt.state_dict.return_value = {}
@@ -99,7 +104,11 @@ def test_topology_change_checks_source_and_target_optimizer_state(
         optimizer=optimizer.config,
         model=SimpleNamespace(tensor_model_parallel_size=2, pipeline_model_parallel_size=1),
         checkpoint=CheckpointConfig(
-            load_optim=resume_mode != "model_only", load_rng=False, finetune=resume_mode == "finetune"
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
+            load_optim=resume_mode != "model_only",
+            load_rng=False,
+            finetune=resume_mode == "finetune",
         ),
     )
     saved_optimizer: dict[int, object] = {0: {"optimizer": {"state": {}, "param_groups": []}}}

@@ -779,6 +779,7 @@ def main():  # pragma: no cover
         f"adam_beta1={args.adam_beta1}, adam_beta2={args.adam_beta2}, clip_grad={args.clip_grad}"
     )
     bridge_opt_config = BridgeOptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="adam",
         lr=args.lr,
         min_lr=args.min_lr,

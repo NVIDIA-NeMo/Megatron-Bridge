@@ -25,6 +25,8 @@ from __future__ import annotations
 import os
 
 import torch
+from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.training.config import RNGConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.stepfun.data.flickr8k import Step37Flickr8kSFTDataProvider
@@ -32,13 +34,7 @@ from megatron.bridge.recipes.common import _sft_common
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.bridge.training.config import (
-    ConfigContainer,
-    DistributedDataParallelConfig,
-    LoggerConfig,
-    RNGConfig,
-    TokenizerConfig,
-)
+from megatron.bridge.training.config import ConfigContainer, LoggerConfig, TokenizerConfig
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
 

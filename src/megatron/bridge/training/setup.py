@@ -26,7 +26,12 @@ import numpy as np
 import torch
 from megatron.core import tensor_parallel
 from megatron.core.config import set_experimental_flag
-from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
+from megatron.core.distributed import (
+    DistributedDataParallel,
+    DistributedDataParallelConfig,
+    TorchFullyShardedDataParallelConfig,
+    finalize_model_grads,
+)
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
     FullyShardedDataParallelV1,
     FullyShardedDataParallelV2,
@@ -176,9 +181,7 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         "local_checkpoint_manager" in checkpointing_context
         and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
     )
-    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(
-        cfg.checkpoint.load, cfg.checkpoint
-    )
+    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(cfg.checkpoint.load, cfg.checkpoint)
 
     if cfg.peft is not None:
         load_checkpoint_exists = cfg.checkpoint.load is not None and (
@@ -403,9 +406,7 @@ def setup(
                 checkpoint_path = cfg.checkpoint.pretrained_checkpoint
                 ckpt_step = None
             else:
-                raise RuntimeError(
-                    "No checkpoint source is available for ModelOpt state restoration"
-                )
+                raise RuntimeError("No checkpoint source is available for ModelOpt state restoration")
 
             if not has_modelopt_state(checkpoint_path, ckpt_step=ckpt_step):
                 raise RuntimeError(f"No modelopt_state found in selected checkpoint={checkpoint_path}")
@@ -454,7 +455,7 @@ def setup(
                     model=model,
                     optimizer=optimizer,
                     opt_param_scheduler=scheduler,
-                    skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
+                    skip_load_to_model_and_opt=isinstance(cfg.ddp, TorchFullyShardedDataParallelConfig),
                 )
             )
         # Refresh HDO working masters after model-only initialization, or rebind
@@ -592,7 +593,9 @@ def _register_setup_pre_wrap_hook(
             ]
         else:
             model_cfg._pre_wrap_hooks[:] = [
-                registered_hook for registered_hook in model_cfg._pre_wrap_hooks if registered_hook is not previous_hook
+                registered_hook
+                for registered_hook in model_cfg._pre_wrap_hooks
+                if registered_hook is not previous_hook
             ]
 
     setup_hooks[setup_hook_name] = hook
@@ -618,7 +621,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
         model_config.finalize()
     configure_gtp_remat(
         model_config,
-        reduce_scatter_with_fp32_accumulation=cfg.dist.gtp_remat_reduce_scatter_with_fp32_accumulation,
+        reduce_scatter_with_fp32_accumulation=cfg.ddp.gtp_remat_reduce_scatter_with_fp32_accumulation,
         nccl_ub=cfg.dist.gtp_remat_nccl_ub,
         pg_collection=pg_collection,
     )
@@ -635,7 +638,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
             use_layer_wise_distributed_optimizer=uses_layer_wise_optimizer(cfg.optimizer),
             use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
-            use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+            use_torch_fsdp2=isinstance(cfg.ddp, TorchFullyShardedDataParallelConfig),
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
             use_layer_wise_param_layout=getattr(cfg.optimizer, "use_layer_wise_param_layout", False),
         )
@@ -643,7 +646,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
         model = model_config.provide_distributed_model(
             ddp_config=cfg.ddp,
             use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
-            use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+            use_torch_fsdp2=isinstance(cfg.ddp, TorchFullyShardedDataParallelConfig),
             overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
             use_layer_wise_distributed_optimizer=uses_layer_wise_optimizer(cfg.optimizer),
             use_layer_wise_param_layout=getattr(cfg.optimizer, "use_layer_wise_param_layout", False),
@@ -672,8 +675,7 @@ def _update_model_config_funcs(
     # every backward finalizes the DP-outer axis and only the last microbatch's gradient
     # reaches the optimizer.
     if isinstance(model[0], FullyShardedDataParallelV2) or (
-        isinstance(model[0], (DistributedDataParallel, FullyShardedDataParallelV1))
-        and ddp_config.overlap_grad_reduce
+        isinstance(model[0], (DistributedDataParallel, FullyShardedDataParallelV1)) and ddp_config.overlap_grad_reduce
     ):
         assert model_config.no_sync_func is None, (
             "config.no_sync_func must be None when the wrapper supplies its own no_sync "

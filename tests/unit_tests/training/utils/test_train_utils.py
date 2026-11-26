@@ -562,7 +562,7 @@ class TestTrainingLog:
         )
         monkeypatch.setattr(
             "megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group",
-            lambda value, mp_group: value,
+            lambda value, group: value,
             raising=True,
         )
 
@@ -636,7 +636,7 @@ class TestTrainingLog:
         )
         monkeypatch.setattr(
             "megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group",
-            lambda value, mp_group: value,
+            lambda value, group: value,
             raising=True,
         )
 

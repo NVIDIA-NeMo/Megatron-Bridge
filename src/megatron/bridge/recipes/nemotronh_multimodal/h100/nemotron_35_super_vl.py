@@ -121,7 +121,7 @@ def nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = nemotron_35_super_vl_sft_64gpu_h100_bf16_config()
     cfg.train.train_iters = 100
-    cfg.train.eval_iters = 0
+    cfg.validation.eval_iters = 0
     cfg.dataset.do_validation = False
     cfg.dataset.pad_to_max_length = True
     cfg.validation.eval_interval = 0

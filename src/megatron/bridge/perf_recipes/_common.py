@@ -45,7 +45,7 @@ def _benchmark_common(
     (e.g. Kimi K2 sets ``grad_reduce_in_fp32 = True``).
     """
     cfg.train.train_iters = 50
-    cfg.train.eval_iters = 0
+    cfg.validation.eval_iters = 0
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 

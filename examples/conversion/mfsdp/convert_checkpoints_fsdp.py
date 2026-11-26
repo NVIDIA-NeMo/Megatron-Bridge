@@ -207,13 +207,15 @@ def export_megatron_to_hf(
         state.cfg = ConfigContainer(
             model=model_provider,
             train=None,
-            optimizer=OptimizerConfig(use_distributed_optimizer=False),
+            optimizer=OptimizerConfig(use_layer_wise_param_layout=False, use_distributed_optimizer=False),
             ddp=ddp_config,
             scheduler=None,
             dataset=None,
             logger=LoggerConfig(),
             tokenizer=None,
             checkpoint=CheckpointConfig(
+                use_persistent_ckpt_worker=True,
+                strict_fsdp_dtensor_load=False,
                 load=megatron_path,
                 finetune=True,
                 load_optim=False,

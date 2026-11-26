@@ -17,6 +17,7 @@ from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
 from typing import Any, Mapping
 
+from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.quantization.quant_config import GlobMatcher, Matcher, RecipeConfig
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.training.config.container import ConfigContainerBase as _MCoreConfigContainerBase
@@ -246,14 +247,14 @@ def create_ddp_config(
     use_megatron_fsdp: bool = False,
     overrides: Mapping[str, object] | None = None,
     finalize: bool = True,
-) -> object | None:
+) -> DistributedDataParallelConfig | None:
     """Create a finalized Bridge DDP config for external model construction."""
     if not wrap_with_ddp:
         return None
 
-    from megatron.bridge.training.config import DistributedDataParallelConfig
+    from megatron.bridge.training.config import finalize_ddp_config
 
-    ddp_config = {
+    ddp_config: dict[str, object] = {
         "use_distributed_optimizer": use_distributed_optimizer,
     }
     if use_megatron_fsdp:
@@ -270,5 +271,5 @@ def create_ddp_config(
 
     config = DistributedDataParallelConfig(**ddp_config)
     if finalize:
-        config.finalize()
+        finalize_ddp_config(config)
     return config

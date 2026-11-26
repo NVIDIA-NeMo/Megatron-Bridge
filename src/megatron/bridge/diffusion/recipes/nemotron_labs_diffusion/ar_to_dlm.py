@@ -18,6 +18,8 @@ from typing import Optional
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.core.optimizer import OptimizerConfig
+from megatron.training.config import RNGConfig, SchedulerConfig, ValidationConfig
 
 from megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_diffusion_bridge import (
     NemotronLabsDiffusionBridge,
@@ -34,9 +36,6 @@ from megatron.bridge.training.config import (
     ConfigContainer,
     GPTDatasetConfig,
     LoggerConfig,
-    OptimizerConfig,
-    RNGConfig,
-    SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
 )
@@ -266,10 +265,9 @@ def _nemotron_labs_diffusion_common(
     # Config Container
     cfg_container = ConfigContainer(
         model=model_cfg,
+        validation=ValidationConfig(eval_interval=eval_interval, eval_iters=32),
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             manual_gc=True,
@@ -312,6 +310,8 @@ def _nemotron_labs_diffusion_common(
         ),
         tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(
+            use_persistent_ckpt_worker=True,
+            strict_fsdp_dtensor_load=False,
             finetune=True,
             pretrained_checkpoint=None,
             save_interval=save_interval,
@@ -359,6 +359,7 @@ def distributed_fused_adam_with_cosine_annealing_dllm(
     """
     min_lr = min_lr if min_lr is not None else (0.1 * max_lr)
     optimizer = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="adam",
         lr=max_lr,
         min_lr=min_lr,

@@ -416,9 +416,9 @@ Mixed precision is selected via the `mixed_precision` config key (e.g., preset n
 | `--manual-gc` | `train.manual_gc` | Enable manual Python GC scheduling. |
 | `--manual-gc-interval` | `train.manual_gc_interval` | Steps between manual GC runs. |
 | `--no-manual-gc-eval` | `train.manual_gc_eval=false` | Disable GC at eval boundaries. |
-| `--eval-iters` | `train.eval_iters` | Eval iterations per validation run. |
-| `--eval-interval` | `train.eval_interval` | Steps between validations. |
-| `--skip-train` | `train.skip_train` | Skip training loop (eval-only). |
+| `--eval-iters` | `validation.eval_iters` | Eval iterations per validation run. |
+| `--eval-interval` | `validation.eval_interval` | Steps between validations. |
+| `--skip-train` | `validation.skip_train` | Skip training loop (eval-only). |
 
 ### Scheduler / Regularization
 

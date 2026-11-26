@@ -14,7 +14,8 @@
 
 from typing import Optional
 
-from megatron.bridge.training.config import OptimizerConfig, SchedulerConfig
+from megatron.core.optimizer import OptimizerConfig
+from megatron.training.config import SchedulerConfig
 
 
 def distributed_muon_with_cosine_annealing(
@@ -76,6 +77,7 @@ def distributed_muon_with_cosine_annealing(
         override_opt_param_scheduler=True,
     )
     optimizer = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="dist_muon",
         lr=max_lr,
         min_lr=min_lr,
@@ -138,6 +140,7 @@ def distributed_fused_adam_with_cosine_annealing(
     """
     min_lr = min_lr if min_lr is not None else (0.1 * max_lr)
     optimizer = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="adam",
         lr=max_lr,
         min_lr=min_lr,
@@ -201,6 +204,7 @@ def distributed_fused_adam_with_cosine_annealing_samples(
     """
     min_lr = min_lr if min_lr is not None else (0.1 * max_lr)
     optimizer = OptimizerConfig(
+        use_layer_wise_param_layout=False,
         optimizer="adam",
         lr=max_lr,
         min_lr=min_lr,
