@@ -30,6 +30,7 @@ from megatron.core.utils import get_pg_rank, unwrap_model
 from megatron.bridge.models.conversion.gtp import _gather_gtp_weight
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
+    MegatronParamMapping,
     ReplicatedMapping,
     RowParallelMapping,
     _split_gdn_grouped_to_separate,
@@ -1051,6 +1052,15 @@ class MegatronPeftBridge:
                 else:
                     shared_linear_out = torch.stack(per_expert_linear_out, dim=0)
                     linear_out_by_base = {base_name: shared_linear_out for base_name in base_hf_weight_names}
+                if len(base_hf_weight_names) == 1:
+                    # A packed expert weight whose mapping reorders the rows (e.g. interleaved gate/up) needs its
+                    # lora_B rows in the same order.
+                    base_mapping = mapping_registry.megatron_to_hf_lookup(
+                        f"{adapter_task.global_base_prefix}{base_suffixes[0]}"
+                    )
+                    if isinstance(base_mapping, MegatronParamMapping):
+                        (base_name,) = base_hf_weight_names
+                        linear_out_by_base[base_name] = base_mapping.hf_lora_out_rows(linear_out_by_base[base_name])
 
                 for index, base_name in enumerate(base_hf_weight_names):
                     linear_out_stacked = linear_out_by_base[base_name]
@@ -1562,6 +1572,9 @@ class MegatronPeftBridge:
             expert_idx,
             num_moe_experts,
         )
+        # The converted weights are in the HF row order; give the delta the same.
+        if isinstance(task.mapping, MegatronParamMapping):
+            current_linear_out_weight = task.mapping.hf_lora_out_rows(current_linear_out_weight)
 
         for hf_name, base_weight in list(converted_weights_dict.items()):
             converted_weights_dict[hf_name] = self._merge_single_adapter_weight(
