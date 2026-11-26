@@ -27,6 +27,7 @@ from megatron.bridge.engine.datum import (
 )
 from megatron.bridge.engine.engine import Topology, TrainingEngine, topology_from_recipe
 from megatron.bridge.engine.recipes import TrainingRecipe
+from megatron.bridge.engine.refit import RefitHandle, RefitPlan, RefitReceiver, RolloutLayout
 
 
 __all__ = [
@@ -39,6 +40,10 @@ __all__ = [
     "ModelOutput",
     "NormalizationPolicy",
     "PreparedMicrobatch",
+    "RefitHandle",
+    "RefitPlan",
+    "RefitReceiver",
+    "RolloutLayout",
     "Topology",
     "TrainingEngine",
     "TrainingRecipe",
