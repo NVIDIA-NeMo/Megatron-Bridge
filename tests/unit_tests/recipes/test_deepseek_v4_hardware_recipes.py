@@ -27,6 +27,9 @@ from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config as flash_bf16_base_config,
 )
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_64gpu_gb200_bf16_fsdp_config as flash_fsdp_config,
+)
+from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config as flash_fp8_config,
 )
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
@@ -49,6 +52,77 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_recipe_construction_dependencies(monkeypatch)
+
+
+def test_flash_fsdp_recipe_preserves_full_model_and_training_contract() -> None:
+    base = flash_bf16_base_config()
+    cfg = flash_fsdp_config()
+
+    assert recipes.deepseek_v4_flash_pretrain_64gpu_gb200_bf16_fsdp_config is flash_fsdp_config
+    assert cfg.model.num_layers == base.model.num_layers == 86
+    main_pattern = cfg.model.hybrid_layer_pattern.partition("/")[0]
+    assert "|" not in main_pattern
+    assert len(main_pattern) == cfg.model.num_layers
+    assert cfg.model.mtp_num_layers == base.model.mtp_num_layers == 1
+    assert cfg.model.tensor_model_parallel_size == cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.recompute_modules == ["moe"]
+    assert cfg.model.fine_grained_activation_offloading is True
+    assert cfg.model.offload_modules == base.model.offload_modules
+    assert cfg.model.use_fused_mhc is True
+    assert cfg.model.mhc_norm_eps_inside_sqrt is False
+    assert cfg.model.gradient_accumulation_fusion is False
+    assert cfg.model.dsa_indexer_loss_coeff == base.model.dsa_indexer_loss_coeff
+    assert cfg.model.dsa_indexer_use_sparse_loss == base.model.dsa_indexer_use_sparse_loss
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.cuda_graph_impl == "full_iteration"
+    assert cfg.model.cuda_graph_warmup_steps == 3
+    assert cfg.model.moe_use_grouped_tensor is True
+    assert cfg.model.moe_expert_rank_capacity_factor == 4.0
+    assert cfg.model.moe_pad_expert_input_to_capacity is False
+    assert cfg.model.use_te_rng_tracker is True
+    assert cfg.rng.te_rng_tracker is True
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is False
+    assert cfg.ddp.check_for_nan_in_grad is True
+    assert cfg.train.global_batch_size == base.train.global_batch_size == 256
+    assert cfg.train.micro_batch_size == base.train.micro_batch_size == 1
+    assert cfg.dataset.seq_length == cfg.model.seq_length == 4096
+    assert cfg.train.manual_gc is True
+    assert cfg.train.manual_gc_interval == 20
+    assert cfg.optimizer.lr == base.optimizer.lr
+    assert cfg.scheduler.lr_warmup_iters == base.scheduler.lr_warmup_iters
+    assert cfg.scheduler.lr_decay_iters == cfg.train.train_iters == 1_000_000
+    assert base.model.pipeline_model_parallel_size == 8
+    assert base.train.manual_gc_interval == 5
+    assert base.model.cuda_graph_impl == "none"
+    assert base.model.recompute_modules == ["moe_act", "mla_up_proj"]
+
+
+def test_flash_fsdp_recipe_uses_native_sharded_optimizer() -> None:
+    cfg = flash_fsdp_config()
+
+    assert cfg.dist.use_megatron_fsdp is True
+    assert cfg.dist.distributed_timeout_minutes == 60
+    assert cfg.ddp.use_megatron_fsdp is True
+    assert cfg.ddp.megatron_fsdp_version == 2
+    assert cfg.ddp.use_distributed_optimizer is False
+    assert cfg.optimizer.use_distributed_optimizer is False
+    assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
+    assert cfg.ddp.expert_data_parallel_sharding_strategy == "optim_grads_params"
+    assert cfg.ddp.outer_dp_sharding_strategy == cfg.ddp.expert_outer_dp_sharding_strategy == "no_shard"
+    assert cfg.ddp.num_distributed_optimizer_instances == 1
+    assert cfg.ddp.megatron_fsdp_main_params_dtype == torch.float32
+    assert cfg.ddp.megatron_fsdp_main_grads_dtype == torch.float32
+    assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.float32
+    assert cfg.ddp.suggested_communication_unit_size == 0
+    assert cfg.checkpoint.ckpt_format == "fsdp_dtensor"
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == (
+        "expandable_segments:True,graph_capture_record_stream_reuse:True"
+    )
 
 
 def test_flash_base_recipe_enables_precision_independent_fusions() -> None:

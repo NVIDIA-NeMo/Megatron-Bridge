@@ -142,6 +142,70 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_fsdp_config() -> ConfigContainer:
+    """Return the experimental BF16 FSDP v2 recipe for 64 GB200 GPUs.
+
+    Uses TP1/PP1/CP1/EP32, full dense and expert sharding, whole-MoE recompute,
+    activation offload, no FSDP prefetch, and manual GC every 20 steps. Full-
+    iteration CUDA graphs use GroupedTensor experts and a rank capacity factor
+    of four. Fused mHC stays enabled and gradient accumulation fusion is disabled.
+
+    The corresponding experimental configuration measured 6.136 s/step over steps 31-100
+    of a 100-step pretrained-checkpoint DCLM run at sequence length 4096 and
+    global batch 256 on 64 GB200 GPUs. That study used an earlier Bridge/Core
+    runtime with external finite/overflow guards and 97 replays on every rank.
+    Current-main full-model qualification remains pending. The native capacity
+    overflow handler retries in eager dropless mode; such retries must not be
+    counted as successful graph replay. This is not a long-run convergence or
+    checkpoint-I/O claim. The measured run released unused allocator cache before
+    capture; that diagnostic intervention is not installed by this recipe.
+    Supply the dataset and tokenizer through the launcher. The current Bridge
+    FSDP v2 contract rejects pretrained_checkpoint; this recipe's native bring-up
+    path starts from random initialization, not the measured pretrained weights.
+    """
+    cfg = deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config()
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 32
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
+    cfg.model.use_fused_mhc = True
+    cfg.model.mhc_norm_eps_inside_sqrt = False
+    cfg.model.gradient_accumulation_fusion = False
+    cfg.model.recompute_modules = ["moe"]
+    cfg.model.moe_use_grouped_tensor = True
+    cfg.model.moe_expert_rank_capacity_factor = 4.0
+    cfg.model.moe_pad_expert_input_to_capacity = False
+    cfg.model.cuda_graph_impl = "full_iteration"
+    cfg.model.cuda_graph_warmup_steps = 3
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
+    cfg.rerun_state_machine.check_for_nan_in_loss = False
+
+    cfg.dist.use_megatron_fsdp = True
+    cfg.dist.distributed_timeout_minutes = 60
+    cfg.ddp.use_megatron_fsdp = True
+    cfg.ddp.megatron_fsdp_version = 2
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.optimizer.use_distributed_optimizer = False
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.expert_data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.outer_dp_sharding_strategy = "no_shard"
+    cfg.ddp.expert_outer_dp_sharding_strategy = "no_shard"
+    cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.ddp.megatron_fsdp_main_params_dtype = torch.float32
+    cfg.ddp.megatron_fsdp_main_grads_dtype = torch.float32
+    cfg.ddp.megatron_fsdp_grad_comm_dtype = torch.float32
+    cfg.ddp.suggested_communication_unit_size = 0
+    cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+    cfg.train.manual_gc_interval = 20
+    cfg.scheduler.lr_decay_iters = cfg.train.train_iters
+    cfg.env_vars = {
+        **cfg.env_vars,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+    }
+    return cfg
+
+
 def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """DeepSeek-V4-Flash MXFP8 pre-training on 64-GPU GB200 (PP=8, EP=8).
 
