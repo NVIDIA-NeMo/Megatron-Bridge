@@ -198,17 +198,19 @@ def llama3_70b_pretrain_64gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
     cfg.model.use_te_activation_func = True
     cfg.model.bias_activation_fusion = False
     cfg.dataset.create_attention_mask = False
+    # NCCL user buffers for the DP gradient reduce-scatter; NCCL's symmetric kernels do not support AVG.
+    cfg.ddp.nccl_ub = True
+    cfg.ddp.average_in_collective = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         # CUDA stream scheduling for this model and parallel layout.
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
+        "NCCL_NVLS_ENABLE": 1,
+        "NCCL_CTA_POLICY": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
