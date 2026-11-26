@@ -28,23 +28,15 @@ WORKDIR /opt
 
 # Clone FW repositories
 RUN git clone --depth 1 https://github.com/NVIDIA-NeMo/NeMo.git && \
-    git clone --depth 1 https://github.com/NVIDIA-NeMo/Export-Deploy.git && \
     git clone --depth 1 https://github.com/NVIDIA-NeMo/Evaluator.git && \
     git clone --depth 1 https://github.com/NVIDIA-NeMo/Run
 
 ARG NEMO_COMMIT
-ARG NEMO_EXPORT_DEPLOY_COMMIT
 ARG NEMO_EVALUATOR_COMMIT
 ARG NEMO_RUN_COMMIT
 
 # Update FW repository commit
-RUN    pushd /opt/Export-Deploy && \
-        git pull && \
-        git fetch origin $NEMO_EXPORT_DEPLOY_COMMIT && \
-        git checkout FETCH_HEAD && \
-        echo "Container built with NeMo-Export-Deploy commit hash: $NEMO_EXPORT_DEPLOY_COMMIT" && \
-    popd && \
-    pushd /opt/Evaluator && \
+RUN pushd /opt/Evaluator && \
         git pull && \
         git fetch origin $NEMO_EVALUATOR_COMMIT && \
         git checkout FETCH_HEAD && \

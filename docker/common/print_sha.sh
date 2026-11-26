@@ -29,7 +29,6 @@ repos=(
     "Megatron-Bridge,/opt/Megatron-Bridge"
     "Megatron-LM,/opt/Megatron-Bridge/3rdparty/Megatron-LM"
     "DeepEP,/opt/DeepEP"
-    "Export-Deploy,/opt/Export-Deploy"
     "Run,/opt/Run"
 )
 
