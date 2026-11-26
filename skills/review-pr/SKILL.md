@@ -1,7 +1,6 @@
 ---
 name: review-pr
-description: Structured single-agent code review workflow for PRs, commits, and local diffs. Use when asked to review code, understand a PR, rubber duck a change, prepare GitHub review comments, compare a change against Megatron Bridge conventions, or produce high-signal findings without subagents or tmux.
-when_to_use: Reviewing a GitHub PR, commit, local diff, or code change; preparing review comments; checking a change against Megatron Bridge conventions; assessing whether a PR is safe to merge; summarizing review findings and test gaps.
+description: Structured single-agent code review workflow for PRs, commits, and local diffs. Use when asked to review code, understand a PR, rubber duck a change, prepare GitHub review comments, compare a change against Megatron Bridge conventions, or produce high-signal findings without subagents or tmux. Use when reviewing a GitHub PR, commit, local diff, or code change; preparing review comments; checking a change against Megatron Bridge conventions; assessing whether a PR is safe to merge; summarizing review findings and test gaps.
 ---
 
 # Review PR

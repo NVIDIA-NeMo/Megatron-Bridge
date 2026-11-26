@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-perf-megatron-fsdp
-description: Operational guide for enabling Megatron FSDP in Megatron-Bridge, including config knobs, code anchors, pitfalls, and verification.
+description: Operational guide for enabling Megatron FSDP in Megatron-Bridge, including config knobs, code anchors, pitfalls, and verification. Use when using FSDP-based data parallelism instead of DDP, or tracing an OOM or regression to a FSDP config change; 'use_megatron_fsdp', 'data_parallel_sharding_strategy', 'sharded data parallel', 'Megatron FSDP'.
 license: Apache-2.0
-when_to_use: Using FSDP-based data parallelism instead of DDP, or tracing an OOM or regression to a FSDP config change; 'use_megatron_fsdp', 'data_parallel_sharding_strategy', 'sharded data parallel', 'Megatron FSDP'.
 ---
 
 # Megatron FSDP Skill

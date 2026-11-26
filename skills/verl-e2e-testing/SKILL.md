@@ -1,7 +1,6 @@
 ---
 name: verl-e2e-testing
-description: External verl end-to-end validation workflow for Megatron-Bridge changes. Covers running a small verl Megatron backend job from a Bridge checkout, choosing LoRA/DDP plus optional save/resume and parallelism variants, setting PYTHONPATH so verl imports the local Bridge tree, and reporting pass/fail evidence.
-when_to_use: Changing Megatron-Bridge code that needs downstream verl compatibility validation; checking non-vanilla Bridge paths; testing PEFT/LoRA, DDP, checkpoint behavior, or explicitly requested advanced variants through verl; 'does this work in verl', 'run verl e2e', 'external RL loop validation'.
+description: External verl end-to-end validation workflow for Megatron-Bridge changes. Covers running a small verl Megatron backend job from a Bridge checkout, choosing LoRA/DDP plus optional save/resume and parallelism variants, setting PYTHONPATH so verl imports the local Bridge tree, and reporting pass/fail evidence. Use when changing Megatron-Bridge code that needs downstream verl compatibility validation; checking non-vanilla Bridge paths; testing PEFT/LoRA, DDP, checkpoint behavior, or explicitly requested advanced variants through verl; 'does this work in verl', 'run verl e2e', 'external RL loop validation'.
 ---
 
 # verl E2E Testing

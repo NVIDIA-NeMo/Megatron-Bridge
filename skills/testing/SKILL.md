@@ -1,7 +1,6 @@
 ---
 name: testing
-description: Testing reference for Megatron Bridge — unit and functional test layout, tier semantics (L0/L1/L2/flaky), script conventions, running tests locally, adding/moving/disabling tests, and pytest conventions.
-when_to_use: Adding, running, moving, or disabling tests; debugging a test failure; choosing the right test tier; understanding L0 vs L1 vs L2; handling flaky tests; 'add a test', 'which tier', 'functional test layout'.
+description: Testing reference for Megatron Bridge — unit and functional test layout, tier semantics (L0/L1/L2/flaky), script conventions, running tests locally, adding/moving/disabling tests, and pytest conventions. Use when adding, running, moving, or disabling tests; debugging a test failure; choosing the right test tier; understanding L0 vs L1 vs L2; handling flaky tests; 'add a test', 'which tier', 'functional test layout'.
 ---
 
 # Testing
