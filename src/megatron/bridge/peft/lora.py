@@ -72,9 +72,14 @@ def get_lora_plus_config_overrides(
     Returns:
         Per-group overrides ready for ``get_megatron_optimizer(config_overrides=...)``.
     """
-    return merge_config_overrides(
-        get_standard_config_overrides(config), get_lora_plus_lr_overrides(config, lora_plus_ratio)
+    adapter_policy = get_lora_plus_lr_overrides(config, lora_plus_ratio)
+    logger.info(
+        "LoRA+ enabled: lora_plus_ratio=%s (linear_in/A max_lr=%s, linear_out/B max_lr=%s)",
+        lora_plus_ratio,
+        config.lr,
+        adapter_policy[ParamKey(name="*.linear_out.weight")]["max_lr"],
     )
+    return merge_config_overrides(get_standard_config_overrides(config), adapter_policy)
 
 
 @dataclass
