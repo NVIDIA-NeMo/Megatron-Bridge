@@ -1,0 +1,117 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: SkyRL Megatron e2e (weekly)
+
+on:
+  schedule:
+    - cron: "0 8 * * 1" # Mondays 08:00 UTC, after the weekly verl and NeMo-RL workflows.
+  workflow_dispatch:
+    inputs:
+      rows:
+        description: "Space-separated test_logprobs_matching_roundtrip row IDs; empty = default set"
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  megatron-models:
+    name: Megatron <-> vLLM logprob parity (SkyRL)
+    runs-on: nemo-ci-gcp-gpu-x8
+    # First run populates the model cache (~130 GB across the 35B and 30B rows).
+    timeout-minutes: 180
+    env:
+      CONTAINER: skyrl_${{ github.run_id }}
+      HF_HOME: /home/TestData/skyrl/hf_home
+      UV_CACHE_DIR: /home/TestData/skyrl/uv_cache
+      SKYRL_IMAGE: ${{ vars.DEFAULT_CONTAINER_REGISTRY }}/dockerhub/novaskyai/skyrl-train-ray-2.57.0-py3.12-cu13.0-megatron@sha256:41c779f16c141e9eb42259a848f0a1dea4a2e0da78173b5f5bb1d4547ce2e38a # pragma: allowlist secret
+      SKYRL_REF: a1e34dbf21003f66bd7921487fd47db6c154aba2 # pragma: allowlist secret
+      SKYRL_TEST_ROWS: ${{ github.event.inputs.rows }}
+      TEST_DATA_PATH: ${{ vars.DEFAULT_TEST_DATA_PATH }}
+    steps:
+      - name: Checkout Megatron-Bridge
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Checkout pinned SkyRL
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          rm -rf "${RUNNER_TEMP}/skyrl"
+          git init "${RUNNER_TEMP}/skyrl"
+          git -C "${RUNNER_TEMP}/skyrl" remote add origin https://github.com/NovaSky-AI/SkyRL.git
+          git -C "${RUNNER_TEMP}/skyrl" fetch --depth=1 origin "$SKYRL_REF"
+          git -C "${RUNNER_TEMP}/skyrl" checkout --detach FETCH_HEAD
+          test "$(git -C "${RUNNER_TEMP}/skyrl" rev-parse HEAD)" = "$SKYRL_REF"
+          # The SkyRL image runs as `ray`; pytest and uv write caches into the checkout.
+          chmod -R a+rwX "${RUNNER_TEMP}/skyrl"
+
+      - name: Start SkyRL container
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          docker rm -f "$CONTAINER" || true
+          docker pull "$SKYRL_IMAGE"
+          docker run \
+            --rm -d \
+            --name "$CONTAINER" \
+            --runtime=nvidia --gpus all \
+            --shm-size=64g \
+            --env HF_HOME \
+            --env UV_CACHE_DIR \
+            --volume "${TEST_DATA_PATH}:/home/TestData" \
+            --volume "${GITHUB_WORKSPACE}:/opt/Megatron-Bridge" \
+            --volume "${RUNNER_TEMP}/skyrl:/opt/skyrl" \
+            --workdir /opt/skyrl \
+            "$SKYRL_IMAGE" \
+            sleep $(( 180 * 60 + 300 ))
+
+      - name: Run SkyRL Megatron model parity
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          docker exec \
+            --env BRIDGE_ROOT=/opt/Megatron-Bridge \
+            --env EXPECTED_BRIDGE_SHA="$GITHUB_SHA" \
+            --env EXPECTED_SKYRL_SHA="$SKYRL_REF" \
+            --env SKYRL_ROOT=/opt/skyrl \
+            --env SKYRL_TEST_ROWS \
+            "$CONTAINER" \
+            bash /opt/Megatron-Bridge/.github/workflows/skyrl_ci/run_megatron_models.sh
+
+      - name: Cleanup container
+        if: always()
+        shell: bash
+        run: docker rm -f "$CONTAINER" || true
+
+  notify:
+    needs: [megatron-models]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack on failure
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_CI_CHANNEL_WEBHOOK }}
+          SLACK_WEBHOOK_ADMIN: <!subteam^${{ secrets.SLACK_TEAM_GROUP_ID }}>
+        run: |
+          curl -X POST \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\":rotating_light: <https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}|SkyRL Megatron e2e (weekly)> failed. Please review.\n\ncc ${SLACK_WEBHOOK_ADMIN}\"}" \
+            "$SLACK_WEBHOOK"
