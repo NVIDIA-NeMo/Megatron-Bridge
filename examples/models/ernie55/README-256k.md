@@ -146,6 +146,30 @@ run_arm moon true
 
 The `false` and `true` arms use identical MoK macrobatches (16,384), expert routes, shapes, full recomputation and optimizer settings. The second arm enables expert replication. MTP is enabled by the model configuration and has loss scale 0.1. Confirm both `ERNIE55_CUDA_HEAD dispatch=main` and `dispatch=mtp` appear. Optional W&B logging uses `logger.wandb_project` and `logger.wandb_exp_name` overrides passed to `run_arm`, with local credentials. Give each arm a distinct name. Disable experiment logging hooks that add profiling to timing runs.
 
+#### Variable packed lengths with a fixed MoK workspace
+
+For training with variable packed lengths, install the MoK wheel from the MCore workspace fix, then set `max_local_tokens` to the largest **physical token count per EP rank in one microbatch**. Keep the historical environment from step 1 if you also need the original timing baselines. In the environment for your variable-length run, build the wheel from the companion installer:
+
+```bash
+export MCORE_MOK_CAPACITY=$WORK/Megatron-LM-mok-capacity
+git -C "$MCORE" fetch origin refs/pull/9506/head
+git -C "$MCORE" worktree add --detach "$MCORE_MOK_CAPACITY" 1b3027de9ca4f42d67d26d7c8d5e2dba7993b393
+export UV_PROJECT_ENVIRONMENT=$(python -c 'import sys; print(sys.prefix)')
+export MOK_ARCH=SM103
+bash "$MCORE_MOK_CAPACITY/docker/common/install_mok.sh" \
+  ee7bdaba515fd3d557105d71809ec74cd523d5a1 "$WORK/mok-capacity-wheels"
+python -c 'from mok.functional import MoKConfig; assert MoKConfig(max_local_tokens=16384).max_local_tokens == 16384'
+```
+
+Deploy the wheel in the torchrun environment on every node. For this TP1, CP16 benchmark, one microbatch contains one row of up to 262,144 positions including padding. Each rank therefore needs capacity for at most 16,384 tokens. Set `INPUT` to your tokenized JSONL and `DOCS` to the maximum document count per row, and add the override to either arm:
+
+```bash
+run_arm mok_varlen false '++model.moe_megakernel_backend_config.max_local_tokens=16384'
+run_arm moon_varlen true '++model.moe_megakernel_backend_config.max_local_tokens=16384'
+```
+
+MoK reserves the communication buffers on first use and processes each microbatch at its actual token count. All ranks in the EP group use the same capacity and the same local token count on each invocation. Both values must be at least 512 and divisible by 256. For a different TP1 recipe, divide the maximum combined padded length across the rows in one microbatch by CP and round the capacity up to a supported size. Gradient accumulation does not enter this bound. The workspace capacity can be set independently of `macrobatch_size`, which controls kernel scheduling.
+
 ### 4b. Reproduce the two MoonEP-enabled arms in the throughput and memory table
 
 Prepare a separate checkout **once on the shared workspace** for the retain-source baseline. Both checkouts begin at the same verified MCore commit. Reverse just the release commit in the baseline checkout. It removes one runtime assignment and the corresponding unit-test assertion. All packed attention, MoK, MoonEP, CUDA-head and other source changes are shared between the arms. The normal checkout used in step 4 stays intact.
