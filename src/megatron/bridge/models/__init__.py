@@ -161,6 +161,7 @@ from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
 from megatron.bridge.models.mimo_v2_flash import (
     MiMoV2FlashBridge,
     MiMoV2FlashModelProvider,
+    MiMoV26Bridge,
 )
 from megatron.bridge.models.minicpmo import MiniCPMOBridge, MiniCPMOModelConfig
 from megatron.bridge.models.minimax_m2 import (
@@ -351,7 +352,8 @@ __all__ = [
     "NemotronHBridge",
     "MambaModelProvider",
     "MimoBridge",
-    # MiMo-V2-Flash
+    # MiMo-V2-Flash / V2.6
+    "MiMoV26Bridge",
     "MiMoV2FlashBridge",
     "MiMoV2FlashModelProvider",
     # Nemotron Models

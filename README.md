@@ -277,7 +277,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**MiniCPM-o**](docs/models/minicpmo/minicpmo-4.5.md) | MiniCPM-o 4.5 (text/image/audio understanding only; no speech generation or SFT/LoRA recipes) |
 | [**MiniMax**](docs/models/minimax/index.md) | MiniMax-M2 / M2.5 / M2.7, MiniMax-M3 |
 | [**Mistral**](docs/models/mistral/index.md) | Ministral 3 (3B/8B/14B) |
-| [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo, MiMo-V2-Flash |
+| [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo, MiMo-V2-Flash, MiMo-V2.6-Flash |
 | [**Moonlight**](docs/models/moonlight/index.md) | Moonlight |
 | [**Muse Glimmer**](docs/models/muse_glimmer/muse-glimmer.md) | Muse Glimmer 30B |
 | [**Muse Spark Open**](docs/models/muse_spark_open/muse-spark-open.md) | Muse-Spark-Open-816B-A42B |
