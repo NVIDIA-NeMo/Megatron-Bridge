@@ -15,16 +15,17 @@
 import logging
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from copy import copy
 from fnmatch import fnmatch
 from types import MethodType
 from typing import Literal, Optional, Union, cast
 
+import megatron.training.optim
 import torch
 from megatron.core.optimizer import (
     MegatronOptimizer,
     OptimizerConfig,
     ParamKey,
-    get_megatron_optimizer,
     get_mup_config_overrides,
     get_standard_config_overrides,
     merge_config_overrides,
@@ -162,25 +163,20 @@ def setup_optimizer(
                 "Set lr_warmup_init=0 or lora_plus_ratio=1."
             )
 
-    if hasattr(optimizer_config, "provide"):
-        optimizer = optimizer_config.provide(
-            model_chunks=model,
-            config_overrides=config_overrides,
-            use_gloo_process_groups=use_gloo_process_groups,
-            pg_collection=pg_collection,
-        )
-    else:
-        optimizer = get_megatron_optimizer(
-            config=optimizer_config,
-            model_chunks=model,
-            config_overrides=config_overrides,
-            use_gloo_process_groups=use_gloo_process_groups,
-            pg_collection=pg_collection,
-        )
-
-    scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
-
-    return optimizer, scheduler
+    # Bridge's existing builder does not apply these inherited MLM-only settings.
+    # Preserve that behavior here; the shared MLM entry point supports them directly.
+    scheduler_config = copy(scheduler_config)
+    scheduler_config.step_lr_rescale_schedule = None
+    scheduler_config.step_lr_rescale_warmup_samples = 0
+    return megatron.training.optim.setup_optimizer(
+        optimizer_config,
+        scheduler_config,
+        model,
+        config_overrides=config_overrides,
+        use_gloo_process_groups=use_gloo_process_groups,
+        pg_collection=pg_collection,
+        optimizer_factory=getattr(optimizer_config, "provide", None),
+    )
 
 
 def _optimizer_state_is_fp32_adam(state_dict: Mapping[str, object]) -> bool:
@@ -592,37 +588,3 @@ def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer
             "preserving restored optimizer state when present."
         )
     return synced
-
-
-def _get_scheduler(
-    optimizer_config: OptimizerConfig, scheduler_config: SchedulerConfig, optimizer: MegatronOptimizer
-) -> OptimizerParamScheduler:
-    """Get the optimizer parameter scheduler.
-
-    Args:
-        optimizer_config: Configuration for the optimizer
-        scheduler_config: Configuration for the scheduler
-        optimizer: The optimizer to schedule
-
-    Returns:
-        The optimizer parameter scheduler
-    """
-    scheduler = OptimizerParamScheduler(
-        optimizer,
-        init_lr=scheduler_config.lr_warmup_init,
-        max_lr=optimizer_config.lr,
-        min_lr=optimizer_config.min_lr,
-        lr_warmup_steps=scheduler_config.lr_warmup_steps,
-        lr_decay_steps=scheduler_config.lr_decay_steps,
-        lr_decay_style=scheduler_config.lr_decay_style,
-        start_wd=scheduler_config.start_weight_decay,
-        end_wd=scheduler_config.end_weight_decay,
-        wd_incr_steps=scheduler_config.wd_incr_steps,
-        wd_incr_style=scheduler_config.weight_decay_incr_style,
-        use_checkpoint_opt_param_scheduler=scheduler_config.use_checkpoint_opt_param_scheduler,
-        override_opt_param_scheduler=scheduler_config.override_opt_param_scheduler,
-        wsd_decay_steps=scheduler_config.wsd_decay_steps,
-        lr_wsd_decay_style=scheduler_config.lr_wsd_decay_style,
-    )
-
-    return scheduler

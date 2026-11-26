@@ -229,8 +229,8 @@ def test_setup_passes_actual_model_and_shared_mapping_to_core():
     context = _context()
     hook = Mock(return_value={ParamKey(name="weight"): {"max_lr": 0.004}})
     with (
-        patch("megatron.bridge.training.optim.get_megatron_optimizer") as factory,
-        patch("megatron.bridge.training.optim._get_scheduler"),
+        patch("megatron.training.optim.get_megatron_optimizer") as factory,
+        patch("megatron.training.optim.build_optimizer_param_scheduler"),
     ):
         setup_optimizer(
             context.optimizer_config, context.scheduler_config, context.model, optimizer_config_overrides=hook
@@ -258,7 +258,7 @@ def test_mup_does_not_silently_overwrite_identical_selector():
             return_value=SimpleNamespace(use_mup=True, mup_width_mult=2.0),
         ),
         patch("megatron.bridge.training.optim.get_mup_config_overrides", return_value={key: {"max_lr": 0.0005}}),
-        patch("megatron.bridge.training.optim.get_megatron_optimizer") as factory,
+        patch("megatron.training.optim.get_megatron_optimizer") as factory,
         pytest.raises(ValueError, match="Conflicting optimizer overrides"),
     ):
         setup_optimizer(
@@ -277,7 +277,7 @@ def test_mup_overlap_conflicts_reach_core_parameter_validation(single_rank_group
     context.model[0].config.mup_width_mult = 2.0
     with (
         patch(
-            "megatron.bridge.training.optim.get_megatron_optimizer",
+            "megatron.training.optim.get_megatron_optimizer",
             side_effect=lambda **kwargs: _get_param_groups(
                 kwargs["model_chunks"], kwargs["config"], kwargs["config_overrides"]
             ),
@@ -309,7 +309,7 @@ def test_new_mapping_preserves_lora_warmup_constraint(mode):
     context = _context()
     context.scheduler_config.lr_warmup_init = 0.0001
     with (
-        patch("megatron.bridge.training.optim.get_megatron_optimizer") as factory,
+        patch("megatron.training.optim.get_megatron_optimizer") as factory,
         pytest.raises(ValueError, match=r"LoRA\+.*lr_warmup_init=0"),
     ):
         setup_optimizer(
@@ -364,3 +364,98 @@ def test_lsq_callable_settings_can_be_overridden(tmp_path, source):
         "min_lr": 0.0008,
         "wd_mult": 0.0,
     }
+
+
+@pytest.mark.parametrize("policy,single_model", [(None, True), ({}, False), ("custom", False)])
+def test_legacy_setup_keeps_factory_provider_and_finalization_contract(single_rank_group, policy, single_model):
+    """Exercise the downstream six-argument API through real optimizer updates."""
+    from copy import deepcopy
+
+    from megatron.core.optimizer.optimizer import FP32Optimizer
+    from megatron.core.process_groups_config import ProcessGroupCollection
+
+    captured = {}
+
+    class CustomConfig(OptimizerConfig):
+        finalizations = 0
+
+        def finalize(self):
+            self.finalizations += 1
+            self.lr *= 2
+
+        def provide(self, *, model_chunks, config_overrides, use_gloo_process_groups, pg_collection):
+            assert self.finalizations == 1
+            captured.update(
+                model=model_chunks, overrides=config_overrides, groups=pg_collection, gloo=use_gloo_process_groups
+            )
+            chunks = model_chunks if isinstance(model_chunks, list) else [model_chunks]
+            param_groups = _get_param_groups(chunks, self, config_overrides)
+            return FP32Optimizer(torch.optim.SGD(param_groups, lr=self.lr, momentum=0.9), self, None)
+
+    class Provider(OptimizerConfigOverrideProvider):
+        def build_config_overrides(self, context):
+            assert context.optimizer_config is config.optimizer
+            assert context.scheduler_config is config.scheduler
+            assert context.model is model
+            return overrides
+
+    config = _container()
+    config.train.train_iters = 20
+    config.train.global_batch_size = 8
+    config.train.micro_batch_size = 1
+    config.scheduler.lr_warmup_iters = 2
+    config.scheduler.start_weight_decay = config.scheduler.end_weight_decay = 0.01
+    config.optimizer = CustomConfig(lr=0.001, min_lr=0.0001, clip_grad=0.0)
+    config.dataset.reset_position_ids = False
+    config.dataset.reset_attention_mask = False
+    config.dataset.eod_mask_loss = False
+    config.validate()
+    model = _model()
+    model = model[0] if single_model else model
+    overrides = {ParamKey(name="weight"): {"max_lr": 0.008}} if policy == "custom" else policy
+    groups = ProcessGroupCollection()
+    scheduler_before = deepcopy(vars(config.scheduler))
+    optimizer, scheduler = setup_optimizer(config.optimizer, config.scheduler, model, False, groups, Provider())
+    assert captured["model"] is model
+    assert captured["groups"] is groups and captured["gloo"] is False
+    assert captured["overrides"] == overrides
+    assert config.optimizer.finalizations == 1
+    assert vars(config.scheduler) == scheduler_before
+    assert scheduler.lr_decay_steps == 160 and scheduler.lr_warmup_steps == 16
+    scheduler.step(increment=8)
+    expected_lrs = {0.001, 0.004} if policy == "custom" else {0.001}
+    assert {group["lr"] for group in optimizer.param_groups} == expected_lrs
+    parameter = model.weight if single_model else model[0].weight
+    before = parameter.detach().clone()
+    for group in optimizer.param_groups:
+        for param in group["params"]:
+            param.main_grad = torch.ones_like(param)
+    assert optimizer.step()[0]
+    assert not torch.equal(parameter, before)
+    assert optimizer.state_dict() and scheduler.state_dict()["num_steps"] == 8
+
+
+def test_bridge_wrapper_preserves_legacy_step_rescaling_behavior():
+    """The shared builder must not activate previously ignored Bridge settings."""
+
+    def build_custom(**kwargs):
+        return torch.optim.SGD(_model()[0].parameters(), lr=0.01)
+
+    # A custom config owns construction; this mirrors existing config.provide users.
+    class CustomConfig(OptimizerConfig):
+        provide = staticmethod(build_custom)
+
+    config = CustomConfig(lr=0.01, min_lr=0.001)
+    schedule = SchedulerConfig(
+        start_weight_decay=0.1,
+        end_weight_decay=0.1,
+        step_lr_rescale_schedule="0:0.5,8:1.0",
+        step_lr_rescale_warmup_samples=2,
+    )
+    schedule.lr_warmup_steps = 0
+    schedule.lr_decay_steps = schedule.wd_incr_steps = 20
+    optimizer, scheduler = setup_optimizer(config, schedule, _model())
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(0.01)
+    assert scheduler.step_lr_rescale_schedule == ()
+    assert schedule.step_lr_rescale_schedule == "0:0.5,8:1.0"
+    assert schedule.step_lr_rescale_warmup_samples == 2

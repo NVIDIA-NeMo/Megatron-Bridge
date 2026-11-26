@@ -245,3 +245,28 @@ These scheduling options control how the weight decay coefficient changes over t
 | **Constant**  | Fixed weight decay throughout training.                                     |
 | **Linear**    | Linear progression from start to end weight decay.                          |
 | **Cosine**    | Cosine progression from start to end weight decay.                          |
+
+## Shared optimizer construction
+
+Bridge's public `setup_optimizer` signature is unchanged. It resolves recipe mappings
+or legacy providers, then delegates optimizer and scheduler construction to
+`megatron.training.optim.setup_optimizer`. This requires a Megatron-LM revision that
+provides the shared helper; upgrade Core before adopting this change.
+
+Configuration validation/finalization stays in `ConfigContainer.validate()`. It is not
+repeated by either setup helper. Custom optimizer configs with a `provide()` method
+remain supported: the bound method receives the same `model_chunks`,
+`config_overrides`, `use_gloo_process_groups`, and `pg_collection` keyword arguments,
+including the original single model or model list. Provider results retain their
+existing `None` versus empty-mapping behavior, and explicit process groups retain
+their identity. Existing six-positional-argument setup calls remain valid.
+
+The shared scheduler builder supports MLM's stepwise LR rescaling fields. Bridge's
+wrapper continues to ignore `step_lr_rescale_schedule` and
+`step_lr_rescale_warmup_samples`, matching its previous behavior; it passes a shallow
+copy with these fields disabled and leaves the caller's config unchanged. Enabling
+that scheduling feature in Bridge is a separate behavior change.
+
+Optimizer state and scheduler checkpoint formats do not change. For direct use of the
+shared API, supply finalized configs and a resolved policy mapping; its optional
+`optimizer_factory` is a callable with the optimizer config already bound.

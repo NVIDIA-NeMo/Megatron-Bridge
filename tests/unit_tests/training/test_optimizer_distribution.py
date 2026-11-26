@@ -92,8 +92,8 @@ def test_setup_optimizer_normalizes_dist_muon_without_container_validation():
 
     with (
         patch("megatron.bridge.training.optim.get_model_config", return_value=SimpleNamespace(use_mup=False)),
-        patch("megatron.bridge.training.optim.get_megatron_optimizer", return_value=Mock()) as factory,
-        patch("megatron.bridge.training.optim.OptimizerParamScheduler"),
+        patch("megatron.training.optim.get_megatron_optimizer", return_value=Mock()) as factory,
+        patch("megatron.training.optim.OptimizerParamScheduler"),
     ):
         setup_optimizer(
             optimizer_config,
