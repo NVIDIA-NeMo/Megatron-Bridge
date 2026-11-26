@@ -48,6 +48,33 @@ uv run python scripts/translate_mlm_to_bridge.py --reverse \
     --yaml bridge_config.yaml
 ```
 
+### Resuming a translated recipe with a longer training run
+
+Suppose `vanilla_gpt_pretrain_config` saved a complete checkpoint after iteration 10
+of 12, with global batch size 32, one warmup iteration, and 20 LR decay iterations.
+To extend training to 20 iterations, export the named recipe with the same scheduler settings:
+
+```bash
+uv run python scripts/translate_mlm_to_bridge.py --reverse \
+    --recipe vanilla_gpt_pretrain_config --world-size 2 \
+    --args "train.train_iters=20 train.global_batch_size=32 scheduler.lr_warmup_iters=1 scheduler.lr_decay_iters=20 checkpoint.load=/checkpoints/run"
+```
+
+The emitted MLM arguments include `--override-opt-param-scheduler` and
+`--lr-decay-style cosine`. The first lets the current configuration set the
+weight-decay horizon to 640 samples (20 × 32). The checkpoint recorded 384
+samples (12 × 32). The scheduler resumes at 320 consumed samples. With the
+recipe's LR bounds of 0.0003 and 0.00003, the first optimizer update after
+loading uses LR **0.0001761482** and weight decay **0.033** in an ordinary
+decay group. Read the group's values before the scheduler advances for that update.
+
+Some recipes intentionally require matching schedule settings. For example,
+`diffusion_gemma_26b_sft_config` leaves both `override_opt_param_scheduler` and
+`use_checkpoint_opt_param_scheduler` false. Omit both corresponding MLM flags
+when porting it. A normal resume succeeds with the original schedule and rejects
+a changed horizon. Passing only handwritten overrides to `--reverse --args` can
+miss defaults supplied by a recipe helper.
+
 ### Key mappings
 
 For a constant weight-decay schedule with explicit equal bounds, reverse translation

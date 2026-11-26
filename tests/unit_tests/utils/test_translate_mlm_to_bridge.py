@@ -1052,6 +1052,118 @@ class TestParamGatherTranslation:
         assert result.mlm_args["fp8-amax-history-len"] == 16
 
 
+def _mlm_scheduler_from_translation(flat: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Any:
+    import shlex
+    import sys
+    from unittest.mock import Mock
+
+    from megatron.training import training as mlm
+    from megatron.training.argument_utils import pretrain_cfg_container_from_args
+    from megatron.training.arguments import parse_args, validate_args
+
+    # Exercise the emitted training and optimizer arguments on a tiny GPT model in MLM.
+    policy = {k: v for k, v in flat.items() if k.startswith(("optimizer.", "scheduler.", "train."))}
+    command = emit_mlm_args(translate_bridge_to_mlm(policy))
+    tokens = shlex.split(command.replace("\\\n", " "), comments=True)
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pretrain_gpt.py",
+            "--num-layers",
+            "2",
+            "--hidden-size",
+            "128",
+            "--num-attention-heads",
+            "4",
+            "--seq-length",
+            "128",
+            "--max-position-embeddings",
+            "128",
+            "--mock-data",
+            *tokens,
+        ],
+    )
+    args = validate_args(parse_args())
+    target_cfg = pretrain_cfg_container_from_args(args)
+    target_cfg._resolve_scheduler_step_fields()
+    monkeypatch.setattr(mlm, "get_args", lambda: args)
+    monkeypatch.setattr(mlm, "get_run_config", lambda: target_cfg)
+    return mlm.get_optimizer_param_scheduler(Mock(param_groups=[{}]))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "recipe_name,resume_iters,linear_wd",
+    [
+        ("vanilla_gpt_pretrain_config", 12, False),
+        ("vanilla_gpt_pretrain_config", 20, False),
+        ("vanilla_gpt_pretrain_config", 20, True),
+        ("diffusion_gemma_26b_sft_config", 12, False),
+        ("diffusion_gemma_26b_sft_config", 20, False),
+    ],
+)
+def test_recipe_scheduler_resume_after_translation(
+    recipe_name: str, resume_iters: int, linear_wd: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Compare the settings used by the first optimizer update after a step-10 checkpoint."""
+    import math
+    from unittest.mock import Mock
+
+    from megatron.bridge import AutoBridge, recipes
+    from megatron.bridge.models import GPTModelProvider
+    from megatron.bridge.training.optim import _get_scheduler
+    from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+    if recipe_name == "diffusion_gemma_26b_sft_config":
+        # Only the model provider comes from the Hub. Keep the recipe's own scheduler config.
+        hf_bridge = Mock()
+        hf_bridge.to_megatron_provider.return_value = GPTModelProvider()
+        monkeypatch.setattr(AutoBridge, "from_hf_pretrained", Mock(return_value=hf_bridge))
+
+    batch = 32
+    overrides = ["train.global_batch_size=32", "scheduler.lr_decay_iters=20", "scheduler.lr_warmup_iters=1"]
+    if linear_wd:
+        overrides += [
+            "scheduler.start_weight_decay=0.01",
+            "scheduler.end_weight_decay=0.11",
+            "scheduler.weight_decay_incr_style=linear",
+        ]
+    cfg = process_config_with_overrides(getattr(recipes, recipe_name)(), cli_overrides=overrides)
+    cfg.train.train_iters = 12
+    cfg._calculate_scheduler_steps()
+    saved = _get_scheduler(cfg.optimizer, cfg.scheduler, Mock(param_groups=[{}]))
+    saved.step(10 * batch)
+    checkpoint = saved.state_dict()
+
+    cfg.train.train_iters = resume_iters
+    cfg._calculate_scheduler_steps()
+    reference = _get_scheduler(cfg.optimizer, cfg.scheduler, Mock(param_groups=[{}]))
+    flat = _mod._load_recipe_to_flat_dict(
+        recipe_name, world_size=8, cli_overrides=[*overrides, f"train.train_iters={resume_iters}"]
+    )
+    translated = _mlm_scheduler_from_translation(flat, monkeypatch)
+
+    override = recipe_name == "vanilla_gpt_pretrain_config"
+    for scheduler in (reference, translated):
+        assert scheduler.override_opt_param_scheduler is override
+        assert not scheduler.use_checkpoint_opt_param_scheduler
+        if not override and resume_iters != 12:
+            with pytest.raises(AssertionError, match="total number of weight decay iterations"):
+                scheduler.load_state_dict(checkpoint)
+            continue
+
+        scheduler.load_state_dict(checkpoint)
+        assert scheduler.num_steps == 10 * batch
+        # The optimizer uses the current groups before the next scheduler.step().
+        group = scheduler.optimizer.param_groups[0]
+        cosine = (1 + math.cos(math.pi * (10 - 1) / (20 - 1))) / 2
+        assert group["lr"] == pytest.approx(cfg.optimizer.min_lr + (cfg.optimizer.lr - cfg.optimizer.min_lr) * cosine)
+        expected_wd = 0.01 + (0.11 - 0.01) * 10 / resume_iters if linear_wd else cfg.scheduler.start_weight_decay
+        assert group["weight_decay"] == pytest.approx(expected_wd)
+
+
 class TestResolvedOptimizerTranslation:
     def test_complete_real_recipe_command_passes_mlm_parser_and_validation(self, monkeypatch):
         import shlex
