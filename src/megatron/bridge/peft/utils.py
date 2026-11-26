@@ -69,8 +69,8 @@ TEColumnParallelGroupedLinear, HAVE_TE_COL_GRP_LINEAR = safe_import_from(
 TEFP8GlobalStateManager, HAVE_TE_FP8_GLOBAL_STATE_MANAGER = safe_import_from(
     "megatron.core.extensions.transformer_engine", "FP8GlobalStateManager"
 )
-TEPytorchGroupedLinearOp, HAVE_TE_PYTORCH_GROUPED_LINEAR_OP = safe_import_from(
-    "transformer_engine.pytorch.ops", "GroupedLinear"
+TEPytorchGroupedLinear, HAVE_TE_PYTORCH_GROUPED_LINEAR = safe_import_from(
+    "transformer_engine.pytorch", "GroupedLinear"
 )
 TERowParallelLinear, HAVE_TE_ROW_LINEAR = safe_import_from(
     "megatron.core.extensions.transformer_engine", "TERowParallelLinear"
@@ -2168,7 +2168,7 @@ class GroupedExpertLinearAdapter(nn.Module):
     def _can_use_te_grouped_linear_fp8(self, x: torch.Tensor) -> bool:
         """Return whether TE can run the grouped adapter weights through FP8."""
 
-        if not HAVE_TE_PYTORCH_GROUPED_LINEAR_OP:
+        if not HAVE_TE_PYTORCH_GROUPED_LINEAR:
             return False
         if not x.is_cuda or x.dtype not in (torch.bfloat16, torch.float16):
             return False
@@ -2199,13 +2199,14 @@ class GroupedExpertLinearAdapter(nn.Module):
         key = (projection, num_gemms, in_features, out_features, params_dtype, device)
         helper = self._te_grouped_linear_helpers.get(key)
         if helper is None:
-            helper = TEPytorchGroupedLinearOp(
-                num_groups=num_gemms,
+            helper = TEPytorchGroupedLinear(
+                num_gemms=num_gemms,
                 in_features=in_features,
                 out_features=out_features,
                 bias=False,
-                dtype=params_dtype,
-                accumulate_into_main_grad=False,
+                params_dtype=params_dtype,
+                fuse_wgrad_accumulation=False,
+                use_grouped_tensor=False,
                 device="meta",
             )
             self._te_grouped_linear_helpers[key] = helper
@@ -2220,7 +2221,7 @@ class GroupedExpertLinearAdapter(nn.Module):
         m_splits: List[int],
         projection: str,
     ) -> torch.Tensor:
-        """Apply FP8 grouped linear through TE's public op with Bridge-owned weights."""
+        """Apply FP8 grouped linear through TE's public module with Bridge-owned weights."""
 
         device_context = torch.cuda.device(x.device) if x.is_cuda else nullcontext()
         with device_context:
@@ -2233,14 +2234,9 @@ class GroupedExpertLinearAdapter(nn.Module):
                 device=x.device,
             )
             weights = {f"weight{i}": weight[i] for i in range(self.num_local_experts)}
-            for name, view in weights.items():
-                # TE also reads parameter device/dtype during backward, after
-                # functional_call restores the module. Keep storage-sharing aliases
-                # there, not meta tensors. They are not optimizer-owned parameters;
-                # functional_call passes the differentiable views to TE's autograd.
-                helper.register_parameter(name, nn.Parameter(view.detach(), requires_grad=view.requires_grad))
-            splits = torch.tensor(m_splits, dtype=torch.int64, device=x.device)
-            return torch.func.functional_call(helper, weights, (x, splits), strict=True)
+            # Keep split sizes on the host. The split-quantize backend consumes
+            # a Python list; a CUDA tensor would require a device-to-host sync.
+            return torch.func.functional_call(helper, weights, (x, m_splits), strict=True)
 
     def _build_grouped_mm_offsets(self, m_splits: List[int], *, device: torch.device) -> torch.Tensor:
         """Build inclusive grouped_mm offsets from per-expert split sizes."""

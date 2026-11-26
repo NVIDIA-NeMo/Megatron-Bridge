@@ -2266,7 +2266,7 @@ class TestGroupedExpertLinearAdapter:
         fake_x = Mock(is_cuda=True, dtype=torch.bfloat16, device=torch.device("cuda:0"))
 
         with (
-            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR_OP", True),
+            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR", True),
             patch("megatron.bridge.peft.utils.torch.cuda.current_device", return_value=0),
         ):
             assert not adapter._can_use_te_grouped_linear_fp8(fake_x)
@@ -2287,7 +2287,7 @@ class TestGroupedExpertLinearAdapter:
         fake_x = Mock(is_cuda=True, dtype=torch.bfloat16, device=torch.device("cuda:1"))
 
         with (
-            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR_OP", True),
+            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR", True),
             patch("megatron.bridge.peft.utils.torch.cuda.current_device", return_value=0),
         ):
             assert not adapter._can_use_te_grouped_linear_fp8(fake_x)
@@ -2317,7 +2317,7 @@ class TestGroupedExpertLinearAdapter:
 
         with patch.object(
             peft_utils,
-            "TEPytorchGroupedLinearOp",
+            "TEPytorchGroupedLinear",
             side_effect=[
                 cuda0_linear_in_helper,
                 cuda1_linear_in_helper,
@@ -2436,7 +2436,7 @@ class TestGroupedExpertLinearAdapter:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="TE FP8 grouped linear requires CUDA")
     def test_grouped_expert_linear_adapter_te_fp8_forward_backward_and_inference(self):
         """The real TE FP8 path should produce finite outputs and gradients without public grouped-MM."""
-        if not (peft_utils.HAVE_TE_FP8_GLOBAL_STATE_MANAGER and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR_OP):
+        if not (peft_utils.HAVE_TE_FP8_GLOBAL_STATE_MANAGER and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR):
             pytest.skip("Transformer Engine grouped-linear FP8 support is unavailable")
         te = pytest.importorskip("transformer_engine.pytorch")
         adapter = GroupedExpertLinearAdapter(
@@ -2500,7 +2500,7 @@ class TestGroupedExpertLinearAdapter:
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="TE FP8 device migration requires two CUDA devices")
     def test_grouped_expert_linear_adapter_te_fp8_device_mismatch_uses_fallback(self):
         """An adapter moved away from the current CUDA device should use the safe fallback."""
-        if not (peft_utils.HAVE_TE_FP8_GLOBAL_STATE_MANAGER and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR_OP):
+        if not (peft_utils.HAVE_TE_FP8_GLOBAL_STATE_MANAGER and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR):
             pytest.skip("Transformer Engine grouped-linear FP8 support is unavailable")
         te = pytest.importorskip("transformer_engine.pytorch")
         torch.cuda.set_device(0)

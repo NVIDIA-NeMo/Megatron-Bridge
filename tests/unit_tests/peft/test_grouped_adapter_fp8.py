@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Numerical coverage for public TE ops with externally owned LoRA weights."""
+"""Numerical coverage for public TE modules with externally owned LoRA weights."""
 
 from unittest.mock import patch
 
@@ -36,7 +36,12 @@ def _recipe(name):
         return recipe.MXFP8BlockScaling()
     if name == "current":
         return recipe.Float8CurrentScaling()
-    return recipe.DelayedScaling(fp8_format=recipe.Format.HYBRID, amax_history_len=16)
+    result = recipe.DelayedScaling(fp8_format=recipe.Format.HYBRID, amax_history_len=16)
+    if name in ("high_precision", "dequantized"):
+        if not hasattr(result, "backward_override"):
+            pytest.skip("TE version does not support backward precision overrides")
+        result.backward_override = name
+    return result
 
 
 def _adapter(zero_init):
@@ -89,8 +94,12 @@ class _TEReference(torch.nn.Module):
 
     def __init__(self, adapter, te):
         super().__init__()
-        self.linear_in = te.ops.GroupedLinear(3, 32, 32, bias=False, device="cuda", dtype=torch.bfloat16)
-        self.linear_out = te.ops.GroupedLinear(3, 32, 64, bias=False, device="cuda", dtype=torch.bfloat16)
+        self.linear_in = te.GroupedLinear(
+            3, 32, 32, bias=False, device="cuda", params_dtype=torch.bfloat16, use_grouped_tensor=False
+        )
+        self.linear_out = te.GroupedLinear(
+            3, 32, 64, bias=False, device="cuda", params_dtype=torch.bfloat16, use_grouped_tensor=False
+        )
         with torch.no_grad():
             for expert in range(3):
                 getattr(self.linear_in, f"weight{expert}").copy_(adapter.linear_in.weight[expert])
@@ -102,20 +111,22 @@ class _TEReference(torch.nn.Module):
             torch.nn.functional.pad(chunk, (0, 0, 0, padded - n))
             for chunk, n, padded in zip(x.split(splits), splits, padded_splits)
         ]
-        sizes = torch.tensor(padded_splits, device=x.device, dtype=torch.int64)
+        sizes = padded_splits
         hidden = torch.nn.functional.silu(self.linear_in(torch.cat(chunks), sizes)) * 1.5
         output = self.linear_out(hidden, sizes)
         return torch.cat([chunk[:n] for chunk, n in zip(output.split(padded_splits), splits)])
 
 
-@pytest.mark.parametrize("recipe_name", ["delayed", "current", "mxfp8"])
+@pytest.mark.parametrize("recipe_name", ["delayed", "current", "mxfp8", "high_precision", "dequantized"])
 @pytest.mark.parametrize("input_requires_grad", [False, True])
 @pytest.mark.parametrize("zero_init", [False, True])
-def test_fp8_adapter_math_routing_and_optimizer(recipe_name, input_requires_grad, zero_init):
+def test_fp8_adapter_math_routing_and_optimizer(recipe_name, input_requires_grad, zero_init, monkeypatch):
     """Compare outputs, input/A/B gradients and optimizer updates with FP32 math."""
     te = pytest.importorskip("transformer_engine.pytorch")
-    if not peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR_OP:
-        pytest.skip("TE grouped linear ops unavailable")
+    if not peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR:
+        pytest.skip("TE grouped linear unavailable")
+    # The adapter keeps host splits even if other layers opt into grouped tensors.
+    monkeypatch.setenv("NVTE_GROUPED_LINEAR_USE_FUSED_GROUPED_GEMM", "1")
     recipe = _recipe(recipe_name)
     torch.manual_seed(173)
     adapter = _adapter(zero_init)
@@ -132,8 +143,8 @@ def test_fp8_adapter_math_routing_and_optimizer(recipe_name, input_requires_grad
     # forward graphs alive together to catch stale parameter bindings in TE.
     routing_steps = [([5, 0, 19], [0, 11, 7]), ([13, 9, 0], [3, 0, 17])]
     with (
-        patch.object(adapter, "_forward_per_expert", side_effect=AssertionError("Must exercise FP8 ops")),
-        patch.object(adapter, "_can_use_grouped_mm", side_effect=AssertionError("Must exercise FP8 ops")),
+        patch.object(adapter, "_forward_per_expert", side_effect=AssertionError("Must exercise FP8 grouped linear")),
+        patch.object(adapter, "_can_use_grouped_mm", side_effect=AssertionError("Must exercise FP8 grouped linear")),
     ):
         for routing in routing_steps:
             optimizer.zero_grad(set_to_none=True)
@@ -270,3 +281,55 @@ def test_fp8_adapter_device_dtype_changes_clear_helpers():
     _assert_fp8_close(x.grad, ref_x.grad)
     _assert_fp8_close(adapter.linear_in.weight.grad, ref_in.grad)
     _assert_fp8_close(adapter.linear_out.weight.grad, ref_out.grad)
+
+
+@pytest.mark.parametrize("use_reentrant", [True, False])
+def test_fp8_adapter_te_checkpoint_restores_delayed_scales(use_reentrant):
+    """TE recompute inside outer autocast must replay the original quantization."""
+    te = pytest.importorskip("transformer_engine.pytorch")
+    torch.manual_seed(631)
+    adapter = _adapter(False)
+    initial = {name: p.detach().clone() for name, p in adapter.named_parameters()}
+    inputs = torch.randn(23, 32, device="cuda", dtype=torch.bfloat16)
+    grad_output = torch.randn(23, 64, device="cuda", dtype=torch.bfloat16)
+
+    def run(recompute):
+        peft_utils.TEFP8GlobalStateManager.reset()
+        candidate = _adapter(False)
+        candidate.load_state_dict(initial)
+        x = inputs.detach().clone().requires_grad_()
+        forwards = []
+
+        def scales():
+            return [
+                helper.fp8_meta["scaling_fwd"].scale.clone()
+                for helper in candidate._te_grouped_linear_helpers.values()
+            ]
+
+        def forward(inp):
+            output = candidate(inp, [7, 0, 16])
+            forwards.append((output.detach().clone(), scales()))
+            return output
+
+        with te.autocast(enabled=True, recipe=_recipe("delayed")):
+            if recompute:
+                output = te.checkpoint(forward, x, use_reentrant=use_reentrant)
+            else:
+                output = forward(x)
+        latest_scales = scales()
+        assert any(not torch.equal(old, new) for old, new in zip(forwards[0][1], latest_scales))
+        output.backward(grad_output)
+        if recompute:
+            assert len(forwards) == 2
+            torch.testing.assert_close(forwards[0][0], forwards[1][0], rtol=0, atol=0)
+        for latest, restored in zip(latest_scales, scales()):
+            torch.testing.assert_close(latest, restored, rtol=0, atol=0)
+        return output.detach(), x.grad, *(p.grad for p in candidate.parameters())
+
+    try:
+        expected = run(False)
+        actual = run(True)
+        for reference, result in zip(expected, actual):
+            torch.testing.assert_close(result, reference, rtol=0, atol=0)
+    finally:
+        peft_utils.TEFP8GlobalStateManager.reset()
