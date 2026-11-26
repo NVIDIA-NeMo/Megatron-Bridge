@@ -1006,6 +1006,352 @@ class TestTranslateConstantWeightDecay:
         assert translate_bridge_to_mlm({"optimizer.weight_decay": 0.2}).mlm_args["weight-decay"] == 0.2
 
 
+@pytest.mark.unit
+class TestParamGatherTranslation:
+    @pytest.mark.parametrize("precision", ["fp8", "fp4"])
+    @pytest.mark.parametrize("enabled", [False, True])
+    @pytest.mark.parametrize("source", ["mixed_precision", "mixed_precision_param", "ddp", "model"])
+    def test_reverse_gather_from_each_config_source(self, precision, enabled, source):
+        key = {
+            "mixed_precision": f"mixed_precision.{precision}_param_gather",
+            "mixed_precision_param": f"mixed_precision.{precision}_param",
+            "ddp": f"ddp.{precision}_param_gather",
+            "model": f"model.{precision}_param",
+        }[source]
+        result = translate_bridge_to_mlm({key: enabled})
+        assert (f"{precision}-param-gather" in result.mlm_args) is enabled
+
+    @pytest.mark.parametrize("precision", ["fp8", "fp4"])
+    @pytest.mark.parametrize("enabled", [False, True])
+    @pytest.mark.parametrize("reverse_order", [False, True])
+    def test_precision_policy_wins_over_stale_runtime_copies(self, precision, enabled, reverse_order):
+        overrides = {
+            f"mixed_precision.{precision}_param_gather": enabled,
+            f"ddp.{precision}_param_gather": not enabled,
+            f"model.{precision}_param": not enabled,
+        }
+        if reverse_order:
+            overrides = dict(reversed(list(overrides.items())))
+        result = translate_bridge_to_mlm(overrides)
+        assert (f"{precision}-param-gather" in result.mlm_args) is enabled
+
+    @pytest.mark.parametrize("precision,format_name,recipe", [("fp8", "hybrid", "mxfp8"), ("fp4", "e2m1", "nvfp4")])
+    def test_precision_cli_round_trip(self, precision, format_name, recipe):
+        args = {f"{precision}-param-gather": True, f"{precision}-format": format_name, f"{precision}-recipe": recipe}
+        forward = translate(args)
+        assert forward.overrides[f"mixed_precision.{precision}_param_gather"] is True
+        assert f"ddp.{precision}_param_gather" not in forward.overrides
+        reverse = translate_bridge_to_mlm(forward.overrides)
+        assert reverse.mlm_args[f"{precision}-param-gather"] is None
+        assert reverse.mlm_args[f"{precision}-format"] == format_name
+        assert reverse.mlm_args[f"{precision}-recipe"] == recipe
+
+    def test_other_mapped_precision_fields_are_not_consumed(self):
+        result = translate_bridge_to_mlm({"mixed_precision.fp8_margin": 2, "mixed_precision.fp8_amax_history_len": 16})
+        assert result.mlm_args["fp8-margin"] == 2
+        assert result.mlm_args["fp8-amax-history-len"] == 16
+
+
+def _mlm_scheduler_from_translation(flat: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Any:
+    import shlex
+    import sys
+    from unittest.mock import Mock
+
+    from megatron.training import training as mlm
+    from megatron.training.argument_utils import pretrain_cfg_container_from_args
+    from megatron.training.arguments import parse_args, validate_args
+
+    # Exercise the emitted training and optimizer arguments on a tiny GPT model in MLM.
+    policy = {k: v for k, v in flat.items() if k.startswith(("optimizer.", "scheduler.", "train."))}
+    command = emit_mlm_args(translate_bridge_to_mlm(policy))
+    tokens = shlex.split(command.replace("\\\n", " "), comments=True)
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pretrain_gpt.py",
+            "--num-layers",
+            "2",
+            "--hidden-size",
+            "128",
+            "--num-attention-heads",
+            "4",
+            "--seq-length",
+            "128",
+            "--max-position-embeddings",
+            "128",
+            "--mock-data",
+            *tokens,
+        ],
+    )
+    args = validate_args(parse_args())
+    target_cfg = pretrain_cfg_container_from_args(args)
+    target_cfg._resolve_scheduler_step_fields()
+    monkeypatch.setattr(mlm, "get_args", lambda: args)
+    monkeypatch.setattr(mlm, "get_run_config", lambda: target_cfg)
+    return mlm.get_optimizer_param_scheduler(Mock(param_groups=[{}]))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "recipe_name,resume_iters,linear_wd",
+    [
+        ("vanilla_gpt_pretrain_config", 12, False),
+        ("vanilla_gpt_pretrain_config", 20, False),
+        ("vanilla_gpt_pretrain_config", 20, True),
+        ("diffusion_gemma_26b_sft_config", 12, False),
+        ("diffusion_gemma_26b_sft_config", 20, False),
+    ],
+)
+def test_recipe_scheduler_resume_after_translation(
+    recipe_name: str, resume_iters: int, linear_wd: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Compare the settings used by the first optimizer update after a step-10 checkpoint."""
+    import math
+    from unittest.mock import Mock
+
+    from megatron.bridge import AutoBridge, recipes
+    from megatron.bridge.models import GPTModelProvider
+    from megatron.bridge.training.optim import _get_scheduler
+    from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+    if recipe_name == "diffusion_gemma_26b_sft_config":
+        # Only the model provider comes from the Hub. Keep the recipe's own scheduler config.
+        hf_bridge = Mock()
+        hf_bridge.to_megatron_provider.return_value = GPTModelProvider()
+        monkeypatch.setattr(AutoBridge, "from_hf_pretrained", Mock(return_value=hf_bridge))
+
+    batch = 32
+    overrides = ["train.global_batch_size=32", "scheduler.lr_decay_iters=20", "scheduler.lr_warmup_iters=1"]
+    if linear_wd:
+        overrides += [
+            "scheduler.start_weight_decay=0.01",
+            "scheduler.end_weight_decay=0.11",
+            "scheduler.weight_decay_incr_style=linear",
+        ]
+    cfg = process_config_with_overrides(getattr(recipes, recipe_name)(), cli_overrides=overrides)
+    cfg.train.train_iters = 12
+    cfg._calculate_scheduler_steps()
+    saved = _get_scheduler(cfg.optimizer, cfg.scheduler, Mock(param_groups=[{}]))
+    saved.step(10 * batch)
+    checkpoint = saved.state_dict()
+
+    cfg.train.train_iters = resume_iters
+    cfg._calculate_scheduler_steps()
+    reference = _get_scheduler(cfg.optimizer, cfg.scheduler, Mock(param_groups=[{}]))
+    flat = _mod._load_recipe_to_flat_dict(
+        recipe_name, world_size=8, cli_overrides=[*overrides, f"train.train_iters={resume_iters}"]
+    )
+    translated = _mlm_scheduler_from_translation(flat, monkeypatch)
+
+    override = recipe_name == "vanilla_gpt_pretrain_config"
+    for scheduler in (reference, translated):
+        assert scheduler.override_opt_param_scheduler is override
+        assert not scheduler.use_checkpoint_opt_param_scheduler
+        if not override and resume_iters != 12:
+            with pytest.raises(AssertionError, match="total number of weight decay iterations"):
+                scheduler.load_state_dict(checkpoint)
+            continue
+
+        scheduler.load_state_dict(checkpoint)
+        assert scheduler.num_steps == 10 * batch
+        # The optimizer uses the current groups before the next scheduler.step().
+        group = scheduler.optimizer.param_groups[0]
+        cosine = (1 + math.cos(math.pi * (10 - 1) / (20 - 1))) / 2
+        assert group["lr"] == pytest.approx(cfg.optimizer.min_lr + (cfg.optimizer.lr - cfg.optimizer.min_lr) * cosine)
+        expected_wd = 0.01 + (0.11 - 0.01) * 10 / resume_iters if linear_wd else cfg.scheduler.start_weight_decay
+        assert group["weight_decay"] == pytest.approx(expected_wd)
+
+
+class TestResolvedOptimizerTranslation:
+    def test_complete_real_recipe_command_passes_mlm_parser_and_validation(self, monkeypatch):
+        import shlex
+        import sys
+
+        from megatron.training.arguments import parse_args, validate_args
+
+        monkeypatch.setenv("WORLD_SIZE", "2")
+        flat = _mod._load_recipe_to_flat_dict(
+            "vanilla_gpt_pretrain_config",
+            world_size=2,
+            cli_overrides=[
+                "model.num_layers=2",
+                "model.hidden_size=128",
+                "model.num_attention_heads=4",
+                "model.seq_length=128",
+                "dataset.seq_length=128",
+                "train.train_iters=10",
+                "scheduler.lr_warmup_iters=1",
+                "scheduler.lr_decay_iters=10",
+            ],
+        )
+        result = translate_bridge_to_mlm(flat)
+        command = emit_mlm_args(result)
+        tokens = shlex.split(command.replace("\\\n", " "), comments=True)
+        monkeypatch.setattr(sys, "argv", ["pretrain_gpt.py", *tokens])
+        args = validate_args(parse_args())
+        assert args.use_distributed_optimizer and args.accumulate_allreduce_grads_in_fp32
+        assert args.weight_decay == args.start_weight_decay == args.end_weight_decay == 0.033
+        assert "--fp8-margin" not in tokens and "--fp4-recipe" not in tokens
+
+    @staticmethod
+    def _register_recipe(monkeypatch, overlap):
+        import sys
+        from types import ModuleType
+
+        import megatron.bridge as bridge
+        from megatron.bridge.models import GPTModelProvider
+        from megatron.bridge.training.config import (
+            CheckpointConfig,
+            ConfigContainer,
+            GPTDatasetConfig,
+            LoggerConfig,
+            OptimizerConfig,
+            SchedulerConfig,
+            TokenizerConfig,
+            TrainingConfig,
+        )
+
+        cfg = ConfigContainer(
+            train=TrainingConfig(train_iters=10),
+            model=GPTModelProvider(num_layers=2, hidden_size=128, num_attention_heads=2, seq_length=128),
+            optimizer=OptimizerConfig(lr=0.001, min_lr=0.0001, use_distributed_optimizer=True),
+            scheduler=SchedulerConfig(),
+            dataset=GPTDatasetConfig(seq_length=128, random_seed=1234),
+            logger=LoggerConfig(),
+            tokenizer=TokenizerConfig(),
+            checkpoint=CheckpointConfig(),
+            comm_overlap=overlap,
+            mixed_precision="bf16_mixed",
+        )
+        # Isolate recipe discovery from optional model-family dependencies. All policy
+        # resolution, overrides, configuration objects and argument emission are real.
+        recipes = ModuleType("megatron.bridge.recipes")
+        recipes.optimizer_translation_test_config = lambda: cfg
+        monkeypatch.setitem(sys.modules, recipes.__name__, recipes)
+        monkeypatch.setattr(bridge, "recipes", recipes, raising=False)
+        return cfg
+
+    @pytest.mark.parametrize("world_size", [1, 2])
+    def test_recipe_policy_is_resolved_after_overrides(self, monkeypatch, world_size):
+        import torch
+
+        from megatron.bridge.training.comm_overlap import CommOverlapConfig
+
+        cfg = self._register_recipe(monkeypatch, CommOverlapConfig(tp_comm_overlap=False))
+        flat = _mod._load_recipe_to_flat_dict(
+            "optimizer_translation_test_config",
+            world_size=world_size,
+            cli_overrides=["optimizer.lr=0.002", "mixed_precision=bf16_mixed"],
+        )
+        assert cfg.optimizer.lr == 0.002
+        assert cfg.optimizer.params_dtype == torch.bfloat16
+        assert cfg.model.bf16 and cfg.optimizer.bf16
+        assert cfg.ddp.use_distributed_optimizer == cfg.optimizer.use_distributed_optimizer
+        assert cfg.data_parallel_size == world_size
+        assert cfg.ddp.overlap_grad_reduce is (world_size > 1)
+        result = translate_bridge_to_mlm(flat)
+        assert result.mlm_args["lr"] == 0.002
+        assert "bf16" in result.mlm_args and "accumulate-allreduce-grads-in-fp32" in result.mlm_args
+        assert ("overlap-grad-reduce" in result.mlm_args) is (world_size > 1)
+        assert ("overlap-param-gather" in result.mlm_args) is (world_size > 1)
+        if world_size > 1:
+            assert result.mlm_args["ddp-bucket-size"] == cfg.ddp.bucket_size == 128 * 1024 * 1024
+        assert result.mlm_args["main-params-dtype"] == "fp32"
+
+    def test_explicit_overlap_overrides_beat_world_size_defaults(self, monkeypatch):
+        from megatron.bridge.training.comm_overlap import CommOverlapConfig
+
+        self._register_recipe(
+            monkeypatch,
+            CommOverlapConfig(
+                tp_comm_overlap=False, overlap_grad_reduce=False, overlap_param_gather=False, bucket_size=1024
+            ),
+        )
+        flat = _mod._load_recipe_to_flat_dict("optimizer_translation_test_config", world_size=2)
+        result = translate_bridge_to_mlm(flat)
+        assert "overlap-grad-reduce" not in result.mlm_args
+        assert "overlap-param-gather" not in result.mlm_args
+        assert result.mlm_args["ddp-bucket-size"] == 1024
+
+    @pytest.mark.parametrize("precision", ["fp8", "fp4"])
+    def test_forward_gather_override_survives_runtime_setup(self, monkeypatch, precision):
+        from megatron.bridge.training.config import resolve_optimizer_runtime_config
+        from megatron.bridge.training.mixed_precision import bf16_mixed
+        from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+        cfg = self._register_recipe(monkeypatch, None)
+        cfg.mixed_precision = bf16_mixed()
+        forward = translate({f"{precision}-param-gather": True})
+        overrides = [
+            line.strip().removesuffix("\\").strip()
+            for line in emit_overrides(forward).splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        process_config_with_overrides(cfg, cli_overrides=overrides)
+        resolve_optimizer_runtime_config(cfg, world_size=2)
+        assert getattr(cfg.ddp, f"{precision}_param_gather") is True
+        assert getattr(cfg.model, f"{precision}_param") is True
+
+    @pytest.mark.parametrize("precision,format_name", [("fp8", "hybrid"), ("fp4", "e2m1")])
+    def test_generated_recipe_preserves_precision_fields(self, monkeypatch, precision, format_name):
+        import sys
+
+        from megatron.bridge.training.config import resolve_optimizer_runtime_config
+
+        self._register_recipe(monkeypatch, None)
+        # Use the real recipe helpers without importing unrelated model families.
+        sys.modules["megatron.bridge.recipes"].__path__ = [
+            str(_SCRIPT_PATH.parents[1] / "src/megatron/bridge/recipes")
+        ]
+        forward = translate({"bf16": True, f"{precision}-param-gather": True, f"{precision}-format": format_name})
+        namespace = {}
+        exec(compile(emit_recipe(forward, recipe_name="precision_test"), "<generated-recipe>", "exec"), namespace)
+        cfg = namespace["precision_test_pretrain_config"]()
+        resolve_optimizer_runtime_config(cfg, world_size=1)
+        assert getattr(cfg.mixed_precision, precision) == format_name
+        assert getattr(cfg.ddp, f"{precision}_param_gather") is True
+        assert getattr(cfg.model, f"{precision}_param") is True
+
+    def test_dtype_and_loss_scale_values_reach_mlm_parser(self, monkeypatch):
+        import shlex
+        import sys
+
+        import torch
+        from megatron.training.arguments import parse_args
+
+        result = translate_bridge_to_mlm(
+            {
+                "model.fp16": True,
+                "optimizer.main_params_dtype": torch.float32,
+                "optimizer.exp_avg_dtype": "torch.float16",
+                "optimizer.exp_avg_sq_dtype": torch.bfloat16,
+                "optimizer.loss_scale": 128.0,
+                "optimizer.hysteresis": 3,
+                "ddp.bucket_size": 4096,
+                "ddp.fp8_param_gather": True,
+            }
+        )
+        argv = ["precision-test"]
+        for name, value in result.mlm_args.items():
+            argv.extend(shlex.split(_mod._to_flag_and_value(name, True if value is None else value)))
+        monkeypatch.setattr(sys, "argv", argv)
+        args = parse_args()
+        assert args.fp16 and args.fp8_param_gather
+        assert args.main_params_dtype == "fp32"
+        assert args.exp_avg_dtype == "fp16" and args.exp_avg_sq_dtype == "bf16"
+        assert args.loss_scale == 128.0 and args.hysteresis == 3
+        assert args.ddp_bucket_size == 4096
+
+    @pytest.mark.parametrize("world_size", [0, -1, True])
+    def test_invalid_target_world_size_is_rejected(self, world_size):
+        from megatron.bridge.training.config import resolve_optimizer_runtime_config
+
+        with pytest.raises(ValueError, match="positive integer"):
+            resolve_optimizer_runtime_config(None, world_size=world_size)
+
+
 class TestTranslateBridgeToMlmActivation:
     """Tests for activation function reverse translation."""
 

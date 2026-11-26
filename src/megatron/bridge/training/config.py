@@ -1120,14 +1120,15 @@ class ConfigContainer(Container):
         """
         return world_size // total_model_size
 
-    def set_data_parallel_size(self) -> None:
+    def set_data_parallel_size(self, world_size: int | None = None) -> None:
         """Calculate and set data_parallel_size for this config and comm_overlap config.
 
         This method calculates the data parallel size needed by setup methods, without
         triggering full validation or finalization of Megatron Core configs.
         """
         # Calculate data parallel size (needed for comm overlap setup)
-        world_size = get_world_size_safe()
+        if world_size is None:
+            world_size = get_world_size_safe()
         self.data_parallel_size = self.get_data_parallel_size(world_size)
 
         # Set data_parallel_size on comm_overlap config if present
@@ -2423,6 +2424,26 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     # Must also run before CUDA initialization (it edits CUDA_VISIBLE_DEVICES).
     apply_ncclep_one_gpu_per_rank(cfg)
 
+    resolve_optimizer_runtime_config(cfg, world_size=get_world_size_safe())
+
+    # Validate the complete run only after precision and overlap have been applied.
+    cfg.validate()
+
+
+def resolve_optimizer_runtime_config(cfg: ConfigContainer, *, world_size: int) -> None:
+    """Resolve optimizer-related recipe policy without constructing a model or process groups.
+
+    This is the same precision, overlap and distribution setup used by training.
+    Offline translation must provide its intended world size explicitly. Full model,
+    dataset and scheduler validation remains the responsibility of runtime setup.
+
+    Args:
+        cfg: Recipe configuration to update in place.
+        world_size: Number of ranks in the intended training run.
+    """
+    if isinstance(world_size, bool) or not isinstance(world_size, int) or world_size < 1:
+        raise ValueError("world_size must be a positive integer.")
+
     # Apply mixed precision configuration if provided
     if cfg.mixed_precision is not None:
         if isinstance(cfg.mixed_precision, str):
@@ -2431,7 +2452,7 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
         cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
     # Calculate data parallel size (needed for comm overlap methods)
-    cfg.set_data_parallel_size()
+    cfg.set_data_parallel_size(world_size)
 
     # EP overlap switches MCore to combined-1F1B schedule-plan execution. The current
     # VLM plan does not forward visual inputs or packed-sequence metadata, so clear every
@@ -2443,9 +2464,8 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
         cfg.comm_overlap.finalize()
         cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
-    # Normalize distribution and validate only after explicit overlap overrides
-    # have replaced inherited recipe settings, and before model construction.
-    cfg.validate()
+    # Use the same distribution normalization for training and offline translation.
+    _validate_and_sync_distributed_optimizer_settings(cfg)
 
 
 def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
