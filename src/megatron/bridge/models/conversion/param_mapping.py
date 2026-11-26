@@ -3079,6 +3079,14 @@ class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # Delegate the actual sharding/broadcasting to the TP-aware mapping.
         return self._tp_mapping.hf_to_megatron(merged, megatron_module)
 
+    def _export_config(self, megatron_module: nn.Module | None) -> TransformerConfig | None:
+        # All PP ranks need the wrapped projection's head geometry, including for LoRA export.
+        config = None
+        if megatron_module is not None:
+            config = remove_non_pickleables(self._get_config(megatron_module), max_depth=2)
+        config_on_stage: TransformerConfig | None = self.broadcast_obj_from_pp_rank(config, "qkv_config")
+        return config_on_stage
+
     def megatron_to_hf(
         self,
         megatron_weights: Optional[torch.Tensor],
@@ -3089,18 +3097,7 @@ class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         if megatron_weights is not None:
             megatron_weights = self.maybe_dequantize(megatron_weights)
 
-        # ------------------------------------------------------------------
-        # Broadcast / retrieve the transformer configuration so that every PP
-        # rank (also the ones that will early-return) participates in the
-        # collective communication.
-        # ------------------------------------------------------------------
-        if megatron_module is None:
-            config = self.broadcast_obj_from_pp_rank(None, "qkv_config")
-        else:
-            config = self._get_config(megatron_module)
-            # create shallow copy and remove non-picklable objects with max depth=2
-            config = remove_non_pickleables(config, max_depth=2)
-            config = self.broadcast_obj_from_pp_rank(config, "qkv_config")
+        config = self._export_config(megatron_module)
 
         # Delegate TP/PP gathering.
         packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
@@ -3108,6 +3105,7 @@ class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         if not packed_dict:
             return {}
 
+        assert config is not None, "Expected an attention config for the gathered QKV tensor"
         packed_qkv = next(iter(packed_dict.values()))
 
         # Check if we're dealing with biases (1D) or weights (2D)

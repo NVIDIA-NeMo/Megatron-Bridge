@@ -36,6 +36,7 @@ from megatron.bridge.models.conversion.model_bridge import (
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
+    ConcatenatedQKVMapping,
     MegatronParamMapping,
     RowParallelMapping,
     _fuse_gdn_separate_to_grouped,
@@ -1483,6 +1484,57 @@ def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):
     torch.testing.assert_close(weights[0].weight, torch.ones(2, 2))
     torch.testing.assert_close(weights[1].weight, qkv_slices["q_proj"])
     torch.testing.assert_close(weights[3].weight, qkv_slices["k_proj"])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("num_query_groups", "hf_rows"),
+    [
+        (4, [0, 3, 6, 9, 1, 4, 7, 10, 2, 5, 8, 11]),  # Q0 K0 V0 Q1 K1 V1 ...
+        (2, [0, 1, 4, 5, 2, 6, 3, 7]),  # Q0 Q1 K0 V0 Q2 Q3 K1 V1
+    ],
+)
+@pytest.mark.parametrize("merge", [False, True], ids=["adapter", "merged"])
+def test_concatenated_qkv_lora_export(monkeypatch, num_query_groups, hf_rows, merge):
+    bridge = DummyBridge()
+    prefix = "vision_model.decoder.layers.0.self_attention.linear_qkv"
+    hf_prefix = "model.visual.blocks.0.attn.qkv"
+    config = SimpleNamespace(hidden_size=4, num_attention_heads=4, kv_channels=1, num_query_groups=num_query_groups)
+    rank = 2
+    rows = len(hf_rows)
+    base = torch.arange(rows * config.hidden_size, dtype=torch.float32).reshape(rows, -1)
+    a = torch.arange(rank * config.hidden_size, dtype=torch.float32).reshape(rank, -1)
+    b = torch.arange(rows * rank, dtype=torch.float32).reshape(rows, rank)
+
+    module = torch.nn.Linear(config.hidden_size, rows, bias=False)
+    module.config = config
+    module.tensor_model_parallel = False
+    module.weight = torch.nn.Parameter(base)
+    adapter = SimpleNamespace(linear_in=SimpleNamespace(weight=a), linear_out=SimpleNamespace(weight=b))
+    mapping = ConcatenatedQKVMapping(prefix + ".weight", hf_prefix + ".weight")
+    registry = MegatronMappingRegistry(mapping)
+    monkeypatch.setattr(bridge, "mapping_registry", lambda: registry)
+    monkeypatch.setattr(
+        bridge,
+        "_megatron_global_adapters_info_all_pp_ranks",
+        lambda *_: [(prefix + ".adapter", prefix, False, False, False, rank, rank, 0, 0)],
+    )
+    monkeypatch.setattr(bridge, "_get_adapter_wrap_module", lambda *_: (adapter, module))
+    monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_rank", lambda: 0)
+    models = [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0), share_embeddings_and_output_weights=False)]
+
+    if not merge:
+        exported = dict(bridge.stream_adapter_weights_megatron_to_hf(models, show_progress=False))
+        torch.testing.assert_close(exported[hf_prefix + ".lora_A.weight"], a)
+        torch.testing.assert_close(exported[hf_prefix + ".lora_B.weight"], b[hf_rows])
+        return
+
+    name = prefix + ".to_wrap.weight"
+    task = WeightConversionTask(name, name, mapping, megatron_module=module, param_weight=module.weight)
+    merged = dict(
+        bridge.stream_weights_megatron_to_hf(models, SimpleNamespace(), conversion_tasks=[task], show_progress=False)
+    )
+    torch.testing.assert_close(merged[hf_prefix + ".weight"], (base + b @ a)[hf_rows])
 
 
 @pytest.mark.unit
