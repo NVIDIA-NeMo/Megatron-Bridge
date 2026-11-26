@@ -18,6 +18,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = yaml.safe_load(next((ROOT / ".github/workflows").glob("release.y*ml")).read_text())
 JOBS = WORKFLOW["jobs"]
+FREEZE = yaml.safe_load((ROOT / ".github/workflows/release-freeze.yml").read_text())["jobs"]
 
 
 def evaluate(expression: str, context: dict[str, object]) -> bool:
@@ -138,6 +139,87 @@ class ReleaseGuards(unittest.TestCase):
             self.assertNotIn("run", step)
             self.assertNotIn("password", step.get("with", {}))
             self.assertNotIn("checkout", step["uses"])
+
+    def test_manual_release_checks_run_on_docs_only_changes(self) -> None:
+        """Every manual release validates source and target even after a docs-only push."""
+        for event in ("push", "workflow_dispatch"):
+            for docs_only in ("true", "false"):
+                with self.subTest(event=event, docs_only=docs_only):
+                    context = {
+                        "github.event_name": event,
+                        "needs.pre-flight.outputs.docs_only": docs_only,
+                        "needs.pre-flight.outputs.is_deployment_workflow": "false",
+                    }
+                    self.assertEqual(
+                        evaluate(JOBS["validate-inputs"]["if"], context),
+                        event == "workflow_dispatch" or docs_only != "true",
+                    )
+
+    def test_dispatch_requires_main(self) -> None:
+        """Allow push rehearsals and require a main-branch dispatch."""
+        guard = next(step for step in JOBS["validate-inputs"]["steps"] if step["name"] == "Require dispatch from main")
+        for event in ("push", "workflow_dispatch"):
+            for ref in ("refs/heads/main", "refs/heads/r0.5.0", "refs/tags/main", "refs/heads/topic"):
+                with self.subTest(event=event, ref=ref):
+                    blocked = evaluate(guard["if"], {"github.event_name": event, "github.ref": ref})
+                    self.assertEqual(blocked, event == "workflow_dispatch" and ref != "refs/heads/main")
+        self.assertNotEqual(subprocess.run(["bash", "-c", guard["run"]], capture_output=True).returncode, 0)
+
+    def test_release_target_requires_a_protected_history(self) -> None:
+        """Run the release validation shell with read-only GitHub API fixtures."""
+        script = next(
+            step["run"] for step in JOBS["validate-inputs"]["steps"] if step["name"].startswith("Verify the release")
+        )
+        candidate = "1" * 40
+        tip = "2" * 40
+        mock_api = """
+gh() {
+    case "$2" in
+        "repos/$GITHUB_REPOSITORY/branches/$TARGET_BRANCH") jq -r "$4" <<< "$BRANCH_REPLY" ;;
+        "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...$EXPECTED_TIP") jq -r "$4" <<< "$COMPARE_REPLY" ;;
+        *) return 1 ;;
+    esac
+}
+"""
+        for branch, protected, status, expected in (
+            ("main", True, "identical", True),
+            ("r1.2.3", True, "ahead", True),
+            ("v1.2.3", True, "behind", False),
+            ("main", True, "diverged", False),
+            ("r1.2.3", False, "ahead", False),
+            ("topic", True, "ahead", False),
+            ("r1.2.3-preview", True, "ahead", False),
+        ):
+            with self.subTest(branch=branch, status=status, protected=protected):
+                env = dict(
+                    os.environ,
+                    RELEASE_REF=candidate,
+                    EXPECTED_TIP=tip,
+                    TARGET_BRANCH=branch,
+                    GITHUB_REPOSITORY="NVIDIA-NeMo/Megatron-Bridge",
+                    BRANCH_REPLY=json.dumps({"protected": protected, "commit": {"sha": tip}}),
+                    COMPARE_REPLY=json.dumps({"status": status}),
+                )
+                result = subprocess.run(
+                    ["bash", "-euo", "pipefail", "-c", mock_api + script], env=env, capture_output=True
+                )
+                self.assertEqual(result.returncode == 0, expected)
+
+    def test_freeze_docs_uses_reviewed_pull_requests(self) -> None:
+        """Rehearse locally and open separate main and release docs PRs on a real freeze."""
+        self.assertEqual(FREEZE["code-freeze"]["with"]["freeze-source-branch"], "main")
+        for job in (FREEZE["code-freeze"], JOBS["bump"], JOBS["finalize"]):
+            self.assertEqual(job["with"]["release-environment"], "megatron-bridge-release")
+            self.assertNotIn("BOT_KEY", job.get("secrets", {}))
+            self.assertNotIn("RELEASE_APP_PRIVATE_KEY", job.get("secrets", {}))
+        docs = FREEZE["bump-docs-versions"]
+        self.assertEqual(set(docs["strategy"]["matrix"]["target"]), {"main", "release"})
+        self.assertEqual(docs["environment"]["name"], "${{ inputs.dry-run && 'public' || 'megatron-bridge-release' }}")
+        token = next(step for step in docs["steps"] if "create-github-app-token" in step.get("uses", ""))
+        create = next(step for step in docs["steps"] if "create-pull-request" in step.get("uses", ""))
+        self.assertEqual(create["if"], "${{ !inputs.dry-run }}")
+        self.assertEqual(token["if"], create["if"])
+        self.assertNotIn("git push", "\n".join(step.get("run", "") for step in docs["steps"]))
 
 
 if __name__ == "__main__":

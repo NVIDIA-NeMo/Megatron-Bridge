@@ -59,9 +59,7 @@ defaults:
   run:
     shell: bash -x -e -u -o pipefail {0}
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
@@ -69,15 +67,18 @@ concurrency:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@037094bcc9138c72bc125418e6e3653f9e1c4160 # v1.11.0
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@1ebb754bdbe6680cce2b3d81da4e63be7200380a
     with:
-      workflow_ref: 037094bcc9138c72bc125418e6e3653f9e1c4160 # pragma: allowlist secret
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
       default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
       non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
       sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
-    secrets: inherit  # pragma: allowlist secret
+    secrets:
+      NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
   release-workflow-tests:
     runs-on: ubuntu-latest
@@ -103,11 +104,13 @@ jobs:
     needs: [pre-flight]
     if: |
       !cancelled() && !failure()
-      && !(needs.pre-flight.outputs.docs_only == 'true'
-           || needs.pre-flight.outputs.is_deployment_workflow == 'true')
+      && (github.event_name == 'workflow_dispatch'
+          || !(needs.pre-flight.outputs.docs_only == 'true'
+               || needs.pre-flight.outputs.is_deployment_workflow == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: {}
+    permissions:
+      contents: read
     steps:
       - name: Validate immutable release ref
         env:
@@ -118,15 +121,43 @@ jobs:
             exit 1
           fi
 
+      - name: Require dispatch from main
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Select the main branch when starting the release workflow."
+          exit 1
+
+      - name: Verify the release commit belongs to the protected target branch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REF: ${{ inputs.release-ref }}
+          TARGET_BRANCH: ${{ inputs.version-bump-branch }}
+        run: |
+          case "$TARGET_BRANCH" in
+            main|[rv][0-9].[0-9].[0-9]) ;;
+            *) echo "::error::Select main or a branch covered by the release protection rule."; exit 1 ;;
+          esac
+          target_sha=$(gh api "repos/$GITHUB_REPOSITORY/branches/$TARGET_BRANCH" \
+            --jq 'select(.protected == true) | .commit.sha')
+          if [[ ! "$target_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The version bump target must be a protected branch."
+            exit 1
+          fi
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...$target_sha" --jq '.status')
+          if [[ "$status" != identical && "$status" != ahead ]]; then
+            echo "::error::The release commit must be on the version bump target branch."
+            exit 1
+          fi
+
   bump:
     needs: [validate-inputs, release-workflow-tests]
     if: |
       !cancelled() && !failure() && needs.validate-inputs.result == 'success'
       && needs.release-workflow-tests.result == 'success'
     permissions:
-      contents: write
-      pull-requests: write
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_bump.yml@2eee849aec3da7b625a798188a0e1ba603e448d8
+      contents: read
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_bump.yml@1ebb754bdbe6680cce2b3d81da4e63be7200380a
     with:
       release-ref: ${{ inputs.release-ref || github.sha }}
       python-package: megatron.bridge
@@ -136,10 +167,8 @@ jobs:
       version-bump-branch: ${{ inputs.version-bump-branch || github.ref_name }}
       packaging: uv
       has-src-dir: true
-      app-id: ${{ vars.BOT_ID }}
+      release-environment: megatron-bridge-release
       restrict-to-admins: true
-    secrets:
-      BOT_KEY: ${{ secrets.BOT_KEY }}
 
   build-wheel:
     needs: [bump, pre-flight]
@@ -147,7 +176,7 @@ jobs:
       !cancelled() && !failure() && needs.bump.result == 'success'
     permissions:
       contents: read
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_wheel.yml@2eee849aec3da7b625a798188a0e1ba603e448d8
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_wheel.yml@1ebb754bdbe6680cce2b3d81da4e63be7200380a
     with:
       python-package: megatron.bridge
       packaging: uv
@@ -193,8 +222,9 @@ jobs:
       && needs.build-wheel.result == 'success'
       && (github.event_name != 'workflow_dispatch' || inputs.dry-run || needs.publish-wheel.result == 'success')
     permissions:
-      contents: write
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_finalize.yml@2eee849aec3da7b625a798188a0e1ba603e448d8
+      contents: read
+      pull-requests: read
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_finalize.yml@1ebb754bdbe6680cce2b3d81da4e63be7200380a
     with:
       release-ref: ${{ inputs.release-ref || github.sha }}
       library-name: Megatron-Bridge
@@ -203,12 +233,21 @@ jobs:
       create-gh-release: ${{ github.event_name != 'workflow_dispatch' || inputs.create-gh-release }}
       gh-release-use-changelog-builder: ${{ inputs.generate-changelog || false }}
       gh-release-from-tag: ${{ inputs.gh-release-from-tag || '' }}
-      app-id: ${{ vars.BOT_ID }}
+      release-environment: megatron-bridge-release
       publish-docs: ${{ github.event_name != 'workflow_dispatch' || inputs.publish-docs }}
       docs-target-path: nemo/megatron-bridge
       release-version: ${{ needs.bump.outputs.release-version || needs.build-wheel.outputs.version }}
       pypi-name: ${{ needs.build-wheel.outputs.pypi-name }}
-    secrets: inherit  # pragma: allowlist secret
+    secrets:
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      AWS_ASSUME_ROLE_ARN: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AKAMAI_HOST: ${{ secrets.AKAMAI_HOST }}
+      AKAMAI_CLIENT_TOKEN: ${{ secrets.AKAMAI_CLIENT_TOKEN }}
+      AKAMAI_CLIENT_SECRET: ${{ secrets.AKAMAI_CLIENT_SECRET }}
+      AKAMAI_ACCESS_TOKEN: ${{ secrets.AKAMAI_ACCESS_TOKEN }}
+      S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
 
   release-summary:
     needs: [release-workflow-tests, pre-flight, validate-inputs, bump, build-wheel, publish-wheel, finalize]
@@ -221,7 +260,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           PUBLISH_EXPECTED: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry-run }}
-          RELEASE_SKIPPED: ${{ needs.pre-flight.outputs.docs_only == 'true' || needs.pre-flight.outputs.is_deployment_workflow == 'true' }}
+          RELEASE_SKIPPED: ${{ github.event_name != 'workflow_dispatch' && (needs.pre-flight.outputs.docs_only == 'true' || needs.pre-flight.outputs.is_deployment_workflow == 'true') }}
         run: |
           jq -e 'all(.[]; .result != "failure" and .result != "cancelled")' <<< "$NEEDS"
           if [[ "$RELEASE_SKIPPED" == "true" ]]; then

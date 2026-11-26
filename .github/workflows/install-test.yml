@@ -55,11 +55,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name || 'main' }}-${{ github.event_name }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@037094bcc9138c72bc125418e6e3653f9e1c4160 # v1.11.0
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@1ebb754bdbe6680cce2b3d81da4e63be7200380a
     with:
-      workflow_ref: 037094bcc9138c72bc125418e6e3653f9e1c4160 # pragma: allowlist secret
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
       sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
@@ -231,12 +234,14 @@ jobs:
         run: bash docker/common/install.sh --base-image pytorch --use-uv
 
       - name: Check imports for megatron-bridge
-        uses: NVIDIA-NeMo/FW-CI-templates/.github/actions/check-imports@d241fcfa92900f804cd425c7abc11855e5532064 # v0.80.1
+        uses: NVIDIA-NeMo/FW-CI-templates/.github/actions/check-imports@1ebb754bdbe6680cce2b3d81da4e63be7200380a
         with:
           package-name: megatron.bridge
           python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
 
   install-test-summary:
+    permissions:
+      actions: read
     needs: [pre-flight, uv-test-pytorch]
     runs-on: ubuntu-latest
     name: Install test summary
