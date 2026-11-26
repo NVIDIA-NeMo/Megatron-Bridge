@@ -582,6 +582,22 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
         return type(self)(resolved_megatron_param, resolved_hf_param)
 
+    def hf_lora_out_rows(self, linear_out: torch.Tensor) -> torch.Tensor:
+        """Put a LoRA ``linear_out`` (lora_B) in the row order of this mapping's Hugging Face weight.
+
+        A LoRA delta ``linear_out @ linear_in`` has the output rows of the Megatron weight it adapts. A mapping whose
+        ``megatron_to_hf`` reorders those rows (e.g. interleaved gate/up experts) reorders ``linear_out`` the same
+        way here, so a merged delta lands on the right Hugging Face rows and an exported adapter applies to them.
+        The default keeps the rows.
+
+        Args:
+            linear_out: One expert's or one layer's ``[..., out_features, rank]`` lora_B, in Megatron's row order.
+
+        Returns:
+            ``linear_out`` in the Hugging Face weight's row order.
+        """
+        return linear_out
+
     @abstractmethod
     def hf_to_megatron(
         self,

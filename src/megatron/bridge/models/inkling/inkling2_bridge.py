@@ -125,6 +125,11 @@ class _InterleavedGatedExpertMapping(FusedGatedExpertMapping):
             megatron_module,
         )
 
+    def hf_lora_out_rows(self, linear_out: torch.Tensor) -> torch.Tensor:
+        """Interleave a LoRA ``linear_out``'s ``[gate; up]`` rows like the HF expert weight's."""
+        gate, up = torch.chunk(linear_out, 2, dim=-2)
+        return torch.stack((gate, up), dim=-2).flatten(-3, -2)
+
     def megatron_to_hf(self, megatron_weights, megatron_module) -> dict[str, torch.Tensor]:
         """Interleave gate and up rows back into the HF expert layout."""
         converted = self._gated_mapping.megatron_to_hf(megatron_weights, megatron_module)
