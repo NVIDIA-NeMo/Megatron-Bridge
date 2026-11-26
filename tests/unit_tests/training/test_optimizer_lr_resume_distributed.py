@@ -55,7 +55,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.gpu]
 
 
 class TwoWeights(torch.nn.Module):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.a = torch.nn.Parameter(torch.ones(128, 128, dtype=torch.bfloat16, device="cuda"))
         self.b = torch.nn.Parameter(torch.full_like(self.a, 2.0))
@@ -69,7 +69,7 @@ class TwoWeights(torch.nn.Module):
 
 
 class Rates(OptimizerConfigOverrideProvider):
-    def __init__(self, rates):
+    def __init__(self, rates) -> None:
         self.rates = rates
 
     def build_config_overrides(self, context):
@@ -120,10 +120,10 @@ def _build(rates):
 
 
 def _step(model, optimizer, scheduler):
-    scheduler.step(increment=1)
     for index, param in enumerate(model.parameters()):
         param.main_grad.fill_(0.25 + index * 0.5)
     assert optimizer.step()[0]
+    scheduler.step(increment=1)
 
 
 def _mlm_state(raw, optimizer, scheduler, cfg, metadata, *, loading=False):
