@@ -277,7 +277,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "overlap-grad-reduce":               ("ddp.overlap_grad_reduce",           "flag"),
     "overlap-param-gather":              ("ddp.overlap_param_gather",          "flag"),
     "no-check-for-nan-in-loss-and-grad": ("ddp.check_for_nan_in_grad",        "flag_invert"),
-    "grad-reduce-in-fp32":               ("ddp.grad_reduce_in_fp32",          "flag"),
+    "accumulate-allreduce-grads-in-fp32":               ("ddp.grad_reduce_in_fp32",          "flag"),
     "overlap-param-gather-with-optimizer-step": ("ddp.overlap_param_gather_with_optimizer_step", "flag"),
     "use-precision-aware-optimizer":     ("optimizer.use_precision_aware_optimizer", "flag"),
     "reuse-grad-buf-for-mxfp8-param-ag":  ("ddp.reuse_grad_buf_for_mxfp8_param_ag", "flag"),
@@ -1556,6 +1556,18 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
 
     if "model.gated_linear_unit" in overrides and "model.gated_linear_unit" not in consumed:
         consumed.add("model.gated_linear_unit")
+
+    # A resolved BF16/FP16 policy carries inactive FP8/FP4 defaults. Omit these
+    # fields, while retaining explicit partial inputs that do not declare a format.
+    for precision in ("fp8", "fp4"):
+        format_key = f"mixed_precision.{precision}"
+        if format_key in overrides and not overrides[format_key]:
+            consumed.update(
+                key
+                for key in overrides
+                if key.startswith(f"mixed_precision.{precision}_")
+                and key not in (f"{format_key}_param", f"{format_key}_param_gather")
+            )
 
     # Precision policy overrides its model/DDP copies during runtime setup.
     # Honor explicit False as well as True, independent of input key order.

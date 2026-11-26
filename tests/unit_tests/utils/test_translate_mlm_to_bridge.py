@@ -1053,6 +1053,36 @@ class TestParamGatherTranslation:
 
 
 class TestResolvedOptimizerTranslation:
+    def test_complete_real_recipe_command_passes_mlm_parser_and_validation(self, monkeypatch):
+        import shlex
+        import sys
+
+        from megatron.training.arguments import parse_args, validate_args
+
+        monkeypatch.setenv("WORLD_SIZE", "2")
+        flat = _mod._load_recipe_to_flat_dict(
+            "vanilla_gpt_pretrain_config",
+            world_size=2,
+            cli_overrides=[
+                "model.num_layers=2",
+                "model.hidden_size=128",
+                "model.num_attention_heads=4",
+                "model.seq_length=128",
+                "dataset.seq_length=128",
+                "train.train_iters=10",
+                "scheduler.lr_warmup_iters=1",
+                "scheduler.lr_decay_iters=10",
+            ],
+        )
+        result = translate_bridge_to_mlm(flat)
+        command = emit_mlm_args(result)
+        tokens = shlex.split(command.replace("\\\n", " "), comments=True)
+        monkeypatch.setattr(sys, "argv", ["pretrain_gpt.py", *tokens])
+        args = validate_args(parse_args())
+        assert args.use_distributed_optimizer and args.accumulate_allreduce_grads_in_fp32
+        assert args.weight_decay == args.start_weight_decay == args.end_weight_decay == 0.033
+        assert "--fp8-margin" not in tokens and "--fp4-recipe" not in tokens
+
     @staticmethod
     def _register_recipe(monkeypatch, overlap):
         import sys
@@ -1111,7 +1141,7 @@ class TestResolvedOptimizerTranslation:
         assert cfg.ddp.overlap_grad_reduce is (world_size > 1)
         result = translate_bridge_to_mlm(flat)
         assert result.mlm_args["lr"] == 0.002
-        assert "bf16" in result.mlm_args and "grad-reduce-in-fp32" in result.mlm_args
+        assert "bf16" in result.mlm_args and "accumulate-allreduce-grads-in-fp32" in result.mlm_args
         assert ("overlap-grad-reduce" in result.mlm_args) is (world_size > 1)
         assert ("overlap-param-gather" in result.mlm_args) is (world_size > 1)
         if world_size > 1:
