@@ -182,8 +182,9 @@ class Inkling2Bridge(MegatronModelBridge):
         text = hf_config.text_config
         unsupported = {
             "n_shared_experts": text.n_shared_experts != 0,
-            "pre_norm_pre_affine": text.pre_norm_pre_affine,
-            "final_norm_pre_affine": text.final_norm_pre_affine,
+            # Transformers' looped config (Inkling 2 Mini) does not carry the pre-affine flags; they are always off.
+            "pre_norm_pre_affine": getattr(text, "pre_norm_pre_affine", False),
+            "final_norm_pre_affine": getattr(text, "final_norm_pre_affine", False),
             "q_bias": text.q_bias,
             "o_bias": text.o_bias,
             "distinct local attention shapes": (
@@ -568,3 +569,77 @@ class Inkling2Bridge(MegatronModelBridge):
             if hf_config.pop("transformers_version", None) is not None:
                 # Laid out as Transformers writes it.
                 _replace_text(hf_config_path, json.dumps(hf_config, indent=2, sort_keys=True) + "\n")
+
+
+LOOP_ARCHITECTURE = "Inkling2LoopForConditionalGeneration"
+LOOP_MODEL_TYPE = "inkling2_loop"
+# Transformers' looped text config holds the loop under these names, and also keeps the release's ``loop_config``.
+_LOOP_FIELDS = (
+    ("loop_layer_index_start", "inkling2_loop_core_start", "core_start"),
+    ("loop_layer_index_end", "inkling2_loop_core_end", "core_end"),
+    ("loop_num_passes", "inkling2_loop_num_passes", "num_passes"),
+    ("loop_gate_rank", "inkling2_loop_gate_rank", "gate_rank"),
+)
+
+
+@MegatronModelBridge.register_bridge(
+    source=LOOP_ARCHITECTURE,
+    target=Inkling2Model,
+    model_type=LOOP_MODEL_TYPE,
+)
+class Inkling2LoopBridge(Inkling2Bridge):
+    """Megatron Bridge for looped Inkling2 checkpoints (Inkling 2 Mini, ``model_type: inkling2_loop``).
+
+    The core decoder blocks ``[loop_layer_index_start, loop_layer_index_end)`` run ``loop_num_passes`` times with
+    shared weights (``modeling_inkling2/loop.py``). On top of the Inkling2 tensors, each core block has four low-rank
+    controllers (``controllers.{attn,k,v,mlp}.{down,gain,forget}_weight``: the first three on the block's attention
+    layer, ``mlp`` on its MoE layer) and the decoder has the FP32 cross-pass message queries.
+
+    Example:
+        >>> from megatron.bridge import AutoBridge
+        >>> bridge = AutoBridge.from_hf_pretrained("thinkingmachines/Inkling-2-Mini")
+        >>> model_config = bridge.get_model_config()
+    """
+
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Add the loop fields to the Inkling2 ``Inkling2ModelConfig`` kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        text = hf_config.text_config
+        if getattr(text, "loop_config", None) and text.loop_config.get("is_varloop", False):
+            raise ValueError("Variable-pass looped Inkling2 checkpoints (is_varloop) are not supported.")
+        for hf_name, megatron_name, _ in _LOOP_FIELDS:
+            config_kwargs[megatron_name] = getattr(text, hf_name)
+        return config_kwargs
+
+    @classmethod
+    def megatron_to_hf_config(cls, model_config: Inkling2ModelConfig) -> dict[str, Any]:
+        """Write the looped architecture and its ``loop_config`` (in both of its layouts)."""
+        hf_config = super().megatron_to_hf_config(model_config)
+        transformer = model_config.transformer
+        hf_config["architectures"] = [LOOP_ARCHITECTURE]
+        hf_config["model_type"] = LOOP_MODEL_TYPE
+        text_config = hf_config["text_config"]
+        loop_config = {"is_varloop": False}
+        for hf_name, megatron_name, release_name in _LOOP_FIELDS:
+            text_config[hf_name] = getattr(transformer, megatron_name)
+            loop_config[release_name] = getattr(transformer, megatron_name)
+        text_config["loop_config"] = loop_config
+        return hf_config
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        """Add the core blocks' controllers and the decoder's cross-pass queries to the Inkling2 mappings."""
+        registry = super().mapping_registry()
+        text = self.hf_config.text_config
+        mappings = list(registry.mappings)
+        for block in range(text.loop_layer_index_start, text.loop_layer_index_end):
+            for module, layer in (("attn", 2 * block), ("k", 2 * block), ("v", 2 * block), ("mlp", 2 * block + 1)):
+                for weight in ("down_weight", "gain_weight", "forget_weight"):
+                    mappings.append(
+                        ReplicatedMapping(
+                            f"decoder.layers.{layer}.controllers.{module}.{weight}",
+                            f"{_LLM}.layers.{block}.controllers.{module}.{weight}",
+                        )
+                    )
+        for name in ("middle_cycle_cross_pass_queries", "middle_cycle_cross_pass_kv_queries"):
+            mappings.append(ReplicatedMapping(f"decoder.loop_queries.{name}", f"{_LLM}.{name}"))
+        return MegatronMappingRegistry(*mappings)

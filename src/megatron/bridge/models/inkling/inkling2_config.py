@@ -65,6 +65,18 @@ class Inkling2TransformerConfig(TransformerConfig):
     inkling2_unpadded_vocab_size: int | None = None
     """Logits at and above this token ID are masked out of the softmax."""
 
+    inkling2_loop_core_start: int = 0
+    """First decoder block of the looped core (Inkling 2 Mini); a multiple of the AttnRes block size."""
+
+    inkling2_loop_core_end: int = 0
+    """Decoder block after the looped core; a multiple of the AttnRes block size."""
+
+    inkling2_loop_num_passes: int = 1
+    """Number of passes over the core blocks, which share their weights; 1 is the unlooped model."""
+
+    inkling2_loop_gate_rank: int = 0
+    """Rank of the controllers that mix the previous pass's block outputs into each core sublayer's inputs."""
+
     inkling2_compile_ops: bool = False
     """Run the AttnRes mixtures, short convolutions, L2 clips, SiTU activations, and residual additions through
     ``torch.compile`` as fused kernels. Dynamo compiles a graph for every new call signature, so this suits training
@@ -129,6 +141,18 @@ class Inkling2ModelConfig(BridgeHybridModelConfig):
             config.num_layers // 2
         ):
             raise ValueError("Inkling2 requires an alternating attention/MoE Hybrid pattern ('*E' per block).")
+        if config.inkling2_loop_num_passes > 1:
+            start, end = config.inkling2_loop_core_start, config.inkling2_loop_core_end
+            block_size = config.inkling2_attn_res_block_size
+            if not 0 < start < end <= config.num_layers // 2 or start % block_size or end % block_size:
+                raise ValueError(
+                    f"Looped Inkling2 needs a core [{start}, {end}) of whole AttnRes blocks (size {block_size}) "
+                    f"after the first block and within the {config.num_layers // 2} decoder blocks."
+                )
+            if config.inkling2_loop_gate_rank <= 0:
+                raise ValueError("Looped Inkling2 needs a positive inkling2_loop_gate_rank.")
+            if config.pipeline_model_parallel_size > 1 or config.context_parallel_size > 1:
+                raise ValueError("Looped Inkling2 does not support pipeline or context parallelism yet.")
         super().finalize()
 
     def _get_num_floating_point_operations_with_runtime_stats(

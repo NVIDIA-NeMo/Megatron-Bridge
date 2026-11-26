@@ -40,6 +40,7 @@ from torch import nn
 
 from megatron.bridge.models.inkling.modeling_inkling2.attention import packed_cu_seqlens
 from megatron.bridge.models.inkling.modeling_inkling2.context_parallel import context_parallel_layout
+from megatron.bridge.models.inkling.modeling_inkling2.loop import Inkling2LoopController, loop_core_blocks
 from megatron.bridge.models.inkling.modeling_inkling2.ops import (
     attn_res_mix,
     document_positions,
@@ -116,6 +117,16 @@ class _Inkling2HybridLayer(TransformerLayer):
         if inference_context is not None:
             raise ValueError("Inkling2 does not support Megatron's KV-cache inference yet")
 
+    def _add_loop_controllers(self, modules: tuple[str, ...]) -> None:
+        """Give a looped core block's sublayer its cross-pass controllers (see ``loop.py``)."""
+        if self.block_index in loop_core_blocks(self.config):
+            self.controllers = nn.ModuleDict({module: Inkling2LoopController(self.config) for module in modules})
+
+    def _loop_messages(self, bank: torch.Tensor, queries: torch.Tensor) -> torch.Tensor:
+        """FP32 messages ``[Q, ..., H]`` that ``queries`` read from the previous pass's block outputs ``bank``."""
+        sources = unpack_attn_res_state(bank, self.config.hidden_size, bank.shape[-1] // self.config.hidden_size)
+        return attn_res_mix(sources, queries, normalize_values=True, compiled=self.config.inkling2_compile_ops)
+
 
 class Inkling2AttentionLayer(_Inkling2HybridLayer):
     """Attention layer of an Inkling2 decoder block (Hybrid symbol ``*``)."""
@@ -131,6 +142,7 @@ class Inkling2AttentionLayer(_Inkling2HybridLayer):
             self.v_input_norm = TENorm(config, hidden, config.layernorm_epsilon)
         if self.block_index > 0:
             self._add_float32_parameter("attn_res_query", *((hidden,) if self.is_local else (3, hidden)))
+        self._add_loop_controllers(("attn", "k", "v"))
 
     def forward(
         self,
@@ -138,6 +150,8 @@ class Inkling2AttentionLayer(_Inkling2HybridLayer):
         attention_mask: torch.Tensor | None = None,
         inference_context=None,
         packed_seq_params: PackedSeqParams | None = None,
+        loop_bank: torch.Tensor | None = None,
+        loop_queries: torch.Tensor | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, None]:
         """Attend over the AttnRes mixtures and hand the block's state to its MoE layer.
@@ -145,6 +159,9 @@ class Inkling2AttentionLayer(_Inkling2HybridLayer):
         Args:
             hidden_states: Packed ``[partial, *bank]`` state of the previous block.
             packed_seq_params: Document boundaries of a packed batch.
+            loop_bank: In a looped core block's passes after the first, the previous pass's block outputs,
+                packed like ``hidden_states``.
+            loop_queries: The block's ``[4, H]`` message queries (attn, k, v, mlp) for ``loop_bank``.
 
         Returns:
             ``[attention, *bank, partial]`` when the block starts a new AttnRes block,
@@ -161,8 +178,18 @@ class Inkling2AttentionLayer(_Inkling2HybridLayer):
             query_input = key_input = value_input = mixtures[0]
             if not self.is_local:
                 key_input, value_input = mixtures[1], mixtures[2]
+        looped = loop_bank is not None
+        if looped:
+            # Each input mixes in its own message, so local blocks too attend over three distinct inputs.
+            messages = self._loop_messages(loop_bank, loop_queries[:3])
+            query_input = self.controllers["attn"](query_input, messages[0])
+            key_input = self.controllers["k"](key_input, messages[1])
+            value_input = self.controllers["v"](value_input, messages[2])
         normalized_query = self._normalize(self.input_layernorm, query_input)
-        if self.is_local:
+        if self.is_local and looped:
+            normalized_key = self._normalize(self.input_layernorm, key_input)
+            normalized_value = self._normalize(self.input_layernorm, value_input)
+        elif self.is_local:
             normalized_key = normalized_value = normalized_query
         else:
             normalized_key = self._normalize(self.k_input_norm, key_input)
@@ -192,6 +219,7 @@ class Inkling2MoELayer(_Inkling2HybridLayer):
             )
         )
         self._add_float32_parameter("mlp_res_query", hidden)
+        self._add_loop_controllers(("mlp",))
         self.num_blocks_after = self.num_blocks_before + int(self.starts_attn_res_block)
         self.is_last_block = self.layer_number == config.num_layers
         if self.is_last_block:
@@ -240,6 +268,8 @@ class Inkling2MoELayer(_Inkling2HybridLayer):
         inference_context=None,
         packed_seq_params: PackedSeqParams | None = None,
         padding_mask: torch.Tensor | None = None,
+        loop_bank: torch.Tensor | None = None,
+        loop_queries: torch.Tensor | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, None]:
         """Run the MoE on its AttnRes mixture and update the partial block.
@@ -248,6 +278,8 @@ class Inkling2MoELayer(_Inkling2HybridLayer):
             hidden_states: Packed state from the block's attention layer.
             packed_seq_params: Document boundaries of a packed batch.
             padding_mask: Optional MoE router padding mask.
+            loop_bank: See ``Inkling2AttentionLayer.forward``.
+            loop_queries: See ``Inkling2AttentionLayer.forward``.
 
         Returns:
             The packed ``[partial, *bank]`` state, or the final AttnRes output after
@@ -262,8 +294,11 @@ class Inkling2MoELayer(_Inkling2HybridLayer):
         else:
             partial, attention, *bank = unpack_attn_res_state(hidden_states, hidden, 2 + self.num_blocks_after)
             mlp_input = self._mix([*bank, partial], self.mlp_res_query, partial_addend=attention)
+        mlp_input = mlp_input[0]
+        if loop_bank is not None:
+            mlp_input = self.controllers["mlp"](mlp_input, self._loop_messages(loop_bank, loop_queries[3:])[0])
         mlp_output = self._without_bias(
-            self.mlp(self._normalize(self.pre_mlp_layernorm, mlp_input[0]), padding_mask=padding_mask)
+            self.mlp(self._normalize(self.pre_mlp_layernorm, mlp_input), padding_mask=padding_mask)
         )
         mlp_output = self._mlp_conv(mlp_output, packed_seq_params)
         if self.starts_attn_res_block:
