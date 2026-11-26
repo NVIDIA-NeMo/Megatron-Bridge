@@ -80,6 +80,64 @@ buffer-reuse optimizations that do not match the FSDP path.
 
 ## Compatibility and Caveats
 
+### Megatron FSDP v2 and DeepSeek-V4
+
+Enable the experimental v2 implementation with `ddp.use_megatron_fsdp=True`
+and `ddp.megatron_fsdp_version=2`. The DeepSeek-V4 path is qualified with
+TP=PP=1 and no virtual pipeline parallelism.
+
+For models with `enable_mhc_connections=True`, Bridge replaces the default
+dense FSDP units with `HyperConnectionHybridLayer`. Split mHC layers call
+private inner Transformer helpers directly; wrapping those inner Transformers
+would bypass their parameter-gather hooks. Routed experts remain independent
+expert-DP units. Remaining MTP projections and reused embedding/output
+parameters are owned by the root unit.
+
+With selective `mhc` recomputation, the enclosing `HybridStack` becomes the
+dense unit instead. The recompute manager can replay several layers from one
+output hook, before individual layer backward hooks execute. Gathering at the
+stack boundary makes the replay's dense parameters available, at the cost of
+keeping more dense weights gathered simultaneously. This does not change the
+configured recompute regions or the separate expert units.
+
+Configure v2 explicitly:
+
+```python
+cfg.model.tensor_model_parallel_size = 1
+cfg.model.pipeline_model_parallel_size = 1
+cfg.model.virtual_pipeline_model_parallel_size = None
+cfg.model.pipeline_model_parallel_layout = None
+cfg.ddp.use_megatron_fsdp = True
+cfg.ddp.megatron_fsdp_version = 2
+cfg.ddp.use_distributed_optimizer = False
+cfg.optimizer.use_distributed_optimizer = False
+cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+cfg.ddp.expert_data_parallel_sharding_strategy = "optim_grads_params"
+cfg.ddp.outer_dp_sharding_strategy = "no_shard"
+cfg.ddp.expert_outer_dp_sharding_strategy = "no_shard"
+cfg.ddp.num_distributed_optimizer_instances = 1
+cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+cfg.model.gradient_accumulation_fusion = False
+cfg.model.use_fused_mhc = False
+cfg.dist.distributed_timeout_minutes = 60
+```
+
+Set `megatron_fsdp_main_grads_dtype` and `megatron_fsdp_grad_comm_dtype`
+explicitly when matching a reference run; `grad_reduce_in_fp32` alone does
+not select v2's gradient storage precision. Data-parallel random initialization,
+layer-wise distributed optimization, optimizer-step parameter-gather overlap,
+and expert communication overlap are not supported by this mHC wrapper.
+
+The full-model BF16 smoke test used unfused mHC (`use_fused_mhc=False`) on
+64 GB200 GPUs with NeMo 26.10, TP1/PP1/CP1/EP8, and a 60-minute distributed
+timeout. Ten steps completed with finite, unskipped updates on every rank.
+This is a smoke qualification, not a claim of long-run stability, checkpoint
+resume coverage, or performance parity with pipeline-parallel DDP. Model-specific
+recompute, MTP, and checkpoint workflows still require configuration-specific
+validation. No diagnostic synchronization or logging is added by the wrapper.
+
+### General compatibility
+
 At the configuration level, Megatron FSDP is intended to work with:
 
 - tensor parallelism
