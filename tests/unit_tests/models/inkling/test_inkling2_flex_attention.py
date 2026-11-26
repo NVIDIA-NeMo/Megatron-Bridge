@@ -29,6 +29,7 @@ from megatron.bridge.models.inkling.modeling_inkling2 import ops
 from megatron.bridge.models.inkling.modeling_inkling2.attention import (
     _eager_relative_sink_attention,
     context_parallel_relative_sink_attention,
+    flex_padded_length,
     relative_sink_attention,
 )
 from megatron.bridge.models.inkling.modeling_inkling2.context_parallel import context_parallel_layout
@@ -161,3 +162,33 @@ def test_output_dtype_defaults_to_the_query_dtype():
     assert default.dtype == torch.bfloat16
     assert fp32.dtype == torch.float32
     _assert_close(default.float(), fp32, "bf16 output")
+
+
+@pytest.mark.parametrize("window", [None, EXTENT])
+@pytest.mark.parametrize("packed", [None, [0, 100, 437]])
+def test_unaligned_lengths_are_padded_to_a_bucket_without_changing_the_result(window, packed):
+    """A length off the FlexAttention bucket (437 tokens -> 512) runs padded: same output and gradients as eager."""
+    length = 437
+    cu_seqlens = None if packed is None else torch.tensor(packed, dtype=torch.int32, device=CUDA)
+    tensors, grad = _inputs(seed=4)
+    tensors = [tensor[:length] for tensor in tensors[:3]] + [tensor[:, :, :length] for tensor in tensors[3:]]
+    grad = grad[:length]
+    docs = ops.document_ids(length, CUDA, cu_seqlens)
+
+    def flex(query, key, value, rel_logits, sink):
+        return relative_sink_attention(
+            query, key, value, rel_logits, sink, window=window, cu_seqlens=cu_seqlens, out_dtype=torch.float32
+        )
+
+    def eager(query, key, value, rel_logits, sink):
+        return _eager_relative_sink_attention(
+            query, key, value, rel_logits, sink, window=window, docs=docs, out_dtype=torch.float32
+        )
+
+    flex_out = _run(flex, tensors, grad)
+    assert flex_out[0].shape == (length, 1, HEADS, DIM)
+    _assert_matches(flex_out, _run(eager, tensors, grad))
+
+
+def test_bucketed_lengths():
+    assert [flex_padded_length(n) for n in (1, 128, 129, 1000, 1024, 1025, 6656)] == [128, 128, 256, 1024, 1024, 2048, 7168]

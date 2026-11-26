@@ -43,23 +43,31 @@ _ACCUMULATED_RECOMPILE_LIMIT = 8192
 _COMPILED: dict[tuple[Callable, bool | None], Callable] = {}
 
 
+def raise_recompile_limits() -> None:
+    """Raise Dynamo's recompile limits for the graphs Inkling2 compiles once per shape.
+
+    Past a limit Dynamo silently runs the function eagerly; for FlexAttention that materializes the full score
+    matrix. Dynamo keeps config overrides in context variables, which do not reach autograd's thread, where full
+    activation recompute replays the forward pass; raise the limits' defaults, which every thread reads.
+    """
+    import torch._dynamo
+
+    config = torch._dynamo.config
+    for name, limit in (
+        ("recompile_limit", _RECOMPILE_LIMIT),
+        ("accumulated_recompile_limit", _ACCUMULATED_RECOMPILE_LIMIT),
+    ):
+        entry = getattr(config, "_config", {}).get(name)
+        if entry is not None and isinstance(getattr(entry, "default", None), int):
+            entry.default = max(entry.default, limit)
+
+
 def _compiled(fn: Callable, *, dynamic: bool | None = False) -> Callable:
     """Return ``fn`` compiled as one full graph, built once per process."""
     key = (fn, dynamic)
     compiled = _COMPILED.get(key)
     if compiled is None:
-        import torch._dynamo
-
-        # Dynamo keeps config overrides in context variables, which do not reach autograd's thread, where full
-        # activation recompute replays the forward pass; raise the limits' defaults, which every thread reads.
-        config = torch._dynamo.config
-        for name, limit in (
-            ("recompile_limit", _RECOMPILE_LIMIT),
-            ("accumulated_recompile_limit", _ACCUMULATED_RECOMPILE_LIMIT),
-        ):
-            entry = getattr(config, "_config", {}).get(name)
-            if entry is not None and isinstance(getattr(entry, "default", None), int):
-                entry.default = max(entry.default, limit)
+        raise_recompile_limits()
         kwargs: dict[str, object] = {"dynamic": dynamic, "fullgraph": True}
         if "recompile_limit" in inspect.signature(torch.compile).parameters:
             kwargs["recompile_limit"] = _RECOMPILE_LIMIT
