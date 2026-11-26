@@ -109,7 +109,8 @@ class RefitEntry:
 
 @dataclass(frozen=True)
 class RefitAtom:
-    """One ``nccl.m2n`` reshard: ``entry`` from one source row to one block of rollout ranks.
+    """Representing one ``nccl.m2n`` reshard: ``entry`` from one source row to one block of rollout ranks.
+    One RefitEntry can be split into one or multiple RefitAtoms.
 
     Attributes:
         entry: The tensor.
