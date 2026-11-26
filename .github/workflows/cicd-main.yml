@@ -104,7 +104,9 @@ jobs:
       expect_l2:         ${{ steps.configure.outputs.expect_l2 }}
       perf_scripts_only: ${{ steps.configure.outputs.perf_scripts_only }}
       dependency_only:   ${{ steps.coverage-scope.outputs.dependency_only }}
-      pr_head_sha:       ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').head.sha || github.sha }}
+      pr_head_sha:       ${{ github.sha }}
+      pr_number:         ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}
+      pr_base_ref:       ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').base.ref }}
       skip_queue:        ${{ steps.configure.outputs.skip_queue }}
       merge_sha:         ${{ steps.merge-sha.outputs.merge_sha }}
     steps:
@@ -138,24 +140,29 @@ jobs:
             }
             core.setOutput('dependency_only', String(dependencyOnly));
 
-      - name: Resolve merge commit sha
+      - name: Resolve build revision
         id: merge-sha
-        shell: bash -e -u -o pipefail {0}
+        shell: bash
         env:
-          IS_PR: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
-          PR_HEAD_SHA: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').head.sha }}
-          PR_MERGE_SHA: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').merge_commit_sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_INFO: ${{ steps.get-pr-info.outputs.pr-info || '{}' }}
         run: |
-          if [[ "$IS_PR" == "true" ]]; then
-            SHA=${PR_MERGE_SHA:-$PR_HEAD_SHA}
-          else
-            SHA=${GITHUB_SHA}
+          set -euo pipefail
+          sha=$GITHUB_SHA
+          if [[ "$GITHUB_REF_NAME" == pull-request/* ]]; then
+            jq -e --arg repo "$GITHUB_REPOSITORY" --arg ref "$GITHUB_REF_NAME" --arg sha "$sha" '
+              .state == "open" and .base.repo.full_name == $repo and .head.sha == $sha
+              and ("pull-request/" + (.number | tostring)) == $ref' <<< "$PR_INFO" > /dev/null
+            merge_sha=$(jq -r '.merge_commit_sha // empty' <<< "$PR_INFO")
+            if [[ -n "$merge_sha" ]]; then
+              base_sha=$(jq -er '.base.sha' <<< "$PR_INFO")
+              [[ "$merge_sha" =~ ^[0-9a-f]{40}$ && "$base_sha" =~ ^[0-9a-f]{40}$ ]]
+              gh api "repos/$GITHUB_REPOSITORY/git/commits/$merge_sha" |
+                jq -e --arg base "$base_sha" --arg head "$sha" '[.parents[].sha] == [$base, $head]' > /dev/null
+              sha=$merge_sha
+            fi
           fi
-          if [[ -z "$SHA" ]]; then
-            echo "Unable to resolve a non-empty workflow revision" >&2
-            exit 1
-          fi
-          echo "merge_sha=${SHA}" | tee -a "$GITHUB_OUTPUT"
+          echo "merge_sha=$sha" | tee -a "$GITHUB_OUTPUT"
 
       - name: Configure
         id: configure
@@ -342,6 +349,7 @@ jobs:
           pre-commit install
           pre-commit run --all-files --show-diff-on-failure --color=always
           python3 .github/scripts/test_coverage_config.py
+          python3 .github/tests/test_dependency_workflow.py
 
   cicd-wait-in-queue:
     needs: [pre-flight, lint-check, configure]
@@ -371,6 +379,7 @@ jobs:
         || github.event_name == 'merge_group'
       )
       && !cancelled()
+      && needs.configure.result == 'success'
       && needs.configure.outputs.perf_scripts_only != 'true'
     outputs:
       matrix: ${{ steps.compute.outputs.matrix }}
@@ -412,13 +421,9 @@ jobs:
         || github.event_name == 'merge_group'
       )
       && !cancelled()
+      && needs.configure.result == 'success'
       && needs.configure.outputs.perf_scripts_only != 'true'
     steps:
-      - name: Get PR info
-        id: get-pr-info
-        if: startsWith(github.ref, 'refs/heads/pull-request/')
-        uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
-
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -497,12 +502,12 @@ jobs:
         id: cache_keys
         shell: bash
         env:
-          BASE_REF: ${{ github.event.merge_group.base_ref || fromJSON(steps.get-pr-info.outputs.pr-info || '{}').base.ref || 'main' }}
+          BASE_REF: ${{ github.event.merge_group.base_ref || needs.configure.outputs.pr_base_ref || 'main' }}
           EVENT_NAME: ${{ github.event_name }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           MBRIDGE_SHA: ${{ needs.configure.outputs.merge_sha }}
           MCORE_REF: ${{ github.event.inputs.mcore_ref }}
-          PR_NUMBER: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}
+          PR_NUMBER: ${{ needs.configure.outputs.pr_number }}
           REF: ${{ github.ref }}
         run: |
           BASE_REF="${BASE_REF#refs/heads/}"

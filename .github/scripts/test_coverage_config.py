@@ -16,7 +16,9 @@
 
 import json
 import logging
+import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -140,3 +142,54 @@ assert "base_sha" not in uploader["with"]
 assert "dependency_only" not in jobs["configure"]["steps"][-1]["run"]
 logging.basicConfig(level=logging.INFO)
 logging.getLogger(__name__).info("PASS: explicit uploader metadata; test selection unchanged")
+
+
+def check_build_revision() -> None:
+    """Verify the image build uses the commit identified by the mirror push."""
+    resolve = next(step["run"] for step in jobs["configure"]["steps"] if step.get("id") == "merge-sha")
+    repo = "NVIDIA-NeMo/Megatron-Bridge"
+    head, base, merge, stale = (c * 40 for c in "1234")
+    pr = {"number": 12, "state": "open", "base": {"repo": {"full_name": repo}, "sha": base}, "head": {"sha": head}}
+    fixture = """
+gh() {
+    [[ "$1" == api && "$2" == "repos/$GITHUB_REPOSITORY/git/commits/$EXPECTED_MERGE" ]] || return 1
+    printf '%s\\n' "$COMMIT"
+}
+"""
+    cases = [
+        ("main", {}, [], head),
+        ("pull-request/12", pr, [], head),
+        ("pull-request/12", dict(pr, merge_commit_sha=merge), [base, head], merge),
+        ("pull-request/13", pr, [], None),
+        ("pull-request/12", dict(pr, state="closed"), [], None),
+        ("pull-request/12", dict(pr, head={"sha": stale}), [], None),
+        ("pull-request/12", dict(pr, base={"repo": {"full_name": "example/other"}, "sha": base}), [], None),
+        ("pull-request/12", dict(pr, merge_commit_sha=merge), [base, stale], None),
+        ("pull-request/12", dict(pr, merge_commit_sha=merge), [stale, head], None),
+    ]
+    with tempfile.TemporaryDirectory() as temp:
+        output = Path(temp) / "output"
+        for ref, metadata, parents, expected in cases:
+            output.write_text("")
+            env = dict(
+                os.environ,
+                GITHUB_SHA=head,
+                GITHUB_REF_NAME=ref,
+                GITHUB_REPOSITORY=repo,
+                GITHUB_OUTPUT=str(output),
+                EXPECTED_MERGE=merge,
+                PR_INFO=json.dumps(metadata),
+                COMMIT=json.dumps({"parents": [{"sha": parent} for parent in parents]}),
+            )
+            rc = subprocess.run(["bash", "-c", fixture + resolve], env=env, capture_output=True).returncode
+            assert (rc == 0) == bool(expected), (ref, metadata, parents, rc)
+            assert output.read_text().strip() == (f"merge_sha={expected}" if expected else "")
+    for job in ("cicd-compute-build-matrix", "cicd-container-build"):
+        assert "needs.configure.result == 'success'" in jobs[job]["if"]
+    image = jobs["cicd-container-build"]
+    checkout = next(step for step in image["steps"] if step.get("name") == "Checkout")
+    assert checkout["with"]["ref"] == "${{ needs.configure.outputs.merge_sha }}"
+    logging.getLogger(__name__).info("PASS: mirror identity, merge parents, and registry build revision")
+
+
+check_build_revision()

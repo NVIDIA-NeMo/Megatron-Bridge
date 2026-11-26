@@ -23,6 +23,7 @@ permissions:
 
 jobs:
   call-release-docs:
+    if: github.repository == 'NVIDIA-NeMo/Megatron-Bridge' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/release-docs.yml
     with:
       dry-run: false

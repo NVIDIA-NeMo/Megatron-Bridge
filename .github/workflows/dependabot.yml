@@ -7,32 +7,7 @@ on:
 permissions: {}
 
 jobs:
-  get-release-branch-names:
-    runs-on: ubuntu-latest
-    outputs:
-      megatron-bridge: ${{ steps.get-branch.outputs.megatron_bridge_release_branch }}
-      mcore: ${{ steps.get-branch.outputs.mcore_latest_branch }}
-    steps:
-      - name: Get release branch names
-        id: get-branch
-        shell: bash
-        run: |
-          latest_branch=$(git ls-remote --heads https://github.com/NVIDIA-NeMo/Megatron-Bridge.git 'refs/heads/r*' |
-            sed -nE 's|^.*refs/heads/(r[0-9]+\.[0-9]+\.[0-9]+)$|\1|p' |
-            sort -V |
-            tail -n1)
-          test -n "$latest_branch"
-          echo "megatron_bridge_release_branch=$latest_branch" | tee -a "$GITHUB_OUTPUT"
-
-          mcore_latest_branch=$(git ls-remote --heads https://github.com/NVIDIA/Megatron-LM.git 'refs/heads/core_r*' |
-            sed -nE 's|^.*refs/heads/(core_r[0-9]+\.[0-9]+\.[0-9]+)$|\1|p' |
-            sort -V |
-            tail -n1)
-          test -n "$mcore_latest_branch"
-          echo "mcore_latest_branch=$mcore_latest_branch" | tee -a "$GITHUB_OUTPUT"
-
   bump-tags:
-    needs: [get-release-branch-names]
     permissions:
       contents: write
       checks: read
@@ -41,8 +16,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target-branch: ${{ needs.get-release-branch-names.outputs.megatron-bridge }}
-            mcore-branch: ${{ needs.get-release-branch-names.outputs.mcore }}
+          - target-branch: latest-release
+            mcore-branch: latest-release
           - target-branch: main
             mcore-branch: main
           - target-branch: main

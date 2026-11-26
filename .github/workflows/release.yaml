@@ -234,12 +234,40 @@ jobs:
       gh-release-use-changelog-builder: ${{ inputs.generate-changelog || false }}
       gh-release-from-tag: ${{ inputs.gh-release-from-tag || '' }}
       release-environment: megatron-bridge-release
-      publish-docs: ${{ github.event_name != 'workflow_dispatch' || inputs.publish-docs }}
-      docs-target-path: nemo/megatron-bridge
+      publish-docs: false
       release-version: ${{ needs.bump.outputs.release-version || needs.build-wheel.outputs.version }}
       pypi-name: ${{ needs.build-wheel.outputs.pypi-name }}
     secrets:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+
+  rehearse-docs:
+    needs: [bump, build-wheel, finalize]
+    if: >-
+      !cancelled() && !failure() && needs.finalize.result == 'success' &&
+      (github.event_name != 'workflow_dispatch' || (inputs.dry-run && inputs.publish-docs))
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-docs.yml
+    with:
+      dry-run: true
+      github-ref: ${{ inputs.release-ref || github.sha }}
+      docs-version-override: ${{ needs.bump.outputs.release-version || needs.build-wheel.outputs.version }}
+
+  publish-docs:
+    needs: [bump, build-wheel, finalize]
+    if: >-
+      !cancelled() && !failure() && needs.finalize.result == 'success' &&
+      github.repository == 'NVIDIA-NeMo/Megatron-Bridge' && github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' && !inputs.dry-run && inputs.publish-docs
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-docs.yml
+    with:
+      dry-run: false
+      github-ref: ${{ format('refs/tags/v{0}', needs.bump.outputs.release-version || needs.build-wheel.outputs.version) }}
+      expected-sha: ${{ inputs.release-ref }}
+      docs-version-override: ${{ needs.bump.outputs.release-version || needs.build-wheel.outputs.version }}
+    secrets:
       AWS_ASSUME_ROLE_ARN: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -250,7 +278,7 @@ jobs:
       S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
 
   release-summary:
-    needs: [release-workflow-tests, pre-flight, validate-inputs, bump, build-wheel, publish-wheel, finalize]
+    needs: [release-workflow-tests, pre-flight, validate-inputs, bump, build-wheel, publish-wheel, finalize, rehearse-docs, publish-docs]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -260,6 +288,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           PUBLISH_EXPECTED: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry-run }}
+          DOCS_EXPECTED: ${{ github.event_name != 'workflow_dispatch' || inputs.publish-docs }}
           RELEASE_SKIPPED: ${{ github.event_name != 'workflow_dispatch' && (needs.pre-flight.outputs.docs_only == 'true' || needs.pre-flight.outputs.is_deployment_workflow == 'true') }}
         run: |
           jq -e 'all(.[]; .result != "failure" and .result != "cancelled")' <<< "$NEEDS"
@@ -272,3 +301,7 @@ jobs:
           else
             jq -e '.["publish-wheel"].result == "skipped"' <<< "$NEEDS"
           fi
+          jq -e --arg publish "$PUBLISH_EXPECTED" --arg docs "$DOCS_EXPECTED" '
+            .["rehearse-docs"].result == (if $docs == "true" and $publish != "true" then "success" else "skipped" end)
+            and .["publish-docs"].result == (if $docs == "true" and $publish == "true" then "success" else "skipped" end)
+          ' <<< "$NEEDS"
