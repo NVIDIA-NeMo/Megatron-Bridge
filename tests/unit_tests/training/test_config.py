@@ -3523,7 +3523,7 @@ class TestRerunConfigValidation:
             full_cfg.scheduler.lr_decay_iters = 20
             full_cfg.validate()
 
-            with pytest.raises(AssertionError, match="start_weight_decay"):
+            with pytest.raises(ValueError, match="Constant weight decay"):
                 full_cfg.scheduler.start_weight_decay = -5.2
                 full_cfg.validate()
         finally:

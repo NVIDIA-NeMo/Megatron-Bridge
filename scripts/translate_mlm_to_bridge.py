@@ -63,6 +63,7 @@ import shlex
 import sys
 import textwrap
 from collections import OrderedDict
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -1296,6 +1297,9 @@ def _to_flag_and_value(name: str, val: Any) -> str:
     Returns ``"--flag value"`` for value args, ``"--flag"`` for store_true,
     or ``""`` when the arg should not be emitted.
     """
+    if isinstance(val, Enum):
+        val = val.name
+
     if _MLM_ARG_INDEX is None:
         if isinstance(val, bool):
             return f"--{name}" if val else ""
@@ -1327,7 +1331,8 @@ def _to_flag_and_value(name: str, val: Any) -> str:
     if val is None:
         return ""
     if act.type is not None:
-        return f"--{name} {act.type(val)}"
+        parsed = act.type(val)
+        return f"--{name} {parsed.name if isinstance(parsed, Enum) else parsed}"
     return f"--{name} {val}"
 
 

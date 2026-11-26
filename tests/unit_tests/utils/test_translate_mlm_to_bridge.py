@@ -931,6 +931,14 @@ class TestTranslateBridgeToMlmPrecision:
 
 
 class TestTranslateConstantWeightDecay:
+    def test_real_recipe_emits_an_attention_backend_name(self):
+        flat = _mod._load_recipe_to_flat_dict("vanilla_gpt_pretrain_config")
+        result = translate_bridge_to_mlm(flat)
+        command = emit_mlm_args(result)
+        assert "--attention-backend auto" in command
+        assert "AttnBackend." not in command
+        assert result.mlm_args["weight-decay"] == result.mlm_args["start-weight-decay"] == 0.033
+
     @pytest.mark.parametrize("effective", [0.0, 0.033, 0.1])
     def test_effective_scheduler_wd_survives_mlm_validation(self, effective):
         from types import SimpleNamespace

@@ -444,6 +444,24 @@ class MockGPTDatasetConfig(GPTDatasetConfig):
 class SchedulerConfig(MTrainSchedulerConfig):
     """Configuration settings for the learning rate scheduler and weight decay."""
 
+    def normalize_weight_decay(self, optimizer: MCoreOptimizerConfig) -> None:
+        """Make a constant recipe's optimizer value match its effective schedule.
+
+        Explicit scheduler bounds retain Bridge's existing precedence. Unset bounds
+        inherit the optimizer value. This changes configuration representation only;
+        parameter-group weight-decay multipliers are applied by the scheduler.
+        """
+        if self.weight_decay_incr_style != "constant":
+            return
+        start, end = self.start_weight_decay, self.end_weight_decay
+        if start is None and end is None:
+            start = end = optimizer.weight_decay
+        if start is None or end is None or start != end or not 0 <= start < float("inf"):
+            raise ValueError("Constant weight decay requires equal, finite, nonnegative bounds.")
+        optimizer.weight_decay = start
+        self.start_weight_decay = start
+        self.end_weight_decay = end
+
     max_steps: int | None = None
     """Number of steps used to configure schedules during shortened test runs.
 
@@ -1485,6 +1503,7 @@ class ConfigContainer(Container):
         """
         from megatron.bridge.training.global_batch_packing import fixed_thd_dsv4_packing_enabled
 
+        self.scheduler.normalize_weight_decay(self.optimizer)
         _validate_and_sync_distributed_optimizer_settings(self)
         if self.optimizer.optimizer not in ("adam", "sgd") and (
             self.ddp.use_megatron_fsdp or self.dist.use_torch_fsdp2

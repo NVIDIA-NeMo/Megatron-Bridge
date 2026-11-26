@@ -56,7 +56,7 @@ def distributed_muon_with_cosine_annealing(
             Defaults to 0.98.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate scheduler.
         lr_decay_iters (int): Number of decay iterations for the learning rate scheduler.
-        weight_decay (float): Amount of weight decay to apply.
+        weight_decay (float): Optimizer fallback; the constant scheduler determines applied decay.
         max_lr (float): Maximum learning rate.
         min_lr (Optional[float]): Minimum learning rate; if None, determined automatically.
         clip_grad (float): Gradient clipping threshold.
@@ -94,6 +94,7 @@ def distributed_muon_with_cosine_annealing(
         lion_beta2=lion_beta2,
         clip_grad=clip_grad,
     )
+    scheduler.normalize_weight_decay(optimizer)
     return optimizer, scheduler
 
 
@@ -124,7 +125,7 @@ def distributed_fused_adam_with_cosine_annealing(
         adam_beta1: Adam optimizer beta1 parameter
         adam_beta2: Adam optimizer beta2 parameter
         adam_eps: Adam optimizer epsilon parameter
-        weight_decay: Weight decay coefficient
+        weight_decay: Optimizer fallback; explicit constant scheduler bounds take precedence
         max_lr: Maximum learning rate
         min_lr: Minimum learning rate (defaults to 0.1 * max_lr)
         clip_grad: Gradient clipping value
@@ -164,6 +165,7 @@ def distributed_fused_adam_with_cosine_annealing(
         override_opt_param_scheduler=True,
     )
 
+    scheduler.normalize_weight_decay(optimizer)
     return optimizer, scheduler
 
 
@@ -191,7 +193,7 @@ def distributed_fused_adam_with_cosine_annealing_samples(
         adam_beta1: Adam optimizer beta1 parameter
         adam_beta2: Adam optimizer beta2 parameter
         adam_eps: Adam optimizer epsilon parameter
-        weight_decay: Weight decay coefficient
+        weight_decay: Optimizer fallback; explicit constant scheduler bounds take precedence
         max_lr: Maximum learning rate
         min_lr: Minimum learning rate (defaults to 0.1 * max_lr)
         clip_grad: Gradient clipping value
@@ -225,4 +227,5 @@ def distributed_fused_adam_with_cosine_annealing_samples(
         override_opt_param_scheduler=True,
     )
 
+    scheduler.normalize_weight_decay(optimizer)
     return optimizer, scheduler
