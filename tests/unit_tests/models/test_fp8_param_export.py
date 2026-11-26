@@ -638,7 +638,7 @@ def test_fc1_native_mxfp8_projects_paired_expert_views(monkeypatch):
     "mapping",
     [
         GatedMLPMapping(
-            "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight",
+            "decoder.layers.0.mlp.experts.linear_fc1.weight0",
             gate="model.layers.0.mlp.experts.0.gate_proj.weight",
             up="model.layers.0.mlp.experts.0.up_proj.weight",
         ),

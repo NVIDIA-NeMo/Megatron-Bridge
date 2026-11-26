@@ -1026,6 +1026,35 @@ class TestGatedMLPMapping:
         assert torch.equal(result["model.layers.0.mlp.gate_proj.weight"], gate)
         assert torch.equal(result["model.layers.0.mlp.up_proj.weight"], up)
 
+    @pytest.mark.unit
+    @pytest.mark.parametrize("bias", [False, True])
+    def test_sequential_expert_ignores_grouped_interleave_size(self, mock_distributed_env, bias):
+        """Sequential expert import and export keep contiguous rows despite a retained tuning setting."""
+        mock_mpu, _ = mock_distributed_env()
+        single_rank_group = mock_mpu.get_tensor_model_parallel_group()
+        mock_mpu.get_expert_tensor_parallel_group.return_value = single_rank_group
+        mock_mpu.get_expert_model_parallel_group.return_value = single_rank_group
+        config = SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=32)
+        leaf = "bias" if bias else "weight"
+        mapping = GatedMLPMapping(
+            megatron_param=f"decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.{leaf}",
+            gate=f"gate.{leaf}",
+            up=f"up.{leaf}",
+        )
+        shape = (96,) if bias else (96, 4)
+        gate = torch.arange(torch.Size(shape).numel(), dtype=torch.float32).reshape(shape)
+        up = gate + 1000
+        contiguous = torch.cat((gate, up))
+        module = MockModule(config, weight_shape=(192, 4), has_bias=bias)
+        if bias:
+            module.bias = torch.nn.Parameter(torch.empty(192))
+
+        imported = mapping.hf_to_megatron({"gate": gate, "up": up}, module)
+        assert torch.equal(imported, contiguous)
+        exported = mapping.megatron_to_hf(contiguous, module)
+        assert torch.equal(exported[f"gate.{leaf}"], gate)
+        assert torch.equal(exported[f"up.{leaf}"], up)
+
     def test_shared_expert_uses_its_own_interleave_size(self, mock_distributed_env):
         """Shared experts select their dedicated layout configuration."""
         mock_distributed_env()

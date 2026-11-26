@@ -33,7 +33,9 @@ def classify_glu_fc1(param_name: str) -> GLUFC1Kind | None:
     Dense FC1 parameters use the routed-expert interleave configuration only
     when dense activation fusion is explicitly enabled, matching Megatron
     checkpoint loading and saving. Scale metadata, extra state and adapter
-    parameters are not FC1 weights or biases and are excluded.
+    parameters are not FC1 weights or biases and are excluded. Sequential
+    experts keep contiguous gate/up rows even when the grouped interleave
+    configuration remains set.
 
     Args:
         param_name: Fully resolved Megatron parameter name.
@@ -47,6 +49,8 @@ def classify_glu_fc1(param_name: str) -> GLUFC1Kind | None:
     if len(path) < -fc1_index or path[fc1_index] != "linear_fc1" or _FC1_PARAM_RE.fullmatch(path[-1]) is None:
         return None
     path_segments = path[:fc1_index]
+    if "local_experts" in path_segments:
+        return None
     if "shared_experts" in path_segments:
         return "shared_expert"
     if "experts" in path_segments:

@@ -2038,7 +2038,7 @@ class TestSaveMegatronModel:
         from megatron.bridge.training.checkpointing import _interleave_glu_tensor
 
         interleave_size = 2
-        key = "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight"
+        key = "decoder.layers.0.mlp.experts.linear_fc1.weight0"
         contiguous_weight = torch.arange(32, dtype=torch.float32).reshape(8, 4)
         runtime_weight = _interleave_glu_tensor(contiguous_weight, interleave_size)
 

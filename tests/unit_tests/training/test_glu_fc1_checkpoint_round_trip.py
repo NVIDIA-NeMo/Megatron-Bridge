@@ -33,8 +33,8 @@ from megatron.bridge.training.checkpointing import (
 
 _CKPT_MOD = "megatron.bridge.training.checkpointing"
 
-MOE_FC1_KEY = "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight"
-MOE_FC1_BIAS_KEY = "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.bias"
+MOE_FC1_KEY = "decoder.layers.0.mlp.experts.linear_fc1.weight0"
+MOE_FC1_BIAS_KEY = "decoder.layers.0.mlp.experts.linear_fc1.bias0"
 DENSE_FC1_KEY = "decoder.layers.0.mlp.linear_fc1.weight"
 DENSE_FC1_BIAS_KEY = "decoder.layers.0.mlp.linear_fc1.bias"
 SHARED_FC1_KEY = "decoder.layers.0.mlp.shared_experts.linear_fc1.weight"
@@ -501,3 +501,14 @@ class TestMegatronFSDPCheckpointRoundTrip:
         )
         assert torch.equal(after_save[DENSE_FC1_KEY]._local_tensor._data, original_w)
         assert torch.equal(after_save[DENSE_FC1_BIAS_KEY]._local_tensor._data, original_b)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("leaf", ["weight", "bias", "to_wrap.weight", "to_wrap.bias"])
+@pytest.mark.parametrize("interleave", [False, True])
+def test_sequential_expert_checkpoint_keeps_contiguous_rows(leaf, interleave, patch_print_rank_0):
+    key = f"decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.{leaf}"
+    weight = torch.arange(192, dtype=torch.bfloat16)
+    state_dict = {key: weight}
+    processed = _process_state_dict_for_glu_interleaving(state_dict, 32, interleave=interleave)
+    assert processed[key] is weight

@@ -27,7 +27,7 @@ from megatron.bridge.models.conversion.glu import (
 )
 
 
-ROUTED_WEIGHT = "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight"
+SEQUENTIAL_WEIGHT = "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight"
 SHARED_BIAS = "decoder.layers.0.mlp.shared_experts.linear_fc1.bias"
 DENSE_WEIGHT = "decoder.layers.0.mlp.linear_fc1.weight"
 GROUPED_WEIGHT = "decoder.layers.0.mlp.experts.linear_fc1.weight0"
@@ -37,14 +37,16 @@ GROUPED_BIAS = "decoder.layers.0.mlp.experts.linear_fc1.bias0"
 def test_classify_glu_fc1_matches_checkpoint_selection(monkeypatch):
     monkeypatch.delenv("USE_ACT_FUSION_FOR_DENSE", raising=False)
 
-    assert classify_glu_fc1(ROUTED_WEIGHT) == "routed_expert"
-    assert classify_glu_fc1(ROUTED_WEIGHT.replace(".weight", ".to_wrap.weight")) == "routed_expert"
+    assert classify_glu_fc1(GROUPED_WEIGHT) == "routed_expert"
+    assert classify_glu_fc1(GROUPED_WEIGHT.replace(".weight", ".to_wrap.weight")) == "routed_expert"
+    assert classify_glu_fc1(SEQUENTIAL_WEIGHT) is None
     assert classify_glu_fc1(SHARED_BIAS) == "shared_expert"
     assert classify_glu_fc1(DENSE_WEIGHT) is None
     assert classify_glu_fc1("decoder.layers.0.mlp.experts.local_experts.0.linear_fc2.weight") is None
 
     monkeypatch.setenv("USE_ACT_FUSION_FOR_DENSE", "1")
     assert classify_glu_fc1(DENSE_WEIGHT) == "dense"
+    assert classify_glu_fc1(SEQUENTIAL_WEIGHT) is None
 
 
 def test_get_glu_interleave_size_selects_routed_and_shared_config(monkeypatch):
@@ -56,7 +58,7 @@ def test_get_glu_interleave_size_selects_routed_and_shared_config(monkeypatch):
         use_grouped_gemm_for_shared_expert=True,
     )
 
-    assert get_glu_interleave_size(config, ROUTED_WEIGHT) == 2
+    assert get_glu_interleave_size(config, GROUPED_WEIGHT) == 2
     assert get_glu_interleave_size(config, DENSE_WEIGHT) == 2
     assert get_glu_interleave_size(config, SHARED_BIAS) == 4
 
@@ -78,7 +80,7 @@ def test_configured_glu_layout_conversion_is_zero_copy_when_disabled():
     physical = logical_to_physical_glu_tensor(
         logical,
         model_config=disabled_config,
-        param_name=ROUTED_WEIGHT,
+        param_name=GROUPED_WEIGHT,
     )
 
     assert physical is logical
@@ -86,7 +88,7 @@ def test_configured_glu_layout_conversion_is_zero_copy_when_disabled():
         physical_to_logical_glu_tensor(
             physical,
             model_config=disabled_config,
-            param_name=ROUTED_WEIGHT,
+            param_name=GROUPED_WEIGHT,
         )
         is logical
     )
@@ -99,7 +101,7 @@ def test_configured_glu_layout_conversion_restores_logical_rows():
     physical = logical_to_physical_glu_tensor(
         logical,
         model_config=config,
-        param_name=ROUTED_WEIGHT,
+        param_name=GROUPED_WEIGHT,
     )
 
     assert not torch.equal(physical, logical)
@@ -107,7 +109,7 @@ def test_configured_glu_layout_conversion_restores_logical_rows():
         physical_to_logical_glu_tensor(
             physical,
             model_config=config,
-            param_name=ROUTED_WEIGHT,
+            param_name=GROUPED_WEIGHT,
         ),
         logical,
     )
@@ -146,7 +148,7 @@ def test_get_glu_interleave_size_rejects_invalid_config(interleave_size):
     config = SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=interleave_size)
 
     with pytest.raises(ValueError, match="must be a positive integer"):
-        get_glu_interleave_size(config, ROUTED_WEIGHT)
+        get_glu_interleave_size(config, GROUPED_WEIGHT)
 
 
 def test_glu_layout_conversion_rejects_incompatible_rows():
@@ -173,8 +175,8 @@ def test_glu_selection_excludes_metadata_and_adapters(suffix):
 def test_non_glu_config_leaves_fc1_unchanged_like_mcore():
     config = SimpleNamespace(gated_linear_unit=False, moe_mlp_glu_interleave_size=2)
     weight = torch.arange(60).reshape(12, 5)
-    assert get_glu_interleave_size(config, ROUTED_WEIGHT) is None
-    assert physical_to_logical_glu_tensor(weight, model_config=config, param_name=ROUTED_WEIGHT) is weight
+    assert get_glu_interleave_size(config, GROUPED_WEIGHT) is None
+    assert physical_to_logical_glu_tensor(weight, model_config=config, param_name=GROUPED_WEIGHT) is weight
 
 
 def test_shared_expert_requires_grouped_gemm_like_mcore():
@@ -184,3 +186,18 @@ def test_shared_expert_requires_grouped_gemm_like_mcore():
         use_grouped_gemm_for_shared_expert=False,
     )
     assert get_glu_interleave_size(config, SHARED_BIAS) is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("leaf", ["weight", "bias", "to_wrap.weight", "to_wrap.bias"])
+@pytest.mark.parametrize("dense_fusion", ["0", "1"])
+def test_sequential_experts_ignore_grouped_interleave_setting(monkeypatch, leaf, dense_fusion):
+    monkeypatch.setenv("USE_ACT_FUSION_FOR_DENSE", dense_fusion)
+    config = SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=32)
+    name = f"decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.{leaf}"
+    weight = torch.arange(192, dtype=torch.bfloat16)
+
+    assert classify_glu_fc1(name) is None
+    assert get_glu_interleave_size(config, name) is None
+    assert logical_to_physical_glu_tensor(weight, model_config=config, param_name=name) is weight
+    assert physical_to_logical_glu_tensor(weight, model_config=config, param_name=name) is weight
