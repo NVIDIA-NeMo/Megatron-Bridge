@@ -1197,12 +1197,16 @@ def _save_hf_weights(
 
     # Non-distributed save: rank 0 runs streaming safetensors I/O inside ``save_generator`` (which
     # buffers only one shard at a time).  Other ranks drain the streaming export generator so TP/PP/EP
-    # collectives complete.  We intentionally do **not** buffer the entire model into CPU RAM nor
+    # collectives complete, while suppressing source-only HF passthrough disk reads that would be
+    # discarded immediately.  We intentionally do **not** buffer the entire model into CPU RAM nor
     # offload disk writes to a background thread — both would violate collective/threading rules or
     # double peak memory.
     if rank != 0:
-        for _ in raw_generator:
-            pass
+        from megatron.bridge.models.conversion.model_bridge import suppress_hf_passthrough
+
+        with suppress_hf_passthrough():
+            for _ in raw_generator:
+                pass
         return
 
     state_source.save_generator(raw_generator, iter_dir, strict=False)

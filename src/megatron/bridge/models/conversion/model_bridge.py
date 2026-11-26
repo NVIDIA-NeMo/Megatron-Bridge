@@ -21,6 +21,7 @@ import logging
 import math
 import re
 import warnings
+from contextvars import ContextVar
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import (
@@ -478,6 +479,24 @@ def _megatron_local_name_to_global(
             param_name = _update_grouped_expert_number(param_name, "bias")
 
     return param_name
+
+
+_SUPPRESS_HF_PASSTHROUGH: ContextVar[bool] = ContextVar("_suppress_hf_passthrough", default=False)
+
+
+@contextlib.contextmanager
+def suppress_hf_passthrough():
+    """Suppress source-only HF passthrough reads in the current context.
+
+    Non-writer ranks in synchronous single-writer HF exports still drain
+    ``export_hf_weights`` to complete TP/PP/EP collectives, so skipping
+    passthrough reads avoids redundant disk I/O across non-writer ranks.
+    """
+    token = _SUPPRESS_HF_PASSTHROUGH.set(True)
+    try:
+        yield
+    finally:
+        _SUPPRESS_HF_PASSTHROUGH.reset(token)
 
 
 class MegatronModelBridge(
@@ -1949,6 +1968,8 @@ class MegatronModelBridge(
         assign them to PP rank 0 so every pipeline group emits one deterministic
         copy while the union of stage streams remains complete.
         """
+        if _SUPPRESS_HF_PASSTHROUGH.get():
+            return False
         return not current_pp_stage_only or _get_pp_rank(megatron_model) == 0
 
     @torch.no_grad()
