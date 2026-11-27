@@ -14,6 +14,7 @@
 
 """Tests for optinizer_utils module."""
 
+import pytest
 from megatron.core.optimizer import OptimizerConfig
 
 from megatron.bridge.recipes.utils.optimizer_utils import (
@@ -22,6 +23,74 @@ from megatron.bridge.recipes.utils.optimizer_utils import (
     distributed_muon_with_cosine_annealing,
 )
 from megatron.bridge.training.config import SchedulerConfig
+
+
+@pytest.mark.parametrize("effective", [0.0, 0.033, 0.1])
+def test_constant_recipe_config_preserves_effective_decay(effective):
+    from types import SimpleNamespace
+
+    from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+    from megatron.training.config.training_config import SchedulerConfig as MLMSchedulerConfig
+
+    optimizer, scheduler = distributed_fused_adam_with_cosine_annealing(
+        weight_decay=0.1,
+        start_weight_decay=effective,
+        end_weight_decay=effective,
+    )
+    assert optimizer.weight_decay == 0.1
+    scheduler.normalize_weight_decay(optimizer)
+    assert optimizer.weight_decay == effective
+    MLMSchedulerConfig(start_weight_decay=effective, end_weight_decay=effective).validate_run(
+        train_iters=10,
+        train_samples=None,
+        skip_train=False,
+        weight_decay=optimizer.weight_decay,
+    )
+    groups = SimpleNamespace(param_groups=[{"wd_mult": mult, "lr_mult": 1.0} for mult in (0.0, 0.5, 1.0)])
+    schedule = OptimizerParamScheduler(
+        groups,
+        init_lr=0.0,
+        max_lr=0.001,
+        min_lr=0.0,
+        lr_warmup_steps=0,
+        lr_decay_steps=10,
+        lr_decay_style="linear",
+        start_wd=scheduler.start_weight_decay,
+        end_wd=scheduler.end_weight_decay,
+        wd_incr_steps=10,
+        wd_incr_style="constant",
+    )
+    for step in (0, 5, 10):
+        schedule.step(step - schedule.num_steps)
+        assert [group["weight_decay"] for group in groups.param_groups] == pytest.approx(
+            [0.0, effective / 2, effective]
+        )
+
+
+def test_late_recipe_override_is_normalized_by_validation(monkeypatch):
+    from megatron.bridge.recipes import vanilla_gpt_pretrain_config
+    from megatron.bridge.training.config import runtime_config_update
+
+    monkeypatch.setenv("WORLD_SIZE", "1")
+    config = vanilla_gpt_pretrain_config()
+    config.model.num_layers = 2
+    config.model.hidden_size = 128
+    config.model.num_attention_heads = 4
+    config.scheduler.start_weight_decay = config.scheduler.end_weight_decay = 0.02
+    with pytest.warns(UserWarning, match=r"optimizer.weight_decay=.*Applying weight_decay=0.02"):
+        runtime_config_update(config)
+    config.validate()
+    assert config.optimizer.weight_decay == 0.02
+
+
+def test_unset_and_nonconstant_weight_decay_bounds():
+    optimizer = OptimizerConfig(weight_decay=0.07)
+    scheduler = SchedulerConfig(start_weight_decay=None, end_weight_decay=None)
+    scheduler.normalize_weight_decay(optimizer)
+    assert scheduler.start_weight_decay == scheduler.end_weight_decay == 0.07
+    scheduler = SchedulerConfig(start_weight_decay=0.01, end_weight_decay=0.1, weight_decay_incr_style="linear")
+    scheduler.normalize_weight_decay(optimizer)
+    assert optimizer.weight_decay == 0.07
 
 
 class TestOptimizerUtils:
