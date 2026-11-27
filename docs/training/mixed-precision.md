@@ -62,6 +62,13 @@ config = ConfigContainer(
 
 NVIDIA H100 GPU introduced support for a new datatype, FP8 (8-bit floating point), enabling higher throughput of matrix multiplies and convolutions. Megatron Bridge uses the NVIDIA TransformerEngine (TE) to leverage speedups from FP8. For a more detailed overview, refer to the [TE documentation](https://docs.nvidia.com/deeplearning/transformer-engine/index.html), specifically the FP8 format and recipe.
 
+Mixed precision presets apply their settings to the model, optimizer, and DDP before validation.
+When configuring these sections manually (`mixed_precision=None`), Bridge follows Megatron-LM's
+precedence for FP8: `model.fp8_recipe` overrides `optimizer.fp8_recipe`, and
+`optimizer.reuse_grad_buf_for_mxfp8_param_ag` overrides the DDP copy, including when it is `False`.
+To enable MXFP8 gradient-buffer reuse manually, set the optimizer flag to `True`.
+Megatron FSDP disables reuse in both sections because it does not support this optimization.
+
 ### FP8 Configuration Parameters
 
 The {py:class}`bridge.training.mixed_precision.MixedPrecisionConfig` provides several FP8-specific parameters:
