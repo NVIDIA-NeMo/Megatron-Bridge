@@ -1017,6 +1017,7 @@ class TestLegacyPreprocessReturnsLossMask:
 def _create_minimal_packed_dataset(tokenizer_eos_id: int = 0):
     """Utility helper to instantiate GPTSFTPackedDataset without touching disk."""
     dataset = GPTSFTPackedDataset.__new__(GPTSFTPackedDataset)
+    dataset.enable_global_batch_packing = False
     dataset.pad_to_max_length = False
     dataset.max_seq_length = 32
     dataset.pad_seq_length_to_mult = 1
