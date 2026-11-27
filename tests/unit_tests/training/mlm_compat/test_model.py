@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import argparse
+from collections.abc import Callable, Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.training.mlm_compat.model import (
@@ -26,6 +28,16 @@ from megatron.bridge.training.mlm_compat.model import (
     _mamba_provider,
 )
 from megatron.bridge.utils.instantiate_utils import InstantiationException
+
+
+@pytest.fixture(autouse=True)
+def mock_mpu_pg_collection() -> Iterator[MagicMock]:
+    groups = ProcessGroupCollection(tp=object(), cp=object(), pp=object(), embd=None)
+    with patch(
+        "megatron.bridge.training.mlm_compat.model.ProcessGroupCollection.use_mpu_process_groups",
+        return_value=groups,
+    ) as mock_groups:
+        yield mock_groups
 
 
 def common_mock_args() -> argparse.Namespace:
@@ -83,7 +95,7 @@ def common_mock_args() -> argparse.Namespace:
     return args
 
 
-def common_mock_transformer_cfg():
+def common_mock_transformer_cfg() -> TransformerConfig:
     return TransformerConfig(
         num_layers=3,
         hidden_size=256,
@@ -170,6 +182,7 @@ class TestGPTProvider:
         mock_gpt_args,
         mock_transformer_config,
         mock_transformer_layer_spec,
+        mock_mpu_pg_collection,
     ):
         """Test basic GPT model creation with local transformer implementation."""
         mock_config_func.return_value = mock_transformer_config
@@ -198,6 +211,7 @@ class TestGPTProvider:
             rope_scaling=False,
             mtp_block_spec=None,
             vp_stage=None,
+            pg_collection=mock_mpu_pg_collection.return_value,
         )
 
     @patch("megatron.bridge.training.mlm_compat.model._get_transformer_layer_spec")
@@ -404,6 +418,7 @@ class TestHybridModelProvider:
         mock_args,
         mock_transformer_config,
         mock_hybrid_stack_spec,
+        mock_mpu_pg_collection,
     ):
         """Test basic Hybrid model creation with default parameters."""
         mock_import.return_value = mock_hybrid_stack_spec
@@ -431,6 +446,7 @@ class TestHybridModelProvider:
             rotary_percent=1.0,
             rotary_base=10000,
             vp_stage=None,
+            pg_collection=mock_mpu_pg_collection.return_value,
         )
 
     @patch("megatron.bridge.training.mlm_compat.model.import_module")
@@ -658,4 +674,47 @@ class TestMambaModelProviderCompatibility:
             result = _mamba_provider(args, config=config, pre_process=False, post_process=True, vp_stage=3)
 
         assert result is model
-        mock_hybrid.assert_called_once_with(args, config=config, pre_process=False, post_process=True, vp_stage=3)
+        mock_hybrid.assert_called_once_with(
+            args, config=config, pre_process=False, post_process=True, vp_stage=3, pg_collection=None
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("provider", [_gpt_provider, _hybrid_provider, _mamba_provider])
+@pytest.mark.parametrize("supply_groups", [False, True])
+def test_provider_process_groups(
+    provider: Callable[..., object], supply_groups: bool, mock_mpu_pg_collection: MagicMock
+) -> None:
+    """Explicit grids retain identity; legacy callers resolve a complete collection once."""
+    args = common_mock_args()
+    args.use_rope_scaling = False
+    args.transformer_impl = "local"
+    args.heterogeneous_layers_config_path = None
+    args.spec = ["megatron.core.models.hybrid.hybrid_layer_specs", "hybrid_stack_spec"]
+    args.hybrid_layer_pattern = None
+    args.hybrid_override_pattern = None
+    args.mtp_hybrid_override_pattern = None
+    args.use_legacy_models = False
+    args.rank = 0
+    expected = mock_mpu_pg_collection.return_value
+    kwargs = {}
+    if supply_groups:
+        expected = ProcessGroupCollection(tp=object(), cp=object(), pp=object(), embd=None)
+        kwargs["pg_collection"] = expected
+        mock_mpu_pg_collection.side_effect = AssertionError("explicit groups must not resolve the global grid")
+
+    with (
+        patch("megatron.bridge.training.mlm_compat.model._get_transformer_layer_spec"),
+        patch("megatron.bridge.training.mlm_compat.model.import_module"),
+        patch("megatron.bridge.training.mlm_compat.model.GPTModel") as mock_gpt,
+        patch("megatron.bridge.training.mlm_compat.model.HybridModel") as mock_hybrid,
+    ):
+        result = provider(args, config=common_mock_transformer_cfg(), **kwargs)
+
+    constructor = mock_gpt if provider is _gpt_provider else mock_hybrid
+    assert result is constructor.return_value
+    assert constructor.call_args.kwargs["pg_collection"] is expected
+    if supply_groups:
+        mock_mpu_pg_collection.assert_not_called()
+    else:
+        mock_mpu_pg_collection.assert_called_once_with()
