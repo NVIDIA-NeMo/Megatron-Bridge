@@ -5,243 +5,376 @@ on:
       target-branch:
         required: true
         type: string
-        description: "The target branch to bump"
+        description: "Bridge main, a protected release branch, or latest-release"
       mcore-branch:
         required: true
         type: string
-        description: "The mcore branch to bump"
+        description: "Megatron-LM main, dev, a protected release branch, or latest-release"
     secrets:
-      NGC_API_USER:
+      PR_APP_PRIVATE_KEY:
+        required: true
+      RELEASE_APP_PRIVATE_KEY:
+        description: Provided by the protected megatron-bridge-release environment.
         required: false
-      NGC_API_KEY:
-        required: false
-      PAT:
-        required: true
-      AZURE_CLIENT_ID:
-        required: true
-      AZURE_TENANT_ID:
-        required: true
-      AZURE_SUBSCRIPTION_ID:
-        required: true
-      SSH_KEY:
-        required: true
-      SSH_PWD:
-        required: true
+
+concurrency:
+  group: update-dependencies-${{ inputs.target-branch }}-${{ inputs.mcore-branch }}
+  cancel-in-progress: false
 
 jobs:
   pre-flight:
+    if: >-
+      github.repository == 'NVIDIA-NeMo/Megatron-Bridge' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment:
+      name: megatron-bridge-release
+      deployment: false
     outputs:
-      bump-branch: bump-ci-container-${{ steps.ref.outputs.date }}-${{ inputs.target-branch }}-${{ inputs.mcore-branch }}
+      target-branch: ${{ steps.target.outputs.branch }}
+      target-sha: ${{ steps.target.outputs.sha }}
+      mcore-branch: ${{ steps.mcore.outputs.branch }}
+      mcore-sha: ${{ steps.mcore.outputs.sha }}
+      bump-branch: bump-ci-container-${{ steps.ref.outputs.date }}-${{ steps.target.outputs.branch }}-${{ steps.mcore.outputs.branch }}
       date: ${{ steps.ref.outputs.date }}
     steps:
+      - name: Create read-only branch policy token
+        id: policy-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-administration: read
+          permission-contents: read
+
+      - name: Select the protected Bridge target
+        id: target
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          TARGET_BRANCH: ${{ inputs.target-branch }}
+        with:
+          github-token: ${{ steps.policy-token.outputs.token }}
+          script: &resolve-protected-target |
+            const requested = process.env.TARGET_BRANCH;
+            const {owner, repo} = context.repo;
+            const releaseName = /^r[0-9]\.[0-9]\.[0-9]$/;
+            let candidates = [requested];
+            if (requested === "latest-release") {
+              const branches = await github.paginate(github.rest.repos.listBranches, {owner, repo, protected: true, per_page: 100});
+              candidates = branches.map(({name}) => name).filter(name => releaseName.test(name)).sort().reverse();
+            }
+            for (const name of candidates) {
+              if (name !== "main" && !releaseName.test(name)) continue;
+              const {repository: {ref}} = await github.graphql(`
+                query($owner: String!, $repo: String!, $ref: String!) {
+                  repository(owner: $owner, name: $repo) {
+                    ref(qualifiedName: $ref) {
+                      target { oid }
+                      branchProtectionRule { pattern restrictsPushes blocksCreations requiresApprovingReviews requiresCodeOwnerReviews }
+                    }
+                  }
+                }`, {owner, repo, ref: "refs/heads/" + name});
+              const rule = ref?.branchProtectionRule;
+              if (!rule?.requiresApprovingReviews || !rule.requiresCodeOwnerReviews) continue;
+              if (name === "main" ? rule.pattern !== "main" :
+                  rule.pattern !== "[rv][0-9].[0-9].[0-9]" || !rule.restrictsPushes || !rule.blocksCreations) continue;
+              const sha = ref.target.oid;
+              if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Invalid protected branch commit");
+              const base = process.env.EXPECTED_BASE;
+              if (base && base !== sha) {
+                const {data} = await github.rest.repos.compareCommitsWithBasehead({owner, repo, basehead: base + "..." + sha, per_page: 1});
+                if (data.status !== "ahead") throw new Error("Protected target history changed; rerun the updater");
+              }
+              core.setOutput("branch", name);
+              core.setOutput("sha", sha);
+              return;
+            }
+            throw new Error("No eligible Bridge target with the expected branch protection rule");
+
+      - name: Resolve the protected Megatron-LM dependency
+        id: mcore
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          TARGET_BRANCH: ${{ steps.target.outputs.branch }}
+          MCORE_BRANCH: ${{ inputs.mcore-branch }}
+        with:
+          script: |
+            const repo = {owner: "NVIDIA", repo: "Megatron-LM"};
+            const releaseName = /^core_r(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
+            let name = process.env.MCORE_BRANCH;
+            if (name === "latest-release") {
+              const branches = await github.paginate(github.rest.repos.listBranches, {...repo, protected: true, per_page: 100});
+              const names = branches.map(({name}) => name).filter(name => releaseName.test(name));
+              name = names.sort((a, b) => b.localeCompare(a, "en", {numeric: true}))[0];
+            }
+            if (process.env.TARGET_BRANCH === "main" ? !["main", "dev"].includes(name) : !releaseName.test(name)) {
+              throw new Error("Invalid Megatron-LM dependency branch for the selected Bridge target");
+            }
+            const {data} = await github.rest.repos.getBranch({...repo, branch: name});
+            if (!data.protected || data.name !== name || !/^[0-9a-f]{40}$/.test(data.commit.sha)) {
+              throw new Error("Expected a protected Megatron-LM branch and commit");
+            }
+            core.setOutput("branch", name);
+            core.setOutput("sha", data.commit.sha);
+
       - name: Get date
         id: ref
         run: echo "date=$(date +%F)" | tee -a "$GITHUB_OUTPUT"
 
   update-lockfile:
     runs-on: linux-amd64-cpu16
-    needs: [pre-flight]
+    needs: pre-flight
+    permissions:
+      contents: write
+    outputs:
+      pr-number: ${{ steps.pr.outputs.pull-request-number }}
+      head-sha: ${{ steps.pr.outputs.pull-request-head-sha }}
     env:
       SOURCE_BRANCH: ${{ needs.pre-flight.outputs.bump-branch }}
-      TARGET_BRANCH: ${{ inputs.target-branch }}
+      TARGET_BRANCH: ${{ needs.pre-flight.outputs.target-branch }}
+      TARGET_SHA: ${{ needs.pre-flight.outputs.target-sha }}
+      MCORE_BRANCH: ${{ needs.pre-flight.outputs.mcore-branch }}
+      MCORE_SHA: ${{ needs.pre-flight.outputs.mcore-sha }}
     steps:
-      - name: Checkout repo
+      - name: Check out the verified Bridge commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ env.TARGET_BRANCH }}
-          token: ${{ secrets.PAT }}
+          ref: ${{ env.TARGET_SHA }}
           submodules: recursive
+          persist-credentials: false
+
+      - name: Set the local PR base to the verified commit
+        run: |
+          git update-ref "refs/remotes/origin/$TARGET_BRANCH" "$TARGET_SHA"
+          git switch --force-create "$TARGET_BRANCH" "$TARGET_SHA"
 
       - name: Build container
-        env:
-          GH_TOKEN: ${{ secrets.PAT }}
+        run: docker build -f docker/Dockerfile.ci -t megatron-bridge .
+
+      - name: Update submodule
         run: |
-          docker build -f docker/Dockerfile.ci --secret id=GH_TOKEN -t megatron-bridge .
-
-      - name: Create bump branch if not exists
-        run: |
-          if ! git ls-remote --exit-code origin $SOURCE_BRANCH; then
-            git checkout -b $SOURCE_BRANCH $TARGET_BRANCH
-            git push origin $SOURCE_BRANCH
-          fi
-
-      - name: Checkout repo
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ env.SOURCE_BRANCH }}
-          token: ${{ secrets.PAT }}
-          submodules: recursive
-
-      - name: Update submodules
-        id: mlm-commit
-        env:
-          TARGET_BRANCH: ${{ inputs.mcore-branch }}
-        run: |
-          pushd 3rdparty/Megatron-LM
-            git fetch origin ${{ inputs.mcore-branch }}
-            git checkout FETCH_HEAD
-            MLM_COMMIT=$(git rev-parse HEAD)
-          popd
-
-          if [[ "$TARGET_BRANCH" == "dev" ]]; then
-            echo $MLM_COMMIT > .dev.commit
+          git -C 3rdparty/Megatron-LM fetch https://github.com/NVIDIA/Megatron-LM.git "$MCORE_SHA"
+          git -C 3rdparty/Megatron-LM checkout --detach "$MCORE_SHA"
+          if [[ "$MCORE_BRANCH" == dev ]]; then
+            git -C 3rdparty/Megatron-LM rev-parse HEAD > .dev.commit
           else
-            echo $MLM_COMMIT > .main.commit
+            git -C 3rdparty/Megatron-LM rev-parse HEAD > .main.commit
           fi
 
       - name: Upgrade lock file
-        env:
-          GH_TOKEN: ${{ secrets.PAT }}
         run: |
-          docker run \
-          --rm \
-          -v $(pwd):/opt/Megatron-Bridge \
-          -w /opt/Megatron-Bridge \
-          -e GH_TOKEN=${{ secrets.PAT }} \
-          megatron-bridge \
-          bash -c 'uv lock --upgrade'
+          docker run --rm -v "$PWD:/opt/Megatron-Bridge" -w /opt/Megatron-Bridge megatron-bridge uv lock --upgrade
 
-      - name: Create Bump PR
-        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
-        id: create-pull-request
+      - name: Require the protected target to still match the build
         env:
-          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}, mcore-${{ inputs.mcore-branch }}) (${{ needs.pre-flight.outputs.date }})"
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/branches/$TARGET_BRANCH" --jq 'select(.protected) | .commit.sha')
+          if [[ "$tip" != "$TARGET_SHA" ]]; then
+            echo "::error::The dependency target changed during the build. Rerun against its new protected tip."
+            exit 1
+          fi
+
+      - name: Create pull request token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.PR_APP_ID }}
+          private-key: ${{ secrets.PR_APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+
+      - name: Create bump PR
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
+        id: pr
+        env:
+          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH }}, mcore-${{ env.MCORE_BRANCH }}) (${{ needs.pre-flight.outputs.date }})"
         with:
           branch: ${{ env.SOURCE_BRANCH }}
           base: ${{ env.TARGET_BRANCH }}
           title: ${{ env.title }}
-          token: ${{ secrets.PAT }}
+          token: ${{ steps.app-token.outputs.token }}
+          branch-token: ${{ github.token }}
+          add-paths: |
+            .main.commit
+            .dev.commit
+            uv.lock
+            3rdparty/Megatron-LM
           body: |
-            🚀 PR to bump `uv.lock` in `${{ inputs.target-branch }}`.
+            🚀 PR to bump `uv.lock` in `${{ env.TARGET_BRANCH }}`.
 
-            🤖 This PR will be merged automatically once CI passes.
+            🤖 GitHub will merge this PR once the required checks and reviews pass.
+            A maintainer can start mirror CI with `/ok to test <head-sha>`.
           commit-message: ${{ env.title }}
           signoff: true
           committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
           labels: full-test-suite
 
-      - name: Post /ok to test comment
+      - name: Request mirror CI
+        if: steps.pr.outputs.pull-request-number != ''
+        shell: bash
         env:
-          GH_TOKEN: ${{ secrets.PAT }}
-        run: |
-          PR_NUMBER="${{ steps.create-pull-request.outputs.pull-request-number }}"
-          if [ -z "$PR_NUMBER" ]; then
-            echo "No PR was created, skipping comment"
-            exit 0
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
+          PR_NUMBER: ${{ steps.pr.outputs.pull-request-number }}
+          HEAD_SHA: ${{ steps.pr.outputs.pull-request-head-sha }}
+        run: &request-mirror-ci |
+          request="/ok to test $HEAD_SHA"
+          existing=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" |
+            jq -r --arg login "$APP_LOGIN" --arg request "$request" '.[] | select(.user.login == $login and .body == $request) | .id')
+          if [[ -z "$existing" ]]; then
+            gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$request"
           fi
-          SHA="${{ steps.create-pull-request.outputs.pull-request-head-sha }}"
-          gh pr comment "$PR_NUMBER" --body "/ok to test $SHA"
 
-      - name: Wait for CI checks
+  validate-dev:
+    if: inputs.mcore-branch == 'dev' && needs.update-lockfile.outputs.pr-number != ''
+    needs: update-lockfile
+    runs-on: linux-amd64-cpu16
+    timeout-minutes: 1380
+    permissions:
+      contents: read
+      checks: read
+      statuses: read
+    steps:
+      - name: Wait for the dev candidate's required checks
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
-          GH_TOKEN: ${{ secrets.PAT }}
+          HEAD_SHA: ${{ needs.update-lockfile.outputs.head-sha }}
+          TARGET_BRANCH: ${{ inputs.target-branch }}
+        with:
+          script: |
+            const repo = context.repo;
+            const ref = process.env.HEAD_SHA;
+            const {data: branch} = await github.rest.repos.getBranch({...repo, branch: process.env.TARGET_BRANCH});
+            const required = branch.protection?.required_status_checks?.checks;
+            if (!required?.length) {
+              throw new Error("Expected required status checks on the target branch");
+            }
+            while (true) {
+              const [runs, statuses] = await Promise.all([
+                github.paginate(github.rest.checks.listForRef, {...repo, ref, filter: "latest", per_page: 100}),
+                github.paginate(github.rest.repos.listCommitStatusesForRef, {...repo, ref, per_page: 100}),
+              ]);
+              const pending = [];
+              for (const {context: name, app_id: appId} of required) {
+                const checks = runs.filter(run => run.name === name && (!appId || appId === -1 || run.app?.id === appId));
+                const status = (!appId || appId === -1) && statuses.find(item => item.context === name);
+                const states = checks.map(run => run.conclusion || "pending");
+                if (status) states.push(status.state);
+                if (states.some(state => !["success", "skipped", "neutral", "pending"].includes(state))) {
+                  throw new Error("Required check failed: " + name);
+                }
+                if (!states.length || states.includes("pending")) pending.push(name);
+              }
+              if (!pending.length) break;
+              core.info("Waiting for " + pending.join(", "));
+              await new Promise(resolve => setTimeout(resolve, 60000));
+            }
+
+  finish-dev:
+    needs: [pre-flight, update-lockfile, validate-dev]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      head-sha: ${{ steps.restore.outputs.head-sha }}
+    env:
+      SOURCE_BRANCH: ${{ needs.pre-flight.outputs.bump-branch }}
+      TARGET_SHA: ${{ needs.pre-flight.outputs.target-sha }}
+      HEAD_SHA: ${{ needs.update-lockfile.outputs.head-sha }}
+    steps:
+      - name: Check out tested dev candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
+
+      - name: Restore release submodule and lock file
+        id: restore
         run: |
-          PR_NUMBER="${{ steps.create-pull-request.outputs.pull-request-number }}"
-          if [ -z "$PR_NUMBER" ]; then
-            echo "No PR was created, skipping wait"
-            exit 0
-          fi
-
-          # Fetch required status checks from branch protection rules
-          REQUIRED_CHECKS=$(gh api \
-            "repos/${{ github.repository }}/branches/${{ env.TARGET_BRANCH }}/protection/required_status_checks" \
-            --jq '.checks[].context' 2>/dev/null \
-            || gh api \
-            "repos/${{ github.repository }}/branches/${{ env.TARGET_BRANCH }}/protection/required_status_checks" \
-            --jq '.contexts[]' 2>/dev/null \
-            || true)
-
-          if [ -z "$REQUIRED_CHECKS" ]; then
-            echo "No branch protection rules found for ${{ env.TARGET_BRANCH }}, skipping wait"
-            exit 0
-          fi
-
-          echo "Required checks from branch protection:"
-          echo "$REQUIRED_CHECKS"
-
-          echo "Waiting for required checks to complete on PR #$PR_NUMBER..."
-          i=0
-          INITIALIZED=false
-          while true; do
-            i=$((i + 1))
-            CHECKS_JSON=$(gh pr checks "$PR_NUMBER" --json name,state 2>/dev/null || echo "[]")
-            ALL_DONE=true
-            FAILED_CHECKS=""
-            while IFS= read -r check; do
-              CHECK_STATE=$(echo "$CHECKS_JSON" | jq -r --arg name "$check" '.[] | select(.name == $name) | .state // ""' | tr '[:upper:]' '[:lower:]')
-              case "$CHECK_STATE" in
-                *success*|*pass*|*skip*|*neutral*) ;;
-                *pending*|*queued*|*progress*|*waiting*|*request*|"")
-                  ALL_DONE=false
-                  INITIALIZED=true
-                  break
-                  ;;
-                *)
-                  if [ "$INITIALIZED" = "true" ]; then
-                    FAILED_CHECKS="${FAILED_CHECKS}  - ${check} (${CHECK_STATE})"$'\n'
-                  else
-                    ALL_DONE=false
-                  fi
-                  ;;
-              esac
-            done <<< "$REQUIRED_CHECKS"
-            if [ "$ALL_DONE" = "true" ]; then
-              if [ -n "$FAILED_CHECKS" ]; then
-                echo "Required check(s) did not pass:"
-                echo "$FAILED_CHECKS"
-                exit 1
-              fi
-              echo "All required checks passed!"
-              break
+          git merge-base --is-ancestor "$TARGET_SHA" "$HEAD_SHA"
+          git restore --source="$TARGET_SHA" --staged --worktree -- 3rdparty/Megatron-LM uv.lock
+          current=$(git rev-parse "origin/$SOURCE_BRANCH")
+          if [[ "$current" == "$HEAD_SHA" ]]; then
+            if ! git diff --cached --quiet; then
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git commit --signoff -m "Revert submodule bump for dev branch"
             fi
-            echo "Checks not yet complete (attempt $i), retrying in 30s..."
-            sleep 30
-          done
-
-      - name: Revert submodule bump for dev branch
-        if: ${{ inputs.mcore-branch == 'dev' }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin ${{ env.TARGET_BRANCH }}
-          TARGET_MLM_COMMIT=$(git ls-tree origin/${{ env.TARGET_BRANCH }} -- 3rdparty/Megatron-LM | awk '{print $3}')
-          git -C 3rdparty/Megatron-LM checkout "$TARGET_MLM_COMMIT"
-          git restore --source=origin/${{ env.TARGET_BRANCH }} -- uv.lock
-          git add 3rdparty/Megatron-LM uv.lock
-          git commit -m "Revert submodule bump for dev branch"
-          git push origin ${{ env.SOURCE_BRANCH }}
-
-      - name: Merge PR
-        id: merge-pr
-        env:
-          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}, mcore-${{ inputs.mcore-branch }}) (${{ needs.pre-flight.outputs.date }})"
-        run: |
-          PR_NUMBER="${{ steps.create-pull-request.outputs.pull-request-number }}"
-          if [ -z "$PR_NUMBER" ]; then
-            echo "No PR was created, skipping merge"
-            exit 0
+            git push --force-with-lease="refs/heads/$SOURCE_BRANCH:$HEAD_SHA" origin "HEAD:refs/heads/$SOURCE_BRANCH"
+            current=$(git rev-parse HEAD)
+          elif [[ "$(git rev-parse "$current^@")" != "$HEAD_SHA" || "$(git rev-parse "$current^{tree}")" != "$(git write-tree)" ]]; then
+            echo "::error::The bump branch changed after its dev candidate was tested."
+            exit 1
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin ${{ env.SOURCE_BRANCH }}
-          git fetch origin ${{ env.TARGET_BRANCH }}
-          git checkout ${{ env.TARGET_BRANCH }}
-          git merge --squash origin/${{ env.SOURCE_BRANCH }}
-          git commit -m "${{ env.title }}"
-          git pull --rebase origin ${{ env.TARGET_BRANCH }}
-          git push origin ${{ env.TARGET_BRANCH }}
-          echo "merge-sha=$(git rev-parse HEAD)" | tee -a "$GITHUB_OUTPUT"
-          git push origin --delete ${{ env.SOURCE_BRANCH }}
+          echo "head-sha=$current" | tee -a "$GITHUB_OUTPUT"
 
-      - name: Post merge comment
+      - name: Create pull request token
+        if: steps.restore.outputs.head-sha != env.HEAD_SHA
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.PR_APP_ID }}
+          private-key: ${{ secrets.PR_APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+
+      - name: Request mirror CI for the final dev head
+        if: steps.restore.outputs.head-sha != env.HEAD_SHA
+        shell: bash
         env:
-          GH_TOKEN: ${{ secrets.PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
+          PR_NUMBER: ${{ needs.update-lockfile.outputs.pr-number }}
+          HEAD_SHA: ${{ steps.restore.outputs.head-sha }}
+        run: *request-mirror-ci
+
+  merge:
+    needs: [pre-flight, update-lockfile, finish-dev]
+    if: >-
+      !cancelled() && needs.update-lockfile.result == 'success' && needs.update-lockfile.outputs.pr-number != '' &&
+      (inputs.mcore-branch != 'dev' || needs.finish-dev.result == 'success')
+    runs-on: ubuntu-latest
+    permissions: {}
+    environment:
+      name: megatron-bridge-release
+      deployment: false
+    steps:
+      - name: Create release token
+        id: release-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-administration: read
+
+      - name: Recheck the protected merge target and its history
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          TARGET_BRANCH: ${{ needs.pre-flight.outputs.target-branch }}
+          EXPECTED_BASE: ${{ needs.pre-flight.outputs.target-sha }}
+        with:
+          github-token: ${{ steps.release-token.outputs.token }}
+          script: *resolve-protected-target
+
+      - name: Request a squash merge after required checks and reviews
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          PR_NUMBER: ${{ needs.update-lockfile.outputs.pr-number }}
+          HEAD_SHA: ${{ needs.finish-dev.outputs.head-sha || needs.update-lockfile.outputs.head-sha }}
+          SOURCE_BRANCH: ${{ needs.pre-flight.outputs.bump-branch }}
+          TARGET_BRANCH: ${{ needs.pre-flight.outputs.target-branch }}
         run: |
-          PR_NUMBER="${{ steps.create-pull-request.outputs.pull-request-number }}"
-          if [ -z "$PR_NUMBER" ]; then
-            echo "No PR was created, skipping comment"
-            exit 0
+          merge_state=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" |
+            jq -er --arg repo "$GITHUB_REPOSITORY" --arg base "$TARGET_BRANCH" --arg source "$SOURCE_BRANCH" --arg sha "$HEAD_SHA" '
+              select(.base.repo.full_name == $repo and .base.ref == $base and .head.repo.full_name == $repo and .head.ref == $source and .head.sha == $sha) |
+              if .merged then "merged" elif .state != "open" then error("PR closed without merging")
+              elif .auto_merge.merge_method == "squash" then "queued" else "request" end')
+          if [[ "$merge_state" == request ]]; then
+            gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --squash --auto --match-head-commit "$HEAD_SHA" --delete-branch
+          else
+            echo "The expected bump PR is already $merge_state."
           fi
-          gh pr comment "$PR_NUMBER" --repo ${{ github.repository }} \
-            --body "🤖 Manually merged commit \`${{ steps.merge-pr.outputs.merge-sha }}\` after a successful CI run."

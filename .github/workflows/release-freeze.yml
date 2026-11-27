@@ -37,10 +37,10 @@ permissions:
 
 jobs:
   code-freeze:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_code_freeze.yml@fb3b45eed8585aafae60297464a004eb209fc95a # code freeze: /cherrypick PSA
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_code_freeze.yml@1ebb754bdbe6680cce2b3d81da4e63be7200380a
     with:
-      app-id: ${{ vars.BOT_ID }}
-      environment-name: main
+      release-environment: megatron-bridge-release
+      freeze-source-branch: main
       library-name: Megatron-Bridge
       python-package: megatron.bridge
       has-src-dir: true
@@ -52,83 +52,68 @@ jobs:
     secrets:
       SLACK_WEBHOOK: ${{ secrets.SLACK_MAIN_CHANNEL_WEBHOOK }}
       SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_TEAM_GROUP_ID }}
-      BOT_KEY: ${{ secrets.BOT_KEY }}
 
   bump-docs-versions:
-    needs: [code-freeze]
+    needs: code-freeze
     runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.dry-run && 'public' || 'megatron-bridge-release' }}
+      deployment: false
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [main, release]
     env:
-      VERSION: ${{ needs.code-freeze.outputs.release-branch }}
-      DRY_RUN: ${{ inputs.dry-run }}
+      RELEASE_BRANCH: ${{ needs.code-freeze.outputs.release-branch }}
+      FREEZE_CUTOFF: ${{ inputs.freeze-commit && inputs.freeze-commit != 'main' && inputs.freeze-commit || github.sha }}
     steps:
-      - name: Generate GitHub App token
+      - name: Generate release App token
+        if: ${{ !inputs.dry-run }}
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.BOT_ID }}
-          private-key: ${{ secrets.BOT_KEY }}
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
-          permission-administration: write
+          permission-pull-requests: write
 
-      - name: Checkout repository
+      - name: Check out the docs target
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: main
+          ref: ${{ matrix.target == 'main' && 'main' || (inputs.dry-run && env.FREEZE_CUTOFF) || env.RELEASE_BRANCH }}
+          persist-credentials: false
+
+      - name: Update the version picker
+        run: |
+          version=${RELEASE_BRANCH#r}
+          jq --arg ver "$version" \
+            'map(select(.version != $ver)) + [{"version": $ver, "url": "https://docs.nvidia.com/nemo/megatron-bridge/\($ver)/"}]
+            | sort_by(.version) | reverse' docs/versions1.json > tmp.json
+          mv tmp.json docs/versions1.json
+
+      - name: Set the release branch documentation version
+        if: matrix.target == 'release'
+        run: |
+          version=${RELEASE_BRANCH#r}
+          jq --arg ver "$version" '{version: $ver, name: "megatron-bridge"}' docs/project.json > tmp.json
+          mv tmp.json docs/project.json
+          sed -i "s/^release = .*/release = \"$version\"/" docs/conf.py
+
+      - name: Check documentation changes
+        run: git diff --check
+
+      - name: Open docs version pull request
+        if: ${{ !inputs.dry-run }}
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
+        with:
           token: ${{ steps.app-token.outputs.token }}
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Update versions1.json
-        run: |
-          version_number=$(echo ${VERSION} | sed 's/^r//')
-
-          jq --arg ver "$version_number" \
-            '. += [{"version": $ver, "url": "https://docs.nvidia.com/nemo/megatron-bridge/\($ver)/"}] | sort_by(.version) | reverse' \
-            docs/versions1.json > tmp.json && mv tmp.json docs/versions1.json
-
-      - name: Commit changes
-        id: commit-versions1
-        run: |
-          git add docs/versions1.json
-          git commit -m "[🤖]: Update docs-versions after code-freeze for ${VERSION}"
-          commit_hash=$(git rev-parse HEAD)
-          echo "commit_hash=${commit_hash}" | tee -a $GITHUB_OUTPUT
-
-          if [[ "$DRY_RUN" != "true" ]]; then
-            git push
-          fi
-
-      - name: Switch to release branch
-        run: |
-          git fetch origin ${{ needs.code-freeze.outputs.release-branch }}
-          git checkout ${{ needs.code-freeze.outputs.release-branch }}
-
-      - name: Cherry-pick docs-versions commit
-        run: |
-          git cherry-pick ${{ steps.commit-versions1.outputs.commit_hash }}
-
-      - name: Update project.json
-        run: |
-          version_number=$(echo ${VERSION} | sed 's/^r//')
-
-          jq --arg ver "$version_number" \
-            '. = {"version": $ver, "name": "megatron-bridge"}' \
-            docs/project.json > tmp.json && mv tmp.json docs/project.json
-
-      - name: Update conf.py
-        run: |
-          version_number=$(echo ${VERSION} | sed 's/^r//')
-          sed -i "s/release = .*/release = \"${version_number}\"/" docs/conf.py
-
-      - name: Commit changes
-        run: |
-          git add docs/project.json
-          git add docs/conf.py
-          git commit -m "Bump docs version to ${VERSION}"
-
-          if [[ "$DRY_RUN" != "true" ]]; then
-            git push
-          fi
+          base: ${{ matrix.target == 'main' && 'main' || env.RELEASE_BRANCH }}
+          branch: ci/docs-versions-${{ env.RELEASE_BRANCH }}-${{ matrix.target }}
+          add-paths: |
+            docs/versions1.json
+            docs/project.json
+            docs/conf.py
+          title: Update docs versions after the ${{ env.RELEASE_BRANCH }} freeze
+          body: Update the documentation version for the ${{ env.RELEASE_BRANCH }} code freeze.
+          commit-message: Update docs versions for ${{ env.RELEASE_BRANCH }}
+          signoff: true

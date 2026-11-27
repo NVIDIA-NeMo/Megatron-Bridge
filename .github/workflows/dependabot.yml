@@ -4,42 +4,20 @@ on:
     - cron: "0 8 * * *"
   workflow_dispatch: # Allow manual triggering
 
-permissions:
-  id-token: write
-  contents: write
+permissions: {}
 
 jobs:
-  get-release-branch-names:
-    runs-on: ubuntu-latest
-    outputs:
-      megatron-bridge: ${{ steps.get-branch.outputs.megatron_bridge_release_branch }}
-      mcore: ${{ steps.get-branch.outputs.mcore_latest_branch }}
-    steps:
-      - name: Get release branch names
-        id: get-branch
-        env:
-          PAT: ${{ secrets.PAT }}
-        run: |
-          latest_branch=$(git ls-remote --heads https://token:${PAT}@github.com/NVIDIA-NeMo/megatron-bridge.git 'refs/heads/r*' | 
-            grep -o 'r[0-9]\+\.[0-9]\+\.[0-9]\+' | 
-            sort -V | 
-            tail -n1)
-          echo "megatron_bridge_release_branch=$latest_branch" | tee -a $GITHUB_OUTPUT
-
-          mcore_latest_branch=$(git ls-remote --heads https://token:${PAT}@github.com/NVIDIA/Megatron-LM.git 'refs/heads/core_r*' | 
-            grep -o 'core_r[0-9]\+\.[0-9]\+\.[0-9]\+' | 
-            sort -V | 
-            tail -n1)
-          echo "mcore_latest_branch=$mcore_latest_branch" | tee -a $GITHUB_OUTPUT
-
   bump-tags:
-    needs: [get-release-branch-names]
+    permissions:
+      contents: write
+      checks: read
+      statuses: read
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target-branch: ${{ needs.get-release-branch-names.outputs.megatron-bridge }}
-            mcore-branch: ${{ needs.get-release-branch-names.outputs.mcore }}
+          - target-branch: latest-release
+            mcore-branch: latest-release
           - target-branch: main
             mcore-branch: main
           - target-branch: main
@@ -49,14 +27,7 @@ jobs:
       target-branch: ${{ matrix.target-branch }}
       mcore-branch: ${{ matrix.mcore-branch }}
     secrets:
-      NGC_API_USER: ${{ secrets.NGC_API_USER }}
-      NGC_API_KEY: ${{ secrets.NGC_API_KEY }}
-      PAT: ${{ secrets.PAT }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      SSH_KEY: ${{ secrets.SSH_KEY }}
-      SSH_PWD: ${{ secrets.SSH_PWD }}
+      PR_APP_PRIVATE_KEY: ${{ secrets.PR_APP_PRIVATE_KEY }}
 
   notify:
     if: failure()
@@ -73,4 +44,4 @@ jobs:
           curl -X POST \
             -H 'Content-type: application/json' \
             --data "{\"text\":\":robot_joy: <https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}|Mcore-bump-bot workflow> failed. Please fix manually.\n\ncc ${SLACK_WEBHOOK_ADMIN}\"}" \
-            $SLACK_WEBHOOK
+            "$SLACK_WEBHOOK"

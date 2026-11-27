@@ -176,9 +176,8 @@ runs:
         cmd=$(cat <<'RUN_TEST_EOF'
         #!/bin/bash
 
-        docker exec -t nemo_container_${{ github.run_id }} bash -c '
+        docker exec --env GH_TOKEN -t nemo_container_${{ github.run_id }} bash -c '
           set -e
-          export GH_TOKEN=${{ inputs.github-token }}
 
           # Keep the FlashAttention generation policy scoped to CI tests.
           export NVTE_FLASH_ATTN_V2=1 NVTE_FLASH_ATTN_V3=0 NVTE_FLASH_ATTN_V4=0
@@ -213,6 +212,7 @@ runs:
       id: run-main-script
       shell: bash -e -u -o pipefail {0}
       env:
+        GH_TOKEN: ${{ inputs.github-token }}
         SCRIPT: ${{ inputs.script }}
       run: |
         echo -e "\033[1;34m┌─ launching test ─────────────────────────────────────────────────────────┐\033[0m"
