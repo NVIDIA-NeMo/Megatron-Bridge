@@ -155,6 +155,20 @@ def update_config_with_precision_overrides(mixed_precision_config: MixedPrecisio
         # If we overwrote a value, log a debug message.
         old_val = getattr(config, field.name)
         new_val = getattr(mixed_precision_config, field.name)
+        if (
+            field.name == "fp8_recipe"
+            and not hasattr(config, "fp8")
+            and not mixed_precision_config.fp8
+            and not mixed_precision_config.fp4
+        ):
+            # MixedPrecisionConfig.fp8_recipe defaults to "tensorwise" even when
+            # FP8 is disabled. Configs without an `fp8` field (notably MCore's
+            # OptimizerConfig) rely on `fp8_recipe=None` to identify non-FP8
+            # runs, e.g. for `use_precision_aware_optimizer_no_fp8_or_ds_fp8`
+            # and int16 `store_param_remainders`. Keep a non-None value when
+            # `fp4` is active so quantized NVFP4 parameters stay on MCore's
+            # FP32 main-param path in DistributedOptimizer.
+            new_val = None
         if old_val != new_val:
             setattr(config, field.name, new_val)
             logging.debug(f"Overwrote {type(config).__name__}.{field.name}  {old_val} -> {new_val}")

@@ -860,3 +860,122 @@ class TestMixedPrecisionSetupWithModelConfig:
         assert config.transformer.fp16 is True
         assert config.params_dtype == torch.float16
         assert config.transformer.params_dtype == torch.float16
+
+
+class TestOptimizerFp8RecipeSync:
+    """Tests that non-FP8 mixed precision does not leak default fp8_recipe into OptimizerConfig."""
+
+    @pytest.mark.unit
+    def test_bf16_non_fp8_clears_optimizer_fp8_recipe_and_enables_precision_aware_path(self):
+        """BF16 runs without FP8/FP4 must keep OptimizerConfig.fp8_recipe=None."""
+        mp_cfg = bf16_mixed()
+        model_config = _make_gpt_model_config_for_mp()
+        optimizer_config = OptimizerConfig(
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            use_precision_aware_optimizer=True,
+            main_params_dtype=torch.float32,
+            store_param_remainders=True,
+        )
+
+        mp_cfg.setup(model_config, optimizer_config=optimizer_config)
+
+        assert optimizer_config.fp8_recipe is None
+        assert optimizer_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is True
+        assert model_config.fp8 is None
+
+    @pytest.mark.unit
+    def test_bf16_non_fp8_clears_stale_optimizer_fp8_recipe(self):
+        """A stale optimizer_config.fp8_recipe is reset to None when neither FP8 nor FP4 is active."""
+        mp_cfg = bf16_mixed()
+        model_config = _make_gpt_model_config_for_mp()
+        optimizer_config = OptimizerConfig(
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            fp8_recipe="tensorwise",
+            use_precision_aware_optimizer=True,
+            main_params_dtype=torch.float32,
+        )
+
+        mp_cfg.setup(model_config, optimizer_config=optimizer_config)
+
+        assert optimizer_config.fp8_recipe is None
+        assert optimizer_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is True
+
+    @pytest.mark.unit
+    def test_fp16_non_fp8_clears_optimizer_fp8_recipe(self):
+        """FP16 runs without FP8/FP4 must keep OptimizerConfig.fp8_recipe=None."""
+        mp_cfg = fp16_mixed()
+        model_config = _make_gpt_model_config_for_mp()
+        optimizer_config = OptimizerConfig(
+            fp16=True,
+            params_dtype=torch.float16,
+            use_precision_aware_optimizer=True,
+            main_params_dtype=torch.float32,
+        )
+
+        mp_cfg.setup(model_config, optimizer_config=optimizer_config)
+
+        assert optimizer_config.fp8_recipe is None
+        assert optimizer_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is True
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("recipe_factory", "expected_fp8_recipe", "expected_no_fp8_or_ds"),
+        [
+            (bf16_with_fp8_current_scaling_mixed, "tensorwise", False),
+            (bf16_with_mxfp8_mixed, "mxfp8", False),
+            (bf16_with_fp8_subchannel_scaling_mixed, "blockwise", False),
+            (bf16_with_fp8_delayed_scaling_mixed, "delayed", True),
+        ],
+    )
+    def test_fp8_recipes_preserve_optimizer_fp8_recipe(
+        self,
+        recipe_factory,
+        expected_fp8_recipe: str,
+        expected_no_fp8_or_ds: bool,
+    ):
+        """Active FP8 recipes must continue propagating fp8_recipe to OptimizerConfig."""
+        mp_cfg = recipe_factory()
+        model_config = _make_gpt_model_config_for_mp()
+        optimizer_config = OptimizerConfig(
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            use_precision_aware_optimizer=True,
+            main_params_dtype=torch.float32,
+        )
+
+        mp_cfg.setup(model_config, optimizer_config=optimizer_config)
+
+        assert optimizer_config.fp8_recipe == expected_fp8_recipe
+        assert optimizer_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is expected_no_fp8_or_ds
+
+    @pytest.mark.unit
+    def test_nvfp4_recipe_keeps_non_none_optimizer_fp8_recipe(self):
+        """NVFP4 keeps quantized weights on MCore's FP32 main-param path."""
+        mp_cfg = bf16_with_nvfp4_mixed()
+        model_config = _make_gpt_model_config_for_mp()
+        optimizer_config = OptimizerConfig(
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            use_precision_aware_optimizer=True,
+            main_params_dtype=torch.float32,
+        )
+
+        mp_cfg.setup(model_config, optimizer_config=optimizer_config)
+
+        assert optimizer_config.fp8_recipe == "tensorwise"
+        assert optimizer_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is False
+
+    @pytest.mark.unit
+    @patch("logging.debug")
+    def test_bf16_non_fp8_does_not_log_spurious_fp8_recipe_overwrite(self, mock_log):
+        """Unchanged OptimizerConfig.fp8_recipe=None should not emit an overwrite log."""
+        mp_cfg = bf16_mixed()
+        optimizer_config = OptimizerConfig(bf16=True, params_dtype=torch.bfloat16)
+
+        update_config_with_precision_overrides(mp_cfg, optimizer_config)
+
+        assert optimizer_config.fp8_recipe is None
+        debug_calls = [str(call) for call in mock_log.call_args_list]
+        assert not any("fp8_recipe" in call for call in debug_calls)
