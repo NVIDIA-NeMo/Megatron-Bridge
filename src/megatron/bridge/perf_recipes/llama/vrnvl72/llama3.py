@@ -190,6 +190,9 @@ def llama3_70b_pretrain_64gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = "Et*4|t*5|t*5|t*4|(t*4|)*15,ttL"
     # NVFP4BlockScaling takes fp8_dpa from this field, so DPA runs in FP8 under the FP4 recipe.
     cfg.mixed_precision.fp8_dot_product_attention = True
+    # Keep parameters in BF16 (the NVFP4 preset turns FP4 parameters on), as the tuned Llama 3.1 recipes do.
+    cfg.mixed_precision.fp4_param_gather = False
+    cfg.mixed_precision.fp4_param = False
     cfg.model.fused_single_qkv_rope = True
     # TE SwiGLU kernel; MCore requires bias_activation_fusion off with it.
     cfg.model.use_te_activation_func = True
