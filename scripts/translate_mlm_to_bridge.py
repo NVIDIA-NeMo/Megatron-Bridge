@@ -203,6 +203,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "num-dataset-builder-threads":       ("dataset.num_dataset_builder_threads", None),
 
     # ── Optimizer / regularization ──────────────────────────────────────
+    "optimizer":                         ("optimizer.optimizer",                 None),
     "lr":                                ("optimizer.lr",                        None),
     "min-lr":                            ("optimizer.min_lr",                    None),
     "adam-beta1":                        ("optimizer.adam_beta1",                None),
@@ -212,6 +213,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "clip-grad":                         ("optimizer.clip_grad",                None),
     "decoupled-lr":                      ("optimizer.decoupled_lr",             None),
     "decoupled-min-lr":                  ("optimizer.decoupled_min_lr",         None),
+    "no-use-layer-wise-param-layout":    ("optimizer.use_layer_wise_param_layout", "flag_invert"),
     "attention-dropout":                 ("model.attention_dropout",             None),
     "hidden-dropout":                    ("model.hidden_dropout",               None),
 
@@ -604,6 +606,20 @@ def translate(args: dict[str, Any], env_vars: dict[str, str | int | float | bool
         result.skipped.append(("mtp-hybrid-override-pattern", mtp_override))
         result.add_note(
             "mtp-hybrid-override-pattern ignored because hybrid-layer-pattern already contains unified MTP sections"
+        )
+
+    # MLM defaults to shard-aligned LayerWise buffers and Bridge to compact ones, so a
+    # LayerWise run without --no-use-layer-wise-param-layout must keep its layout explicitly.
+    optimizer = args.get("optimizer", "adam")
+    if (
+        optimizer not in ("adam", "sgd")
+        and (args.get("use-distributed-optimizer") or optimizer == "dist_muon")
+        and "no-use-layer-wise-param-layout" not in args
+    ):
+        result.add_override("optimizer.use_layer_wise_param_layout", True)
+        result.add_note(
+            "LayerWise optimizer uses MLM's default shard-aligned layout: "
+            "set optimizer.use_layer_wise_param_layout=true (Bridge defaults to the compact layout)"
         )
 
     # Handle bf16/fp16 → mixed_precision string
@@ -1635,6 +1651,48 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
             result.add_arg("sft-tokenizer-prompt-format", prompt_format)
         else:
             result.skipped.append((prompt_format_key, prompt_format))
+
+    # --- Special: optimizer selection → --optimizer / --use-distributed-optimizer ----
+    # Mirrors Bridge's normalize_optimizer_config: a dist_ alias, the LayerWise switch, or an
+    # emerging optimizer with either distributed-optimizer setting selects the LayerWise
+    # optimizer, which MLM builds for an emerging optimizer with --use-distributed-optimizer.
+    selection_keys = (
+        "optimizer.optimizer",
+        "optimizer.use_distributed_optimizer",
+        "optimizer.use_layer_wise_distributed_optimizer",
+        "ddp.use_distributed_optimizer",
+    )
+    if any(key in overrides for key in selection_keys):
+        consumed.update(selection_keys)
+        optimizer_name = str(overrides.get("optimizer.optimizer", "adam"))
+        use_layer_wise = optimizer_name.startswith("dist_") or bool(
+            overrides.get("optimizer.use_layer_wise_distributed_optimizer")
+        )
+        optimizer_name = optimizer_name.removeprefix("dist_")
+        distributed = bool(
+            overrides.get("optimizer.use_distributed_optimizer") or overrides.get("ddp.use_distributed_optimizer")
+        )
+        if optimizer_name not in ("adam", "sgd"):
+            use_layer_wise = use_layer_wise or distributed
+            distributed = use_layer_wise
+        if "optimizer.optimizer" in overrides:
+            result.add_arg("optimizer", optimizer_name)
+        if distributed:
+            result.add_arg("use-distributed-optimizer")
+    else:
+        use_layer_wise = False
+
+    # --- Special: optimizer.use_layer_wise_param_layout → --no-use-layer-wise-param-layout
+    # Bridge defaults to compact LayerWise buffers and MLM to shard-aligned ones. The two
+    # layouts communicate differently and save different optimizer checkpoints, so Bridge's
+    # compact layout must be requested explicitly whenever the LayerWise optimizer is used.
+    layout_key = "optimizer.use_layer_wise_param_layout"
+    if layout_key in overrides:
+        consumed.add(layout_key)
+        if not use_layer_wise:
+            result.skipped.append((layout_key, overrides[layout_key]))
+        elif not overrides[layout_key]:
+            result.add_arg("no-use-layer-wise-param-layout")
 
     # --- Main loop -------------------------------------------------------
     for bridge_key, val in overrides.items():

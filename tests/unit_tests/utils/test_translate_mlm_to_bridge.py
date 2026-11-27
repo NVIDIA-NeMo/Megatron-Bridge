@@ -383,6 +383,42 @@ class TestTranslateFlagTransforms:
         assert r.overrides["model.qk_layernorm"] is True
 
 
+class TestTranslateLayerWiseOptimizer:
+    """MLM's LayerWise optimizer and its layout must survive translation despite the different defaults."""
+
+    def test_opt_out_flag_selects_compact_layout(self):
+        """--no-use-layer-wise-param-layout produces the compact layout."""
+        args, env = parse_raw_args(
+            "--optimizer muon --use-distributed-optimizer --no-use-layer-wise-param-layout --lr 1e-3"
+        )
+        r = translate(args, env)
+        assert r.overrides["optimizer.optimizer"] == "muon"
+        assert r.overrides["ddp.use_distributed_optimizer"] is True
+        assert r.overrides["optimizer.use_layer_wise_param_layout"] is False
+        assert r.overrides["optimizer.lr"] == pytest.approx(1e-3)
+
+    @pytest.mark.parametrize("optimizer", ["adam", "muon", "dist_muon", "lion"])
+    def test_optimizer_type(self, optimizer):
+        """--optimizer maps to optimizer.optimizer; Bridge resolves the dist_ alias itself."""
+        r = translate(*parse_raw_args(f"--optimizer {optimizer}"))
+        assert r.overrides["optimizer.optimizer"] == optimizer
+        assert all(name != "optimizer" for name, _ in r.unknown)
+
+    @pytest.mark.parametrize("args_str", ["--optimizer muon --use-distributed-optimizer", "--optimizer dist_muon"])
+    def test_layer_wise_default_keeps_aligned_layout(self, args_str):
+        """A LayerWise run without the opt-out keeps MLM's shard-aligned layout."""
+        r = translate(*parse_raw_args(args_str))
+        assert r.overrides["optimizer.use_layer_wise_param_layout"] is True
+
+    @pytest.mark.parametrize(
+        "args_str", ["--use-distributed-optimizer", "--optimizer adam --use-distributed-optimizer", "--optimizer muon"]
+    )
+    def test_no_layout_without_layer_wise_optimizer(self, args_str):
+        """The layout is not set when MLM does not build the LayerWise optimizer."""
+        r = translate(*parse_raw_args(args_str))
+        assert "optimizer.use_layer_wise_param_layout" not in r.overrides
+
+
 class TestTranslateSeqLength:
     """Tests for seq-length dual mapping."""
 
@@ -987,6 +1023,85 @@ class TestTranslateBridgeToMlmFlagInvert:
         """model.add_bias_linear=True → no --disable-bias-linear."""
         r = translate_bridge_to_mlm({"model.add_bias_linear": True})
         assert "disable-bias-linear" not in r.mlm_args
+
+
+class TestTranslateBridgeToMlmLayerWiseOptimizer:
+    """Bridge's optimizer selection and compact LayerWise layout must not become MLM's defaults."""
+
+    _NOT_DISTRIBUTED = {
+        "optimizer.use_distributed_optimizer": False,
+        "optimizer.use_layer_wise_distributed_optimizer": False,
+        "ddp.use_distributed_optimizer": False,
+    }
+
+    @pytest.mark.parametrize(
+        "optimizer_overrides",
+        [
+            {"optimizer.optimizer": "dist_muon"},
+            {"optimizer.optimizer": "muon", "optimizer.use_distributed_optimizer": True},
+            {"optimizer.optimizer": "muon", "ddp.use_distributed_optimizer": True},
+            {"optimizer.optimizer": "muon", "optimizer.use_layer_wise_distributed_optimizer": True},
+        ],
+    )
+    def test_layer_wise_optimizer_with_compact_layout(self, optimizer_overrides):
+        """Every Bridge LayerWise request → MLM Muon with the distributed optimizer and compact layout."""
+        overrides = {**self._NOT_DISTRIBUTED, **optimizer_overrides, "optimizer.use_layer_wise_param_layout": False}
+        r = translate_bridge_to_mlm(overrides)
+        assert r.mlm_args["optimizer"] == "muon"
+        assert "use-distributed-optimizer" in r.mlm_args
+        assert "no-use-layer-wise-param-layout" in r.mlm_args
+        assert not any(key.startswith(("optimizer.", "ddp.use_distributed")) for key, _ in r.unknown + r.skipped)
+
+    def test_aligned_layout_uses_mlm_default(self):
+        """Shard-aligned layout is MLM's default, so no flag is needed."""
+        r = translate_bridge_to_mlm(
+            {"optimizer.optimizer": "dist_muon", "optimizer.use_layer_wise_param_layout": True}
+        )
+        assert "use-distributed-optimizer" in r.mlm_args
+        assert "no-use-layer-wise-param-layout" not in r.mlm_args
+        assert all(key != "optimizer.use_layer_wise_param_layout" for key, _ in r.unknown)
+
+    def test_non_layer_wise_emerging_optimizer(self):
+        """An emerging optimizer without distribution stays non-distributed; the layout does not apply."""
+        overrides = {
+            **self._NOT_DISTRIBUTED,
+            "optimizer.optimizer": "muon",
+            "optimizer.use_layer_wise_param_layout": False,
+        }
+        r = translate_bridge_to_mlm(overrides)
+        assert r.mlm_args["optimizer"] == "muon"
+        assert "use-distributed-optimizer" not in r.mlm_args
+        assert "no-use-layer-wise-param-layout" not in r.mlm_args
+        assert ("optimizer.use_layer_wise_param_layout", False) in r.skipped
+
+    @pytest.mark.parametrize(
+        "distributed_key", ["optimizer.use_distributed_optimizer", "ddp.use_distributed_optimizer"]
+    )
+    def test_adam_distributed_optimizer(self, distributed_key):
+        """Bridge enables Adam's distributed optimizer from either setting, so MLM gets the flag."""
+        overrides = {**self._NOT_DISTRIBUTED, "optimizer.optimizer": "adam", distributed_key: True}
+        r = translate_bridge_to_mlm(overrides)
+        assert r.mlm_args["optimizer"] == "adam"
+        assert "use-distributed-optimizer" in r.mlm_args
+
+    @pytest.mark.parametrize("optimizer_overrides", [{}, {"optimizer.optimizer": "adam"}])
+    def test_layout_is_skipped_without_layer_wise_optimizer(self, optimizer_overrides):
+        """The layout has no effect on Adam, so it is skipped rather than emitted."""
+        r = translate_bridge_to_mlm({**optimizer_overrides, "optimizer.use_layer_wise_param_layout": False})
+        assert "no-use-layer-wise-param-layout" not in r.mlm_args
+        assert ("optimizer.use_layer_wise_param_layout", False) in r.skipped
+
+    def test_parsed_override_round_trips(self):
+        """A Bridge CLI override of the layout translates to the MLM flag and back."""
+        overrides = parse_bridge_overrides("optimizer.optimizer=dist_muon optimizer.use_layer_wise_param_layout=false")
+        mlm_args = translate_bridge_to_mlm(overrides).mlm_args
+        assert mlm_args["optimizer"] == "muon"
+        assert "use-distributed-optimizer" in mlm_args
+        assert "no-use-layer-wise-param-layout" in mlm_args
+        r = translate(*parse_raw_args("--optimizer muon --use-distributed-optimizer --no-use-layer-wise-param-layout"))
+        assert r.overrides["optimizer.optimizer"] == "muon"
+        assert r.overrides["ddp.use_distributed_optimizer"] is True
+        assert r.overrides["optimizer.use_layer_wise_param_layout"] is False
 
 
 class TestTranslateBridgeToMlmDataArgs:
