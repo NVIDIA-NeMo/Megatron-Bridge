@@ -18,6 +18,7 @@ from contextlib import ExitStack, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -109,8 +110,13 @@ def test_quantized_resume_requires_successful_main_parameter_restore(
         for logger in (checkpointing.wandb_utils, checkpointing.mlflow_utils, checkpointing.comet_utils):
             stack.enter_context(patch.object(logger, "on_load_checkpoint_success"))
         kwargs = dict(pg_collection=Mock(), skip_load_to_model_and_opt=mode == "skip")
-        if mode == "load_error":
-            with pytest.raises(KeyError, match="missing main"):
+        if mode in ("load_error", "missing_optimizer"):
+            error = (
+                (KeyError, "missing main")
+                if mode == "load_error"
+                else (RuntimeError, "load_optim=False.*finetune=True")
+            )
+            with pytest.raises(error[0], match=error[1]):
                 checkpointing._load_checkpoint_from_path(
                     "/checkpoints",
                     state,
@@ -141,6 +147,142 @@ def test_quantized_resume_requires_successful_main_parameter_restore(
         scheduler.step.assert_not_called()
     if expected:
         assert events == ["optimizer", "scheduler", "quantize"]
+
+
+@pytest.mark.parametrize("ckpt_format", ["torch_dist", "fsdp_dtensor"])
+@pytest.mark.parametrize("saved", [True, False], ids=["complete", "weights-only"])
+@pytest.mark.parametrize("mode", ["resume", "no_load_optim", "finetune", "release", "model_only"])
+def test_loading_optimizer_is_independent_of_future_save_policy(
+    load_checkpoint_fixtures: dict[str, Any], mode: str, saved: bool, ckpt_format: str
+) -> None:
+    fixtures = load_checkpoint_fixtures
+    cfg, state = fixtures["mock_cfg"], fixtures["mock_state"]
+    cfg.peft = None
+    cfg.checkpoint.ckpt_format = ckpt_format
+    cfg.checkpoint.save_optim = False
+    cfg.checkpoint.load_optim = mode != "no_load_optim"
+    cfg.checkpoint.finetune = mode == "finetune"
+    cfg.checkpoint.load_rng = cfg.checkpoint.save_rng = False
+    cfg.scheduler.override_opt_param_scheduler = False
+    cfg.ddp.fp8_param_gather = cfg.ddp.fp4_param_gather = False
+    state.train_state = TrainState(step=3, consumed_train_samples=48)
+    model = fixtures["mock_model"]
+    model[0].sharded_state_dict.return_value = {"weight": torch.ones(1)}
+    model[0].hide_loss_modules.return_value = nullcontext()
+    optimizer = fixtures["mock_optimizer"]
+    optimizer.param_groups = [{}]
+    scheduler = OptimizerParamScheduler(optimizer, 0, 0.2, 0.1, 0, 100, "linear", 0.01, 0.11, 100, "linear")
+    optimizer.is_stub_optimizer = False
+    optimizer.sharded_state_dict.return_value = {"state": {"step": 3}}
+    payload = {
+        "checkpoint_version": 3.0,
+        "model": {},
+    }
+    if saved:
+        payload.update(optimizer={"step": 3}, opt_param_scheduler={**scheduler.state_dict(), "num_steps": 48})
+    reader = Mock()
+    reader.read_metadata.return_value.state_dict_metadata = {f"{key}.value": Mock() for key in payload}
+    with ExitStack() as stack:
+        replacements = {
+            "is_hf_checkpoint_dir": False,
+            "is_checkpoint_iteration_directory": True,
+            "file_exists": True,
+            "_get_filesystem_reader": reader,
+            "read_run_config": {
+                "model": {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1},
+                "checkpoint": {"save_optim": saved, "save_rng": False, "fully_parallel_save": False},
+            },
+            "read_train_state": state.train_state,
+            "update_num_microbatches": None,
+            "_get_model_glu_interleave_sizes": (None, None),
+            "_load_model_state_dict": None,
+            "unwrap_model": model,
+            "_load_base_checkpoint": (
+                payload,
+                "/checkpoints/iter_0000003",
+                mode == "release",
+                checkpointing.CheckpointType.GLOBAL
+                if ckpt_format == "torch_dist"
+                else checkpointing.CheckpointType.FSDP_DTENSOR,
+            ),
+        }
+        for name, value in replacements.items():
+            stack.enter_context(patch.object(checkpointing, name, return_value=value))
+        stack.enter_context(patch.object(checkpointing.dist_checkpointing, "load_content_metadata", return_value={}))
+        stack.enter_context(patch.object(torch.distributed, "is_initialized", return_value=False))
+        for logger in (checkpointing.wandb_utils, checkpointing.mlflow_utils, checkpointing.comet_utils):
+            stack.enter_context(patch.object(logger, "on_load_checkpoint_success"))
+        if mode == "resume" and not saved:
+            with pytest.raises(RuntimeError, match="load_optim=False.*finetune=True"):
+                checkpointing._load_checkpoint_from_path(
+                    "/checkpoints", state, model, optimizer, scheduler, pg_collection=Mock()
+                )
+            optimizer.sharded_state_dict.assert_not_called()
+            optimizer.load_state_dict.assert_not_called()
+            assert scheduler.num_steps == 0
+            return
+
+        step, _ = checkpointing._load_checkpoint_from_path(
+            "/checkpoints",
+            state,
+            model,
+            None if mode == "model_only" else optimizer,
+            None if mode == "model_only" else scheduler,
+            pg_collection=Mock(),
+        )
+
+    assert step == (0 if mode in ("finetune", "release") else 3)
+    assert cfg.checkpoint.save_optim is False
+    if mode == "resume":
+        optimizer.sharded_state_dict.assert_called_once()
+        optimizer.load_state_dict.assert_called_once_with(payload["optimizer"])
+        assert scheduler.num_steps == 48
+        assert optimizer.param_groups[0]["lr"] == pytest.approx(0.152)
+        assert optimizer.param_groups[0]["weight_decay"] == pytest.approx(0.058)
+    else:
+        optimizer.sharded_state_dict.assert_not_called()
+        optimizer.load_state_dict.assert_not_called()
+        assert scheduler.num_steps == 0
+        assert optimizer.param_groups[0]["lr"] == pytest.approx(0.2)
+        assert optimizer.param_groups[0]["weight_decay"] == pytest.approx(0.01)
+
+
+@pytest.mark.parametrize("ckpt_format", ["torch_dist", "fsdp_dtensor"])
+def test_local_weights_only_resume_checks_saved_sections(
+    load_checkpoint_fixtures: dict[str, Any], ckpt_format: str
+) -> None:
+    fixtures = load_checkpoint_fixtures
+    cfg = fixtures["mock_cfg"]
+    cfg.checkpoint.ckpt_format = ckpt_format
+    cfg.checkpoint.save_optim = True
+    optimizer = fixtures["mock_optimizer"]
+    optimizer.is_stub_optimizer = False
+    manager = Mock()
+    manager.load.return_value = (
+        SimpleNamespace(common_state_dict={"iteration": 3}, sharded_state_dict={"model": {}}),
+        "local",
+    )
+
+    with (
+        patch.object(checkpointing, "is_hf_checkpoint_dir", return_value=False),
+        patch.object(
+            checkpointing,
+            "_load_base_checkpoint",
+            return_value=({}, "local", False, checkpointing.CheckpointType.LOCAL),
+        ),
+        pytest.raises(RuntimeError, match="local is missing optimizer state"),
+    ):
+        checkpointing._load_checkpoint_from_path(
+            "/checkpoints",
+            fixtures["mock_state"],
+            fixtures["mock_model"],
+            optimizer,
+            fixtures["mock_scheduler"],
+            checkpointing_context={"local_checkpoint_manager": manager},
+            pg_collection=Mock(),
+        )
+    manager.load.assert_called_once()
+    optimizer.sharded_state_dict.assert_not_called()
 
 
 def test_scheduler_runtime_override_changes_next_lr_and_preserves_multipliers():
@@ -508,6 +650,7 @@ def test_optimizer_dtype_key_resume_round_trip(tmp_path, load_checkpoint_fixture
         cfg.checkpoint.load_rng = False
         cfg.checkpoint.save_rng = False
         cfg.checkpoint.non_persistent_ckpt_type = "local" if local else None
+        cfg.checkpoint.save_optim = False  # A future save policy cannot suppress a local restore.
         cfg.checkpoint.non_persistent_local_ckpt_algo = "atomic"
         cfg.optimizer.use_distributed_optimizer = True
         del cfg.model.megatron_mimo_parallelism_config

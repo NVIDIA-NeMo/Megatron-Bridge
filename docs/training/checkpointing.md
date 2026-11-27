@@ -60,6 +60,21 @@ Asynchronous saving allows training to continue while checkpoint data is persist
 | `exit_on_missing_checkpoint` | `bool` | `False` | Exit if specified checkpoint is not found instead of random initialization |
 | `dist_ckpt_strictness` | `Literal[...]` | `"assume_ok_unexpected"` | Handling of key mismatches during distributed checkpoint load |
 
+Saving and loading optimizer state are independent policies. With a complete checkpoint,
+`load_optim=True` restores the optimizer and scheduler even when `save_optim=False`
+omits them from future saves.
+
+**Compatibility change for training resumes.** Earlier Bridge versions could resume a
+weights-only checkpoint at its saved step with a fresh optimizer and scheduler. With
+`torch_dist` and `fsdp_dtensor`, a normal resume now raises an error when requested
+optimizer or scheduler state is missing. For a checkpoint saved at step 100:
+
+| Intent | Checkpoint setting | Training step | Optimizer and scheduler |
+| --- | --- | --- | --- |
+| Continue training exactly | `load_optim=True` (default) | 100 | Restore saved state. A weights-only checkpoint cannot satisfy this request. |
+| Keep training progress and reset optimization | `load_optim=False` | 100 | Both start fresh, including the LR/weight-decay schedule. |
+| Initialize a new training run from the weights | `finetune=True` | 0 | Both start fresh. |
+
 ### Loading Specific Checkpoint Iterations
 
 By default, `checkpoint.load` loads the **latest checkpoint** available in the specified base directory by reading from the tracker file (`latest_train_state.pt`). You can explicitly load from a specific checkpoint iteration using the `ckpt_step` parameter.

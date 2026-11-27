@@ -22,6 +22,7 @@ from contextlib import ExitStack, contextmanager
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, Mock, mock_open, patch
 
 import numpy as np
@@ -2401,138 +2402,63 @@ class TestLoadCheckpoint:
         assert result == (0, 0)
         mock_get_rng_state.assert_called_once_with(True, "fsdp_dtensor", pg_collection=pg_collection)
 
-    def test_fsdp_omitted_optimizer_does_not_materialize_load_state(self, load_checkpoint_fixtures):
-        """An FSDP checkpoint saved without optimizer state must leave the optimizer fresh."""
+    @pytest.mark.parametrize("with_run_config", [False, True])
+    @pytest.mark.parametrize("missing", ["optimizer", "scheduler"])
+    def test_fsdp_rejects_missing_resume_section_before_partial_load(
+        self, load_checkpoint_fixtures: dict[str, Any], tmp_path: Path, with_run_config: bool, missing: str
+    ) -> None:
+        from torch.distributed.checkpoint.state_dict_saver import save
+
         cfg = load_checkpoint_fixtures["mock_cfg"]
         cfg.checkpoint.ckpt_format = "fsdp_dtensor"
         cfg.checkpoint.load_rng = False
-        cfg.peft = None
-
-        pg_collection = Mock()
-        reader = Mock()
-        reader.read_metadata.return_value.state_dict_metadata = {"model.weight": Mock()}
-
-        optimizer = load_checkpoint_fixtures["mock_optimizer"]
-        optimizer.is_stub_optimizer = False
-        optimizer.materialized_step = 0
-
-        def materialize_optimizer_state(*_args, **_kwargs):
-            optimizer.materialized_step += 1
-            return {"state": {"step": optimizer.materialized_step}}
-
-        optimizer.sharded_state_dict.side_effect = materialize_optimizer_state
-        load_checkpoint_fixtures["mock_model"][0].state_dict_for_save_checkpoint.return_value = {"weight": Mock()}
-
-        with (
-            patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False),
-            patch("megatron.bridge.training.checkpointing.is_checkpoint_iteration_directory", return_value=True),
-            patch("megatron.bridge.training.checkpointing.file_exists", return_value=True),
-            patch(
-                "megatron.bridge.training.checkpointing.read_run_config",
-                return_value={
-                    "model": {
-                        "tensor_model_parallel_size": 1,
-                        "pipeline_model_parallel_size": 1,
-                    },
-                    "checkpoint": {"save_optim": False},
-                },
-            ),
-            patch("megatron.bridge.training.checkpointing._get_filesystem_reader", return_value=reader),
-            patch(
-                "megatron.bridge.training.checkpointing._load_base_checkpoint",
-                side_effect=[
-                    ({}, "/checkpoints/iter_0000003", False, CheckpointType.FSDP_DTENSOR),
-                    (None, "", False, None),
-                ],
-            ),
-        ):
-            result = _load_checkpoint_from_path(
-                "/checkpoints/iter_0000003",
-                load_checkpoint_fixtures["mock_state"],
-                load_checkpoint_fixtures["mock_model"],
-                optimizer,
-                None,
-                pg_collection=pg_collection,
-            )
-
-        assert result == (0, 0)
-        assert optimizer.materialized_step == 0
-
-    def test_torch_dist_omitted_optimizer_keeps_load_state_fresh(self, load_checkpoint_fixtures):
-        """A torch-dist checkpoint without optimizer state must leave load state fresh."""
-        cfg = load_checkpoint_fixtures["mock_cfg"]
-        cfg.checkpoint.ckpt_format = "torch_dist"
-        cfg.checkpoint.load_rng = False
-        cfg.peft = None
-
-        state = load_checkpoint_fixtures["mock_state"]
-        state.train_state.step = 0
-        state.train_state.floating_point_operations_so_far = 0
-
         optimizer = load_checkpoint_fixtures["mock_optimizer"]
         optimizer.is_stub_optimizer = False
         scheduler = load_checkpoint_fixtures["mock_scheduler"]
-        pg_collection = Mock()
 
-        checkpoint_without_optimizer = {"model": {}, "checkpoint_version": 3.0}
-        run_config = {
-            "model": {
-                "tensor_model_parallel_size": 1,
-                "pipeline_model_parallel_size": 1,
-            },
-            "checkpoint": {
-                "save_optim": False,
-                "save_rng": False,
-                "fully_parallel_save": False,
-            },
-        }
+        # Use the index actually written by DCP. A partial load would otherwise leave
+        # the missing section at the values supplied by the new run's load template.
+        payload: dict[str, Any] = {"model": {"weight": torch.ones(1)}}
+        if missing == "scheduler":
+            payload["optimizer"] = {"state": {"step": torch.tensor(3)}}
+        else:
+            payload["opt_param_scheduler"] = {"num_steps": 48}
+        save(payload, checkpoint_id=tmp_path, no_dist=True)
 
         with (
             patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False),
-            patch("megatron.bridge.training.checkpointing.is_checkpoint_iteration_directory", return_value=True),
-            patch("megatron.bridge.training.checkpointing.file_exists", return_value=True),
-            patch("megatron.bridge.training.checkpointing.read_run_config", return_value=run_config),
-            patch("megatron.bridge.training.checkpointing.read_train_state", return_value=state.train_state),
-            patch("megatron.bridge.training.checkpointing.update_num_microbatches"),
-            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
-            patch("megatron.bridge.training.checkpointing._load_model_state_dict"),
-            patch("megatron.bridge.training.checkpointing.dist_checkpointing.load_content_metadata", return_value={}),
-            patch("megatron.bridge.training.checkpointing.generate_state_dict", return_value={"model": {}}),
-            patch("megatron.bridge.training.checkpointing.torch.distributed.is_initialized", return_value=False),
-            patch("megatron.bridge.training.checkpointing.torch.cuda.empty_cache"),
-            patch("megatron.bridge.training.checkpointing.wandb_utils.on_load_checkpoint_success"),
-            patch("megatron.bridge.training.checkpointing.mlflow_utils.on_load_checkpoint_success"),
-            patch("megatron.bridge.training.checkpointing.comet_utils.on_load_checkpoint_success"),
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=with_run_config),
+            patch(
+                "megatron.bridge.training.checkpointing.read_run_config",
+                return_value={
+                    "model": {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1},
+                    "checkpoint": {"save_optim": True},
+                },
+            ),
             patch(
                 "megatron.bridge.training.checkpointing._load_base_checkpoint",
-                side_effect=[
-                    ({}, "/checkpoints/iter_0000003", False, CheckpointType.GLOBAL),
-                    (
-                        checkpoint_without_optimizer,
-                        "/checkpoints/iter_0000003",
-                        False,
-                        CheckpointType.GLOBAL,
-                    ),
-                ],
-            ),
+                return_value=({}, str(tmp_path), False, CheckpointType.FSDP_DTENSOR),
+            ) as load,
+            pytest.raises(RuntimeError, match=rf"missing {missing} state.*load_optim=False.*finetune=True"),
         ):
-            result = _load_checkpoint_from_path(
-                "/checkpoints/iter_0000003",
-                state,
+            _load_checkpoint_from_path(
+                str(tmp_path),
+                load_checkpoint_fixtures["mock_state"],
                 load_checkpoint_fixtures["mock_model"],
                 optimizer,
                 scheduler,
-                pg_collection=pg_collection,
+                pg_collection=Mock(),
             )
 
-        assert result == (0, 0)
-        optimizer.load_state_dict.assert_not_called()
+        load.assert_called_once()
+        optimizer.sharded_state_dict.assert_not_called()
         scheduler.load_state_dict.assert_not_called()
 
     def test_torch_dist_resume_releases_loaded_state_dict_before_empty_cache(self, load_checkpoint_fixtures):
         """The loaded resume state dict is unreachable by the time the cache is emptied."""
         cfg = load_checkpoint_fixtures["mock_cfg"]
         cfg.checkpoint.ckpt_format = "torch_dist"
+        cfg.checkpoint.load_optim = False
         cfg.checkpoint.load_rng = False
         cfg.peft = None
 
@@ -5430,8 +5356,10 @@ class TestFSDPDTensorFunctionality:
             )
 
     @pytest.mark.parametrize("cpu_staging", [False, True])
-    def test_generate_state_dict_includes_optimizer_scaffold_when_loading(self, cpu_staging):
-        """Load-time optimizer scaffolding should not depend on save_optim."""
+    @pytest.mark.parametrize("ckpt_format", ["torch_dist", "fsdp_dtensor"])
+    @pytest.mark.parametrize("is_loading", [False, True])
+    def test_generate_state_dict_includes_optimizer_scaffold_when_loading(self, cpu_staging, ckpt_format, is_loading):
+        """Disabling future saves still permits loading optimizer and scheduler state."""
         from unittest.mock import Mock
 
         from megatron.bridge.training.checkpointing import generate_state_dict
@@ -5439,6 +5367,7 @@ class TestFSDPDTensorFunctionality:
 
         mock_model = Mock()
         mock_model.sharded_state_dict.return_value = {"test_param": torch.tensor([1.0])}
+        mock_model.state_dict_for_save_checkpoint.return_value = {"test_param": torch.tensor([1.0])}
         mock_optimizer = Mock()
         mock_optimizer.is_stub_optimizer = False
         mock_optimizer.sharded_state_dict.return_value = {"optimizer": {"param_groups": []}}
@@ -5446,7 +5375,7 @@ class TestFSDPDTensorFunctionality:
         mock_scheduler.state_dict.return_value = {"scheduler": "state"}
 
         ckpt_cfg = CheckpointConfig(
-            ckpt_format="torch_dist",
+            ckpt_format=ckpt_format,
             save_optim=False,
             save_rng=False,
             stage_precision_aware_optimizer_state_on_cpu=cpu_staging,
@@ -5461,15 +5390,24 @@ class TestFSDPDTensorFunctionality:
                 opt_param_scheduler=mock_scheduler,
                 rng_state=None,
                 optim_sd_kwargs={
-                    "is_loading": True,
+                    "is_loading": is_loading,
                     "metadata": {"distrib_optim_sharding_type": "dp_zero_gather_scatter"},
                 },
             )
 
-        assert result["optimizer"] == {"optimizer": {"param_groups": []}}
-        assert result["opt_param_scheduler"] == {"scheduler": "state"}
-        mock_cpu_staging.assert_called_once_with(mock_optimizer, enabled=cpu_staging)
-        mock_optimizer.sharded_state_dict.assert_called_once()
+        assert ckpt_cfg.save_optim is False
+        if is_loading:
+            assert result["optimizer"] == {"optimizer": {"param_groups": []}}
+            assert result["opt_param_scheduler"] == {"scheduler": "state"}
+            mock_cpu_staging.assert_called_once_with(mock_optimizer, enabled=cpu_staging)
+            mock_optimizer.sharded_state_dict.assert_called_once()
+            assert mock_optimizer.sharded_state_dict.call_args.kwargs["is_loading"] is True
+        else:
+            assert "optimizer" not in result
+            assert "opt_param_scheduler" not in result
+            mock_cpu_staging.assert_not_called()
+            mock_optimizer.sharded_state_dict.assert_not_called()
+            mock_scheduler.state_dict.assert_not_called()
 
     @pytest.mark.parametrize("ckpt_format", ["torch_dist", "fsdp_dtensor"])
     @pytest.mark.parametrize(
@@ -6435,7 +6373,10 @@ class TestLayerWiseOptimizerCheckpointing:
         local_ckpt_dir = "/ckpts/local_nonpersistent"
         mock_local_ckpt_manager = Mock()
         mock_local_ckpt_manager.local_ckpt_dir = local_ckpt_dir
-        mock_local_ckpt_manager.load.return_value = (Mock(common_state_dict=mock_state_dict), "/ckpts/local_ckpt_id")
+        mock_local_ckpt_manager.load.return_value = (
+            Mock(common_state_dict=mock_state_dict, sharded_state_dict={}),
+            "/ckpts/local_ckpt_id",
+        )
         checkpointing_context = {"local_checkpoint_manager": mock_local_ckpt_manager}
 
         load_checkpoint_fixtures["mock_cfg"].checkpoint.load = "/ckpts"
