@@ -824,6 +824,16 @@ class TestDeleteExtraState:
         assert result is sd
 
 
+def _checkpoint_model_mock(*, config):
+    """A model double with explicit module traversal for layout inspection."""
+    model = Mock(config=config)
+    model._checkpoint_glu_interleave_size = None
+    model._glu_interleave_size = None
+    model.modules.return_value = [model]
+    model.named_modules.return_value = [("", model)]
+    return model
+
+
 @pytest.fixture
 def save_checkpoint_fixtures():
     """Fixture for save checkpoint tests."""
@@ -867,7 +877,7 @@ def save_checkpoint_fixtures():
 
     mock_state.cfg = mock_cfg
 
-    mock_model = [Mock()]
+    mock_model = [_checkpoint_model_mock(config=SimpleNamespace())]
     mock_optimizer = Mock()
     mock_scheduler = Mock()
 
@@ -908,7 +918,6 @@ class TestSaveCheckpoint:
             patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
-            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
             patch(
                 "megatron.bridge.training.checkpointing.generate_state_dict",
                 return_value={"model": {"weight": Mock()}},
@@ -1030,6 +1039,14 @@ class TestSaveCheckpoint:
 
             mock_parallel_strategy.side_effect = legacy_wrapper
         # Setup mocks
+        save_checkpoint_fixtures["mock_model"][0].config = SimpleNamespace(
+            gated_linear_unit=True, moe_mlp_glu_interleave_size=2
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.checkpointing._process_state_dict_for_model_glu_interleaving",
+            Mock(side_effect=AssertionError("Native GLU factories must not be converted twice")),
+            raising=False,
+        )
         mock_dist_init.return_value = True
         mock_get_dist_rank.return_value = 0
         mock_get_rank_safe.return_value = 0
@@ -1098,6 +1115,9 @@ class TestSaveCheckpoint:
         mock_ft.on_checkpointing_start.assert_called_once()
         mock_gen_state.assert_called_once()
         mock_dist_ckpt.save.assert_called_once()
+        saved_metadata = mock_dist_ckpt.save.call_args.kwargs["content_metadata"]
+        assert saved_metadata["glu_checkpoint_layout"] == "contiguous"
+        assert saved_metadata["glu_runtime_layout"]["routed"] == 2
         expected_validation = (validate_sharding or not save_validation_supported) and not (
             (cached_strategy and constant_structure) or (is_mimo and not fully_parallel)
         )
@@ -1253,7 +1273,6 @@ class TestSaveCheckpoint:
             patch("megatron.bridge.training.checkpointing.get_pg_collection", return_value=pg_collection),
             patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
-            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
             patch(
                 "megatron.bridge.training.checkpointing.generate_state_dict",
                 return_value={"model": {"weight": Mock()}},
@@ -1350,7 +1369,6 @@ class TestSaveCheckpoint:
             patch("megatron.bridge.training.checkpointing.get_pg_collection", return_value=pg_collection),
             patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
-            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
             patch(
                 "megatron.bridge.training.checkpointing.generate_state_dict",
                 return_value={"model": {"weight": Mock()}},
@@ -1422,7 +1440,6 @@ class TestSaveCheckpoint:
             patch("megatron.bridge.training.checkpointing.get_pg_collection", return_value=pg_collection),
             patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
-            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
             patch(
                 "megatron.bridge.training.checkpointing.generate_state_dict",
                 return_value={"model": {"weight": Mock()}},
@@ -1491,12 +1508,6 @@ class TestSaveCheckpoint:
             )
             stack.enter_context(patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()))
             mock_rerun = stack.enter_context(patch("megatron.bridge.training.checkpointing.get_rerun_state_machine"))
-            stack.enter_context(
-                patch(
-                    "megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes",
-                    return_value=(None, None),
-                )
-            )
             stack.enter_context(
                 patch(
                     "megatron.bridge.training.checkpointing.generate_state_dict",
@@ -1603,7 +1614,6 @@ class TestSaveCheckpoint:
             patch("megatron.bridge.training.checkpointing.get_pg_collection", return_value=pg_collection),
             patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
-            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
             patch(
                 "megatron.bridge.training.checkpointing.generate_state_dict",
                 return_value={"model": {"weight": Mock()}},
@@ -1691,7 +1701,6 @@ class TestSaveCheckpoint:
             patch("megatron.bridge.training.checkpointing.get_pg_collection", return_value=pg_collection),
             patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
-            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
             patch(
                 "megatron.bridge.training.checkpointing.generate_state_dict",
                 return_value={"model": {"weight": Mock()}},
@@ -2154,7 +2163,7 @@ def load_checkpoint_fixtures():
     mock_cfg.checkpoint.save_rng_state_per_dp_rank = False
 
     # Create nested mock attributes that might be accessed during loading
-    mock_cfg.model = Mock()
+    mock_cfg.model = _checkpoint_model_mock(config=SimpleNamespace())
     mock_cfg.model.fp16 = False
     mock_cfg.model.bf16 = False
     mock_cfg.model.tensor_model_parallel_size = 1
@@ -2172,7 +2181,7 @@ def load_checkpoint_fixtures():
 
     mock_state.cfg = mock_cfg
 
-    mock_model = [Mock()]
+    mock_model = [_checkpoint_model_mock(config=SimpleNamespace())]
     # The native GTP load context iterates over module parameters.
     mock_model[0].parameters.return_value = []
     mock_optimizer = Mock()
@@ -2494,7 +2503,6 @@ class TestLoadCheckpoint:
             patch("megatron.bridge.training.checkpointing.read_run_config", return_value=run_config),
             patch("megatron.bridge.training.checkpointing.read_train_state", return_value=state.train_state),
             patch("megatron.bridge.training.checkpointing.update_num_microbatches"),
-            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
             patch("megatron.bridge.training.checkpointing._load_model_state_dict"),
             patch("megatron.bridge.training.checkpointing.dist_checkpointing.load_content_metadata", return_value={}),
             patch("megatron.bridge.training.checkpointing.generate_state_dict", return_value={"model": {}}),
@@ -2596,7 +2604,6 @@ class TestLoadCheckpoint:
             patch("megatron.bridge.training.checkpointing.read_run_config", return_value=run_config),
             patch("megatron.bridge.training.checkpointing.read_train_state", return_value=state.train_state),
             patch("megatron.bridge.training.checkpointing.update_num_microbatches"),
-            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
             patch("megatron.bridge.training.checkpointing._load_model_state_dict", new=lambda *args, **kwargs: None),
             patch("megatron.bridge.training.checkpointing.dist_checkpointing.load_content_metadata", return_value={}),
             patch("megatron.bridge.training.checkpointing.generate_state_dict", new=_generate),
@@ -2790,7 +2797,14 @@ class TestLoadCheckpoint:
         load_checkpoint_fixtures["mock_cfg"].optimizer.use_distributed_optimizer = True
 
         # Mock dist_checkpointing
-        mock_dist_ckpt.load_content_metadata.return_value = {"distrib_optim_sharding_type": "dp_reshardable"}
+        from megatron.core.dist_checkpointing.glu import glu_checkpoint_metadata
+
+        glu_config = SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=2)
+        load_checkpoint_fixtures["mock_model"][0].config = glu_config
+        mock_dist_ckpt.load_content_metadata.return_value = {
+            "distrib_optim_sharding_type": "dp_reshardable",
+            **glu_checkpoint_metadata(glu_config, optimizer_uses_model_layout=False),
+        }
         legacy_key = "optimizer.distributed.dp_group_idx_0.gbuf_idx_0.dtype_(torch.bfloat16, torch.bfloat16).bucket_idx_0.exp_avg"
         mock_dist_ckpt.load_tensors_metadata.return_value = {legacy_key: Mock()}
         mock_dist_ckpt.load.return_value = {}
@@ -2860,6 +2874,11 @@ class TestLoadCheckpoint:
 
         optimizer.load_state_dict.side_effect = load_optimizer
         with (
+            patch(
+                "megatron.bridge.training.checkpointing._process_state_dict_for_model_glu_interleaving",
+                side_effect=AssertionError("Native GLU factories must not be converted twice"),
+                create=True,
+            ),
             patch("torch.distributed.get_rank", return_value=0),
             patch("torch.distributed.get_world_size", return_value=1),
             patch(
@@ -3677,6 +3696,53 @@ class TestRecordDataloaderStateDir:
 class TestLoadModelWeightsFromCheckpoint:
     """Test the _load_model_weights_from_checkpoint function."""
 
+    @pytest.mark.parametrize("marked", [False, True])
+    def test_native_glu_metadata_is_checked_before_weight_loading(self, marked):
+        from megatron.core.dist_checkpointing.glu import glu_checkpoint_metadata, permute_glu_rows
+        from megatron.core.dist_checkpointing.mapping import ShardedTensor
+        from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
+
+        from megatron.bridge.training import checkpointing
+
+        config = SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=2)
+        canonical = torch.arange(48, dtype=torch.float32).reshape(16, 3)
+        key = "decoder.layers.0.mlp.experts.linear_fc1.weight0"
+        factory = apply_swiglu_sharded_factory(
+            ShardedTensor.from_rank_offsets(key, torch.empty_like(canonical)), (), glu_interleave_size=2
+        )
+        model = _checkpoint_model_mock(config=config)
+        model.sharded_state_dict.return_value = {key: factory}
+        group = SimpleNamespace(dp_cp=object())
+
+        def load(template, *args, **kwargs):
+            # Core merges return the target runtime layout; Bridge must preserve it.
+            return {"model": {key: template["model"][key].merge_fn(list(canonical.chunk(2)))}}
+
+        with (
+            patch.object(checkpointing.dist_checkpointing, "load_common_state_dict", return_value={}),
+            patch.object(
+                checkpointing.dist_checkpointing,
+                "load_content_metadata",
+                return_value=(glu_checkpoint_metadata(config, optimizer_uses_model_layout=True) if marked else None),
+            ),
+            patch.object(checkpointing.dist_checkpointing, "load", side_effect=load) as load_tensors,
+            patch.object(checkpointing, "file_exists", return_value=True),
+            patch.object(checkpointing, "read_run_config", return_value={"model": vars(config)}),
+            patch.object(checkpointing, "restore_modelopt_state"),
+            patch.object(checkpointing, "get_pg_collection", return_value=group),
+        ):
+            if not marked:
+                with pytest.raises(ValueError, match="unmarked interleaved"):
+                    checkpointing._load_model_weights_from_checkpoint("/checkpoint", [model], return_state_dict=True)
+                load_tensors.assert_not_called()
+                model.sharded_state_dict.assert_not_called()
+            else:
+                loaded = checkpointing._load_model_weights_from_checkpoint(
+                    "/checkpoint", [model], return_state_dict=True
+                )
+                expected = permute_glu_rows(canonical, 2, interleave=True)
+                torch.testing.assert_close(loaded["model"][key], expected, rtol=0, atol=0)
+
     @pytest.mark.parametrize("saved_shards,requested_shards", [(2, 1), (1, 2)])
     @pytest.mark.parametrize("legacy_args", [False, True])
     def test_direct_model_load_rejects_changed_gtp_topology(self, saved_shards, requested_shards, legacy_args):
@@ -3690,7 +3756,7 @@ class TestLoadModelWeightsFromCheckpoint:
         requested_config = SimpleNamespace(
             **{**saved_model_config, "tensor_parallel_num_weight_shards": requested_shards}
         )
-        model = Mock(config=requested_config)
+        model = _checkpoint_model_mock(config=requested_config)
         common_state = {"args": SimpleNamespace(**saved_model_config)} if legacy_args else {}
         with (
             patch("megatron.bridge.training.checkpointing.dist_checkpointing") as checkpointing,
@@ -3710,7 +3776,7 @@ class TestLoadModelWeightsFromCheckpoint:
     def test_direct_gtp_load_requires_saved_topology(self):
         from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
 
-        model = Mock(config=SimpleNamespace(tensor_parallel_num_weight_shards=2))
+        model = _checkpoint_model_mock(config=SimpleNamespace(tensor_parallel_num_weight_shards=2))
         with (
             patch("megatron.bridge.training.checkpointing.dist_checkpointing") as checkpointing,
             patch("megatron.bridge.training.checkpointing.file_exists", return_value=False),
@@ -3723,7 +3789,7 @@ class TestLoadModelWeightsFromCheckpoint:
     @pytest.fixture
     def mock_model(self):
         """Create a mock model for testing."""
-        model = Mock()
+        model = _checkpoint_model_mock(config=SimpleNamespace())
         model.parameters.return_value = []
         model.sharded_state_dict.return_value = {"weight": torch.randn(10, 10)}
         return [model]
@@ -3731,10 +3797,10 @@ class TestLoadModelWeightsFromCheckpoint:
     @pytest.fixture
     def mock_multiple_models(self):
         """Create multiple mock models for testing."""
-        model1 = Mock()
+        model1 = _checkpoint_model_mock(config=SimpleNamespace())
         model1.parameters.return_value = []
         model1.sharded_state_dict.return_value = {"weight1": torch.randn(10, 10)}
-        model2 = Mock()
+        model2 = _checkpoint_model_mock(config=SimpleNamespace())
         model2.parameters.return_value = []
         model2.sharded_state_dict.return_value = {"weight2": torch.randn(5, 5)}
         return [model1, model2]
@@ -4621,7 +4687,7 @@ class TestMegatronLMCompatibility:
         mock_cfg.checkpoint.load_rng = False  # Skip RNG loading for this test
         mock_cfg.checkpoint.ckpt_format = "torch_dist"  # Set format explicitly
         mock_cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu = True
-        mock_cfg.model = Mock()
+        mock_cfg.model = _checkpoint_model_mock(config=SimpleNamespace())
         mock_cfg.model.fp16 = False
         mock_cfg.model.bf16 = False
         mock_cfg.model.tensor_model_parallel_size = 2  # Should match checkpoint
@@ -4637,7 +4703,7 @@ class TestMegatronLMCompatibility:
         mock_state.cfg = mock_cfg
 
         # Create mocks with necessary methods
-        mock_model = Mock()
+        mock_model = _checkpoint_model_mock(config=SimpleNamespace())
         mock_model.parameters.return_value = []
         mock_model.load_state_dict = Mock()
 
@@ -5289,13 +5355,12 @@ class TestFSDPDTensorFunctionality:
     @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
     def test_generate_state_dict_fsdp_dtensor_no_preprocessing(self):
         """Test generate_state_dict does NOT apply FSDP DTensor preprocessing."""
-        from unittest.mock import Mock
 
         from megatron.bridge.training.checkpointing import generate_state_dict
         from megatron.bridge.training.config import CheckpointConfig
 
         # Create mock model
-        mock_model = Mock()
+        mock_model = _checkpoint_model_mock(config=SimpleNamespace())
         mock_model.state_dict_for_save_checkpoint.return_value = {"test_param": torch.tensor([1.0])}
 
         with (
@@ -5329,7 +5394,7 @@ class TestFSDPDTensorFunctionality:
         from megatron.bridge.training.checkpointing import preprocess_fsdp_dtensor_state_dict
 
         # Create mock model and config
-        mock_model = Mock()
+        mock_model = _checkpoint_model_mock(config=SimpleNamespace())
         mock_cfg = Mock()
 
         # Mock model config without swiglu or experts
@@ -5365,7 +5430,7 @@ class TestFSDPDTensorFunctionality:
         raw_state_dict = {"model": {"test_param": torch.tensor([1.0])}}
         preprocessed_state_dict = {"model": {"test_param": torch.tensor([2.0])}}
         cfg = Mock()
-        model = Mock()
+        model = _checkpoint_model_mock(config=SimpleNamespace())
         writer = Mock()
         save_result = object()
 
@@ -5398,12 +5463,11 @@ class TestFSDPDTensorFunctionality:
 
     def test_generate_state_dict_torch_dist_no_preprocessing(self):
         """Test generate_state_dict skips FSDP preprocessing for torch_dist."""
-        from unittest.mock import Mock
 
         from megatron.bridge.training.checkpointing import generate_state_dict
         from megatron.bridge.training.config import CheckpointConfig
 
-        mock_model = Mock()
+        mock_model = _checkpoint_model_mock(config=SimpleNamespace())
         mock_model.sharded_state_dict.return_value = {"test_param": torch.tensor([1.0])}
 
         with (
@@ -5437,7 +5501,7 @@ class TestFSDPDTensorFunctionality:
         from megatron.bridge.training.checkpointing import generate_state_dict
         from megatron.bridge.training.config import CheckpointConfig
 
-        mock_model = Mock()
+        mock_model = _checkpoint_model_mock(config=SimpleNamespace())
         mock_model.sharded_state_dict.return_value = {"test_param": torch.tensor([1.0])}
         mock_optimizer = Mock()
         mock_optimizer.is_stub_optimizer = False
@@ -5482,7 +5546,7 @@ class TestFSDPDTensorFunctionality:
         """Load-time RNG scaffolding should not depend on save_rng."""
         from megatron.bridge.training.checkpointing import generate_state_dict
 
-        mock_model = Mock()
+        mock_model = _checkpoint_model_mock(config=SimpleNamespace())
         mock_model.sharded_state_dict.return_value = {"test_param": torch.tensor([1.0])}
         mock_model.state_dict_for_save_checkpoint.return_value = {"test_param": torch.tensor([1.0])}
         mock_rng_state = Mock() if has_rng_scaffold else None
@@ -5637,7 +5701,7 @@ class TestLoadCheckpointFromPathDirectIterDir:
         mock_reader_instance.read_metadata.return_value = mock_metadata
         mock_reader.return_value = mock_reader_instance
 
-        mock_model = Mock()
+        mock_model = _checkpoint_model_mock(config=SimpleNamespace())
         mock_unwrap.return_value = [mock_model]
         mock_pg = Mock()
         mock_pg.gtp_remat = None
@@ -5719,7 +5783,7 @@ class TestLoadCheckpointFromPathDirectIterDir:
         mock_reader_instance.read_metadata.return_value = mock_metadata
         mock_reader.return_value = mock_reader_instance
 
-        mock_model = Mock()
+        mock_model = _checkpoint_model_mock(config=SimpleNamespace())
         mock_unwrap.return_value = [mock_model]
         mock_pg = Mock()
         mock_pg.gtp_remat = None
@@ -5785,7 +5849,7 @@ class TestLoadCheckpointFromPathDirectIterDir:
         mock_reader_instance.read_metadata.return_value = mock_metadata
         mock_reader.return_value = mock_reader_instance
 
-        mock_model = Mock()
+        mock_model = _checkpoint_model_mock(config=SimpleNamespace())
         mock_unwrap.return_value = [mock_model]
         mock_pg = Mock()
         mock_pg.gtp_remat = None
@@ -5843,7 +5907,7 @@ class TestCheckpointManager:
     def test_checkpoint_save_context_creation(self):
         """Test CheckpointSaveContext dataclass can be created with required fields."""
         mock_state = Mock(spec=GlobalState)
-        mock_model = [Mock()]
+        mock_model = [_checkpoint_model_mock(config=SimpleNamespace())]
         mock_optimizer = Mock()
         mock_scheduler = Mock()
 
@@ -5884,7 +5948,7 @@ class TestCheckpointManager:
     def test_checkpoint_load_context_creation(self):
         """Test CheckpointLoadContext dataclass can be created with required fields."""
         mock_state = Mock(spec=GlobalState)
-        mock_model = [Mock()]
+        mock_model = [_checkpoint_model_mock(config=SimpleNamespace())]
         mock_optimizer = Mock()
         mock_scheduler = Mock()
 
@@ -6030,7 +6094,7 @@ class TestCheckpointManager:
         """Test DefaultCheckpointManager.save() delegates to save_checkpoint."""
         config = CheckpointConfig()
         mock_state = Mock(spec=GlobalState)
-        mock_model = [Mock()]
+        mock_model = [_checkpoint_model_mock(config=SimpleNamespace())]
         mock_optimizer = Mock()
         mock_scheduler = Mock()
 
@@ -6070,7 +6134,7 @@ class TestCheckpointManager:
         """Test DefaultCheckpointManager.load() delegates to load_checkpoint."""
         config = CheckpointConfig()
         mock_state = Mock(spec=GlobalState)
-        mock_model = [Mock()]
+        mock_model = [_checkpoint_model_mock(config=SimpleNamespace())]
         mock_optimizer = Mock()
         mock_scheduler = Mock()
 
@@ -6277,7 +6341,7 @@ class TestLayerWiseOptimizerCheckpointing:
             pass
 
         cfg = save_checkpoint_fixtures["mock_cfg"]
-        cfg.model = Mock()
+        cfg.model = _checkpoint_model_mock(config=SimpleNamespace())
         cfg.checkpoint.non_persistent_ckpt_type = "local"
         cfg.checkpoint.save_rng = False
 

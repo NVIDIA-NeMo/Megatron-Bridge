@@ -397,7 +397,7 @@ def _permute_rope_rows(weight: torch.Tensor, *, block: int, offset: int, perm: t
 def _glu_interleave(weight: torch.Tensor, size: int) -> torch.Tensor:
     """``[gate; up]`` rows to Megatron-Core's block-interleaved ``[g_0:k, u_0:k, g_k:2k, u_k:2k, ...]``.
 
-    Same layout as the GLU interleave of Bridge's checkpoint loader (``_interleave_glu_tensor``) and
+    Same layout as the GLU interleave of Core's GLU checkpoint factory and
     the one ``TEGroupedMLP._remove_glu_interleaving`` undoes on the fc1 output.
     """
     rows = weight.shape[0]

@@ -25,6 +25,7 @@ import torch
 import torch.distributed
 import torch.nn as nn
 from megatron.core import mpu
+from megatron.core.dist_checkpointing.glu import permute_glu_rows
 from megatron.core.fp8_utils import FP8_TENSOR_CLASS, HAVE_TE_FP8_TENSOR_CLASS
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -3209,7 +3210,9 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         """Split gate and up separately, then concatenate corresponding shards."""
         # For single TP, just concatenate and return
         if self.tp_size == 1:
-            return torch.cat([hf_weights["gate"], hf_weights["up"]], dim=0)
+            tensor = torch.cat([hf_weights["gate"], hf_weights["up"]], dim=0)
+            size = getattr(megatron_module, "_glu_interleave_size", None)
+            return permute_glu_rows(tensor, size, interleave=True) if isinstance(size, int) else tensor
 
         # Get target parameter info from megatron module
         # Some parameters are named with global expert number, e.g. experts.weight15,
@@ -3248,12 +3251,9 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         else:
             output_shape = _get_mapping_shape(target_param)
         # Scatter the concatenated shards to each rank
-        return self.scatter_to_tp_ranks(
-            splits,
-            output_shape,
-            target_param.dtype,
-            target_param.device,
-        )
+        tensor = self.scatter_to_tp_ranks(splits, output_shape, target_param.dtype, target_param.device)
+        size = getattr(megatron_module, "_glu_interleave_size", None)
+        return permute_glu_rows(tensor, size, interleave=True) if isinstance(size, int) else tensor
 
     def megatron_to_hf(
         self,
@@ -3261,6 +3261,10 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         megatron_module: Optional[nn.Module],
     ) -> Dict[str, torch.Tensor]:
         """Gather concatenated shards and split into gate and up."""
+        # Convert on the owning rank before broadcast, gathering and projection splitting.
+        size = getattr(megatron_module, "_glu_interleave_size", None)
+        if megatron_weights is not None and isinstance(size, int):
+            megatron_weights = permute_glu_rows(megatron_weights, size, interleave=False)
         # Handle cross-PP broadcast first
         megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
 
@@ -3320,6 +3324,9 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         if megatron_weights is not None:
             megatron_weights = self.maybe_dequantize(megatron_weights)
+            size = getattr(megatron_module, "_glu_interleave_size", None)
+            if isinstance(size, int):
+                megatron_weights = permute_glu_rows(megatron_weights, size, interleave=False)
 
             assert quant_block_size is not None, "quant_block_size must be provided for quantization"
 
