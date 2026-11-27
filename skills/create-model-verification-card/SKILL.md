@@ -54,8 +54,17 @@ runtime changes. Items that are not verified must not carry a commit override.
 
 ### 2. Create the core inventory and add performance when available
 
-Include these twelve required items, even when their status is `unsupported` or
-`not_applicable`:
+Cards default to `verification_scope: full` (the field may be omitted).
+When the requested scope is only conversion, set `verification_scope: import_export`.
+This scope requires exactly the four CPU/GPU import/export items and only the
+`verification_index.model_level` index. Omit inference, training, performance
+items and their indexes. Conversion-only cards do not need a performance
+disclaimer. All conversion evidence, privacy and status requirements still apply.
+For a card with no verified items, label `verification_environment` as the target
+for pending verification; it must not be presented as a completed run.
+
+For the default full scope, include these twelve required items, even when their
+status is `unsupported` or `not_applicable`:
 
 1. CPU HF-to-Megatron conversion
 2. GPU HF-to-Megatron conversion
@@ -925,7 +934,7 @@ entry in the generator's `MODEL_PAGE_PATHS` table.
 
 ## Completion checklist
 
-- Keep all twelve core inventory items and use only the four statuses. Include
+- Keep the inventory required by `verification_scope` and use only the four statuses. Include
   `pretrain_performance` only when the exact variant has a canonical public
   performance recipe, and `pretrain_fsdp` only when an exact FSDP performance
   recipe has a completed standalone verification run. Use precision-keyed

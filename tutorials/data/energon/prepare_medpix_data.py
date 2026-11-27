@@ -82,6 +82,11 @@ def _write_split(output_dir: Path, split: str, rows: list[dict]) -> None:
             )
 
 
+def _row_count(value: str) -> int | None:
+    """Parse a CLI row count, mapping ``all`` to the whole split."""
+    return None if value == "all" else int(value)
+
+
 def _run_energon_prepare(output_dir: Path, *, num_workers: int) -> None:
     prepare_webdataset(
         output_dir,
@@ -93,8 +98,9 @@ def _run_energon_prepare(output_dir: Path, *, num_workers: int) -> None:
 def prepare_medpix_data(
     output_dir: Path,
     *,
-    train_rows: int = 16,
-    validation_rows: int = 8,
+    train_rows: int | None = 16,
+    validation_rows: int | None = 8,
+    revision: str | None = None,
     run_prepare: bool = True,
     num_workers: int = 2,
 ) -> None:
@@ -102,8 +108,9 @@ def prepare_medpix_data(
 
     Args:
         output_dir: Directory that will contain the tar shards and Energon metadata.
-        train_rows: Number of rows selected from the beginning of the training split.
-        validation_rows: Number of rows selected from the beginning of the validation split.
+        train_rows: Number of rows selected from the beginning of the training split, or None for all rows.
+        validation_rows: Number of rows selected from the beginning of the validation split, or None for all rows.
+        revision: Hugging Face dataset revision to load, or None for the default branch.
         run_prepare: Whether to index the shards after writing them.
         num_workers: Worker count passed to Energon's preparation API.
 
@@ -111,14 +118,14 @@ def prepare_medpix_data(
         ValueError: If either requested row count is not positive.
         TypeError: If a MedPix ``image_id`` value does not decode as a PIL image.
     """
-    if train_rows <= 0 or validation_rows <= 0:
+    if (train_rows is not None and train_rows <= 0) or (validation_rows is not None and validation_rows <= 0):
         raise ValueError("train_rows and validation_rows must be greater than zero.")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    train_split = f"train[:{train_rows}]"
-    validation_split = f"validation[:{validation_rows}]"
-    train_examples = list(load_dataset(DATASET_ID, split=train_split))
-    validation_examples = list(load_dataset(DATASET_ID, split=validation_split))
+    train_split = "train" if train_rows is None else f"train[:{train_rows}]"
+    validation_split = "validation" if validation_rows is None else f"validation[:{validation_rows}]"
+    train_examples = list(load_dataset(DATASET_ID, split=train_split, revision=revision))
+    validation_examples = list(load_dataset(DATASET_ID, split=validation_split, revision=revision))
     _write_split(output_dir, "train", train_examples)
     _write_split(output_dir, "val", validation_examples)
 
@@ -148,8 +155,11 @@ def main() -> None:
     """Parse command-line arguments and prepare the MedPix dataset."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--train-rows", type=int, default=16)
-    parser.add_argument("--validation-rows", type=int, default=8)
+    parser.add_argument("--train-rows", type=_row_count, default=16, help="Row count, or 'all' for the whole split.")
+    parser.add_argument(
+        "--validation-rows", type=_row_count, default=8, help="Row count, or 'all' for the whole split."
+    )
+    parser.add_argument("--revision", default=None, help="Hugging Face dataset revision to load.")
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--skip-prepare", action="store_true", help="Write raw shards without Energon indexes.")
     args = parser.parse_args()
@@ -158,6 +168,7 @@ def main() -> None:
         args.output_dir,
         train_rows=args.train_rows,
         validation_rows=args.validation_rows,
+        revision=args.revision,
         run_prepare=not args.skip_prepare,
         num_workers=args.num_workers,
     )

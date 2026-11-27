@@ -185,6 +185,18 @@ def test_bootstrap_one_gpu_per_rank_only_for_ncclep(monkeypatch, backend):
     assert bootstrap.os.environ["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
 
 
+def test_bootstrap_one_gpu_per_rank_skips_moe_megakernel(monkeypatch):
+    # The megakernel owns dispatch/combine; its symmetric-memory buffers need each rank's own device index.
+    recipe = SimpleNamespace(model=SimpleNamespace(moe_flex_dispatcher_backend="ncclep", moe_megakernel_backend="mok"))
+    monkeypatch.setenv("LOCAL_RANK", "2")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+
+    bootstrap._apply_one_gpu_per_rank(recipe)
+
+    assert not bootstrap.uses_ncclep(recipe)
+    assert bootstrap.os.environ["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
+
+
 def test_compatibility_overrides_preserve_legacy_manual_gc_defaults():
     from utils.overrides import _set_common_perf_overrides
 

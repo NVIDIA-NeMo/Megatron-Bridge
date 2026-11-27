@@ -1,6 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for MegatronMIMO Model Provider."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -275,7 +276,7 @@ class TestMegatronMIMOProvider:
     @patch("torch.distributed.get_rank")
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
     def test_build_infra_is_idempotent(self, mock_build_grids, mock_get_rank, mock_get_pg_ranks, mock_new_group):
-        """Test build_infra() can be called multiple times."""
+        """Repeated build_infra() calls return one infra and create its process groups once."""
         mock_get_rank.return_value = 0
         mock_get_pg_ranks.return_value = [0, 1]
         mock_new_group.return_value = MagicMock()
@@ -291,6 +292,7 @@ class TestMegatronMIMOProvider:
         mock_grid.rank_offset = 0
         mock_grid.size = 2
         mock_grid.get_pg.return_value = MagicMock()
+        mock_grid.get_rank_enum.return_value = [[0, 1]]
         mock_build_grids.return_value = {"language": mock_grid}
 
         provider = MegatronMIMOProvider(
@@ -302,8 +304,208 @@ class TestMegatronMIMOProvider:
         infra1 = provider.build_infra()
         infra2 = provider.build_infra()
 
-        # Should return equivalent results (not cached, but same structure)
-        assert infra1.participating_modules == infra2.participating_modules
+        # The second call reuses the first call's process groups instead of creating new ones.
+        assert infra2.module_to_grid_map["language"] is infra1.module_to_grid_map["language"]
+        assert infra2.pg_collections["language"] is infra1.pg_collections["language"]
+        mock_build_grids.assert_called_once_with(megatron_mimo_parallelism_config)
+        assert mock_new_group.call_count == 2  # position and word embedding groups of the one PP group
+
+    @patch("torch.distributed.new_group")
+    @patch("torch.distributed.get_process_group_ranks")
+    @patch("torch.distributed.get_rank")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.MimoModel")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
+    def test_provide_reuses_infra_from_build_infra(
+        self, mock_build_grids, mock_mimo_model, mock_get_rank, mock_get_pg_ranks, mock_new_group
+    ):
+        """provide() injects the process groups build_infra() already created instead of creating more."""
+        mock_get_rank.return_value = 0
+        mock_get_pg_ranks.return_value = [0, 1]
+        mock_new_group.side_effect = lambda **kwargs: MagicMock()
+        megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=1, rank_offset=0),
+            },
+        )
+        mock_grid = MagicMock()
+        mock_grid.rank_offset = 0
+        mock_grid.get_pg.side_effect = lambda dims, *, view=None: MagicMock(name=f"{view}:{dims}")
+        mock_grid.get_rank_enum.return_value = [[0, 1]]
+        mock_build_grids.return_value = {"language": mock_grid}
+        provider = MegatronMIMOProvider(
+            language_model_spec=ModuleSpec(module=Mock, params={"config": Mock()}),
+            megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
+        )
+
+        infra = provider.build_infra()
+        provider.provide()
+
+        mock_build_grids.assert_called_once_with(megatron_mimo_parallelism_config)
+        assert mock_new_group.call_count == 2
+        mimo_config = mock_mimo_model.call_args[0][0]
+        assert mimo_config.module_to_grid_map["language"] is infra.module_to_grid_map["language"]
+        assert mimo_config.language_model_spec.params["pg_collection"] is infra.pg_collections["language"]
+        assert provider.build_infra().pg_collections["language"] is infra.pg_collections["language"]
+
+    @patch("torch.distributed.new_group")
+    @patch("torch.distributed.get_process_group_ranks")
+    @patch("torch.distributed.get_rank")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
+    def test_build_infra_rebuilds_for_new_parallelism_config(
+        self, mock_build_grids, mock_get_rank, mock_get_pg_ranks, mock_new_group
+    ):
+        """Replacing the parallelism config builds new process groups for it."""
+        mock_get_rank.return_value = 0
+        mock_get_pg_ranks.return_value = [0, 1]
+        mock_new_group.return_value = MagicMock()
+        mock_grid = MagicMock()
+        mock_grid.rank_offset = 0
+        mock_grid.get_pg.return_value = MagicMock()
+        mock_build_grids.return_value = {"language": mock_grid}
+
+        def parallelism_config():
+            return MegatronMIMOParallelismConfig(
+                module_parallelisms={
+                    "language": ModuleParallelismConfig(
+                        tensor_model_parallel_size=2, data_parallel_size=1, rank_offset=0
+                    ),
+                },
+            )
+
+        provider = MegatronMIMOProvider(
+            language_model_spec=ModuleSpec(module=Mock, params={"config": Mock()}),
+            megatron_mimo_parallelism_config=parallelism_config(),
+        )
+        infra1 = provider.build_infra()
+        new_config = parallelism_config()
+        provider.megatron_mimo_parallelism_config = new_config
+        infra2 = provider.build_infra()
+
+        assert infra2.pg_collections["language"] is not infra1.pg_collections["language"]
+        assert mock_build_grids.call_count == 2
+        mock_build_grids.assert_called_with(new_config)
+        assert provider.build_infra().pg_collections["language"] is infra2.pg_collections["language"]
+
+    @patch("torch.distributed.new_group")
+    @patch("torch.distributed.get_process_group_ranks")
+    @patch("torch.distributed.get_rank")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
+    def test_build_infra_recomputes_topology_but_reuses_process_groups(
+        self, mock_build_grids, mock_get_rank, mock_get_pg_ranks, mock_new_group
+    ):
+        """Fields other than the process groups reflect the provider at each call."""
+        mock_get_rank.return_value = 0
+        mock_get_pg_ranks.return_value = [0, 1]
+        mock_new_group.return_value = MagicMock()
+        mock_grid = MagicMock()
+        mock_grid.rank_offset = 0
+        mock_grid.get_pg.return_value = MagicMock()
+        mock_build_grids.return_value = {"language": mock_grid}
+        provider = MegatronMIMOProvider(
+            language_model_spec=ModuleSpec(module=Mock, params={"config": Mock()}),
+            megatron_mimo_parallelism_config=MegatronMIMOParallelismConfig(
+                module_parallelisms={"language": ModuleParallelismConfig(tensor_model_parallel_size=2)},
+            ),
+        )
+
+        infra1 = provider.build_infra()
+        provider.topology = {"language": ["generator"]}
+        provider.module_output_ndim = {"language": 2}
+        infra2 = provider.build_infra()
+
+        assert infra1.topology == {"language": []}
+        assert infra2.topology == {"language": ["generator"]}
+        assert infra1.module_output_ndim == {"language": 3}
+        assert infra2.module_output_ndim == {"language": 2}
+        assert infra2.pg_collections["language"] is infra1.pg_collections["language"]
+        mock_build_grids.assert_called_once()
+
+    @patch("torch.distributed.new_group")
+    @patch("torch.distributed.get_process_group_ranks")
+    @patch("torch.distributed.get_rank")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
+    def test_build_infra_rebuilds_after_default_process_group_changes(
+        self, mock_build_grids, mock_get_rank, mock_get_pg_ranks, mock_new_group
+    ):
+        """Process groups of a destroyed default group are not reused after torch.distributed is re-initialized."""
+        mock_get_rank.return_value = 0
+        mock_get_pg_ranks.return_value = [0, 1]
+        mock_new_group.return_value = MagicMock()
+        mock_grid = MagicMock()
+        mock_grid.rank_offset = 0
+        mock_grid.get_pg.return_value = MagicMock()
+        mock_build_grids.return_value = {"language": mock_grid}
+        provider = MegatronMIMOProvider(
+            language_model_spec=ModuleSpec(module=Mock, params={"config": Mock()}),
+            megatron_mimo_parallelism_config=MegatronMIMOParallelismConfig(
+                module_parallelisms={"language": ModuleParallelismConfig(tensor_model_parallel_size=2)},
+            ),
+        )
+
+        with patch("torch.distributed.group", SimpleNamespace(WORLD=object())):
+            infra1 = provider.build_infra()
+        with patch("torch.distributed.group", SimpleNamespace(WORLD=object())):
+            infra2 = provider.build_infra()
+
+        assert mock_build_grids.call_count == 2
+        assert infra2.pg_collections["language"] is not infra1.pg_collections["language"]
+
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_builder._lazy_nccl_pg_options", return_value=None)
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.wrap_megatron_mimo_model_distributed")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.get_model_config")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.MimoModel")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
+    @patch("torch.distributed.new_group")
+    @patch("torch.distributed.get_process_group_ranks")
+    @patch("torch.distributed.get_rank")
+    @patch("torch.distributed.get_world_size")
+    @patch("torch.distributed.is_initialized")
+    def test_provide_distributed_model_shares_process_groups_with_build_infra(
+        self,
+        mock_is_initialized,
+        mock_get_world_size,
+        mock_get_rank,
+        mock_get_pg_ranks,
+        mock_new_group,
+        mock_build_grids,
+        mock_mimo_model,
+        mock_get_model_config,
+        mock_wrap_ddp,
+        _mock_lazy_options,
+    ):
+        """build_infra() -> provide_distributed_model() -> provide() creates one set of groups for model and DDP."""
+        mock_is_initialized.return_value = True
+        mock_get_world_size.return_value = 2
+        mock_get_rank.return_value = 0
+        mock_get_pg_ranks.return_value = [0, 1]
+        mock_new_group.side_effect = lambda **kwargs: MagicMock()
+        mock_grid = MagicMock()
+        mock_grid.rank_offset = 0
+        mock_grid.get_pg.side_effect = lambda dims, *, view=None: MagicMock(name=f"{view}:{dims}")
+        mock_grid.get_rank_enum.return_value = [[0, 1]]
+        mock_build_grids.return_value = {"language": mock_grid}
+        mock_get_model_config.return_value = MagicMock()
+        mock_wrap_ddp.side_effect = lambda megatron_mimo_model, **kwargs: megatron_mimo_model
+        provider = MegatronMIMOProvider(
+            language_model_spec=ModuleSpec(module=Mock, params={"config": Mock()}),
+            megatron_mimo_parallelism_config=MegatronMIMOParallelismConfig(
+                module_parallelisms={
+                    "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=1),
+                },
+            ),
+            bf16=False,
+        )
+
+        infra = provider.build_infra()
+        provider.provide_distributed_model(ddp_config=MagicMock(), use_cpu_initialization=True)
+
+        mock_build_grids.assert_called_once()
+        assert mock_new_group.call_count == 2
+        ddp_kwargs = mock_wrap_ddp.call_args.kwargs
+        assert ddp_kwargs["grids"]["language"] is mock_grid
+        assert ddp_kwargs["pg_collections"]["language"] is infra.pg_collections["language"]
+        mimo_config = mock_mimo_model.call_args[0][0]
+        assert mimo_config.language_model_spec.params["pg_collection"] is infra.pg_collections["language"]
 
     @patch("torch.distributed.new_group")
     @patch("torch.distributed.get_process_group_ranks")

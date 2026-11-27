@@ -2609,8 +2609,8 @@ class TestGLMSplitHybridFlopsConfigIsolation:
 class TestKimiK3KdaFlops:
     """Tests for Kimi K3's KDA (Kimi Delta Attention) hybrid attention schedule.
 
-    The K3 provider subclasses ``MLAModelProvider``, so the MLA branch costs every
-    layer as full multi-latent attention. Layers listed in ``kimi_kda_layers`` are
+    The logical-block MLA estimator initially costs every block as full
+    multi-latent attention. Layers listed in ``kimi_kda_layers`` are
     linear-attention blocks and must be re-costed with the KDA per-layer formula.
     """
 
@@ -2662,6 +2662,37 @@ class TestKimiK3KdaFlops:
         )
         defaults.update(overrides)
         return defaults
+
+    @pytest.mark.parametrize("num_blocks", [6, 24, 93])
+    @pytest.mark.parametrize("partitioned", [False, True])
+    def test_split_hybrid_matches_logical_block_flops(self, num_blocks, partitioned):
+        kda = tuple(i + 1 for i in range(num_blocks) if i % 4 != 3)
+        moe = [int(i > 0) for i in range(num_blocks)]
+        pattern = "".join(("K" if i + 1 in kda else "+") + ("E" if moe[i] else "-") for i in range(num_blocks))
+        if partitioned:
+            split = 2 * (num_blocks // 2)
+            pattern = pattern[:split] + "|" + pattern[split:]
+        kwargs = self._base_kwargs(
+            num_layers=num_blocks,
+            seq_length=8192,
+            kimi_kda_layers=kda,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=128,
+            moe_layer_freq=moe,
+        )
+        logical = MockConfigContainer(model=MockModelConfig(**kwargs))
+        split = MockConfigContainer(model=MockModelConfig(**{**kwargs, "num_layers": 2 * num_blocks}))
+        split.model.hybrid_layer_pattern = pattern
+        split.model.is_hybrid_model = True
+        # Derive both schedules from the actual pattern, including proxy overrides.
+        split.model.kimi_kda_layers = ()
+        split.model.moe_layer_freq = 1
+        expected = num_floating_point_operations(logical, batch_size=2)
+        assert num_floating_point_operations(split, batch_size=2) == expected
+        assert split.model.num_layers == 2 * num_blocks
+        assert split.model.kimi_kda_layers == ()
+        assert split.model.moe_layer_freq == 1
 
     def test_kda_layers_change_flops(self):
         """Marking layers as KDA must not leave the pure-MLA total unchanged."""

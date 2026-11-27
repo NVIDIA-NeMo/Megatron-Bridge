@@ -756,7 +756,8 @@ def _model_explorer(entries: list[dict[str, object]], *, heading_level: int = 2,
         {str(entry["hardware"]) for entry in focused_entries if entry.get("hardware") not in (None, "all")},
         key=lambda hardware: (hardware_order.get(hardware, len(hardware_order)), hardware),
     )
-    for index, (capability_id, label, _) in enumerate(CAPABILITY_TABS):
+    tabs = CAPABILITY_TABS[:1] if available_capabilities == {"import-export"} else CAPABILITY_TABS
+    for index, (capability_id, label, _) in enumerate(tabs):
         selected = "true" if index == 0 else "false"
         disabled = " disabled" if capability_id not in available_capabilities else ""
         lines.append(

@@ -43,6 +43,11 @@ RL_INTEGRATION_DOCS = (
     REPO_ROOT / "docs" / "fern" / "versions" / "0.4.2" / "pages" / "bridge-rl-integration.mdx",
 )
 MODEL_PROVIDER = REPO_ROOT / "src" / "megatron" / "bridge" / "models" / "model_provider.py"
+AUTO_BRIDGE = REPO_ROOT / "src" / "megatron" / "bridge" / "models" / "conversion" / "auto_bridge.py"
+MODELOPT_QUANTIZATION_DOCS = (
+    REPO_ROOT / "docs" / "modelopt" / "quantization.md",
+    REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "modelopt" / "quantization.mdx",
+)
 GEMMA3_VL_README = REPO_ROOT / "examples" / "models" / "gemma" / "gemma3_vl" / "README.md"
 GEMMA3_VL_RECIPES = RECIPES_DIR / "gemma3_vl" / "gemma3_vl.py"
 GEMMA3_DOCS = REPO_ROOT / "docs" / "models" / "gemma" / "gemma3.md"
@@ -721,6 +726,41 @@ def test_megatron_bert_readme_saves_a_bert_tokenizer():
     assert all(re.fullmatch(r"BertTokenizer(Fast)?", name) for name in loaders), (
         f"non-BERT tokenizer loaders: {loaders}"
     )
+
+
+def test_modelopt_export_examples_use_accepted_keywords():
+    """Quantization docs must call export_hf_weights_modelopt only with keywords its signature accepts."""
+    tree = ast.parse(_read(AUTO_BRIDGE), filename=str(AUTO_BRIDGE))
+    export_def = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "export_hf_weights_modelopt"
+    )
+    accepted = {arg.arg for arg in (*export_def.args.args, *export_def.args.kwonlyargs)} - {"self"}
+
+    invalid: dict[str, list[tuple[int, list[str]]]] = {}
+    for path in MODELOPT_QUANTIZATION_DOCS:
+        text = _read(path)
+        calls = 0
+        for match in re.finditer(r"```python\n(?P<code>.*?)```", text, re.DOTALL):
+            code = match.group("code")
+            if "export_hf_weights_modelopt(" not in code:
+                continue
+            for node in ast.walk(ast.parse(code, filename=str(path))):
+                if not isinstance(node, ast.Call) or getattr(node.func, "attr", None) != "export_hf_weights_modelopt":
+                    continue
+                calls += 1
+                unknown = sorted({keyword.arg for keyword in node.keywords if keyword.arg} - accepted)
+                if unknown:
+                    source_line = text.count("\n", 0, match.start("code")) + node.lineno
+                    invalid.setdefault(str(path.relative_to(REPO_ROOT)), []).append((source_line, unknown))
+        assert calls, f"no export_hf_weights_modelopt example found in {path}"
+
+    assert not invalid, f"export_hf_weights_modelopt examples pass unsupported keywords: {invalid}"
+    stale = [
+        str(path.relative_to(REPO_ROOT)) for path in MODELOPT_QUANTIZATION_DOCS if "ignore_patterns" in _read(path)
+    ]
+    assert not stale, f"docs still describe the removed ignore_patterns argument: {stale}"
 
 
 if __name__ == "__main__":
