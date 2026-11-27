@@ -77,6 +77,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
 DEFAULT_CONFIG_FILENAME: str = "llama32_3b-1b_distill_override_example.yaml"
 DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
+STUDENT_HF_MODEL_ID: str = "meta-llama/Llama-3.2-1B"
 
 
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
@@ -126,7 +127,9 @@ def main() -> None:
     # The recipe functions do not accept a load_weights argument; use AutoBridge
     # directly to create providers that load HuggingFace weights.
     cfg: ConfigContainer = llama32_1b_pretrain_config()
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(load_weights=True)
+    cfg.model = AutoBridge.from_hf_pretrained(STUDENT_HF_MODEL_ID).to_megatron_provider(load_weights=True)
+    cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
+    cfg.tokenizer.tokenizer_model = STUDENT_HF_MODEL_ID
     teacher_cfg = llama32_3b_pretrain_config()
     teacher_cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-3B").to_megatron_provider(
         load_weights=True

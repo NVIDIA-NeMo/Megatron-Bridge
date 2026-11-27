@@ -5,6 +5,8 @@ vision-language model with a roughly 2B-parameter vision encoder and a 28B-param
 decoder. Megatron Bridge models the complete checkpoint: the vision tower, adapter,
 projection, and text decoder all participate in checkpoint conversion.
 
+For the example scripts, see the [Muse Glimmer examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/muse_glimmer/README.md).
+
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
 ## Verified configurations

@@ -484,6 +484,8 @@ class TestNemotron3Super16GpuH100:
         assert config.ddp.average_in_collective is False
         assert config.ddp.overlap_grad_reduce is False
         assert config.ddp.overlap_param_gather is False
+        # On a cold start, stage 0 waits about 11 minutes for its first backward.
+        assert config.dist.distributed_timeout_minutes == 30
 
 
 @pytest.mark.unit

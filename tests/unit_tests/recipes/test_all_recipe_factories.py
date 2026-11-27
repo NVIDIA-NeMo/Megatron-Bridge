@@ -17,11 +17,12 @@
 import importlib
 import inspect
 from collections.abc import Callable
+from dataclasses import fields
 
 import pytest
 
 from megatron.bridge.recipes.common import _pretrain_common
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, OptimizerConfig
 from tests.unit_tests.recipes.recipe_test_utils import (
     assert_ncclep_bounds_packed_tokens,
     discover_recipe_factories,
@@ -48,6 +49,18 @@ _UNSUPPORTED_FACTORY_KEYS = {
 _RUNNABLE_RECIPE_FACTORIES = tuple(
     factory for factory in _RECIPE_FACTORIES if recipe_factory_key(factory) not in _UNSUPPORTED_FACTORY_KEYS
 )
+_HAS_CHUNKED_ADAM_OFFLOAD = "chunked_optimizer_state_offload" in {field.name for field in fields(OptimizerConfig)}
+_RUNNABLE_RECIPE_PARAMS = tuple(
+    pytest.param(
+        factory,
+        id=recipe_factory_id(factory),
+        marks=pytest.mark.skipif(
+            factory.__module__ == "megatron.bridge.recipes.kimi.gb300.kimi_k3" and not _HAS_CHUNKED_ADAM_OFFLOAD,
+            reason="Kimi K3 GB300 library recipe requires the pinned MCore dev configuration.",
+        ),
+    )
+    for factory in _RUNNABLE_RECIPE_FACTORIES
+)
 _UNSUPPORTED_RECIPE_FACTORIES = tuple(
     factory for factory in _RECIPE_FACTORIES if recipe_factory_key(factory) in _UNSUPPORTED_FACTORY_KEYS
 )
@@ -72,7 +85,7 @@ def test_common_pretrain_uses_runtime_tokenizer_vocabulary() -> None:
     assert _pretrain_common().tokenizer.use_tokenizer_vocab_size is True
 
 
-@pytest.mark.parametrize("recipe_factory", _RUNNABLE_RECIPE_FACTORIES, ids=recipe_factory_id)
+@pytest.mark.parametrize("recipe_factory", _RUNNABLE_RECIPE_PARAMS)
 def test_recipe_factory_builds_config(recipe_factory: Callable[..., object]) -> None:
     """Every supported recipe can be called with defaults without GPU or network access."""
     inspect.signature(recipe_factory).bind()
@@ -96,7 +109,7 @@ def test_recipe_factory_builds_config(recipe_factory: Callable[..., object]) -> 
         assert getattr(cfg, section) is not None
 
 
-@pytest.mark.parametrize("recipe_factory", _RUNNABLE_RECIPE_FACTORIES, ids=recipe_factory_id)
+@pytest.mark.parametrize("recipe_factory", _RUNNABLE_RECIPE_PARAMS)
 def test_ncclep_recipe_bounds_packed_tokens(recipe_factory: Callable[..., object]) -> None:
     """NCCL EP sizes its buffers once, so recipes that feed it packed sequences declare the bound."""
     assert_ncclep_bounds_packed_tokens(recipe_factory())

@@ -529,3 +529,84 @@ def test_megatron_fsdp_feature_is_scoped_to_fsdp_item():
 
     assert fsdp_errors == []
     assert pretrain_errors == ["/items/pretrain/GB200/enabled_features/megatron_fsdp: allowed only on pretrain_fsdp"]
+
+
+def _import_export_card():
+    validator = _load_validator()
+    return {
+        "title": "Conversion example",
+        "summary": "CPU/GPU import and export verification only.",
+        "verification_scope": "import_export",
+        "verification_index": {"model_level": {"unverified": list(validator.IMPORT_EXPORT_ITEMS)}},
+        "model": {
+            "hf_id": "example/model",
+            "hf_revision": "a" * 40,
+            "architecture": "ExampleForCausalLM",
+            "min_transformers_version": "4.56.2",
+        },
+        "verification_environment": {"base_container": "nvcr.io/nvidia/nemo:26.10", "bridge_commit": "b" * 40},
+        "items": {
+            name: {
+                "status": "unverified",
+                "precision": "bf16",
+                "command": None,
+                "last_verified": None,
+                "expected_result": "Complete conversion and reload the output.",
+            }
+            for name in validator.IMPORT_EXPORT_ITEMS
+        },
+    }
+
+
+def test_import_export_scope_accepts_four_items_without_training():
+    validator = _load_validator()
+    assert validator._validate_card(_import_export_card(), "", ()) == []
+
+
+def test_default_scope_still_requires_full_inventory():
+    validator = _load_validator()
+    card = _import_export_card()
+    del card["verification_scope"]
+    errors = validator._validate_card(card, "", ())
+    assert any("/items/pretrain: required verification item is missing" in error for error in errors)
+    assert any("/verification_index/training" in error for error in errors)
+
+
+@pytest.mark.parametrize("missing", _load_validator().IMPORT_EXPORT_ITEMS)
+def test_import_export_scope_requires_every_conversion_direction(missing):
+    validator = _load_validator()
+    card = _import_export_card()
+    del card["items"][missing]
+    errors = validator._validate_card(card, "", ())
+    assert f"/items/{missing}: required verification item is missing" in errors
+
+
+def test_import_export_scope_rejects_training_and_index_drift():
+    validator = _load_validator()
+    card = _import_export_card()
+    card["items"]["pretrain"] = {}
+    card["verification_index"]["training"] = {}
+    card["verification_index"]["model_level"] = {"verified": list(validator.IMPORT_EXPORT_ITEMS)}
+    errors = validator._validate_card(card, "", ())
+    assert "/items/pretrain: unknown verification item" in errors
+    assert any("/verification_index/training" in error for error in errors)
+    assert any("detailed items project to unverified" in error for error in errors)
+
+
+@pytest.mark.parametrize("scope", ["conversion", "", None, []])
+def test_invalid_verification_scope_is_rejected(scope):
+    validator = _load_validator()
+    card = _import_export_card()
+    card["verification_scope"] = scope
+    assert "/verification_scope: expected full or import_export" in validator._validate_card(card, "", ())
+
+
+def test_import_export_scope_does_not_relax_verified_evidence_requirements():
+    validator = _load_validator()
+    card = _import_export_card()
+    for item in card["items"].values():
+        item["status"] = "verified"
+    card["verification_index"]["model_level"] = {"verified": list(validator.IMPORT_EXPORT_ITEMS)}
+    errors = validator._validate_card(card, "", ())
+    assert any("/items/hf_to_megatron_gpu/command" in error for error in errors)
+    assert any("/items/megatron_to_hf_gpu/last_verified" in error for error in errors)
