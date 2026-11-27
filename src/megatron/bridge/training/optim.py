@@ -15,21 +15,28 @@
 import logging
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from copy import copy
 from fnmatch import fnmatch
 from types import MethodType
-from typing import Optional, Union, cast
+from typing import Literal, Optional, Union, cast
 
+import megatron.training.optim
 import torch
 from megatron.core.optimizer import (
     MegatronOptimizer,
     OptimizerConfig,
-    get_megatron_optimizer,
     get_mup_config_overrides,
+    merge_config_overrides,
 )
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler, combine_param_group_overrides
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_model_config
+from megatron.training.config.optimizer_config import (
+    OptimizerConfigOverrideHook,
+    OptimizerConfigOverrides,
+    build_optimizer_config_overrides,
+)
 
 from megatron.bridge.training.config import (
     OptimizerConfigOverrideProvider,
@@ -42,6 +49,30 @@ from megatron.bridge.training.utils.optimizer_utils import normalize_optimizer_c
 G_LOGGER = logging.getLogger(__name__)
 
 
+def _resolve_optimizer_config_overrides(
+    context: OptimizerConfigOverrideProviderContext,
+    provider: OptimizerConfigOverrideProvider | None,
+    overrides: OptimizerConfigOverrides | OptimizerConfigOverrideHook | None,
+    mode: Literal["extend", "replace"],
+) -> OptimizerConfigOverrides | None:
+    """Adapt existing complete-policy providers and new contribution mappings."""
+    if mode not in ("extend", "replace"):
+        raise ValueError(f"Unknown optimizer override mode: {mode!r}; use 'extend' or 'replace'.")
+    if overrides is None and mode == "extend":
+        # Existing providers own their standard rules. In particular, None/{} from
+        # a custom provider must not acquire standard rules during adaptation.
+        provider = provider if provider is not None else OptimizerConfigOverrideProvider()
+        resolved = provider.build_config_overrides(context)
+        return merge_config_overrides(resolved) if resolved is not None else None
+    if provider is not None and type(provider) is not OptimizerConfigOverrideProvider:
+        raise ValueError(
+            "Choose either optimizer_config_override_provider or optimizer_config_overrides; "
+            "custom providers already return a complete policy."
+        )
+    model_chunks = context.model if isinstance(context.model, list) else [context.model]
+    return build_optimizer_config_overrides(context.optimizer_config, model_chunks, overrides, mode=mode)
+
+
 def setup_optimizer(
     optimizer_config: OptimizerConfig,
     scheduler_config: SchedulerConfig,
@@ -49,6 +80,9 @@ def setup_optimizer(
     use_gloo_process_groups: bool = False,
     pg_collection: Optional[ProcessGroupCollection] = None,
     optimizer_config_override_provider: Optional[OptimizerConfigOverrideProvider] = None,
+    *,
+    optimizer_config_overrides: OptimizerConfigOverrides | OptimizerConfigOverrideHook | None = None,
+    optimizer_config_overrides_mode: Literal["extend", "replace"] = "extend",
 ) -> tuple[MegatronOptimizer, OptimizerParamScheduler]:
     """Set up the optimizer and scheduler.
 
@@ -58,6 +92,9 @@ def setup_optimizer(
         model: The model to optimize
         use_gloo_process_groups: Whether to use Gloo process groups
         pg_collection: Optional process group collection for distributed training
+        optimizer_config_override_provider: Existing provider of a complete standard/custom policy.
+        optimizer_config_overrides: Core mapping or callable receiving optimizer_config and a list of model chunks.
+        optimizer_config_overrides_mode: Extend standard rules (default), or explicitly replace them.
 
     Returns:
         tuple containing the optimizer and scheduler
@@ -67,25 +104,29 @@ def setup_optimizer(
         # directly, without ConfigContainer validation.
         normalize_optimizer_config(optimizer_config)
 
-    if optimizer_config_override_provider is None:
-        optimizer_config_override_provider = OptimizerConfigOverrideProvider()
-
-    # Build config overrides for weight decay based on scheduler config and model params
-    config_overrides = optimizer_config_override_provider.build_config_overrides(
-        OptimizerConfigOverrideProviderContext(scheduler_config, optimizer_config, model)
+    config_overrides = _resolve_optimizer_config_overrides(
+        OptimizerConfigOverrideProviderContext(scheduler_config, optimizer_config, model),
+        optimizer_config_override_provider,
+        optimizer_config_overrides,
+        optimizer_config_overrides_mode,
     )
 
     # Apply μP optimizer scaling if enabled on the model config.
     model_chunks = model if isinstance(model, list) else [model]
     model_config = get_model_config(model_chunks[0])
-    if getattr(model_config, "use_mup", False):
+    # The shared builder already composes muP for the new mapping API.
+    if (
+        optimizer_config_overrides is None
+        and optimizer_config_overrides_mode == "extend"
+        and getattr(model_config, "use_mup", False)
+    ):
         mup_overrides = get_mup_config_overrides(
             config=optimizer_config,
             mup_width_mult=model_config.mup_width_mult,
             optimizer_type=optimizer_config.optimizer,
         )
         if mup_overrides:
-            config_overrides = {**(config_overrides or {}), **mup_overrides}
+            config_overrides = merge_config_overrides(config_overrides, mup_overrides)
             G_LOGGER.info(
                 f"μP enabled (width_mult={model_config.mup_width_mult:.4g}): "
                 f"applied {len(mup_overrides)} optimizer param-group override(s)."
@@ -114,25 +155,22 @@ def setup_optimizer(
                 "Set lr_warmup_init=0 or lora_plus_ratio=1."
             )
 
-    if hasattr(optimizer_config, "provide"):
-        optimizer = optimizer_config.provide(
-            model_chunks=model,
-            config_overrides=config_overrides,
-            use_gloo_process_groups=use_gloo_process_groups,
-            pg_collection=pg_collection,
-        )
-    else:
-        optimizer = get_megatron_optimizer(
-            config=optimizer_config,
-            model_chunks=model,
-            config_overrides=config_overrides,
-            use_gloo_process_groups=use_gloo_process_groups,
-            pg_collection=pg_collection,
-        )
-
-    scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
-
-    return optimizer, scheduler
+    # Bridge's existing builder does not apply these inherited MLM-only settings.
+    # Preserve that behavior here; the shared MLM entry point supports them directly.
+    if scheduler_config.step_lr_rescale_schedule or scheduler_config.step_lr_rescale_warmup_samples:
+        G_LOGGER.warning("Bridge ignores step_lr_rescale_schedule and step_lr_rescale_warmup_samples.")
+    scheduler_config = copy(scheduler_config)
+    scheduler_config.step_lr_rescale_schedule = None
+    scheduler_config.step_lr_rescale_warmup_samples = 0
+    return megatron.training.optim.setup_optimizer(
+        optimizer_config,
+        scheduler_config,
+        model,
+        config_overrides=config_overrides,
+        use_gloo_process_groups=use_gloo_process_groups,
+        pg_collection=pg_collection,
+        optimizer_factory=getattr(optimizer_config, "provide", None),
+    )
 
 
 def _optimizer_state_is_fp32_adam(state_dict: Mapping[str, object]) -> bool:
@@ -544,37 +582,3 @@ def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer
             "preserving restored optimizer state when present."
         )
     return synced
-
-
-def _get_scheduler(
-    optimizer_config: OptimizerConfig, scheduler_config: SchedulerConfig, optimizer: MegatronOptimizer
-) -> OptimizerParamScheduler:
-    """Get the optimizer parameter scheduler.
-
-    Args:
-        optimizer_config: Configuration for the optimizer
-        scheduler_config: Configuration for the scheduler
-        optimizer: The optimizer to schedule
-
-    Returns:
-        The optimizer parameter scheduler
-    """
-    scheduler = OptimizerParamScheduler(
-        optimizer,
-        init_lr=scheduler_config.lr_warmup_init,
-        max_lr=optimizer_config.lr,
-        min_lr=optimizer_config.min_lr,
-        lr_warmup_steps=scheduler_config.lr_warmup_steps,
-        lr_decay_steps=scheduler_config.lr_decay_steps,
-        lr_decay_style=scheduler_config.lr_decay_style,
-        start_wd=scheduler_config.start_weight_decay,
-        end_wd=scheduler_config.end_weight_decay,
-        wd_incr_steps=scheduler_config.wd_incr_steps,
-        wd_incr_style=scheduler_config.weight_decay_incr_style,
-        use_checkpoint_opt_param_scheduler=scheduler_config.use_checkpoint_opt_param_scheduler,
-        override_opt_param_scheduler=scheduler_config.override_opt_param_scheduler,
-        wsd_decay_steps=scheduler_config.wsd_decay_steps,
-        lr_wsd_decay_style=scheduler_config.lr_wsd_decay_style,
-    )
-
-    return scheduler

@@ -1301,3 +1301,22 @@ class TestNoneHandling:
         assert omega_conf.optional_int is None
         assert omega_conf.name == "test"
         assert omega_conf.value == 100
+
+
+def test_existing_callable_lora_dataclass_survives_omegaconf_round_trip():
+    from megatron.bridge.peft.lora import LoRA
+
+    @dataclasses.dataclass
+    class Recipe:
+        peft: LoRA
+
+    original = Recipe(peft=LoRA(dim=8, alpha=16))
+    assert callable(original.peft)
+    config, excluded = create_omegaconf_dict_config(original)
+    assert config.peft.dim == 8
+    assert config.peft.alpha == 16
+    assert "root.peft" not in excluded
+    assert original.peft.dim == 8
+    process_config_with_overrides(original, cli_overrides=["peft.dim=4", "peft.alpha=8"])
+    assert isinstance(original.peft, LoRA) and callable(original.peft)
+    assert (original.peft.dim, original.peft.alpha) == (4, 8)

@@ -669,8 +669,8 @@ class TestSetupOptimizerWithPgCollection:
     """Tests for setup_optimizer function with pg_collection parameter."""
 
     @patch("megatron.bridge.training.optim.get_model_config")
-    @patch("megatron.bridge.training.optim.get_megatron_optimizer")
-    @patch("megatron.bridge.training.optim.OptimizerParamScheduler")
+    @patch("megatron.training.optim.get_megatron_optimizer")
+    @patch("megatron.training.optim.OptimizerParamScheduler")
     def test_setup_optimizer_passes_pg_collection_to_get_megatron_optimizer(
         self, mock_scheduler, mock_get_optimizer, mock_get_model_config
     ):
@@ -705,8 +705,8 @@ class TestSetupOptimizerWithPgCollection:
         assert call_kwargs["pg_collection"] == mock_pg_collection
 
     @patch("megatron.bridge.training.optim.get_model_config")
-    @patch("megatron.bridge.training.optim.get_megatron_optimizer")
-    @patch("megatron.bridge.training.optim.OptimizerParamScheduler")
+    @patch("megatron.training.optim.get_megatron_optimizer")
+    @patch("megatron.training.optim.OptimizerParamScheduler")
     def test_setup_optimizer_passes_none_pg_collection_when_not_provided(
         self, mock_scheduler, mock_get_optimizer, mock_get_model_config
     ):
@@ -739,8 +739,8 @@ class TestSetupOptimizerWithPgCollection:
         assert call_kwargs["pg_collection"] is None
 
     @patch("megatron.bridge.training.optim.get_model_config")
-    @patch("megatron.bridge.training.optim.get_megatron_optimizer")
-    @patch("megatron.bridge.training.optim.OptimizerParamScheduler")
+    @patch("megatron.training.optim.get_megatron_optimizer")
+    @patch("megatron.training.optim.OptimizerParamScheduler")
     def test_setup_optimizer_passes_pg_collection_to_muon_optimizer(
         self, mock_scheduler, mock_get_optimizer, mock_get_model_config
     ):
@@ -776,7 +776,7 @@ class TestSetupOptimizerWithPgCollection:
         assert call_kwargs["pg_collection"] == mock_pg_collection
 
     @patch("megatron.bridge.training.optim.get_model_config")
-    @patch("megatron.bridge.training.optim.OptimizerParamScheduler")
+    @patch("megatron.training.optim.OptimizerParamScheduler")
     def test_setup_optimizer_with_optimizer_config_having_provide_method(self, mock_scheduler, mock_get_model_config):
         """Test that setup_optimizer uses the provide method when optimizer_config has one."""
         from megatron.bridge.training.config import SchedulerConfig

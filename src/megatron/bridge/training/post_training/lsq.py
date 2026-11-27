@@ -23,16 +23,17 @@ from dataclasses import dataclass
 
 import modelopt.torch.opt as mto
 import torch
-from megatron.core.optimizer import ParamKey
+from megatron.core.optimizer import OptimizerConfig, ParamKey, merge_config_overrides
 from megatron.core.optimizer_param_scheduler import ParamGroupOverride
 from megatron.core.transformer.module import MegatronModule
+from megatron.post_training.optimizer import LSQ_SCALE_PARAM_NAMES, get_lsq_config_overrides
 
 from megatron.bridge.peft.recompute import maybe_enable_recompute_inputs_grad
 from megatron.bridge.training.config import OptimizerConfigOverrideProvider, OptimizerConfigOverrideProviderContext
 from megatron.bridge.utils.common_utils import print_rank_0, warn_rank_0
 
 
-LSQ_SCALE_PARAM_PATTERNS = ("*_amax_pre", "*_amax_post")
+LSQ_SCALE_PARAM_PATTERNS = LSQ_SCALE_PARAM_NAMES
 """Name patterns (``fnmatch``) of the ModelOpt LSQ scale parameters."""
 
 _LSQ_SCALE_PARAM_KEY = ParamKey(name=LSQ_SCALE_PARAM_PATTERNS)
@@ -152,8 +153,8 @@ def _recompute_needs_input_grad(block: torch.nn.Module) -> bool:
 
 
 @dataclass
-class LSQOptimizerConfigOverrideProvider(OptimizerConfigOverrideProvider):
-    """Put ModelOpt LSQ scale parameters in their own optimizer parameter group.
+class LSQOptimizerConfigOverrides:
+    """Callable scale policy for ``ConfigContainer.optimizer_config_overrides``.
 
     The group follows the base learning-rate schedule with its own peak and minimum learning rate.
     Only settings that differ from the base config are overridden: a scale group identical to the
@@ -170,39 +171,55 @@ class LSQOptimizerConfigOverrideProvider(OptimizerConfigOverrideProvider):
     scale_min_lr: float | None
     scale_wd_mult: float
 
-    def build_config_overrides(
-        self, context: OptimizerConfigOverrideProviderContext
-    ) -> dict[ParamKey, ParamGroupOverride] | None:
-        """Standard overrides plus a parameter group for the LSQ scales.
+    def __call__(
+        self, *, optimizer_config: OptimizerConfig, model: list[MegatronModule]
+    ) -> dict[ParamKey, ParamGroupOverride]:
+        """Validate scale-gradient support and return scale-specific contributions.
 
         Args:
-            context: Scheduler, optimizer, and model context for override construction.
+            optimizer_config: Base optimizer configuration.
+            model: Constructed model chunks.
 
         Returns:
-            Mapping from ``ParamKey`` matchers to per-group optimizer overrides, or ``None``.
+            Scale overrides. Standard rules are composed by the training setup in extend mode.
 
         Raises:
             RuntimeError: If the model has LSQ scales and the installed ModelOpt cannot compute their gradients.
         """
-        config_overrides = super().build_config_overrides(context) or {}
-        optimizer_config = context.optimizer_config
-        scale_override = ParamGroupOverride()
-        if self.scale_lr != optimizer_config.lr:
-            scale_override["max_lr"] = self.scale_lr
-        if self.scale_min_lr is not None and self.scale_min_lr != optimizer_config.min_lr:
-            scale_override["min_lr"] = self.scale_min_lr
-        if self.scale_wd_mult != 1.0:
-            scale_override["wd_mult"] = self.scale_wd_mult
-        if scale_override:
-            config_overrides[_LSQ_SCALE_PARAM_KEY] = scale_override
-
-        model_chunks = context.model if isinstance(context.model, list) else [context.model]
         if any(
             param.requires_grad and _LSQ_SCALE_PARAM_KEY.matches(param, name)
-            for chunk in model_chunks
+            for chunk in model
             for name, param in chunk.named_parameters()
         ):
             _check_modelopt_lsq_gradients()
         else:
             warn_rank_0(f"No trainable LSQ scale parameters {LSQ_SCALE_PARAM_PATTERNS}; quantize with an LSQ recipe.")
-        return config_overrides or None
+        return get_lsq_config_overrides(
+            self.scale_lr,
+            base_lr=optimizer_config.lr,
+            scale_min_lr=self.scale_min_lr,
+            base_min_lr=optimizer_config.min_lr,
+            scale_wd_mult=self.scale_wd_mult,
+        )
+
+
+@dataclass
+class LSQOptimizerConfigOverrideProvider(OptimizerConfigOverrideProvider):
+    """Compatibility wrapper for existing recipes and serialized provider targets.
+
+    New recipes use ``LSQOptimizerConfigOverrides`` with ``optimizer_config_overrides``.
+    """
+
+    scale_lr: float
+    scale_min_lr: float | None
+    scale_wd_mult: float
+
+    def build_config_overrides(
+        self, context: OptimizerConfigOverrideProviderContext
+    ) -> dict[ParamKey, ParamGroupOverride] | None:
+        """Compose the shared scale policy with the legacy provider's standard rules."""
+        scales = LSQOptimizerConfigOverrides(self.scale_lr, self.scale_min_lr, self.scale_wd_mult)(
+            optimizer_config=context.optimizer_config,
+            model=context.model if isinstance(context.model, list) else [context.model],
+        )
+        return merge_config_overrides(super().build_config_overrides(context), scales) or None

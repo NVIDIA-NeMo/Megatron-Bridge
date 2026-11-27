@@ -95,6 +95,8 @@ def _run_setup(
             use_layer_wise_param_layout=True,
         ),
         optimizer_config_override_provider=None,
+        optimizer_config_overrides=None,
+        optimizer_config_overrides_mode="extend",
         peft=None,
         profiling=SimpleNamespace(),
         rng=SimpleNamespace(data_parallel_random_init=False),

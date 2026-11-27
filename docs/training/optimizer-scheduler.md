@@ -22,6 +22,73 @@ The `OptimizerConfig` contains all parameters for the optimization algorithm and
 | `bf16` | `bool` | Use BF16 precision for training |
 | `fp16` | `bool` | Use FP16 precision for training |
 
+## Recipe parameter-group overrides
+
+Use the same Core mapping as MLM, or a callable that receives the constructed
+model and optimizer config:
+
+```python
+from megatron.core.optimizer import ParamKey
+
+cfg.optimizer_config_overrides = {
+    ParamKey(name="*.linear_out.weight"): {"max_lr": 0.001, "min_lr": 0.0001}
+}
+cfg.optimizer_config_overrides_mode = "extend"  # default
+```
+
+For type annotations, import `OptimizerConfigOverrides` and
+`OptimizerConfigOverrideHook` from `megatron.training.config.optimizer_config`.
+This is the shared public import path for MLM and Bridge recipes.
+
+A callable is invoked as `hook(optimizer_config=..., model=...)` after model
+construction and must return a mapping, including an empty one. Use an importable
+function or configured dataclass callable for serialized recipes. Static selector
+mappings use the shared config serializer and existing target allowlist; this
+changes configuration serialization, not optimizer checkpoint data.
+
+Default `extend` mode retains standard weight-decay and decoupled-LR rules.
+Explicit `replace` mode replaces those standard rules, including with an empty
+mapping. Enabled muP rules are composed in either mode. Core's
+`merge_config_overrides` merges equal/disjoint fields on identical selectors;
+conflicts raise, including overlaps detected when constructing actual parameter
+groups. There is no dictionary-order precedence. To change a standard WD rule,
+use replace mode and provide the intended complete mapping.
+
+For LSQ scale learning, use the callable `LSQOptimizerConfigOverrides`:
+
+```python
+from megatron.bridge.training.post_training.lsq import LSQOptimizerConfigOverrides
+
+cfg.optimizer_config_overrides = LSQOptimizerConfigOverrides(
+    scale_lr=3e-5, scale_min_lr=None, scale_wd_mult=0.0
+)
+```
+
+MLM's `get_lsq_config_overrides` owns the scale LR and weight-decay rules; the
+Bridge callable adds the ModelOpt scale-gradient check. With the default extend
+mode, the resulting parameter groups match the old LSQ provider. The old LSQ
+class delegates to the callable and remains loadable from existing configurations.
+The new callable's dataclass settings remain configurable through YAML and CLI overrides, such as
+`optimizer_config_overrides.scale_lr=3e-5`.
+
+The provider API is still used by downstream
+[NeMo RL draft optimizers](https://github.com/NVIDIA-NeMo/RL/blob/d93ba7ddb4b5978a27d7433fd028c42ef766a9bc/nemo_rl/models/megatron/draft/optimizer.py)
+and [BioNeMo Hyena recipes](https://github.com/NVIDIA-BioNeMo/bionemo-recipes/blob/2711f74b13aff333c26031725eae06eedf47ac0f/recipes/evo2_megatron/src/bionemo/evo2/models/evo2_provider.py).
+These integrations must migrate before the provider field and classes can be removed.
+New recipes should use `optimizer_config_overrides`.
+
+Existing `optimizer_config_override_provider` implementations remain supported
+as complete policies. Providers using `super().build_config_overrides()`,
+including LSQ, keep their standard rules; a custom provider returning `None` or
+`{}` retains its previous behavior. LoRA+ warmup constraints remain enforced for
+both APIs. A custom provider and the new mapping/callable cannot be configured
+together. When porting a complete provider mapping to the new API, select replace
+mode; for contributions containing only additions, select extend mode.
+
+The ordinary hook rejects custom MIMO policy, which must be configured in MIMO's
+per-module optimizer factories. This interface requires the companion Core
+mapping-composition and configuration-serialization helpers.
+
 ## Distributed Muon
 
 Use Bridge's `OptimizerConfig` to select Muon and distribute whole parameter tensors:
@@ -178,3 +245,28 @@ These scheduling options control how the weight decay coefficient changes over t
 | **Constant**  | Fixed weight decay throughout training.                                     |
 | **Linear**    | Linear progression from start to end weight decay.                          |
 | **Cosine**    | Cosine progression from start to end weight decay.                          |
+
+## Shared optimizer construction
+
+Bridge's public `setup_optimizer` signature is unchanged. It resolves recipe mappings
+or legacy providers, then delegates optimizer and scheduler construction to
+`megatron.training.optim.setup_optimizer`. This requires a Megatron-LM revision that
+provides the shared helper; upgrade Core before adopting this change.
+
+Configuration validation/finalization stays in `ConfigContainer.validate()`. It is not
+repeated by either setup helper. Custom optimizer configs with a `provide()` method
+remain supported: the bound method receives the same `model_chunks`,
+`config_overrides`, `use_gloo_process_groups`, and `pg_collection` keyword arguments,
+including the original single model or model list. Provider results retain their
+existing `None` versus empty-mapping behavior, and explicit process groups retain
+their identity. Existing six-positional-argument setup calls remain valid.
+
+The shared scheduler builder supports MLM's stepwise LR rescaling fields. Bridge's
+wrapper continues to ignore `step_lr_rescale_schedule` and
+`step_lr_rescale_warmup_samples`, matching its previous behavior; it passes a shallow
+copy with these fields disabled and leaves the caller's config unchanged. Enabling
+that scheduling feature in Bridge is a separate behavior change.
+
+Optimizer state and scheduler checkpoint formats do not change. For direct use of the
+shared API, supply finalized configs and a resolved policy mapping; its optional
+`optimizer_factory` is a callable with the optimizer config already bound.

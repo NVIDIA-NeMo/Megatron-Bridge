@@ -332,6 +332,11 @@ def _is_omegaconf_problematic(val: Any) -> bool:
     if isinstance(val, type):
         return False
 
+    # Callable configuration objects still expose editable dataclass fields.
+    # Recurse into those fields; any nested functions are excluded separately.
+    if dataclasses.is_dataclass(val):
+        return False
+
     # Block function objects, methods, partial functions, etc.
     if callable(val) or (
         hasattr(val, "__call__")

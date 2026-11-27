@@ -56,8 +56,8 @@ class TestSetupOptimizerMuP:
         """Create a simple ParamKey instance for use in fake overrides."""
         return ParamKey(name="*.weight")
 
-    @patch("megatron.bridge.training.optim._get_scheduler")
-    @patch("megatron.bridge.training.optim.get_megatron_optimizer")
+    @patch("megatron.training.optim.build_optimizer_param_scheduler")
+    @patch("megatron.training.optim.get_megatron_optimizer")
     @patch("megatron.bridge.training.optim.get_model_config")
     def test_mup_disabled_skips_overrides(self, mock_get_model_config, mock_get_optimizer, _mock_get_scheduler):
         """When use_mup=False, get_mup_config_overrides is not called."""
@@ -75,8 +75,8 @@ class TestSetupOptimizerMuP:
             )
             mock_mup.assert_not_called()
 
-    @patch("megatron.bridge.training.optim._get_scheduler")
-    @patch("megatron.bridge.training.optim.get_megatron_optimizer")
+    @patch("megatron.training.optim.build_optimizer_param_scheduler")
+    @patch("megatron.training.optim.get_megatron_optimizer")
     @patch("megatron.bridge.training.optim.get_model_config")
     def test_mup_enabled_calls_overrides(self, mock_get_model_config, mock_get_optimizer, _mock_get_scheduler):
         """When use_mup=True, get_mup_config_overrides is called with correct args."""
@@ -101,8 +101,8 @@ class TestSetupOptimizerMuP:
                 optimizer_type="adam",
             )
 
-    @patch("megatron.bridge.training.optim._get_scheduler")
-    @patch("megatron.bridge.training.optim.get_megatron_optimizer")
+    @patch("megatron.training.optim.build_optimizer_param_scheduler")
+    @patch("megatron.training.optim.get_megatron_optimizer")
     @patch("megatron.bridge.training.optim.get_model_config")
     def test_mup_overrides_merged_with_existing(self, mock_get_model_config, mock_get_optimizer, _mock_get_scheduler):
         """μP overrides are merged with existing config_overrides."""
@@ -138,8 +138,8 @@ class TestSetupOptimizerMuP:
         assert mup_key in captured_overrides
         assert existing_key in captured_overrides
 
-    @patch("megatron.bridge.training.optim._get_scheduler")
-    @patch("megatron.bridge.training.optim.get_megatron_optimizer")
+    @patch("megatron.training.optim.build_optimizer_param_scheduler")
+    @patch("megatron.training.optim.get_megatron_optimizer")
     @patch("megatron.bridge.training.optim.get_model_config")
     def test_mup_model_list_uses_first_chunk(self, mock_get_model_config, mock_get_optimizer, _mock_get_scheduler):
         """When model is a list, get_model_config is called on the first chunk."""
@@ -1082,8 +1082,8 @@ class TestLoraPlusWarmupValidation:
             config = OptimizerConfig(optimizer="adam", lr=3e-4, min_lr=3e-5)
         with (
             patch("megatron.bridge.training.optim.get_model_config", return_value=SimpleNamespace(use_mup=False)),
-            patch("megatron.bridge.training.optim.get_megatron_optimizer") as build,
-            patch("megatron.bridge.training.optim._get_scheduler") as schedule,
+            patch("megatron.training.optim.get_megatron_optimizer") as build,
+            patch("megatron.training.optim.build_optimizer_param_scheduler") as schedule,
         ):
             try:
                 setup_optimizer(
