@@ -88,6 +88,7 @@ ERNIE_FIELDS = {
     "ernie_fused_mhc": False,
     "ernie_muon_ns_batch_size": 1,
     "ernie_cp_key_gather_inverse_grad": False,
+    "ernie_overlap_latent_kv_gather": False,
     "ernie_graph_d_layers": False,
     "ernie_graph_mtp_layers": False,
     "ernie_router_force_balance": False,
@@ -173,6 +174,7 @@ class TestErnie55TransformerConfig:
             ernie_fused_ops=False,
             ernie_fused_mhc=True,
             ernie_cp_key_gather_inverse_grad=True,
+            ernie_overlap_latent_kv_gather=True,
             ernie_vha_batched_mix=True,
         )
         layer_config = DSALayerConfig.from_config(config)
@@ -187,6 +189,7 @@ class TestErnie55TransformerConfig:
         assert layer_config.ernie_fused_mhc is True
         # The D-layer core reads the key-gather flag from its per-layer config.
         assert layer_config.ernie_cp_key_gather_inverse_grad is True
+        assert layer_config.ernie_overlap_latent_kv_gather is True
         validate_ernie55_config(layer_config)
 
 

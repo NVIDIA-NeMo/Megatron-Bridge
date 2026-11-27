@@ -394,6 +394,10 @@ def _check_fused_attention_inputs(query: Tensor, key: Tensor) -> None:
         )
 
 
+def _get_key_heads(key_heads: Tensor | Callable[[], Tensor]) -> Tensor:
+    return key_heads() if callable(key_heads) else key_heads
+
+
 class _FlashMLASinkGradFallback(torch.autograd.Function):
     """FlashMLA sparse forward with a sink, cuDNN backward with an analytic sink gradient.
 
@@ -644,6 +648,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         self.contiguous_backward = getattr(config, "ernie_dsa_contiguous_backward", False)
         # At CP > 1: the key gathers' backward gathers by the inverse permutation (off: index_select's backward).
         self.cp_key_gather_inverse_grad = bool(getattr(config, "ernie_cp_key_gather_inverse_grad", False))
+        self.overlap_latent_kv_gather = bool(getattr(config, "ernie_overlap_latent_kv_gather", False))
         self.deterministic = bool(getattr(config, "deterministic_mode", False))
         self._csa_sparse_attn_kwargs = {}
         if self.use_fused:
@@ -797,11 +802,15 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         cp_group = getattr(self.pg_collection, "cp", None)
         geometry = None
         backward_owners = None
+        pending_kv = None
+        defer_latent_kv = self.overlap_latent_kv_gather
         if get_pg_size(cp_group) > 1:
             if self.contiguous_backward and self.use_fused and torch.is_grad_enabled():
                 backward_owners = context_parallel.ContiguousBackwardOwners.for_pack(
                     packed_seq_params, cp_group, self.config
                 )
+                # This backward routes the latent-key gradient through contiguous CP owners.
+                defer_latent_kv = False
             geometry = context_parallel.zigzag_cp_geometry(
                 packed_seq_params,
                 cp_group=cp_group,
@@ -811,14 +820,15 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
                 with_inverse=self.cp_key_gather_inverse_grad,
             )
             # Every local row attends to keys anywhere before it in its document.
-            key_mqa = context_parallel.gather_cp_rows(
-                key_mqa,
-                geometry=geometry,
-                cp_group=cp_group,
-                inverse_grad=self.cp_key_gather_inverse_grad,
-                backward_owners=backward_owners,
-            )
-            key_heads = key_mqa.unsqueeze(2)
+            if not defer_latent_kv:
+                key_mqa = context_parallel.gather_cp_rows(
+                    key_mqa,
+                    geometry=geometry,
+                    cp_group=cp_group,
+                    inverse_grad=self.cp_key_gather_inverse_grad,
+                    backward_owners=backward_owners,
+                )
+                key_heads = key_mqa.unsqueeze(2)
         positions = geometry.query_positions if geometry is not None else None
 
         doc_start = ernie55_document_starts(packed_seq_params, seqlen, query.device, positions=positions)
@@ -832,6 +842,13 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
             k_indexer = context_parallel.gather_cp_rows(
                 k_indexer, geometry=geometry, cp_group=cp_group, inverse_grad=self.cp_key_gather_inverse_grad
             )
+            if defer_latent_kv:
+                # The indexer K collective is already queued on every rank. Its scorer can run
+                # while NCCL gathers latent KV; only the teacher and sparse attention read KV.
+                pending_kv = context_parallel.DeferredLatentKV(
+                    key_mqa, geometry, cp_group, self.cp_key_gather_inverse_grad
+                )
+                key_heads = pending_kv.key_heads
         topk, indexer_loss = self._select_topk(
             q_indexer,
             k_indexer,
@@ -846,6 +863,8 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         )
         topk = mask_topk_beyond_end(topk, ends=ends)
 
+        if pending_kv is not None:
+            key_mqa = pending_kv.wait()
         latent_out = self._sparse_attention(
             query,
             key_mqa,
@@ -900,7 +919,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         k_indexer: Tensor,
         w_indexer: Tensor,
         query: Tensor,
-        key_heads: Tensor,
+        key_heads: Tensor | Callable[[], Tensor],
         starts: Tensor,
         kernel_ends: Tensor,
         use_indexer_loss: bool,
@@ -1056,7 +1075,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         k_indexer: Tensor,
         w_indexer: Tensor,
         query: Tensor,
-        key_heads: Tensor,
+        key_heads: Tensor | Callable[[], Tensor],
         starts: Tensor,
         kernel_ends: Tensor,
         use_indexer_loss: bool,
@@ -1076,6 +1095,51 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         is_thd = packed_seq_params is not None and packed_seq_params.qkv_format == "thd"
         packed = is_thd and (geometry is not None or _pack_covers_rows(packed_seq_params, query.size(0)))
         hook_kwargs = self._packed_cp_hook_kwargs(packed_seq_params, geometry, query.size(0)) if packed else {}
+        if (
+            geometry is not None
+            and packed
+            and self.loss_coeff > 0
+            and getattr(self.config, "ernie_reuse_checkpoint_topk", False)
+        ):
+            from megatron.core.recompute import current_checkpoint_topk_cache
+
+            selections = current_checkpoint_topk_cache()
+            if selections is not None:
+                if use_indexer_loss:
+                    if self not in selections:
+                        raise RuntimeError("ERNIE D replay has no selection from this checkpoint.")
+                    return self._fused_topk_with_loss(
+                        q_indexer,
+                        k_indexer,
+                        w_indexer,
+                        query,
+                        key_heads,
+                        starts,
+                        kernel_ends,
+                        cp_size,
+                        hook_kwargs,
+                        cached_topk=selections[self],
+                    )
+                if self in selections:
+                    raise RuntimeError("ERNIE D layer ran twice in the same checkpoint forward.")
+                result = self._run_topk_hook(
+                    dsa_kernels.run_fused_qk_topk,
+                    q_indexer,
+                    k_indexer,
+                    w_indexer,
+                    self.index_topk,
+                    starts,
+                    kernel_ends,
+                    _FUSED_TOPK_BLOCK_SIZE,
+                    use_relu=self.config.dsa_indexer_scoring_relu,
+                    return_selected_scores=True,
+                    **hook_kwargs,
+                )
+                if result is None:
+                    raise RuntimeError("The ERNIE D checkpoint could not save its packed top-k.")
+                attn_ids, lengths, loss_ids, scores = result
+                selections[self] = (loss_ids, lengths, scores)
+                return pad_topk(attn_ids, self.index_topk), None
         reference_topk = None
         if geometry is None and w_reference is not None:
             reference_topk = self._reference_order_topk(q_indexer, k_indexer, w_reference, starts, kernel_ends)
@@ -1170,11 +1234,12 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         k_indexer: Tensor,
         w_indexer: Tensor,
         query: Tensor,
-        key_heads: Tensor,
+        key_heads: Tensor | Callable[[], Tensor],
         starts: Tensor,
         kernel_ends: Tensor,
         cp_size: int,
         cp_kwargs: dict,
+        cached_topk: tuple[Tensor, Tensor, Tensor] | None = None,
     ) -> tuple[Tensor, Tensor] | None:
         """Top-k and indexer KL through the cuDNN loss hook, one call per sample when ``b > 1``.
 
@@ -1189,7 +1254,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         Returns:
             ``(topk [b, s, K], loss)``, or ``None`` when the hook declines.
         """
-        inputs = (q_indexer, k_indexer, w_indexer, query.detach(), key_heads.detach())
+        inputs = (q_indexer, k_indexer, w_indexer, query.detach(), _get_key_heads(key_heads).detach())
         batch = query.size(1)
         samples = zip(*(tensor.split(1, dim=1) for tensor in inputs)) if batch > 1 else (inputs,)
         topks, losses = [], []
@@ -1211,6 +1276,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
                 query_valid_rows=None,
                 calculate_per_token_loss=self.config.calculate_per_token_loss,
                 use_relu=self.config.dsa_indexer_scoring_relu,
+                **({"cached_topk": cached_topk} if cached_topk is not None else {}),
                 **cp_kwargs,
             )
             if result is None:
@@ -1230,7 +1296,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
         k_indexer: Tensor,
         w_indexer: Tensor,
         query: Tensor,
-        key_heads: Tensor,
+        key_heads: Tensor | Callable[[], Tensor],
         starts: Tensor,
         kernel_ends: Tensor,
         use_indexer_loss: bool,
@@ -1259,7 +1325,7 @@ class Ernie55LatentMQACoreAttention(MegatronModule):
                 index_scores=index_scores * self.indexer_score_scale,
                 topk_indices=topk,
                 query=query.detach(),
-                key=key_heads.detach().expand(-1, -1, query.size(2), -1),
+                key=_get_key_heads(key_heads).detach().expand(-1, -1, query.size(2), -1),
                 softmax_scale=self.softmax_scale,
                 loss_coeff=self._indexer_loss_coeff(cp_size),
                 sparse_loss=True,

@@ -27,6 +27,15 @@ the details and requirements.
   Megatron-Core's Muon).
 - `ernie_cp_key_gather_inverse_grad`: under context parallelism, gather the key gradients by the inverse
   permutation instead of `index_select`'s backward.
+- `ernie_reuse_checkpoint_topk`: for packed D layers trained with the cuDNN indexer, context parallelism and full
+  recomputation, retain the first forward's selected key IDs, lengths and FP32 logits on that
+  particular checkpoint. The replay runs the original top-k-only sparse KL and its gradients
+  over the saved choice. Other layers and microbatches have independent selections.
+- `ernie_overlap_latent_kv_gather`: on D layers with context parallelism, issue the latent KV all-gather
+  after the indexer K gather. The remote top-k selection can run while latent KV is in flight. The
+  top-k-only teacher loss and the main sparse attention wait before they read the gathered rows.
+  With `ernie_dsa_contiguous_backward`, the gradient-enabled replay uses the gather that preserves
+  contiguous gradient ownership; the original checkpoint forward can still overlap its gather.
 - `ernie_vha_batched_mix`: apply the VHA head mix as one strided-batched GEMM.
 - `ernie_fused_situ_prob`: fuse the routed SiTU-GLU with the routing-probability multiply (needs
   `ernie_fused_ops` and Megatron-Core dev).

@@ -675,6 +675,11 @@ def gather_cp_rows(
     gathered = gather_from_sequence_parallel_region(
         local.contiguous(), tensor_parallel_output_grad=True, group=cp_group
     )
+    return _reorder_cp_rows(gathered, geometry, inverse_grad)
+
+
+def _reorder_cp_rows(gathered: Tensor, geometry: ZigzagCpGeometry, inverse_grad: bool) -> Tensor:
+    """Restore the global packed order after the CP collective has completed on this stream."""
     if gathered.size(0) != geometry.key_reorder.numel():
         raise RuntimeError(
             f"Gathered {gathered.size(0)} rows over the CP group, expected {geometry.key_reorder.numel()}."
@@ -682,3 +687,36 @@ def gather_cp_rows(
     if inverse_grad:
         return _PermuteRows.apply(gathered, geometry.key_reorder, geometry.key_reorder_inverse)
     return gathered.index_select(0, geometry.key_reorder)
+
+
+class DeferredLatentKV:
+    """Launch a D-layer CP gather and reorder the result once, at the first KV consumer."""
+
+    def __init__(
+        self, local: Tensor, geometry: ZigzagCpGeometry, cp_group: torch.distributed.ProcessGroup, inverse_grad: bool
+    ):
+        from megatron.core.tensor_parallel.mappings import async_gather_from_sequence_parallel_region
+
+        if inverse_grad and geometry.key_reorder_inverse is None:
+            raise ValueError("DeferredLatentKV with inverse_grad needs geometry built with_inverse=True.")
+        self._geometry = geometry
+        self._inverse_grad = inverse_grad
+        self._grad_enabled = torch.is_grad_enabled()
+        self._handle = async_gather_from_sequence_parallel_region(
+            local, tensor_parallel_output_grad=True, group=cp_group
+        )
+        self._ordered = None
+
+    def wait(self) -> Tensor:
+        """Join the NCCL stream; the gathered tensor retains its reduce-scatter backward."""
+        if self._handle is not None:
+            # The teacher may be the first consumer with grad disabled. The main attention
+            # still needs the reorder and reduce-scatter in the same tape as the gather launch.
+            with torch.set_grad_enabled(self._grad_enabled):
+                self._ordered = _reorder_cp_rows(self._handle.wait(), self._geometry, self._inverse_grad)
+            self._handle = None
+        return self._ordered
+
+    def key_heads(self) -> Tensor:
+        """Expose the gathered latent key to the indexer's top-k-only teacher."""
+        return self.wait().unsqueeze(2)

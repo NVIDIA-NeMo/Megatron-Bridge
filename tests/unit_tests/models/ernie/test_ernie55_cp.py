@@ -995,13 +995,25 @@ def case_gather_cp_rows_matches_index_select(rank: _Rank) -> None:
             full = torch.randn(total, 1, 6, generator=generator, dtype=torch.float64).to(dtype)
             grad = _gradient_with_special_values((total, 1, 6), dtype, seed=82)
             local = full[rows].contiguous()
-            inputs = {name: local.clone().requires_grad_(True) for name in ("default", "inverse", "reference")}
+            inputs = {
+                name: local.clone().requires_grad_(True)
+                for name in ("default", "inverse", "deferred", "deferred_inverse", "reference")
+            }
+            deferred = {
+                name: context_parallel.DeferredLatentKV(inputs[name], geometry, cp_group, inverse_grad)
+                for name, inverse_grad in (("deferred", False), ("deferred_inverse", True))
+            }
+            # The teacher can read KV under no_grad before main attention consumes it with gradients.
+            with torch.no_grad():
+                for pending in deferred.values():
+                    assert torch.equal(_bits(pending.key_heads().squeeze(2)), _bits(full))
             outputs = {
                 "default": context_parallel.gather_cp_rows(inputs["default"], geometry=geometry, cp_group=cp_group),
                 "inverse": context_parallel.gather_cp_rows(
                     inputs["inverse"], geometry=geometry, cp_group=cp_group, inverse_grad=True
                 ),
                 "reference": _index_select_gather_cp_rows(inputs["reference"], geometry=geometry, cp_group=cp_group),
+                **{name: pending.wait() for name, pending in deferred.items()},
             }
             what = f"{layout_name} {dtype}"
             for name, output in outputs.items():
@@ -1009,6 +1021,8 @@ def case_gather_cp_rows_matches_index_select(rank: _Rank) -> None:
             for output in outputs.values():
                 output.backward(grad)
             reference_grad = inputs["reference"].grad
+            for name, baseline in (("deferred", "default"), ("deferred_inverse", "inverse")):
+                assert torch.equal(_bits(inputs[name].grad), _bits(inputs[baseline].grad)), f"{what}: {name} grad"
             assert torch.equal(_bits(inputs["default"].grad), _bits(reference_grad)), f"{what}: default gradient bits"
             flips = _assert_equal_up_to_zero_sign(inputs["inverse"].grad, reference_grad, f"{what}: inverse_grad")
             own_rows = grad[rows]

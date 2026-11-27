@@ -317,6 +317,11 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     default; no recipe turns it on. There is no Hugging Face key; on the command line,
     ``model.ernie_fused_mhc=true``."""
 
+    ernie_reuse_checkpoint_topk: bool = False
+    """Reuse the same D layer's packed CP selection during full recomputation. Training
+    stashes selected IDs, lengths and FP32 scores until the matching checkpoint replays.
+    The sparse KL and its gradients still run on that replay."""
+
     ernie_muon_ns_batch_size: int = 1
     """Batch Muon's Newton-Schulz over up to this many same-shape matrices
     (:class:`~megatron.bridge.models.ernie.modeling_ernie55.muon.Ernie55BatchedMuon`). Muon orthogonalizes every
@@ -329,6 +334,10 @@ class Ernie55TransformerConfig(MLATransformerConfig):
     optimizer built after the model (the model installs it, see
     :func:`~megatron.bridge.models.ernie.modeling_ernie55.muon.install_ernie55_batched_muon`), without tensor, expert
     tensor or GTP sharding. There is no Hugging Face key; on the command line, ``model.ernie_muon_ns_batch_size=32``."""
+
+    ernie_overlap_latent_kv_gather: bool = False
+    """At CP > 1, launch the D layer's latent KV all-gather after its indexer K gather and
+    wait where sparse attention or the indexer teacher first reads the whole key."""
 
     ernie_cp_key_gather_inverse_grad: bool = False
     """At ``context_parallel_size > 1``, compute the backward of the D layers' two key gathers (the latent key and the
@@ -428,6 +437,12 @@ class Ernie55TransformerConfig(MLATransformerConfig):
             raise ValueError(f"ernie_fused_ops must be a bool, got {self.ernie_fused_ops!r}.")
         if not isinstance(self.ernie_fused_situ_prob, bool):
             raise ValueError(f"ernie_fused_situ_prob must be a bool, got {self.ernie_fused_situ_prob!r}.")
+        if not isinstance(self.ernie_reuse_checkpoint_topk, bool):
+            raise ValueError("ernie_reuse_checkpoint_topk must be a bool.")
+        if self.ernie_reuse_checkpoint_topk and self.recompute_granularity != "full":
+            raise ValueError("ernie_reuse_checkpoint_topk requires full-layer recomputation.")
+        if self.ernie_reuse_checkpoint_topk and self.dsa_kernel_backend != "cudnn":
+            raise ValueError("ernie_reuse_checkpoint_topk requires dsa_kernel_backend='cudnn'.")
         if not isinstance(self.ernie_fused_mhc, bool):
             raise ValueError(f"ernie_fused_mhc must be a bool, got {self.ernie_fused_mhc!r}.")
         if not isinstance(self.ernie_cp_key_gather_inverse_grad, bool):
@@ -447,7 +462,12 @@ class Ernie55TransformerConfig(MLATransformerConfig):
                 "ernie_vha_batched_mix=True applies the bf16 VHA head mix as a batched GEMM; it needs "
                 "ernie_vha_bf16_mix=True."
             )
-        for name in ("ernie_graph_d_layers", "ernie_graph_mtp_layers", "ernie_router_force_balance"):
+        for name in (
+            "ernie_graph_d_layers",
+            "ernie_graph_mtp_layers",
+            "ernie_router_force_balance",
+            "ernie_overlap_latent_kv_gather",
+        ):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be a bool, got {getattr(self, name)!r}.")
         if not isinstance(self.ernie_router_bias_contiguous_cp_counts, bool):
