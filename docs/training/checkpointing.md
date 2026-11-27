@@ -416,6 +416,12 @@ Local checkpointing leverages the [NVIDIA Resiliency Extension](https://nvidia.g
 | `dist_ckpt_optim_fully_reshardable` | `bool` | `False` | Make optimizer distributed checkpoint fully reshardable (TP/PP/EP/DP) as opposed to plain DP reshardability |
 | `distrib_optim_fully_reshardable_mem_efficient` | `bool` | `False` | Use as little memory as possible during save and load by using Gloo. Has affect only with `dist_ckpt_optim_fully_reshardable` flag |
 
+To resume with a different tensor or pipeline parallel size, save with
+`checkpoint.dist_ckpt_optim_fully_reshardable=True` if any optimizer child is a
+`DistributedOptimizer`. This includes the Adam child of shard-aligned layer-wise Muon.
+For an existing `dp_reshardable` checkpoint, resume at the original TP/PP and re-save
+in the fully reshardable format, or load only the model weights.
+
 ## Custom Checkpoint Manager
 
 For advanced use cases, you can provide a custom checkpoint manager implementation to override the default save/load behavior. This enables integration with custom storage backends, alternative checkpoint formats, or organization-specific checkpointing workflows.

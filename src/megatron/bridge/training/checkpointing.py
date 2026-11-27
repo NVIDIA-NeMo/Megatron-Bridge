@@ -52,7 +52,11 @@ from megatron.core.dist_checkpointing.utils import _clean_metadata_for_serializa
 from megatron.core.distributed import DistributedDataParallel
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
-from megatron.core.optimizer import DistributedOptimizer, MegatronOptimizer, distrib_optimizer
+from megatron.core.optimizer import MegatronOptimizer, distrib_optimizer
+from megatron.core.optimizer.checkpointing import (
+    contains_distributed_optimizer,
+    validate_optimizer_checkpoint_topology,
+)
 from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOptimizer
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
@@ -3089,38 +3093,30 @@ def _load_checkpoint_from_path(
             gen_sd_optim = optimizer
             gen_sd_opt_param_scheduler = opt_param_scheduler
 
-            if use_distributed_optimizer:
-                if sharded_sd_metadata is None:
-                    sharded_sd_metadata = {
-                        "distrib_optim_sharding_type": (
-                            "fully_sharded_model_space"
-                            if not cfg.optimizer.use_distributed_optimizer
-                            or run_config["checkpoint"]["fully_parallel_save"]
-                            else "dp_zero_gather_scatter"
-                        ),
-                    }
-                # Older mixed-optimizer checkpoints omitted this key and used
-                # DistributedOptimizer's model-space default.
-                sharding_type = sharded_sd_metadata.get("distrib_optim_sharding_type", "fully_sharded_model_space")
-                # Compact LayerWise state is stored in model space even when the
-                # shared metadata says dp_reshardable. Apply tensor-sharded
-                # restrictions only if either side actually uses DistOpt state.
-                has_tensor_sharded_state = (
-                    cfg.optimizer.use_distributed_optimizer
-                    or _has_distributed_optimizer(optimizer)
-                    or _has_distributed_optimizer_state(state_dict.get("optimizer", {}))
-                    or run_config.get("optimizer", {}).get("use_distributed_optimizer", False)
-                )
-                if (
-                    not tp_pp_match
-                    and has_tensor_sharded_state
-                    and sharding_type not in DistributedOptimizer.checkpoint_fully_reshardable_formats
-                ):
-                    raise RuntimeError(
-                        f"{mismatch_msg}: not supported for DistributedOptimizer with sharding type"
-                        f" {sharding_type}."
-                        f" Please use `checkpoint_config.fully_parallel_save=True` for checkpoint saving."
+            declared_distopt = cfg.optimizer.use_distributed_optimizer or run_config.get("optimizer", {}).get(
+                "use_distributed_optimizer", False
+            )
+            if sharded_sd_metadata is None and (use_distributed_optimizer or declared_distopt):
+                # Legacy mixed checkpoints defaulted to model space; ordinary DistOpt
+                # selected the format from the saving run's fully_parallel_save setting.
+                sharded_sd_metadata = {
+                    "distrib_optim_sharding_type": (
+                        "dp_zero_gather_scatter"
+                        if declared_distopt and not run_config["checkpoint"]["fully_parallel_save"]
+                        else "fully_sharded_model_space"
                     )
+                }
+            if not tp_pp_match:
+                validate_optimizer_checkpoint_topology(
+                    optimizer,
+                    state_dict.get("optimizer"),
+                    saved_tp_pp=ckpt_tp_pp,
+                    current_tp_pp=run_tp_pp,
+                    sharding_type=(sharded_sd_metadata or {}).get(
+                        "distrib_optim_sharding_type", "fully_sharded_model_space"
+                    ),
+                    distributed_optimizer_configured=declared_distopt,
+                )
         else:
             gen_sd_optim = None
             gen_sd_opt_param_scheduler = None
@@ -4243,30 +4239,9 @@ def load_fsdp_dtensor_checkpoint(
     return state_dict, checkpoint_name, release, CheckpointType.FSDP_DTENSOR
 
 
-def _has_distributed_optimizer(optimizer: MegatronOptimizer | None) -> bool:
-    """Find tensor-sharded DistributedOptimizer leaves inside optimizer wrappers."""
-    if isinstance(optimizer, DistributedOptimizer):
-        return True
-    if not isinstance(optimizer, MegatronOptimizer):
-        return False
-    return any(_has_distributed_optimizer(child) for child in getattr(optimizer, "chained_optimizers", ()))
-
-
 def _uses_distributed_optimizer(config: Any, optimizer: MegatronOptimizer | None) -> bool:
     """Combine declared LayerWise mode with the constructed optimizer tree."""
-    return uses_distributed_optimizer(config) or _has_distributed_optimizer(optimizer)
-
-
-def _has_distributed_optimizer_state(state: object) -> bool:
-    """Detect saved tensor-sharded state, including nested optimizer chains."""
-    if isinstance(state, dict):
-        # DistOpt keeps this discriminator in common state, outside sharded tensors.
-        return "param_state_sharding_type" in state or any(
-            _has_distributed_optimizer_state(value) for value in state.values()
-        )
-    if isinstance(state, (list, tuple)):
-        return any(_has_distributed_optimizer_state(value) for value in state)
-    return False
+    return uses_distributed_optimizer(config) or contains_distributed_optimizer(optimizer)
 
 
 def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: CheckpointConfig) -> dict:
