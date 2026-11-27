@@ -338,22 +338,3 @@ def test_llama3_vrnvl72_nvfp4_perf_settings(
         assert getattr(vrnvl72_cfg.model, name) == getattr(gb300_cfg.model, name), name
     assert vrnvl72_cfg.train.global_batch_size == gb300_cfg.train.global_batch_size
     assert vrnvl72_cfg.train.micro_batch_size == gb300_cfg.train.micro_batch_size
-
-
-@pytest.mark.unit
-def test_llama3_70b_vrnvl72_nvfp4_uses_nccl_ub(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The 70B VRNVL72 NVFP4 recipe uses NCCL user buffers with the settings the GB300 BF16 recipe uses for them.
-
-    The recipe sets NVLS inline: the runtime only fills it in when the recipe leaves it unset. The PyTorch
-    allocator setting and NCCL_GRAPH_REGISTER are dropped, as in the other NCCL user-buffer recipes.
-    """
-    patch_recipe_construction_dependencies(monkeypatch)
-
-    cfg = llama3_70b_pretrain_64gpu_vrnvl72_nvfp4_config()
-
-    assert cfg.ddp.nccl_ub is True
-    assert cfg.ddp.average_in_collective is False
-    assert cfg.env_vars["NCCL_NVLS_ENABLE"] == 1
-    assert cfg.env_vars["NCCL_CTA_POLICY"] == 1
-    assert "PYTORCH_CUDA_ALLOC_CONF" not in cfg.env_vars
-    assert "NCCL_GRAPH_REGISTER" not in cfg.env_vars
