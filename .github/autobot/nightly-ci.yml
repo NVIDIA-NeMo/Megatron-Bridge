@@ -1,0 +1,4 @@
+# .github/autobot/nightly-ci.yml
+eligible_teams: [automation]
+arguments: {test-cluster: gb200-1, test-suites: NONE, test-image: nightly}
+overridable: [test-cluster, test-suites, test-image]

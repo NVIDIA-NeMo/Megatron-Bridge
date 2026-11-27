@@ -55,8 +55,13 @@ def _apply_recipe_environment(recipe) -> None:
 
 
 def uses_ncclep(recipe) -> bool:
-    """Return True when the resolved recipe dispatches MoE tokens through NCCL EP."""
+    """Return True when the resolved recipe dispatches MoE tokens through NCCL EP.
+
+    A MoE megakernel backend owns dispatch and combine itself, so the flex backend is not its transport.
+    """
     model = getattr(recipe, "model", None)
+    if getattr(model, "moe_megakernel_backend", None) is not None:
+        return False
     return getattr(model, "moe_flex_dispatcher_backend", None) == "ncclep"
 
 

@@ -83,11 +83,15 @@ class FalconH1MambaMixer(MambaMixer):
         zxBCdt: torch.Tensor,
         packed_seq_params: Optional[PackedSeqParams] = None,
         runtime_cp: Optional[MambaContextParallel] = None,
+        **kwargs,
     ) -> torch.Tensor:
+        # Forward MCore SSM layout flags (e.g. ``batch_first``) unchanged. The projection
+        # multipliers scale the last dim, so they apply to either layout.
         return super()._ssm_training(
             self._scale_zxbc_dt(zxBCdt, use_context_parallel_dims=True, runtime_cp=runtime_cp),
             packed_seq_params,
             runtime_cp=runtime_cp,
+            **kwargs,
         )
 
     def _static_prefill(

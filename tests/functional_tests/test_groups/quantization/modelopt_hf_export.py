@@ -15,8 +15,8 @@
 """Save a ModelOpt-quantized toy model as a quantized Hugging Face checkpoint (run with torch.distributed.run).
 
 Weight ranges come from max calibration of the weights, which ModelOpt syncs across tensor parallelism,
-and every input range is pinned to :func:`input_amax` of its global layer and kind, so exports at any
-parallelism describe the same quantized model and can be compared bit for bit.
+and every input and KV-cache range is pinned to :func:`input_amax` of its global layer and kind, so exports
+at any parallelism describe the same quantized model and can be compared bit for bit.
 """
 
 import argparse
@@ -59,13 +59,15 @@ CONFIGS = {
     "fp8": [
         {"quantizer_name": "*weight_quantizer", "cfg": FP8},
         {"quantizer_name": "*input_quantizer", "cfg": FP8},
+        {"quantizer_name": "*[kv]_bmm_quantizer", "cfg": FP8},
     ],
-    # NVFP4 MLP and FP8 attention, as in mixed-precision recipes.
+    # NVFP4 MLP, FP8 attention and FP8 KV cache, as in mixed-precision recipes.
     "mixed": [
         {"quantizer_name": "*mlp*weight_quantizer", "cfg": NVFP4},
         {"quantizer_name": "*mlp*input_quantizer", "cfg": NVFP4},
         {"quantizer_name": "*self_attention*weight_quantizer", "cfg": FP8},
         {"quantizer_name": "*self_attention*input_quantizer", "cfg": FP8},
+        {"quantizer_name": "*[kv]_bmm_quantizer", "cfg": FP8},
     ],
     # Weight-only MXFP4 experts, as GPT-OSS ships.
     "mxfp4_experts": [
@@ -102,6 +104,8 @@ KIND_IDS = {
     "g_b_proj": 21,
     "fc1_latent_proj": 22,
     "fc2_latent_proj": 23,
+    "k_bmm": 24,
+    "v_bmm": 25,
 }
 
 
@@ -112,14 +116,19 @@ def input_amax(layer: int, kind: str) -> float:
 
 def _pin_input_ranges(chunk: torch.nn.Module) -> None:
     for name, quantizer in chunk.named_modules():
-        if not (isinstance(quantizer, TensorQuantizer) and quantizer.is_enabled and name.endswith("input_quantizer")):
+        kind = re.search(r"(\w+)\.input_quantizer$|([kv]_bmm)_quantizer$", name)
+        if not (isinstance(quantizer, TensorQuantizer) and quantizer.is_enabled and kind):
             continue
-        layer = chunk.get_submodule(re.match(r"^.*?decoder\.layers\.\d+", name).group(0))
-        # Hyper-connection layers wrap the numbered layer.
-        layer = getattr(layer, "layer_number", None) or layer.inner_layer.layer_number
-        layer -= 1
-        kind = re.search(r"(\w+)\.input_quantizer", name).group(1)
-        quantizer.amax = torch.tensor(input_amax(layer, kind), device="cuda")
+        layer = chunk.get_submodule(re.match(r"^.*?(?:decoder|hybrid_stack)\.layers\.\d+", name).group(0))
+        # Split Kimi layers share one source block; hyper-connection layers wrap it.
+        if hasattr(layer, "source_index"):
+            layer = layer.source_index
+        else:
+            layer = (getattr(layer, "layer_number", None) or layer.inner_layer.layer_number) - 1
+        amax = input_amax(layer, kind.group(1) or kind.group(2))
+        # Exporters raise FP8 KV-cache scales (amax / 448) to at least one.
+        amax *= 448 if kind.group(2) else 1
+        quantizer.amax = torch.tensor(amax, device="cuda")
 
 
 @torchrun_main
@@ -128,21 +137,34 @@ def main(
 ) -> None:
     # Kimi-K3's config class ships with the checkpoint.
     bridge = AutoBridge.from_hf_pretrained(hf_model_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
-    provider = bridge.to_megatron_provider(load_weights=True)
-    # Also sets bridge-specific pipeline layouts, e.g. for DeepSeek-V4's hash-routed MoE layers.
-    provider.apply_overrides_and_finalize(
-        overrides={
-            "tensor_model_parallel_size": tp,
-            "pipeline_model_parallel_size": pp,
-            "expert_model_parallel_size": ep,
-            "expert_tensor_parallel_size": etp,
-            "moe_grouped_gemm": False,
-            "gradient_accumulation_fusion": False,
-            "pipeline_dtype": torch.bfloat16,
-        }
-    )
-    provider.initialize_model_parallel(seed=0)
-    model = provider.provide_distributed_model(wrap_with_ddp=False)
+    overrides = {
+        "tensor_model_parallel_size": tp,
+        "pipeline_model_parallel_size": pp,
+        "expert_model_parallel_size": ep,
+        "expert_tensor_parallel_size": etp,
+        "moe_grouped_gemm": False,
+        "gradient_accumulation_fusion": False,
+        "pipeline_dtype": torch.bfloat16,
+    }
+    if getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False):
+        model_config = bridge.get_model_config()
+        for name, value in overrides.items():
+            if not hasattr(model_config.transformer, name):
+                raise ValueError(f"Model config has no field {name!r}.")
+            setattr(model_config.transformer, name, value)
+        # Rebuild native pipeline segments and hash-MoE layouts after topology overrides.
+        layout_builder = getattr(model_config, "_pipeline_model_parallel_layout_builder", None)
+        if layout_builder is not None:
+            model_config.pipeline_model_parallel_layout = layout_builder(
+                model_config.pipeline_model_parallel_size,
+                model_config.virtual_pipeline_model_parallel_size,
+            )
+        model = bridge.get_model(model_config, wrap_with_ddp=False)
+    else:
+        provider = bridge.to_megatron_provider(load_weights=True)
+        provider.apply_overrides_and_finalize(overrides=overrides)
+        provider.initialize_model_parallel(seed=0)
+        model = provider.provide_distributed_model(wrap_with_ddp=False)
 
     quant_cfg = {"quant_cfg": [*DISABLED, *CONFIGS[config], *UNQUANTIZED], "algorithm": "max"}
     for chunk in model:

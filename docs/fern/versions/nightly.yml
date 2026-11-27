@@ -179,6 +179,8 @@ navigation:
   - contents:
     - page: Step-3.5-Flash
       path: ./nightly/pages/models/stepfun/step35.mdx
+    - page: Step-3.7-Flash
+      path: ./nightly/pages/models/stepfun/step37.mdx
     section: StepFun
 - section: Training and Customization
   contents:

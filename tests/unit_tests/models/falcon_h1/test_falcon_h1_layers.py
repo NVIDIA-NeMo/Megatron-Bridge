@@ -245,21 +245,28 @@ def test_mamba_mixer_ssm_decode_scales_with_tp_dims():
     assert calls[0][1] is None
 
 
-def test_mamba_mixer_ssm_training_scales_with_runtime_cp_dims():
+@pytest.mark.parametrize(
+    ("layout_kwargs", "shape"),
+    [({}, (3, 2, 7)), ({"batch_first": False}, (3, 2, 7)), ({"batch_first": True}, (2, 3, 7))],
+    ids=["default", "sequence_first", "batch_first"],
+)
+def test_mamba_mixer_ssm_training_scales_with_runtime_cp_dims(layout_kwargs, shape):
+    # MCore's _mamba_chunk passes ``batch_first=`` to _ssm_training, so the override must forward it.
     mixer = _mixer_with_distinct_dims()
     calls = []
 
-    def fake_ssm_training(self, zxBCdt, packed_seq_params=None, runtime_cp=None):
-        calls.append((zxBCdt, packed_seq_params, runtime_cp))
+    def fake_ssm_training(self, zxBCdt, packed_seq_params=None, runtime_cp=None, **kwargs):
+        calls.append((zxBCdt, packed_seq_params, runtime_cp, kwargs))
         return zxBCdt
 
     with patch.object(MambaMixer, "_ssm_training", fake_ssm_training):
-        mixer._ssm_training(torch.ones(1, 1, 7), None, runtime_cp=_RUNTIME_CP)
+        mixer._ssm_training(torch.ones(shape), None, runtime_cp=_RUNTIME_CP, **layout_kwargs)
 
     assert len(calls) == 1
-    torch.testing.assert_close(calls[0][0], _RUNTIME_CP_EXPECTED)
+    torch.testing.assert_close(calls[0][0], _RUNTIME_CP_EXPECTED.expand(shape))
     assert calls[0][1] is None
     assert calls[0][2] is _RUNTIME_CP
+    assert calls[0][3] == layout_kwargs
 
 
 def test_mamba_mixer_ssm_prefill_scales_with_tp_dims():

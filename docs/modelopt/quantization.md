@@ -134,9 +134,10 @@ The export runs at any tensor, pipeline, expert and expert-tensor parallelism an
 of them: packed quantized weights with their scales, and the `quantization_config` in `config.json` that vLLM, SGLang
 and TensorRT-LLM read. Unquantized linear layers are listed in its `ignore` list, derived from the disabled weight
 quantizers. Fused projections are split the way the bridge's own weight mapping splits them, and each quantized
-weight's scales follow its rows. For unsupported configurations (e.g. KV-cache quantization, or a mapping that transposes
-or slices the columns of a quantized weight), the script falls back to ModelOpt's Megatron exporter, which supports TP=1
-only.
+weight's scales follow its rows. A quantized KV cache adds `k_scale` and `v_scale` to each attention layer (see
+[KV-cache scales](#kv-cache-scales-in-online-export)). For unsupported configurations (e.g. KV-cache quantization of
+attention without a fused QKV mapping, such as MLA, or a mapping that transposes or slices the columns of a quantized
+weight), the script falls back to ModelOpt's Megatron exporter, which supports TP=1 only.
 
 **Key Arguments:**
 - `--export-dir` - Output directory for the quantized HuggingFace checkpoint
@@ -209,7 +210,8 @@ every other layer in BF16. This needs a ModelOpt release that packs weight-only 
 
 Quantized adapter-wrapped weights are not supported. Fold adapters into the base weights before ModelOpt calibration
 or QAT. Quantized dimension-permuting mappings are also rejected by the streaming API; unquantized mappings retain
-their ordinary conversion path. Custom QKV mappings that change row layout are rejected for quantized weights.
+their ordinary conversion path. Custom QKV mappings that only select or reorder whole rows are supported for
+quantized weights; mappings that transpose, slice columns, or combine row values are rejected.
 Post-mapping key renames of quantized weights are not supported; excluded weights retain their normal renaming
 behavior. This API requires a ModelOpt release that provides the
 functional quantized-weight export interface.
@@ -239,8 +241,9 @@ any captured attention coefficients when scales change.
 
 This requires ModelOpt's functional KV-cache export API; constant-amax FP8 recipes
 also require constant-amax export support. Asymmetric K/V formats, partially selected
-attention layers, and attention without a supported QKV mapping are rejected. Offline
-`save_hf_pretrained_modelopt()` KV-cache export remains unsupported.
+attention layers, and attention without a supported QKV mapping are rejected.
+`save_hf_pretrained_modelopt()` writes the same scales as ModelOpt's checkpoint exporters do: FP8 K/V scales are
+raised to at least one, and `q_scale` is written only for an enabled query quantizer.
 
 ### Fake-Quantized Hugging Face Export
 
