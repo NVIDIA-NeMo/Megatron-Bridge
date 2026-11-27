@@ -11,6 +11,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     DistributedDataParallelConfig,
+    DistributedInitConfig,
     OptimizerConfig,
     _validate_and_sync_distributed_optimizer_settings,
 )
@@ -29,6 +30,7 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize("source", ["optimizer", "ddp", "layerwise"])
 def test_distributed_emerging_optimizer_normalization(name, source):
     cfg = SimpleNamespace(
+        dist=DistributedInitConfig(),
         optimizer=OptimizerConfig(
             optimizer=name,
             use_distributed_optimizer=source == "optimizer",
@@ -56,6 +58,7 @@ def test_replicated_optimizer_stays_replicated(name):
 @pytest.mark.parametrize("name", ["adam", "sgd"])
 def test_adam_and_sgd_keep_ordinary_distribution(name):
     cfg = SimpleNamespace(
+        dist=DistributedInitConfig(),
         optimizer=OptimizerConfig(optimizer=name),
         ddp=DistributedDataParallelConfig(use_distributed_optimizer=True),
     )
@@ -236,6 +239,7 @@ def test_provider_forwards_layerwise_layout_to_get_model():
 @pytest.mark.parametrize("name", ["muon", "dist_muon", "adaptive_muon", "lion", "soap"])
 def test_layerwise_layout_defaults_to_compact_after_normalization(name: str) -> None:
     cfg = SimpleNamespace(
+        dist=DistributedInitConfig(),
         optimizer=OptimizerConfig(optimizer=name, use_distributed_optimizer=True),
         ddp=DistributedDataParallelConfig(use_distributed_optimizer=True),
     )
@@ -268,14 +272,21 @@ def test_checkpoint_metadata_tracks_both_distributed_implementations(name, layer
     assert ("distrib_optim_sharding_type" in metadata) is expected
 
 
+@pytest.mark.parametrize("layout", [False, True], ids=["compact", "aligned"])
 @pytest.mark.parametrize("name", ["muon", "dist_muon"])
-def test_reject_multiple_layerwise_optimizer_instances(name):
-    cfg = SimpleNamespace(
-        optimizer=OptimizerConfig(optimizer=name, use_layer_wise_distributed_optimizer=True),
-        ddp=DistributedDataParallelConfig(num_distributed_optimizer_instances=2),
-    )
-    with pytest.raises(ValueError, match="num_distributed_optimizer_instances=1"):
-        _validate_and_sync_distributed_optimizer_settings(cfg)
+def test_reject_multiple_layerwise_optimizer_instances(name, layout):
+    from megatron.bridge.recipes.gpt.vanilla_gpt import vanilla_gpt_pretrain_config
+
+    cfg = vanilla_gpt_pretrain_config()
+    cfg.optimizer.optimizer = name
+    cfg.optimizer.use_distributed_optimizer = True
+    cfg.optimizer.use_layer_wise_param_layout = layout
+    cfg.ddp.num_distributed_optimizer_instances = 2
+
+    with pytest.raises(
+        ValueError, match=r"Layer-wise optimizers with DDP require num_distributed_optimizer_instances=1 \(got 2\)"
+    ):
+        cfg.validate()
 
 
 @pytest.mark.parametrize("name", ["muon", "dist_muon"])

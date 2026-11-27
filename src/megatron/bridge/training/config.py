@@ -2519,8 +2519,8 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
 
     normalize_optimizer_config(config.optimizer, ddp_use_distributed_optimizer=ddp_setting)
     if uses_layer_wise_optimizer(config.optimizer):
-        if config.ddp.num_distributed_optimizer_instances != 1:
-            raise ValueError("Layer-wise optimizers require num_distributed_optimizer_instances=1.")
+        if not config.ddp.use_megatron_fsdp and not config.dist.use_torch_fsdp2:
+            config.optimizer.validate_ddp_optimizer_instances(config.ddp.num_distributed_optimizer_instances)
         # This flag selects the ordinary DistributedOptimizer DDP layout. The
         # model wrapper enables it only when a shard-aligned LayerWise layout is
         # requested; compact LayerWise mode intentionally leaves it disabled.
