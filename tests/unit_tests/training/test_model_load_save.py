@@ -2038,7 +2038,7 @@ class TestSaveMegatronModel:
         from megatron.bridge.training.checkpointing import _interleave_glu_tensor
 
         interleave_size = 2
-        key = "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight"
+        key = "decoder.layers.0.mlp.experts.linear_fc1.weight0"
         contiguous_weight = torch.arange(32, dtype=torch.float32).reshape(8, 4)
         runtime_weight = _interleave_glu_tensor(contiguous_weight, interleave_size)
 
@@ -2046,7 +2046,7 @@ class TestSaveMegatronModel:
         module.register_parameter("linear_fc1_weight", torch.nn.Parameter(runtime_weight.clone()))
         models = [module]
 
-        provider = GPTModelProvider(num_layers=1, hidden_size=8, num_attention_heads=1)
+        provider = GPTModelProvider(num_layers=1, hidden_size=8, num_attention_heads=1, gated_linear_unit=True)
         provider.moe_mlp_glu_interleave_size = interleave_size
 
         def build_factory(

@@ -394,26 +394,6 @@ def _permute_rope_rows(weight: torch.Tensor, *, block: int, offset: int, perm: t
     return blocks.reshape(weight.shape)
 
 
-def _glu_interleave(weight: torch.Tensor, size: int) -> torch.Tensor:
-    """``[gate; up]`` rows to Megatron-Core's block-interleaved ``[g_0:k, u_0:k, g_k:2k, u_k:2k, ...]``.
-
-    Same layout as the GLU interleave of Bridge's checkpoint loader (``_interleave_glu_tensor``) and
-    the one ``TEGroupedMLP._remove_glu_interleaving`` undoes on the fc1 output.
-    """
-    rows = weight.shape[0]
-    if rows % (2 * size):
-        raise ValueError(f"ERNIE 5.5 GLU interleave: {rows} fc1 rows are not a multiple of 2 x {size}.")
-    return weight.reshape(2, rows // (2 * size), size, *weight.shape[1:]).transpose(0, 1).reshape(weight.shape)
-
-
-def _glu_deinterleave(weight: torch.Tensor, size: int) -> torch.Tensor:
-    """Inverse of :func:`_glu_interleave`."""
-    rows = weight.shape[0]
-    if rows % (2 * size):
-        raise ValueError(f"ERNIE 5.5 GLU interleave: {rows} fc1 rows are not a multiple of 2 x {size}.")
-    return weight.reshape(rows // (2 * size), 2, size, *weight.shape[1:]).transpose(0, 1).reshape(weight.shape)
-
-
 # ---------------------------------------------------------------------------------------------
 # Mappings
 # ---------------------------------------------------------------------------------------------
@@ -609,28 +589,13 @@ class _Ernie55KVUpMapping(_Ernie55TensorMapping):
         return _to_hf_dtype({str(self.hf_param): joined}, self.hf_dtype)
 
 
-def _glu_interleave_size(config: Any, glu_interleave: str | None) -> int | None:
-    """Megatron-Core's GLU block-interleave size of an fc1, or None when its rows are ``[gate; up]``.
-
-    Only the grouped routed experts (``TEGroupedMLP``, ``moe_mlp_glu_interleave_size``) and the grouped
-    shared expert (``use_grouped_gemm_for_shared_expert`` with ``moe_shared_expert_glu_interleave_size``)
-    read interleaved rows; ``SequentialMLP`` experts and dense MLPs always use ``[gate; up]``.
-    """
-    if glu_interleave == "routed":
-        return getattr(config, "moe_mlp_glu_interleave_size", None)
-    if glu_interleave == "shared" and getattr(config, "use_grouped_gemm_for_shared_expert", False):
-        return getattr(config, "moe_shared_expert_glu_interleave_size", None)
-    return None
-
-
 class _Ernie55GatedMLPMapping(GatedMLPMapping):
     """``linear_fc1 = [gate; up]`` of a dense MLP, the shared expert or a routed expert, in the HF dtype.
 
-    ``glu_interleave`` (``"routed"`` or ``"shared"``) names the fc1 whose rows Megatron-Core may keep
-    block-interleaved (:func:`_glu_interleave_size`); when the model config enables that, the local fc1
-    rows are interleaved on import and restored on export, as Bridge's checkpoint loader does. Tensor-
-    and expert-parallel distribution is :class:`GatedMLPMapping`'s. Import requires ``gate`` and ``up``
-    to be ``hf_dtype``.
+    :class:`GatedMLPMapping` owns GLU row-layout conversion and tensor- and expert-parallel
+    distribution. ``glu_interleave`` (``"routed"`` or ``"shared"``) identifies mappings that cannot
+    expose config-independent local HF views because their runtime rows may be block-interleaved.
+    Import requires ``gate`` and ``up`` to be ``hf_dtype``.
     """
 
     def __init__(
@@ -652,24 +617,14 @@ class _Ernie55GatedMLPMapping(GatedMLPMapping):
             glu_interleave=self.glu_interleave,
         )
 
-    def _interleave_size(self, megatron_module: nn.Module | None) -> int | None:
-        if self.glu_interleave is None or megatron_module is None:
-            return None
-        return _glu_interleave_size(self._get_config(megatron_module), self.glu_interleave)
-
     def hf_to_megatron(self, hf_weights: dict[str, torch.Tensor], megatron_module: nn.Module) -> torch.Tensor:
         for part, hf_weight in hf_weights.items():
             _check_hf_dtype(self.hf_param[part], hf_weight, self.hf_dtype)
-        local = super().hf_to_megatron(hf_weights, megatron_module)
-        size = self._interleave_size(megatron_module)
-        return _glu_interleave(local, size) if size else local
+        return super().hf_to_megatron(hf_weights, megatron_module)
 
     def megatron_to_hf(
         self, megatron_weights: torch.Tensor | None, megatron_module: nn.Module | None
     ) -> dict[str, torch.Tensor]:
-        size = self._interleave_size(megatron_module)
-        if size and megatron_weights is not None:
-            megatron_weights = _glu_deinterleave(self.maybe_dequantize(megatron_weights), size)
         return _to_hf_dtype(super().megatron_to_hf(megatron_weights, megatron_module), self.hf_dtype)
 
     def local_hf_param_specs(self, global_param_name: str | None = None) -> tuple[LocalHFParamSpec, ...]:

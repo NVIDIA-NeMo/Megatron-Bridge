@@ -216,14 +216,18 @@ class TestGptOssBuilderConfig:
         assert hf_config["num_hidden_layers"] == 2
 
 
-@pytest.mark.parametrize("bias", [False, True])
-@pytest.mark.parametrize("etp_size", [1, 2])
-@pytest.mark.parametrize("gtp_size", [1, 2])
-def test_gate_up_mapping_preserves_expert_rows_across_etp_and_gtp(monkeypatch, bias, etp_size, gtp_size):
+@pytest.mark.parametrize(
+    ("bias", "etp_size", "gtp_size", "interleave_size"),
+    [(bias, etp_size, gtp_size, None) for bias in (False, True) for etp_size in (1, 2) for gtp_size in (1, 2)]
+    + [(False, 2, 1, 2), (True, 2, 1, 2)],
+)
+def test_gate_up_mapping_preserves_expert_rows_across_etp_and_gtp(
+    monkeypatch, bias, etp_size, gtp_size, interleave_size
+):
     """Distinct gate/up rows detect a transpose or a split of the fused TP matrix."""
-    gate = torch.arange(4 if bias else 12).reshape((4,) if bias else (4, 3)).float() + 10
+    gate = torch.arange(12 if bias else 36).reshape((12,) if bias else (12, 3)).float() + 10
     up = gate + 100
-    interleaved = torch.empty((8,) if bias else (8, 3))
+    interleaved = torch.empty((24,) if bias else (24, 3))
     interleaved[::2], interleaved[1::2] = gate, up
     hf_expert = interleaved if bias else interleaved.t()
     # Import expert 1, so extracting the wrong expert is also observable.
@@ -231,14 +235,23 @@ def test_gate_up_mapping_preserves_expert_rows_across_etp_and_gtp(monkeypatch, b
     hf_name = "model.layers.0.mlp.experts.gate_up_proj" + ("_bias" if bias else "")
     param_name = "bias0" if bias else "weight0"
     megatron_name = "decoder.layers.0.mlp.experts.linear_fc1." + ("bias1" if bias else "weight1")
-    local_rows = 8 // etp_size
+    local_rows = 24 // etp_size
     mapping_path = "megatron.bridge.models.conversion.param_mapping"
     monkeypatch.setattr(f"{mapping_path}.get_pg_size", lambda group: group.size() if group is not None else 1)
     monkeypatch.setattr(f"{mapping_path}.get_pg_rank", lambda group: group.rank() if group is not None else 0)
-    expected_tp = [torch.cat((g, u)) for g, u in zip(gate.chunk(etp_size), up.chunk(etp_size))]
+    logical_tp = [torch.cat((g, u)) for g, u in zip(gate.chunk(etp_size), up.chunk(etp_size))]
+    expected_tp = (
+        logical_tp
+        if interleave_size is None
+        else [
+            torch.cat([part for pair in zip(g.split(interleave_size), u.split(interleave_size)) for part in pair])
+            for g, u in zip(gate.chunk(etp_size), up.chunk(etp_size))
+        ]
+    )
 
     for etp_rank in range(etp_size):
         module = torch.nn.Module()
+        module.config = SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=interleave_size)
         padding = 2 if gtp_size > 1 else 0
         shape = ((local_rows + padding) // gtp_size, *gate.shape[1:])
         parameter = torch.nn.Parameter(torch.zeros(shape))
@@ -273,7 +286,12 @@ def test_gate_up_mapping_preserves_expert_rows_across_etp_and_gtp(monkeypatch, b
             converted = _gather_gtp_weight(parameter)
 
         monkeypatch.setattr(delegate, "broadcast_from_pp_rank", lambda weight, **kwargs: weight)
-        monkeypatch.setattr(delegate, "gather_from_tp_ranks", lambda weight: expected_tp)
+
+        def gather(weight):
+            assert torch.equal(weight, logical_tp[etp_rank])
+            return logical_tp
+
+        monkeypatch.setattr(delegate, "gather_from_tp_ranks", gather)
         exported = mapping.megatron_to_hf(converted, module)
         assert torch.equal(exported[hf_name], hf_expert)
 
