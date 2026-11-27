@@ -18,7 +18,9 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "${REPO_ROOT}"
 
-export PYTHONPATH="${REPO_ROOT}/src:${REPO_ROOT}/3rdparty/Megatron-LM:${REPO_ROOT}:${PYTHONPATH:-}"
+# Keep REPO_ROOT first: Megatron-LM also ships a regular `tests` package, which would
+# otherwise shadow tests.functional_tests.test_groups in the torchrun child processes.
+export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/src:${REPO_ROOT}/3rdparty/Megatron-LM:${PYTHONPATH:-}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES-0,1}"
 
 uv run --no-sync python -c '
