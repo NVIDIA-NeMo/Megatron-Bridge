@@ -39,14 +39,17 @@ from tests.unit_tests.training.test_checkpointing import load_checkpoint_fixture
 )
 @pytest.mark.parametrize("override", [False, True])
 @pytest.mark.parametrize("precision", ["fp8", "fp4", "bf16"])
+@pytest.mark.parametrize("distributed", [False, True])
 def test_quantized_resume_requires_successful_main_parameter_restore(
-    load_checkpoint_fixtures, mode, precision, override
+    load_checkpoint_fixtures, mode, precision, override, distributed
 ):
     fixtures = load_checkpoint_fixtures
     cfg, state = fixtures["mock_cfg"], fixtures["mock_state"]
     cfg.peft = None
     cfg.scheduler.override_opt_param_scheduler = override
     cfg.optimizer.lr, cfg.optimizer.min_lr = 0.02, 0.002
+    cfg.optimizer.use_distributed_optimizer = distributed
+    cfg.optimizer.use_layer_wise_distributed_optimizer = False
     fixtures["mock_model"][0].hide_loss_modules.return_value = nullcontext()
     cfg.checkpoint.load_rng = False
     cfg.checkpoint.load_optim = mode not in ("no_optim", "conversion")
@@ -60,10 +63,16 @@ def test_quantized_resume_requires_successful_main_parameter_restore(
     optimizer.is_stub_optimizer = mode == "stub"
     # The second group has its own LR override, e.g. from an optimizer_config_override_provider.
     optimizer.param_groups = [{"max_lr": 0.2, "min_lr": 0.1}, {"max_lr": 0.5, "min_lr": 0.05, "default_config": False}]
+    if distributed and override:
+        optimizer.param_groups[0].update(max_lr=0.02, min_lr=0.002)
     events = []
 
-    def load_optimizer(*_):
+    def load_optimizer(*_, **kwargs):
         events.append("optimizer")
+        assert kwargs == ({"override_lr": True} if distributed and override else {})
+        if kwargs:
+            # Core keeps the runtime groups while independently restoring tensor state.
+            return
         # The checkpoint's groups replace the built ones, with stale bounds for the override group.
         optimizer.param_groups[1].update(max_lr=0.9, min_lr=0.09)
 
@@ -137,7 +146,8 @@ def test_quantized_resume_requires_successful_main_parameter_restore(
         assert scheduler.num_steps == 48
         scheduler.step.assert_called_once_with(increment=0)
     else:
-        assert optimizer.param_groups[0] == {"max_lr": 0.2, "min_lr": 0.1}
+        expected_bounds = (0.02, 0.002) if distributed and override else (0.2, 0.1)
+        assert optimizer.param_groups[0] == dict(zip(("max_lr", "min_lr"), expected_bounds))
         scheduler.step.assert_not_called()
     if expected:
         assert events == ["optimizer", "scheduler", "quantize"]
@@ -194,6 +204,21 @@ def test_scheduler_override_keeps_built_per_group_lr_overrides():
 
     assert (optimizer.param_groups[0]["max_lr"], optimizer.param_groups[0]["min_lr"]) == (0.02, 0.002)
     assert (optimizer.param_groups[1]["max_lr"], optimizer.param_groups[1]["min_lr"]) == (0.5, 0.05)
+    assert optimizer.param_groups[1]["lr"] == pytest.approx(0.05 + 0.45 * 0.5)
+
+
+def test_scheduler_override_preserves_core_retained_bounds_and_classification():
+    optimizer = _two_group_optimizer()
+    # Explicit custom bounds also take precedence over decoupled defaults.
+    optimizer.param_groups[1]["is_decoupled_lr"] = True
+    scheduler = OptimizerParamScheduler(optimizer, 0, 0.2, 0.1, 0, 100, "linear", 0, 0, 100, "constant")
+    cfg = SimpleNamespace(optimizer=OptimizerConfig(lr=0.02, min_lr=0.002, decoupled_lr=0.04))
+    checkpointing._restore_scheduler_runtime_overrides(
+        cfg, TrainState(consumed_train_samples=50), optimizer, scheduler, group_lrs_restored=True
+    )
+    assert [(g["max_lr"], g["min_lr"]) for g in optimizer.param_groups] == [(0.2, 0.1), (0.5, 0.05)]
+    assert [g["default_config"] for g in optimizer.param_groups] == [True, False]
+    assert scheduler.num_steps == 50
     assert optimizer.param_groups[1]["lr"] == pytest.approx(0.05 + 0.45 * 0.5)
 
 
