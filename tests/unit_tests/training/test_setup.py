@@ -283,7 +283,6 @@ def test_data_init_warmup_preserves_checkpoint_restored_rng_state():
             setup_logging=Mock(),
             setup_optimizer=Mock(return_value=(optimizer, scheduler)),
             start_memory_history_recording=Mock(),
-            sync_hybrid_device_optimizer_fp32_master_copies=Mock(),
         ),
         patch.object(torch, "tensor", return_value=start_time_tensor),
         patch.object(torch.distributed, "all_reduce"),

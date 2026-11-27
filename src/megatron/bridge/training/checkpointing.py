@@ -84,11 +84,7 @@ from megatron.bridge.training.gtp import (
     _validate_checkpoint_weight_topology,
     get_data_distribution_group,
 )
-from megatron.bridge.training.optim import (
-    hybrid_optimizer_state_loading,
-    memory_efficient_precision_aware_optimizer_state_checkpointing,
-    sync_hybrid_device_optimizer_fp32_master_copies,
-)
+from megatron.bridge.training.optim import memory_efficient_precision_aware_optimizer_state_checkpointing
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils import comet_utils, mlflow_utils, wandb_utils
 from megatron.bridge.training.utils.checkpoint_utils import (
@@ -2869,6 +2865,13 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
             raise
 
 
+def _should_reload_model_params(cfg: ConfigContainer) -> bool:
+    # CPU offload keeps a separate working copy even for FP32 model parameters.
+    return cfg.optimizer.optimizer_cpu_offload or (
+        not cfg.ddp.use_megatron_fsdp and (cfg.model.fp16 or cfg.model.bf16)
+    )
+
+
 def _load_hf_pretrained_checkpoint(
     hf_dir: str,
     state: GlobalState,
@@ -2883,13 +2886,10 @@ def _load_hf_pretrained_checkpoint(
     if not skip_load_to_model_and_opt:
         bridge = _build_auto_bridge_for_save(cfg, hf_source=hf_dir)
         bridge.load_hf_weights(model, hf_path=hf_dir)
+        if optimizer is not None and _should_reload_model_params(cfg):
+            optimizer.reload_model_params()
 
     state.train_state.step = 0
-
-    # HF checkpoints only initialize model weights. Full training resume should
-    # load the complete Megatron checkpoint through ``checkpoint.load``.
-    if (cfg.model.fp16 or cfg.model.bf16) and optimizer is not None and not cfg.ddp.use_megatron_fsdp:
-        optimizer.reload_model_params()
 
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
@@ -3416,16 +3416,12 @@ def _load_checkpoint_from_path(
                     # require grad without this context.
                     with (
                         torch.no_grad(),
-                        hybrid_optimizer_state_loading(optimizer),
                         memory_efficient_precision_aware_optimizer_state_checkpointing(
                             optimizer,
                             enabled=cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu,
                         ),
                     ):
                         optimizer.load_state_dict(state_dict["optimizer"])
-                    # Direct checkpoint callers also need HDO's loaded working
-                    # copies and advancing CPU/GPU step counters synchronized.
-                    sync_hybrid_device_optimizer_fp32_master_copies(optimizer)
 
             if opt_param_scheduler is not None:
                 if "lr_scheduler" in state_dict:
@@ -3461,7 +3457,7 @@ def _load_checkpoint_from_path(
                 "WARNING: quantized parameters were loaded without optimizer main parameters; "
                 "their block scales may differ from the saved training state."
             )
-        if (cfg.model.fp16 or cfg.model.bf16) and optimizer is not None and not cfg.ddp.use_megatron_fsdp:
+        if not skip_load_to_model_and_opt and optimizer is not None and _should_reload_model_params(cfg):
             if cfg.checkpoint.load_main_params_from_ckpt:
                 optimizer.reload_model_params(state_dict=state_dict)
             else:

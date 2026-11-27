@@ -2163,6 +2163,7 @@ def load_checkpoint_fixtures():
     mock_cfg.rng.data_parallel_random_init = False
     mock_cfg.optimizer = Mock()
     mock_cfg.optimizer.use_distributed_optimizer = False
+    mock_cfg.optimizer.optimizer_cpu_offload = False
     mock_cfg.checkpoint.ckpt_format = "torch_dist"
     mock_cfg.checkpoint.non_persistent_save_interval = None
     mock_cfg.dist = Mock()
@@ -2458,11 +2459,16 @@ class TestLoadCheckpoint:
         assert result == (0, 0)
         assert optimizer.materialized_step == 0
 
-    def test_torch_dist_omitted_optimizer_keeps_load_state_fresh(self, load_checkpoint_fixtures):
+    @pytest.mark.parametrize("load_main_params,skip_load", [(False, False), (True, False), (True, True)])
+    def test_torch_dist_omitted_optimizer_keeps_load_state_fresh(
+        self, load_checkpoint_fixtures, load_main_params, skip_load
+    ):
         """A torch-dist checkpoint without optimizer state must leave load state fresh."""
         cfg = load_checkpoint_fixtures["mock_cfg"]
         cfg.checkpoint.ckpt_format = "torch_dist"
         cfg.checkpoint.load_rng = False
+        cfg.optimizer.optimizer_cpu_offload = True
+        cfg.checkpoint.load_main_params_from_ckpt = load_main_params
         cfg.peft = None
 
         state = load_checkpoint_fixtures["mock_state"]
@@ -2523,11 +2529,18 @@ class TestLoadCheckpoint:
                 optimizer,
                 scheduler,
                 pg_collection=pg_collection,
+                skip_load_to_model_and_opt=skip_load,
             )
 
         assert result == (0, 0)
         optimizer.load_state_dict.assert_not_called()
         scheduler.load_state_dict.assert_not_called()
+        if skip_load:
+            optimizer.reload_model_params.assert_not_called()
+        elif load_main_params:
+            optimizer.reload_model_params.assert_called_once_with(state_dict=checkpoint_without_optimizer)
+        else:
+            optimizer.reload_model_params.assert_called_once_with()
 
     def test_torch_dist_resume_releases_loaded_state_dict_before_empty_cache(self, load_checkpoint_fixtures):
         """The loaded resume state dict is unreachable by the time the cache is emptied."""
@@ -2619,6 +2632,68 @@ class TestLoadCheckpoint:
         assert result == (0, 0)
         assert released_at_empty_cache == [True]
 
+    @pytest.mark.unit
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CPU optimizer offload requires a CUDA model")
+    @pytest.mark.parametrize("source", ["torch_dist", "huggingface"])
+    @torch.no_grad()
+    def test_weights_only_load_preserves_offloaded_fp32_weights_on_first_step(self, load_checkpoint_fixtures, source):
+        from megatron.core.optimizer import DistributedOptimizer
+        from megatron.core.optimizer.cpu_offloading.hybrid_optimizer import HybridDeviceOptimizer
+
+        state = load_checkpoint_fixtures["mock_state"]
+        cfg = state.cfg
+        cfg.optimizer.optimizer_cpu_offload = True
+        cfg.checkpoint.finetune = True
+        cfg.checkpoint.load_main_params_from_ckpt = False
+        cfg.model.moe_mlp_glu_interleave_size = cfg.model.moe_shared_expert_glu_interleave_size = None
+
+        model = torch.nn.Linear(2, 1, bias=False, device="cuda", dtype=torch.float32)
+        model.weight.fill_(1)
+        inner = HybridDeviceOptimizer(
+            model.parameters(),
+            offload_fraction=1.0,
+            cpu_optimizer_cls=torch.optim.AdamW,
+            gpu_optimizer_cls=torch.optim.AdamW,
+            param_update_in_fp32=True,
+            overlap_cpu_optimizer_d2h_h2d=False,
+            lr=0.0,
+            weight_decay=0.0,
+        )
+        # The reload only needs the wrapped optimizer, not distributed gradient buffers.
+        optimizer = object.__new__(DistributedOptimizer)
+        optimizer.optimizer = inner
+        optimizer.is_stub_optimizer = False
+
+        saved = {"weight": torch.full_like(model.weight, 7)}
+        run_config = {"model": {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1}, "checkpoint": {}}
+        path = "/pretrained"
+        with (
+            patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=source == "huggingface"),
+            patch("megatron.bridge.training.checkpointing._build_auto_bridge_for_save") as auto_bridge,
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=True),
+            patch("megatron.bridge.training.checkpointing.read_run_config", return_value=run_config),
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing.load_content_metadata", return_value={}),
+            patch("megatron.bridge.training.checkpointing.generate_state_dict", return_value={}),
+            patch(
+                "megatron.bridge.training.checkpointing._load_base_checkpoint",
+                return_value=({"model": saved, "checkpoint_version": 3.0}, path, False, CheckpointType.GLOBAL),
+            ),
+        ):
+            auto_bridge.return_value.load_hf_weights.side_effect = lambda models, hf_path: models[0].load_state_dict(
+                saved
+            )
+            _load_checkpoint_from_path(path, state, [model], optimizer, None, pg_collection=Mock())
+
+        assert torch.equal(model.weight, saved["weight"])
+        # A zero update exposes a stale CPU copy: Adam would copy 1 back over 7.
+        model.weight.grad = torch.zeros_like(model.weight)
+        inner.step()
+        assert torch.equal(model.weight, saved["weight"])
+
+    @pytest.mark.parametrize(
+        "cpu_offload,fsdp,skip_load",
+        [(False, False, False), (False, True, False), (True, True, False), (True, False, True)],
+    )
     @patch("torch.distributed.is_initialized")
     @patch("megatron.bridge.training.checkpointing._build_auto_bridge_for_save")
     def test_load_hf_pretrained_checkpoint_initializes_from_hf_source(
@@ -2626,8 +2701,15 @@ class TestLoadCheckpoint:
         mock_build_bridge,
         mock_dist_init,
         load_checkpoint_fixtures,
+        cpu_offload,
+        fsdp,
+        skip_load,
     ):
         """HF pretrained initialization should not require a separate hf_source_path."""
+        cfg = load_checkpoint_fixtures["mock_cfg"]
+        cfg.optimizer.optimizer_cpu_offload = cpu_offload
+        cfg.ddp.use_megatron_fsdp = fsdp
+        cfg.model.bf16 = fsdp  # FSDP owns mixed-precision weights, while CPU offload owns an additional copy.
         mock_dist_init.return_value = False
         bridge = Mock()
         mock_build_bridge.return_value = bridge
@@ -2637,9 +2719,17 @@ class TestLoadCheckpoint:
             load_checkpoint_fixtures["mock_state"],
             load_checkpoint_fixtures["mock_model"],
             load_checkpoint_fixtures["mock_optimizer"],
-            skip_load_to_model_and_opt=False,
+            skip_load_to_model_and_opt=skip_load,
         )
 
+        reload_params = load_checkpoint_fixtures["mock_optimizer"].reload_model_params
+        if cpu_offload and not skip_load:
+            reload_params.assert_called_once_with()
+        else:
+            reload_params.assert_not_called()
+        if skip_load:
+            mock_build_bridge.assert_not_called()
+            return
         mock_build_bridge.assert_called_once_with(load_checkpoint_fixtures["mock_cfg"], hf_source="/hf/full-model")
         bridge.load_hf_weights.assert_called_once_with(
             load_checkpoint_fixtures["mock_model"], hf_path="/hf/full-model"
@@ -2844,12 +2934,12 @@ class TestLoadCheckpoint:
         events = []
 
         @contextmanager
-        def load_context(name, *_args, **_kwargs):
-            events.append(f"enter {name}")
+        def staging_context(*_args, **_kwargs):
+            events.append("enter staging")
             try:
                 yield
             finally:
-                events.append(f"exit {name}")
+                events.append("exit staging")
 
         def load_optimizer(loaded_state):
             assert loaded_state is mock_state_dict["optimizer"]
@@ -2863,17 +2953,9 @@ class TestLoadCheckpoint:
             patch("torch.distributed.get_rank", return_value=0),
             patch("torch.distributed.get_world_size", return_value=1),
             patch(
-                "megatron.bridge.training.checkpointing.hybrid_optimizer_state_loading",
-                side_effect=partial(load_context, "hybrid"),
-            ),
-            patch(
                 "megatron.bridge.training.checkpointing.memory_efficient_precision_aware_optimizer_state_checkpointing",
-                side_effect=partial(load_context, "staging"),
+                side_effect=staging_context,
             ),
-            patch(
-                "megatron.bridge.training.checkpointing.sync_hybrid_device_optimizer_fp32_master_copies",
-                side_effect=lambda _optimizer: events.append("sync optimizer"),
-            ) as sync_optimizer,
         ):
             if optimizer_load_error:
                 with pytest.raises(RuntimeError, match="optimizer restore failed"):
@@ -2891,13 +2973,9 @@ class TestLoadCheckpoint:
                     load_checkpoint_fixtures["mock_scheduler"],
                 )
 
-        assert events[:5] == ["enter hybrid", "enter staging", "load optimizer", "exit staging", "exit hybrid"]
+        assert events == ["enter staging", "load optimizer", "exit staging"]
         if optimizer_load_error:
-            assert len(events) == 5
-            sync_optimizer.assert_not_called()
             return
-        assert events[5:] == ["sync optimizer"]
-        sync_optimizer.assert_called_once_with(optimizer)
 
         # Idle shards are still requested for strict loading, but must not restore
         # the previous job's validation mode. Active reruns retain their mode.

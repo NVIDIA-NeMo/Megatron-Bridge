@@ -72,7 +72,6 @@ from megatron.bridge.training.initialize import initialize_megatron, set_jit_fus
 from megatron.bridge.training.optim import (
     memory_efficient_fp32_optimizer_state_loading,
     setup_optimizer,
-    sync_hybrid_device_optimizer_fp32_master_copies,
 )
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tensor_inspect import (
@@ -457,11 +456,6 @@ def setup(
                     skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
                 )
             )
-        # Refresh HDO working masters after model-only initialization, or rebind
-        # saved FP32 masters/moments and restore CPU/GPU counters after full resume.
-        # Core's reload_model_params() and distributed state loader do not cover
-        # all of these working copies. No-op when CPU offload is not enabled.
-        sync_hybrid_device_optimizer_fp32_master_copies(optimizer)
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])
 
