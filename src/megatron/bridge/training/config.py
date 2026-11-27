@@ -1379,6 +1379,32 @@ class ConfigContainer(Container):
         if seq_length > model.seq_length:
             raise ValueError(f"dataset.seq_length={seq_length} exceeds model.seq_length={model.seq_length}.")
 
+    def _validate_fixed_thd_dsv4_packing(self) -> None:
+        """Require prepacked, fixed-width batches for the fixed-THD DSv4 contract."""
+        if getattr(self.dataset, "enable_global_batch_packing", False):
+            raise ValueError(
+                "Fixed-THD DSv4 consumes prepacked batches and does not run the online scheduler; "
+                "dataset.enable_global_batch_packing must be False."
+            )
+        specs = getattr(self.dataset, "offline_packing_specs", None)
+        dataset_kwargs = getattr(self.dataset, "dataset_kwargs", None) or {}
+        pad_to_max_length = (
+            getattr(self.dataset, "pad_to_max_length", False) is True
+            or dataset_kwargs.get("pad_to_max_length", False) is True
+        )
+        if not (
+            getattr(self.dataset, "enable_offline_packing", False) is True
+            and specs is not None
+            and specs.pad_cu_seqlens
+            and pad_to_max_length
+        ):
+            raise ValueError(
+                "Fixed-THD DSv4 requires dataset.enable_offline_packing=True, pad_to_max_length=True, "
+                "and offline_packing_specs.pad_cu_seqlens=True."
+            )
+        if specs.packed_sequence_size != self.model.seq_length:
+            raise ValueError("Fixed-THD DSv4 requires offline_packing_specs.packed_sequence_size=model.seq_length.")
+
     def _apply_global_batch_packing_padding(self, collate_padding_multiple: int) -> None:
         """Push the CP alignment multiple to the dataset that yields unpacked samples."""
         if hasattr(self.dataset, "global_batch_packing_pad_to_multiple_of"):
@@ -1457,6 +1483,8 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+        from megatron.bridge.training.global_batch_packing import fixed_thd_dsv4_packing_enabled
+
         _validate_and_sync_distributed_optimizer_settings(self)
         if self.optimizer.optimizer not in ("adam", "sgd") and (
             self.ddp.use_megatron_fsdp or self.dist.use_torch_fsdp2
@@ -1478,6 +1506,9 @@ class ConfigContainer(Container):
         enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
         offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
         enable_global_batch_packing = getattr(self.dataset, "enable_global_batch_packing", False)
+        fixed_thd_dsv4 = fixed_thd_dsv4_packing_enabled(self.model)
+        if fixed_thd_dsv4:
+            self._validate_fixed_thd_dsv4_packing()
         uses_thd = (
             enable_offline_packing or enable_in_batch_packing or enable_energon_packing or enable_global_batch_packing
         )
@@ -1491,9 +1522,13 @@ class ConfigContainer(Container):
                 "enable_global_batch_packing is mutually exclusive with offline, in-batch, and Energon packing: "
                 "the scheduler packs unpacked samples itself."
             )
-        if not enable_global_batch_packing and (
-            getattr(self.model, "sequence_packing_scheduler", None) is not None
-            or getattr(self.model, "dynamic_context_parallel", False)
+        if (
+            not enable_global_batch_packing
+            and not fixed_thd_dsv4
+            and (
+                getattr(self.model, "sequence_packing_scheduler", None) is not None
+                or getattr(self.model, "dynamic_context_parallel", False)
+            )
         ):
             raise ValueError(
                 "model.sequence_packing_scheduler / model.dynamic_context_parallel are driven by the dataset: set "
@@ -1624,6 +1659,8 @@ class ConfigContainer(Container):
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
+        # Match Megatron-LM's ownership before optimizer finalization and GTP validation.
+        _sync_mxfp8_reuse_grad_buf_settings(self)
         if hasattr(self.optimizer, "finalize"):
             self.optimizer.finalize()
         if isinstance(self.ddp, MCoreDistributedDataParallelConfig):
@@ -2298,8 +2335,12 @@ def apply_ncclep_one_gpu_per_rank(cfg: ConfigContainer) -> None:
     No-op when the recipe does not use NCCL EP, when no local rank can be determined, or when CUDA
     is already initialized in this process (the visible-device list can no longer change). A
     launcher that already exposes exactly one device only gets ``external_gpu_device_mapping``.
+    Also a no-op with a MoE megakernel backend: it owns dispatch and combine, so NCCL EP is not its
+    transport, and its symmetric-memory buffers need each rank's real device index.
     """
     model = getattr(cfg, "model", None)
+    if getattr(model, "moe_megakernel_backend", None) is not None:
+        return
     if getattr(model, "moe_token_dispatcher_type", None) != "flex":
         return
     if getattr(model, "moe_flex_dispatcher_backend", None) != "ncclep":
@@ -2510,6 +2551,29 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
             )
         config.ddp.overlap_param_gather = True
         config.optimizer.overlap_param_gather = True
+
+
+def _sync_mxfp8_reuse_grad_buf_settings(config: ConfigContainer) -> None:
+    """Derive DDP reuse from the optimizer and optimizer FP8 recipe from the model, as in Megatron-LM."""
+    ddp_reuse = config.ddp.reuse_grad_buf_for_mxfp8_param_ag
+    optimizer_reuse = config.optimizer.reuse_grad_buf_for_mxfp8_param_ag
+
+    if ddp_reuse != optimizer_reuse:
+        warn_rank_0(
+            f"reuse_grad_buf_for_mxfp8_param_ag settings were not in sync: "
+            f"ddp.reuse_grad_buf_for_mxfp8_param_ag={ddp_reuse}, "
+            f"optimizer.reuse_grad_buf_for_mxfp8_param_ag={optimizer_reuse}. "
+            f"Using the optimizer setting for DDP."
+        )
+    config.ddp.reuse_grad_buf_for_mxfp8_param_ag = optimizer_reuse
+
+    model_recipe = config.model.fp8_recipe
+    if config.optimizer.fp8_recipe is not None and config.optimizer.fp8_recipe != model_recipe:
+        warn_rank_0(
+            f"fp8_recipe settings were not in sync: model.fp8_recipe={model_recipe}, "
+            f"optimizer.fp8_recipe={config.optimizer.fp8_recipe}. Using the model setting for the optimizer."
+        )
+    config.optimizer.fp8_recipe = model_recipe
 
 
 def _validate_mixed_precision_consistency(config: ConfigContainer) -> None:

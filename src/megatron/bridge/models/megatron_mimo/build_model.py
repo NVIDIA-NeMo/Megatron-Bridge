@@ -70,6 +70,9 @@ def build_megatron_mimo_model(
     validate_no_stub_ranks(infra.module_to_grid_map, world_size)
 
     _set_per_module_random_seeds(infra, seed=seed)
+    # Expert layers query parallel_state process groups during model construction.
+    active_module_name, local_pg_collection = get_active_module_pg(infra)
+    _bridge_parallel_state_globals(local_pg_collection)
 
     logger.info("Rank %d: Building distributed MIMO model", dist.get_rank())
     model_list = provider.provide_distributed_model(
@@ -83,8 +86,6 @@ def build_megatron_mimo_model(
     )
     mimo_model = model_list[0]
 
-    active_module_name, local_pg_collection = get_active_module_pg(infra)
-    _bridge_parallel_state_globals(local_pg_collection)
     logger.info(
         "Rank %d: bridged parallel_state globals from module %r",
         dist.get_rank(),

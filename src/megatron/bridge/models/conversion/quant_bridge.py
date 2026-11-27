@@ -20,8 +20,10 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, List, Mappi
 import torch
 from megatron.core.fp8_utils import get_grouped_quantized_members, is_grouped_mxfp8tensor, is_mxfp8tensor  # noqa: F401
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.utils import unwrap_model
+from megatron.core.utils import get_pg_size, unwrap_model
+from torch.distributed._tensor import DTensor
 
+from megatron.bridge.models.conversion.glu import get_glu_interleave_size
 from megatron.bridge.models.conversion.gtp import _gather_gtp_weight, _is_gtp_param
 
 
@@ -32,6 +34,61 @@ if TYPE_CHECKING:
 
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 HFPreTrained = TypeVar("HFPreTrained")
+
+
+def _validate_interleaved_glu_quantized_export(
+    tasks: Iterable["WeightConversionTask"],
+    model_config: object,
+    quantization_checker: Callable[[str], bool],
+) -> None:
+    """Validate mapping and storage support for interleaved quantized export.
+
+    The regular export path materializes a full tensor from Megatron FSDP
+    before invoking a mapping. The quantized stream does not, so applying a
+    GLU row permutation here cannot assume the full TP-local layout is available.
+    """
+    from megatron.bridge.models.conversion.param_mapping import FusedGatedExpertMapping, GatedMLPMapping
+
+    interleaved_tasks = [
+        task for task in tasks if get_glu_interleave_size(model_config, task.global_param_name) is not None
+    ]
+    if not interleaved_tasks:
+        return
+
+    unsupported_mapping = next(
+        (
+            task
+            for task in interleaved_tasks
+            if quantization_checker(task.global_param_name)
+            and not (
+                isinstance(task.mapping, GatedMLPMapping)
+                or (
+                    isinstance(task.mapping, FusedGatedExpertMapping)
+                    and task.mapping.permute_dims is None
+                    and not task.mapping.transpose_on_export
+                )
+            )
+        ),
+        None,
+    )
+    if unsupported_mapping is not None:
+        raise NotImplementedError(
+            f"{unsupported_mapping.global_param_name}: quantized HF export of interleaved GLU storage "
+            f"is not implemented by {type(unsupported_mapping.mapping).__name__}; "
+            "use logical unquantized export"
+        )
+
+    local_unsupported = any(isinstance(task.param_weight, DTensor) for task in interleaved_tasks)
+    pp_group = interleaved_tasks[0].mapping.pp_group
+    if pp_group is not None and (pp_size := get_pg_size(pp_group)) > 1:
+        unsupported_by_rank = [False] * pp_size
+        torch.distributed.all_gather_object(unsupported_by_rank, local_unsupported, group=pp_group)
+        local_unsupported = any(unsupported_by_rank)
+    if local_unsupported:
+        raise NotImplementedError(
+            "Quantized HF export of interleaved GLU parameters does not support Megatron FSDP; "
+            "export logical weights first and quantize the resulting HF tensors"
+        )
 
 
 @dataclass(frozen=True)
@@ -727,6 +784,12 @@ class MegatronQuantizationBridge:
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(unwrapped_model)
+
+        _validate_interleaved_glu_quantized_export(
+            megatron_to_hf_tasks,
+            model_config,
+            quantization_checker,
+        )
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
         grouped_buffers: dict[str, dict[int, torch.Tensor]] = {}

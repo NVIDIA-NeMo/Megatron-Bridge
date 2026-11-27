@@ -202,16 +202,19 @@ def main(args) -> None:
         )
 
         # Initialize model parallel before loading
-        model_provider = bridge.to_megatron_provider(load_weights=False)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.pipeline_model_parallel_size = pp
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = torch.bfloat16
+        use_model_config = getattr(getattr(bridge, "_model_bridge", None), "USE_MODEL_CONFIG_FOR_CONVERSION", False)
+        model_config = (
+            bridge.get_model_config() if use_model_config else bridge.to_megatron_provider(load_weights=False)
+        )
+        model_config.tensor_model_parallel_size = tp
+        model_config.pipeline_model_parallel_size = pp
+        model_config.expert_model_parallel_size = ep
+        model_config.expert_tensor_parallel_size = etp
+        model_config.pipeline_dtype = torch.bfloat16
 
         # Read pipeline layout from checkpoint for PP > 1
         if args.pipeline_model_parallel_layout is not None:
-            model_provider.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
+            model_config.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
         elif pp > 1:
             from pathlib import Path
 
@@ -225,12 +228,16 @@ def main(args) -> None:
                         cfg = yaml.safe_load(f)
                     saved_layout = cfg.get("model", {}).get("pipeline_model_parallel_layout")
                     if isinstance(saved_layout, list):
-                        model_provider.pipeline_model_parallel_layout = saved_layout
+                        model_config.pipeline_model_parallel_layout = saved_layout
                         break
 
-        # Once all overrides are set, apply provider-specific derivations before post initialization.
-        model_provider.apply_overrides_and_finalize()
-        model_provider.initialize_model_parallel(seed=0)
+        if use_model_config:
+            model_config.params_dtype = torch.bfloat16
+            model_config.finalize()
+            bridge._get_or_initialize_pg_collection(model_config.transformer)
+        else:
+            model_config.apply_overrides_and_finalize()
+            model_config.initialize_model_parallel(seed=0)
 
         # Load the Megatron model directly
         mp_overrides = {
@@ -241,9 +248,9 @@ def main(args) -> None:
             "pipeline_dtype": torch.bfloat16,
         }
         resolved_pipeline_layout = getattr(
-            model_provider.pipeline_model_parallel_layout,
+            model_config.pipeline_model_parallel_layout,
             "input_data",
-            model_provider.pipeline_model_parallel_layout,
+            model_config.pipeline_model_parallel_layout,
         )
         if args.pipeline_model_parallel_layout is not None:
             mp_overrides["pipeline_model_parallel_layout"] = args.pipeline_model_parallel_layout
@@ -267,19 +274,30 @@ def main(args) -> None:
             ),
             **_hf_revision_kwargs(args.hf_revision),
         )
-        model_provider = bridge.to_megatron_provider(load_weights=True)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.pipeline_model_parallel_size = pp
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = torch.bfloat16
+        use_model_config = getattr(getattr(bridge, "_model_bridge", None), "USE_MODEL_CONFIG_FOR_CONVERSION", False)
+        model_config = (
+            bridge.get_model_config() if use_model_config else bridge.to_megatron_provider(load_weights=True)
+        )
+        model_config.tensor_model_parallel_size = tp
+        model_config.pipeline_model_parallel_size = pp
+        model_config.expert_model_parallel_size = ep
+        model_config.expert_tensor_parallel_size = etp
+        model_config.pipeline_dtype = torch.bfloat16
         if args.pipeline_model_parallel_layout is not None:
-            model_provider.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
+            model_config.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
 
-        # Once all overrides are set, apply provider-specific derivations before post initialization.
-        model_provider.apply_overrides_and_finalize()
-        model_provider.initialize_model_parallel(seed=0)
-        model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+        if use_model_config:
+            model_config.params_dtype = torch.bfloat16
+            model_config.finalize()
+            bridge._get_or_initialize_pg_collection(model_config.transformer)
+        else:
+            model_config.apply_overrides_and_finalize()
+            model_config.initialize_model_parallel(seed=0)
+        model = (
+            bridge.get_model(model_config, wrap_with_ddp=False, mixed_precision_wrapper=None)
+            if use_model_config
+            else model_config.provide_distributed_model(wrap_with_ddp=False)
+        )
 
     model = [m.cuda() for m in model]
     for m in model:
@@ -345,7 +363,7 @@ def main(args) -> None:
                 world_size = parallel_state.get_tensor_model_parallel_world_size()
                 output = _maybe_gather_tensor_parallel_logits(
                     output,
-                    model_provider.vocab_size,
+                    model_config.vocab_size,
                     world_size,
                     parallel_state.get_tensor_model_parallel_group(),
                 )

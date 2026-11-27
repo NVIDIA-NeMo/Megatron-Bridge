@@ -61,6 +61,7 @@ from megatron.bridge.models.conversion.fp8_export import (
     detect_fp8_export_layout,
     get_fp8_export_tensors,
 )
+from megatron.bridge.models.conversion.glu import get_glu_interleave_size
 from megatron.bridge.models.conversion.gtp import (
     _gather_gtp_weight,
     _get_mapping_shape,
@@ -2797,6 +2798,11 @@ class MegatronModelBridge(
                     raise ValueError(
                         f"{global_name}: raw FP8 export does not support GTP sharding; "
                         "use gathered dequantized export or gathered quantized export instead"
+                    )
+                if get_glu_interleave_size(model_config, global_name) is not None:
+                    raise ValueError(
+                        f"{global_name}: raw FP8 export does not support interleaved GLU storage; "
+                        "use logical export to dequantize before converting rows, then requantize if needed"
                     )
                 try:
                     layout.validate()

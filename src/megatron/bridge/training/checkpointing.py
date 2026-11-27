@@ -37,7 +37,12 @@ import torch
 import torch.nn.functional as F
 from megatron.core import dist_checkpointing, tensor_parallel
 from megatron.core.dist_checkpointing.dict_utils import nested_values
-from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedStateDict, ShardedTensor
+from megatron.core.dist_checkpointing.mapping import (
+    ShardedObject,
+    ShardedStateDict,
+    ShardedTensor,
+    ShardedTensorFactory,
+)
 from megatron.core.dist_checkpointing.serialization import StateDict
 from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelLoadStrategyWrapper,
@@ -50,6 +55,7 @@ from megatron.core.dist_checkpointing.strategies.torch import (
 )
 from megatron.core.dist_checkpointing.utils import _clean_metadata_for_serialization
 from megatron.core.distributed import DistributedDataParallel
+from megatron.core.fp8_utils import FP8_TENSOR_CLASS, HAVE_TE_FP8_TENSOR_CLASS
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.optimizer import DistributedOptimizer, MegatronOptimizer, distrib_optimizer
@@ -74,6 +80,16 @@ from modelopt.torch.opt.plugins import (
 )
 from torch.distributed.tensor import DTensor
 
+from megatron.bridge.models.conversion.glu import (
+    classify_glu_fc1,
+    get_glu_interleave_size,
+)
+from megatron.bridge.models.conversion.glu import (
+    deinterleave_glu_tensor as _deinterleave_glu_tensor,
+)
+from megatron.bridge.models.conversion.glu import (
+    interleave_glu_tensor as _interleave_glu_tensor,
+)
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
@@ -2578,36 +2594,6 @@ def load_checkpoint(
     )
 
 
-def _deinterleave_glu_tensor(tensor: torch.Tensor, interleave_size: int) -> torch.Tensor:
-    """De-interleave SwiGLU fc1 tensor along dim 0: block-interleaved -> contiguous [W_all, V_all].
-
-    Same layout for ``linear_fc1.weight`` (dim 0 + remaining dims) and ``linear_fc1.bias`` (dim 0 only).
-    Interleaved format (dim 0): [W0:k, V0:k, Wk:2k, Vk:2k, ...] with ``k = interleave_size``.
-    """
-    shape = tensor.shape
-    x = tensor.reshape(
-        shape[0] // (2 * interleave_size),
-        2,
-        interleave_size,
-        *shape[1:],
-    )
-    x = x.transpose(0, 1).contiguous()
-    return x.reshape(shape)
-
-
-def _interleave_glu_tensor(tensor: torch.Tensor, interleave_size: int) -> torch.Tensor:
-    """Interleave SwiGLU fc1 tensor along dim 0: contiguous [W_all, V_all] -> block-interleaved."""
-    shape = tensor.shape
-    x = tensor.reshape(
-        2,
-        shape[0] // (2 * interleave_size),
-        interleave_size,
-        *shape[1:],
-    )
-    x = x.transpose(0, 1).contiguous()
-    return x.reshape(shape)
-
-
 def _is_swiglu_fc1_checkpoint_key(
     key: str,
     *,
@@ -2621,27 +2607,18 @@ def _is_swiglu_fc1_checkpoint_key(
     Shared experts are enabled separately by ``moe_shared_expert_glu_interleave_size``
     before this helper is called.
     """
-    is_swiglu_fc1_dense = (
-        include_dense
-        and os.environ.get("USE_ACT_FUSION_FOR_DENSE", "0") == "1"
-        and "experts" not in key
-        and "mlp" in key
-        and ("linear_fc1.weight" in key or "linear_fc1.bias" in key)
+    fc1_kind = classify_glu_fc1(key)
+    return (
+        (fc1_kind == "dense" and include_dense)
+        or (fc1_kind == "shared_expert" and include_shared_experts)
+        or (fc1_kind == "routed_expert" and include_routed_experts)
     )
-    is_swiglu_fc1_shared = (
-        include_shared_experts and "shared_experts" in key and ("linear_fc1.weight" in key or "linear_fc1.bias" in key)
-    )
-    is_swiglu_fc1_moe = (
-        include_routed_experts
-        and "shared_experts" not in key
-        and "experts" in key
-        and ("linear_fc1.weight" in key or "linear_fc1.bias" in key)
-    )
-    return is_swiglu_fc1_dense or is_swiglu_fc1_shared or is_swiglu_fc1_moe
 
 
 def _apply_glu_interleave_to_tensor_data(tensor: torch.Tensor, interleave_size: int, interleave: bool) -> torch.Tensor:
     """Run interleave or de-interleave on fc1 weight or bias (identical dim-0 layout)."""
+    if HAVE_TE_FP8_TENSOR_CLASS and isinstance(tensor, FP8_TENSOR_CLASS):
+        tensor = tensor.dequantize(dtype=tensor.dtype)
     return (
         _interleave_glu_tensor(tensor, interleave_size)
         if interleave
@@ -2716,6 +2693,22 @@ def _process_state_dict_for_glu_interleaving(
             num_keys_processed += 1
             continue
 
+        if isinstance(value, ShardedTensorFactory):
+            if value.data is None:
+                processed_state_dict[key] = value
+                continue
+            if value.flattened_range is not None:
+                raise ValueError(
+                    f"{key}: GLU interleaving requires a complete FC1 tensor, not a flattened factory shard"
+                )
+            # Gated MCore FC1 weights/biases use factories whose build function
+            # splits canonical gate/up rows. Convert before the factory runs,
+            # preserving its callbacks and the live model parameter.
+            new_data = _apply_glu_interleave_to_tensor_data(value.data, interleave_size, interleave)
+            processed_state_dict[key] = replace(value, data=new_data)
+            num_keys_processed += 1
+            continue
+
         if isinstance(value, ShardedTensor):
             if value.data is None:
                 processed_state_dict[key] = value
@@ -2778,8 +2771,8 @@ def _get_model_glu_interleave_sizes(
     except Exception:
         pass
 
-    routed_interleave_size = getattr(model_config, "moe_mlp_glu_interleave_size", None)
-    shared_interleave_size = getattr(model_config, "moe_shared_expert_glu_interleave_size", None)
+    routed_interleave_size = get_glu_interleave_size(model_config, "mlp.experts.linear_fc1.weight")
+    shared_interleave_size = get_glu_interleave_size(model_config, "mlp.shared_experts.linear_fc1.weight")
     return routed_interleave_size, shared_interleave_size
 
 
