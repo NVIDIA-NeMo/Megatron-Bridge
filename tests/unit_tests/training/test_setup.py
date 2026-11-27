@@ -275,7 +275,6 @@ def test_data_init_warmup_preserves_checkpoint_restored_rng_state():
             initialize_tensor_inspect_pre_model_initialization=Mock(),
             maybe_load_dataloader_state=Mock(),
             maybe_log_and_save_config=Mock(),
-            memory_efficient_fp32_optimizer_state_loading=Mock(return_value=MagicMock()),
             print_rank_0=Mock(),
             set_experimental_flag=Mock(),
             set_jit_fusion_options=Mock(),
@@ -290,6 +289,11 @@ def test_data_init_warmup_preserves_checkpoint_restored_rng_state():
     ):
         training_setup.setup(state, Mock(), callback_manager=callback_manager)
 
+    checkpoint_manager.load.assert_called_once()
+    context = checkpoint_manager.load.call_args.args[0]
+    assert context.optimizer is optimizer
+    assert context.opt_param_scheduler is scheduler
+    assert context.model is model
     assert torch.equal(torch.get_rng_state(), restored_rng_state)
 
 
