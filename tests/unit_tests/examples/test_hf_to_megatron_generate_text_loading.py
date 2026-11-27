@@ -59,6 +59,7 @@ def generation_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
             "megatron.bridge.utils.common_utils",
             disable_mtp_for_inference=lambda model: None,
             get_last_rank=lambda: 0,
+            maybe_initialize_distributed=lambda: None,
             print_rank_0=lambda message: None,
         ),
     }
@@ -143,3 +144,53 @@ def test_checkpoint_load_forwards_provider_derived_pipeline_layout(
         generation_module.main(args)
 
     assert recorded_overrides["pipeline_model_parallel_layout"] == layout
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("checkpoint", [False, True])
+def test_builder_backed_load_uses_config_api(generation_module, monkeypatch, checkpoint):
+    import torch
+
+    config = types.SimpleNamespace(pipeline_model_parallel_layout=None, transformer=object())
+    calls = []
+    config.finalize = lambda: calls.append("finalize")
+
+    def finish(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise RuntimeError("loading reached")
+
+    bridge = types.SimpleNamespace(
+        _model_bridge=types.SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=True),
+        get_model_config=lambda: config,
+        get_model=finish,
+        load_megatron_model=finish,
+        _get_or_initialize_pg_collection=lambda transformer: calls.append(transformer),
+    )
+    monkeypatch.setattr(
+        generation_module, "AutoBridge", types.SimpleNamespace(from_hf_pretrained=lambda *a, **k: bridge)
+    )
+    args = types.SimpleNamespace(
+        tp=2,
+        pp=1,
+        ep=2,
+        etp=1,
+        megatron_model_path="checkpoint" if checkpoint else None,
+        hf_model_path="moonshotai/Kimi-K3",
+        trust_remote_code=True,
+        hf_revision=None,
+        pipeline_model_parallel_layout=None,
+    )
+    with pytest.raises(RuntimeError, match="loading reached"):
+        generation_module.main(args)
+    assert config.tensor_model_parallel_size == 2
+    assert config.expert_model_parallel_size == 2
+    assert config.params_dtype == torch.bfloat16
+    assert "finalize" in calls
+    assert config.transformer in calls
+    loaded_args, loaded_kwargs = calls[-1]
+    if checkpoint:
+        assert loaded_args == ("checkpoint",)
+        assert loaded_kwargs["mp_overrides"]["tensor_model_parallel_size"] == 2
+    else:
+        assert loaded_args == (config,)
+        assert loaded_kwargs == {"wrap_with_ddp": False, "mixed_precision_wrapper": None}

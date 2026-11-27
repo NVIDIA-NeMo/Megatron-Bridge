@@ -59,6 +59,12 @@ class Qwen3VLBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    # Source parameter prefixes used by the generic MegatronMIMO converter.
+    mimo_source_prefixes = {
+        "language": "language_model.",
+        "images": "vision_model.",
+    }
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3VLModelProvider:
         """
         Create a Qwen3VLModelProvider from a HuggingFace pretrained model.
@@ -226,6 +232,12 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-VL-30B-A3B-Instruct")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    # Source parameter prefixes used by the generic MegatronMIMO converter.
+    mimo_source_prefixes = {
+        "language": "language_model.",
+        "images": "vision_model.",
+    }
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3VLMoEModelProvider:
         hf_config = hf_pretrained.config

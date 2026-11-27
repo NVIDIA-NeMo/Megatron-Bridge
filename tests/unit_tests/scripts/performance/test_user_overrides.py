@@ -61,6 +61,48 @@ def test_seq_length_updates_model_and_mock_dataset(tmp_path):
     assert updated.dataset.seq_length == 128
 
 
+@pytest.mark.parametrize(("extra_args", "seq_length"), [((), 128), (("--seq_length", "64"), 64)])
+def test_mock_override_preserves_recipe_owned_thd_metadata(tmp_path, extra_args, seq_length):
+    from megatron.bridge.models.deepseek.deepseek_v4_data import FixedTHDMockDatasetConfig
+
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    dataset = FixedTHDMockDatasetConfig(seq_length=128, vocab_size=256, seed=1234, metadata_capacity=8)
+    recipe.dataset = dataset
+    recipe.model.seq_length = 128
+
+    updated = set_user_overrides(recipe, _parse_args(tmp_path, *extra_args))
+
+    assert updated.dataset is dataset
+    assert updated.dataset.enable_offline_packing is True
+    assert (dataset.vocab_size, dataset.seed, dataset.metadata_capacity) == (256, 1234, 8)
+    # Validation compares the packing specs with the model length, so they must follow an override.
+    assert updated.model.seq_length == dataset.seq_length == seq_length
+    specs = dataset.offline_packing_specs
+    assert specs.packed_sequence_size == specs.max_single_sequence_length == seq_length
+
+
+@pytest.mark.parametrize("create_attention_mask", [True, False])
+def test_mock_dataset_keeps_recipe_attention_mask_setting(tmp_path, create_attention_mask):
+    """--data mock rebuilds the dataset config but keeps the recipe's create_attention_mask."""
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    recipe.dataset.create_attention_mask = create_attention_mask
+
+    updated = set_user_overrides(recipe, _parse_args(tmp_path, "--data", "mock"))
+
+    assert updated.dataset.create_attention_mask is create_attention_mask
+
+
+@pytest.mark.parametrize("prefetch_factor", [None, 32])
+def test_mock_dataset_keeps_recipe_prefetch_factor(tmp_path, prefetch_factor):
+    """--data mock rebuilds the dataset config but keeps the recipe's dataloader prefetch_factor."""
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    recipe.dataset.prefetch_factor = prefetch_factor
+
+    updated = set_user_overrides(recipe, _parse_args(tmp_path, "--data", "mock"))
+
+    assert updated.dataset.prefetch_factor == prefetch_factor
+
+
 @pytest.mark.parametrize(
     ("backend", "visible", "expected"),
     [
@@ -78,6 +120,20 @@ def test_one_gpu_per_rank_device_mapping_follows_backend_and_environment(monkeyp
     updated = apply_one_gpu_per_rank_device_mapping(recipe)
 
     assert updated.dist.external_gpu_device_mapping is expected
+
+
+def test_one_gpu_per_rank_device_mapping_skips_moe_megakernel(monkeypatch):
+    # bootstrap.py does not narrow megakernel recipes, so one visible GPU is the launcher's choice.
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2")
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    recipe.model.moe_flex_dispatcher_backend = "ncclep"
+    if not hasattr(recipe.model, "moe_megakernel_backend"):
+        raise ValueError("model config has no moe_megakernel_backend field")
+    recipe.model.moe_megakernel_backend = "mok"
+
+    updated = apply_one_gpu_per_rank_device_mapping(recipe)
+
+    assert updated.dist.external_gpu_device_mapping is False
 
 
 def _nccl_ub_recipe():

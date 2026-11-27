@@ -221,6 +221,7 @@ def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigCont
     cfg.model.moe_expert_rank_capacity_factor = None
     cfg.model.moe_pad_expert_input_to_capacity = False
     cfg.model.moe_paged_stash = False
+    cfg.model.attention_backend = "fused"
 
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -421,7 +422,7 @@ def _nemotron_omni_base() -> ConfigContainer:
         _DEFAULT_HF_PATH,
         revision=_DEFAULT_HF_REVISION,
         trust_remote_code=True,
-    ).to_megatron_provider(load_weights=False)
+    ).get_model_config()
     cfg.model.seq_length = 4096
 
     cfg.model.tensor_model_parallel_size = 4

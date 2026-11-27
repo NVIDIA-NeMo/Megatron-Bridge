@@ -47,8 +47,20 @@ and do not establish THD support for the native main-branch HybridModel.
 Pipeline layouts split complete attention/MoE pairs in `hybrid_layer_pattern`,
 with matching physical-layer metadata for embedding and MTP/loss placement.
 The Flash library recipe uses PP4/VPP4; the 128-GPU Flash benchmark uses PP1.
-The Pro benchmark also combines mHC CUDA graphs with recompute and activation
-offload, which remains unsupported by the main-based runtime above.
+The Pro MXFP8 benchmark uses PP4/VPP4 and runs eagerly with mHC recompute; see
+[Pro benchmark](#pro-benchmark).
+
+When `train.sh` overrides `model.pipeline_model_parallel_size` or
+`model.virtual_pipeline_model_parallel_size`, the pattern segments and layout
+are rebuilt with the default split of attention/MoE pairs: even, except that the
+first stage grows to hold the hash-routed MoE layers. This replaces a recipe's
+uneven split and keeps the MTP suffix. If the command also sets
+`model.pipeline_model_parallel_layout`, nothing is rebuilt, so pass a matching
+`model.hybrid_layer_pattern` as well. Python code that changes PP or VPP on a
+recipe should call `set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)`.
+Training rejects `|` segments that do not match PP x VPP or the explicit layout.
+With VPP unset, an explicit layout sets it, as in Megatron Core: an eight-stage
+PP4 layout means VPP2.
 
 `fast-hadamard-transform` is required by DSA and is installed from the pinned
 source dependency by `uv sync`. Run the examples in a CUDA-enabled Megatron
@@ -120,6 +132,7 @@ launcher. Hardware-qualified library recipes are defined under
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config` | MXFP8 Adam |
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config` | BF16 Muon |
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config` | MXFP8 Adam |
+| GB200, 8 GPUs | `deepseek_v4_flash_proxy_pretrain_8gpu_gb200_bf16_config` | BF16 Adam, six-layer proxy |
 | GB300, 32 GPUs | `deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config` | BF16 Adam |
 | GB300, 32 GPUs | `deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config` | MXFP8 Adam |
 
@@ -144,6 +157,63 @@ exported, but new launches should use the hardware-qualified names above.
 Canonical benchmark recipes under `src/megatron/bridge/perf_recipes/` are
 performance references, not substitutes for the library recipes.
 
+### Pro benchmark
+
+The Pro benchmark recipes follow the MCore reference run: full Pro widths with
+384 experts, one MTP module, 65,536-token sequences, CP16/EP64, GBS256/MBS1,
+MXFP8 with FP8 parameter gathering, layer-wise Muon (`deepseekv4` coefficients,
+ten Newton–Schulz iterations), MoK with HybridEP, and selective
+`mla_up_proj`/mHC recompute. The proxy keeps the first 16 blocks on a quarter
+of the GPUs and does not exercise the PP/VPP schedule.
+
+| Recipe | GPUs | Blocks + MTP | PP / VPP | MoK comm SMs |
+|--------|------|--------------|----------|--------------|
+| `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config` | 256 | 61 + 1 | 4 / 4 | 28 |
+| `deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config` | 64 | 16 + 1 | 1 / none | 28 |
+| `deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config` | 256 | 61 + 1 | 4 / 4 | 40 |
+| `deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config` | 64 | 16 + 1 | 1 / none | 40 |
+
+They run on MCore `main` and are synthetic-data performance benchmarks, not
+convergence recipes: load balancing is forced, and the dataset emits one
+full-length sequence per microbatch with fixed THD metadata, which the
+launchers route through `dsv4_step`.
+
+```bash
+./scripts/training/train.sh --nodes 16 --gpus-per-node 4 \
+  --recipe deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config \
+  --mode pretrain
+```
+
+With the performance launcher, select the proxy with `--config_variant proxy`:
+
+```bash
+-m deepseek -mr deepseek_v4_pro -g gb300 -c fp8_mx -ng 64 \
+  --task pretrain --config_variant proxy
+```
+
+Differences from the reference run:
+
+- Execution is eager and the parameter gather is not overlapped with the
+  forward pass. Attention CUDA graphs and the overlapped gather both need
+  [MCore #7337](https://github.com/NVIDIA/Megatron-LM/pull/7337), so step time
+  is not comparable with the reference until the recipes adopt them.
+- Indexer scoring is BF16; the reference uses a compact MXFP8 indexer that
+  MCore `main` does not have.
+- Fallback Adam state is not sharded across data-parallel ranks.
+- The launch environment adds this repository's DeepSeek defaults, which the
+  reference scripts leave unset: `TORCH_NCCL_HIGH_PRIORITY=1`,
+  `CUDA_DEVICE_MAX_CONNECTIONS=32`, LayerNorm SM margins of 20 and the
+  NVLink-domain settings (`NVLINK_DOMAIN_SIZE=72`, `USE_MNNVL=1`, 64 ranks per
+  domain).
+
+The recipes export `TORCH_DIST_USE_NCCL2=0`. PyTorch 26.11 makes `nccl2` the
+default `nccl` backend, and that snapshot deadlocks MoK's async barrier
+([pytorch#202783](https://github.com/pytorch/pytorch/pull/202783)) and fails
+the layer-wise parameter gather
+([pytorch#200585](https://github.com/pytorch/pytorch/pull/200585)). Remove the
+setting once the image carries both fixes. Rubin also needs a MoK build with
+Rubin kernels ([#6687](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6687)).
+
 ## Supervised Fine-Tuning
 
 DeepSeek-V4-Flash provides BF16 Adam full-parameter SFT recipes. Packed THD
@@ -157,7 +227,8 @@ support remains a work in progress and is not supported on `main`:
 | `deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config` | Offline-packed THD (WIP) | On | 32-GPU GB200 |
 
 The recipes select fused mHC only when the runtime supports the Blackwell
-kernel; Hopper uses the unfused fallback. The GB200 packed recipe additionally
+kernel; Hopper uses the unfused path, which matches DeepSeek-V4's mHC
+normalization (see Known Limitations). The GB200 packed recipe additionally
 enables HybridEP, uneven-dispatch padding, DSA fusion, grouped GEMM, selective
 recompute, and attention activation offload.
 
@@ -256,5 +327,12 @@ required storage and validate checkpoint resume explicitly.
   `srun --ntasks-per-node=1 bash -c 'NNODES=$SLURM_JOB_NUM_NODES NODE_RANK=$SLURM_NODEID MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1) examples/models/deepseek_v4/inference.sh'`.
   With the variables unset the script launches all ranks on the current node.
 - Fused mHC requires Blackwell (`sm_100`). Hopper uses the unfused path.
+- DeepSeek-V4 normalizes the mHC mapping input as
+  `x * rsqrt(mean(x^2) + rms_norm_eps)`. Only the unfused mHC path computes
+  this (`mhc_norm_eps_inside_sqrt=True`); the fused kernels add epsilon outside
+  the square root. The bridge's model config therefore uses the unfused path
+  on every GPU. Recipes enable fused mHC on Blackwell for speed; for exact
+  reference numerics there, override
+  `model.use_fused_mhc=False model.mhc_norm_eps_inside_sqrt=True`.
 - CPU import and export require enough RAM for the full BF16 model plus
   conversion workspace and remain unverified in the current card.

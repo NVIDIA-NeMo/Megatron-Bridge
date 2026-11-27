@@ -29,8 +29,17 @@ if str(_PERF_SCRIPTS_DIR) not in sys.path:
 import bootstrap
 import run_recipe
 import run_script
-import setup_experiment
 from utils import utils
+
+
+# setup_experiment imports utils.executors, which references nemo_run.KubeflowExecutor at import time; the locked
+# nemo-run 0.4.0 does not have it.
+try:
+    from nemo_run import KubeflowExecutor  # noqa: F401
+except ImportError:
+    setup_experiment = None
+else:
+    import setup_experiment
 
 
 def test_nemo_ci_legacy_variants_select_the_default_flat_recipe_name():
@@ -41,6 +50,7 @@ def test_nemo_ci_legacy_variants_select_the_default_flat_recipe_name():
     assert utils._recipe_variant_suffix("large_scale") == "_large_scale"
 
 
+@pytest.mark.skipif(setup_experiment is None, reason="setup_experiment needs a nemo-run release with KubeflowExecutor")
 def test_gpu_tuning_options_are_not_forwarded_to_rank_local_scripts():
     assert setup_experiment._filter_run_script_args(
         [
@@ -172,6 +182,18 @@ def test_bootstrap_one_gpu_per_rank_only_for_ncclep(monkeypatch, backend):
 
     bootstrap._apply_one_gpu_per_rank(recipe)
 
+    assert bootstrap.os.environ["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
+
+
+def test_bootstrap_one_gpu_per_rank_skips_moe_megakernel(monkeypatch):
+    # The megakernel owns dispatch/combine; its symmetric-memory buffers need each rank's own device index.
+    recipe = SimpleNamespace(model=SimpleNamespace(moe_flex_dispatcher_backend="ncclep", moe_megakernel_backend="mok"))
+    monkeypatch.setenv("LOCAL_RANK", "2")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+
+    bootstrap._apply_one_gpu_per_rank(recipe)
+
+    assert not bootstrap.uses_ncclep(recipe)
     assert bootstrap.os.environ["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
 
 

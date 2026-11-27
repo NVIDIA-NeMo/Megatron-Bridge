@@ -14,6 +14,11 @@
 
 # Import model providers for easy access
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.glu import (
+    get_glu_interleave_size,
+    logical_to_physical_glu_tensor,
+    physical_to_logical_glu_tensor,
+)
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -22,6 +27,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
+    HCAlphaMapping,
+    InitOnlyMapping,
     MegatronParamMapping,
     QKVMapping,
     ReplicatedMapping,
@@ -38,10 +45,15 @@ __all__ = [
     "FusedExpertMapping",
     "FusedGatedExpertMapping",
     "GatedMLPMapping",
+    "get_glu_interleave_size",
+    "logical_to_physical_glu_tensor",
     "MegatronParamMapping",
     "QKVMapping",
+    "physical_to_logical_glu_tensor",
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    "HCAlphaMapping",
+    "InitOnlyMapping",
     "weights_verification_table",
 ]

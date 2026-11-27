@@ -263,7 +263,8 @@ class TestGPTOSSFinetuneRecipes:
         train_split = train_samples_needed / total_samples
         valid_split = eval_samples_needed / total_samples
         test_split = test_samples_needed / total_samples
-        config.dataset.split = [train_split, valid_split, test_split]
+        # Megatron Core parses ``split`` as a comma-separated string of weights.
+        config.dataset.split = f"{train_split},{valid_split},{test_split}"
 
         # Run the test using the actual finetuning function
         from megatron.bridge.training.finetune import finetune

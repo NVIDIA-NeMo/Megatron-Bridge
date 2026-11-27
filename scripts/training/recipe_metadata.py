@@ -67,6 +67,7 @@ BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS = frozenset(
         "llama3_70b_peft_8gpu_h100_bf16_config",
         "llama3_70b_sft_32gpu_h100_bf16_config",
         "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
+        "nemotron_3_super_pretrain_64gpu_gb200_bf16_config",
         "qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config",
         "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
     }
@@ -87,6 +88,13 @@ TEXT_FORWARD_STEPS = frozenset({"dsv4_step", "gpt_step", "llm_step"})
 # Qwen3-VL Energon recipe emits canonical THD metadata through ``vlm_step``;
 # the other Qwen3-VL recipes retain their legacy model-specific step.
 RECIPE_FORWARD_STEPS = {
+    "deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config": "dsv4_step",
+    "deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config": "dsv4_step",
+    "deepseek_v4_pro_pretrain_64gpu_vrnvl72_fp8mx_proxy_config": "dsv4_step",
+    "deepseek_v4_pro_pretrain_256gpu_vrnvl72_fp8mx_config": "dsv4_step",
+    # Inkling2's text recipes keep the LLM step; its image-text recipes feed images through the VLM step.
+    "inkling2_small_peft_32gpu_gb200_bf16_multimodal_config": "vlm_step",
+    "inkling2_small_sft_128gpu_gb200_bf16_multimodal_config": "vlm_step",
     "qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config": "vlm_step",
     "qwen3_vl_8b_peft_energon_config": "vlm_step",
 }

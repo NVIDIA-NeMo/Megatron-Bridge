@@ -463,6 +463,19 @@ def reduce_max_stat_across_model_parallel_group(
         return stat.item()
 
 
+def _coerce_log_scalar(
+    value: float | int | torch.Tensor | None,
+    *,
+    as_int: bool = False,
+) -> float | int | None:
+    """Convert optimizer stats to Python scalars for logging."""
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        value = value.item()
+    return int(value) if as_int else float(value)
+
+
 def logical_and_across_model_parallel_group(input: bool, mp_group: "TorchProcessGroup") -> bool:
     """Performs a logical AND operation across the model parallel group.
 
@@ -644,7 +657,10 @@ def _get_num_moe_layers(model_config: Any) -> int:
     mtp_num_layers = getattr(model_config, "mtp_num_layers", None) or 0
     repeated_mtp = getattr(model_config, "mtp_use_repeated_layer", False)
 
-    if getattr(model_config, "is_hybrid_model", False) or getattr(model_config, "hybrid_layer_pattern", None):
+    is_hybrid = getattr(model_config, "is_hybrid_model", False) or getattr(model_config, "hybrid_layer_pattern", None)
+    # Full-block hybrid symbols include their MLP, so their MoE placement is
+    # defined by moe_layer_freq rather than separate E symbols in the pattern.
+    if is_hybrid and not getattr(model_config, "hybrid_attention_layers_include_mlp", False):
         pattern = parse_hybrid_pattern(getattr(model_config, "hybrid_layer_pattern", None))
         main_moe_layers = (pattern.main_pattern or "").count(Symbols.MOE)
         mtp_moe_layers = (pattern.mtp_pattern or "").count(Symbols.MOE)
@@ -663,7 +679,7 @@ def _get_num_moe_layers(model_config: Any) -> int:
         else:
             raise ValueError(f"Invalid moe_layer_freq: {moe_layer_freq}")
 
-        # Non-hybrid MTP copies the final main layer's dense/MoE layout.
+        # Transformer and full-block hybrid MTP copy the final main layer's layout.
         mtp_moe_layers = int(last_layer_is_moe and mtp_num_layers > 0)
         mtp_depth = mtp_num_layers
 
@@ -672,6 +688,82 @@ def _get_num_moe_layers(model_config: Any) -> int:
         mtp_moe_layers *= mtp_depth
 
     return main_moe_layers + mtp_moe_layers
+
+
+def _dsa_indexer_metric_num_layers(model_config: Any) -> Optional[int]:
+    """Divisor of the logged DSA indexer loss, or ``None`` for Megatron-Core's (the tracker size).
+
+    A model config may define ``dsa_indexer_metric_num_layers()`` to choose its convention; ERNIE 5.5
+    divides the sum over its indexer layers by its layer count plus MTP depths, as its reference does.
+    """
+    divisor = getattr(model_config, "dsa_indexer_metric_num_layers", None)
+    return divisor() if callable(divisor) else None
+
+
+def initialize_dsa_indexer_metric_tracker(model_config: Any, model: list[MegatronModule], pg_collection: Any) -> int:
+    """Fix the DSA indexer-loss tracker's capacity for a new model, before its first forward.
+
+    Megatron-Core's training setup does the same (``initialize_dsa_metric_tracker``): the capacity is agreed over the
+    pipeline stages once, so no stage grows (rebinds) the tracker later, when :func:`_track_dsa_indexer_metrics`
+    first reduces it, and CUDA graphs captured before that keep writing into the tensor that is logged. Only models
+    that train an indexer loss (``dsa_indexer_loss_coeff > 0``) are affected. The tracker is process-wide, so what an
+    earlier model in this process left in it is cleared first. Megatron-Core builds without the function (main)
+    keep their lazily sized tracker.
+
+    Args:
+        model_config: The run's model config (``dsa_indexer_loss_coeff``), the one the logging reads.
+        model: This rank's model chunks, wrapped or not.
+        pg_collection: The model's process groups.
+
+    Returns:
+        The tracker capacity, or 0 when nothing was initialized.
+    """
+    if (getattr(model_config, "dsa_indexer_loss_coeff", None) or 0.0) <= 0:
+        return 0
+    try:
+        from megatron.core.transformer.experimental_attention_variant.dsa_logging import (
+            DSAIndexerLossLoggingHelper,
+            initialize_dsa_metric_tracker,
+        )
+    except ImportError:
+        return 0
+    DSAIndexerLossLoggingHelper.tracker.clear()
+    return initialize_dsa_metric_tracker(model, pg_collection)
+
+
+def _track_dsa_indexer_metrics(
+    config: ConfigContainer,
+    global_state: GlobalState,
+    iteration: int,
+    writer: Optional[Any],
+    wandb_writer: Optional[Any],
+    total_loss_dict: dict[str, Any],
+    pg_collection: Optional[Any],
+) -> None:
+    """Log the DSA indexer loss of models that train one (``dsa_indexer_loss_coeff > 0``).
+
+    Megatron-Core's DSA layers record their indexer losses in ``DSAIndexerLossLoggingHelper``'s tracker; this
+    reduces them over the pipeline and data-parallel ranks and logs ``indexer loss`` (and ``indexer raw loss``,
+    before the coefficient), averaged over the step's micro-batches. Dynamic context parallelism needs its
+    physical DP x CP group for the reduction and is left out.
+    """
+    if (getattr(config.model, "dsa_indexer_loss_coeff", None) or 0.0) <= 0:
+        return
+    if getattr(config.model, "dynamic_context_parallel", False):
+        return
+    from megatron.core.process_groups_config import ProcessGroupCollection
+    from megatron.core.transformer.experimental_attention_variant.dsa import DSAIndexerLossLoggingHelper
+
+    DSAIndexerLossLoggingHelper.track_indexer_metrics(
+        loss_scale=1 / _step_num_microbatches(global_state),
+        iteration=iteration,
+        writer=writer,
+        pg_collection=pg_collection if pg_collection is not None else ProcessGroupCollection.use_mpu_process_groups(),
+        wandb_writer=wandb_writer,
+        total_loss_dict=total_loss_dict,
+        num_indexer_layers=_dsa_indexer_metric_num_layers(config.model),
+        preserve_groups=getattr(config.model, "cuda_graph_impl", "none") not in (None, "none"),
+    )
 
 
 # Attribute on GlobalState holding the running count of steps whose global token
@@ -775,6 +867,11 @@ def training_log(
     logger_config = config.logger
     train_config = config.train
     pg_collection = pg_collection or get_pg_collection(model)
+
+    grad_norm = _coerce_log_scalar(grad_norm)
+    params_norm = _coerce_log_scalar(params_norm)
+    num_zeros_in_grad = _coerce_log_scalar(num_zeros_in_grad, as_int=True)
+    log_max_attention_logit = _coerce_log_scalar(log_max_attention_logit)
 
     loggers_exist = (
         writer is not None or wandb_writer is not None or mlflow_logger is not None or comet_logger is not None
@@ -1137,6 +1234,15 @@ def training_log(
         MTPLossLoggingHelper.track_mtp_metrics(
             mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
         )
+    _track_dsa_indexer_metrics(
+        config,
+        global_state,
+        iteration,
+        _build_moe_metric_writer(writer, comet_logger, mlflow_logger),
+        wandb_writer,
+        total_loss_dict,
+        pg_collection,
+    )
 
     if iteration % logger_config.log_interval == 0:
         elapsed_time = timers("interval-time").elapsed(barrier=True)
@@ -1237,8 +1343,9 @@ def training_log(
             if comet_logger:
                 comet_logger.log_metrics({"iter-energy/gpu": float(energy), "power/gpu": float(power)}, step=iteration)
 
-        # Decoupled_learning_rate should be not None only on first and last pipeline stage.
-        log_string += f" learning rate: {learning_rate:.6E} |"
+        # A fully frozen module can have no LR even after the MP reduction.
+        if learning_rate is not None:
+            log_string += f" learning rate: {learning_rate:.6E} |"
         log_string += f" global batch size: {batch_size:5d} |"
         for key in total_loss_dict:
             if key not in [advanced_iters_key, skipped_iters_key, nan_iters_key]:

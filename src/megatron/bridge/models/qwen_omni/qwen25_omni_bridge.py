@@ -12,11 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Iterable
+
 import torch
 from transformers import Qwen2_5OmniForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import (
+    HFSourcedWeightTuple,
+    HFWeightTuple,
+    MegatronModelBridge,
+    WeightConversionTask,
+)
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
@@ -44,6 +51,8 @@ class Qwen25OmniBridge(MegatronModelBridge):
     - Audio: ReplicatedMapping for HF audio encoder (thinker.audio_model.** -> thinker.audio_tower.**)
     - LLM layer norms use mlp.linear_fc1.layer_norm_weight (not pre_mlp_layernorm)
     """
+
+    _HF_PASSTHROUGH_PREFIXES = ("talker.", "token2wav.")
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen25OmniModelProvider:
         """Create a Qwen25OmniModelProvider from a HuggingFace pretrained model."""
@@ -152,3 +161,49 @@ class Qwen25OmniBridge(MegatronModelBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    @torch.no_grad()
+    def _stream_weight_events_megatron_to_hf(
+        self,
+        megatron_model: Qwen25OmniModel | list[Qwen25OmniModel],
+        hf_pretrained: PreTrainedCausalLM,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: list[WeightConversionTask] | None = None,
+        merge_adapter_weights: bool = True,
+        weight_dtype: torch.dtype | None = None,
+        with_megatron_names: bool = False,
+        current_pp_stage_only: bool = False,
+    ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple | None]:
+        """Export the thinker, then copy the unmapped talker/token2wav weights from the HF checkpoint."""
+        export_device = None
+        for event in super()._stream_weight_events_megatron_to_hf(
+            megatron_model,
+            hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
+            with_megatron_names=with_megatron_names,
+            current_pp_stage_only=current_pp_stage_only,
+        ):
+            if event is not None and export_device is None:
+                export_device = event.weight.device
+            yield event
+        if not self._should_emit_hf_passthrough(megatron_model, current_pp_stage_only=current_pp_stage_only):
+            return
+        passthrough_sources = () if with_megatron_names else None
+        state = getattr(hf_pretrained, "state", None)
+        source = getattr(state, "source", None)
+        if source is None:
+            return
+        for name in source.get_all_keys():
+            if name.startswith(self._HF_PASSTHROUGH_PREFIXES):
+                tensor = state[name]
+                if not cpu and export_device is not None:
+                    tensor = tensor.to(device=export_device)
+                yield from HFWeightTuple(name, tensor).iter_finalized(
+                    cpu=cpu, megatron_param_names=passthrough_sources
+                )
+                yield None

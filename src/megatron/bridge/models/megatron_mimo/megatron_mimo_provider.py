@@ -15,7 +15,7 @@ from __future__ import annotations
 import copy
 import inspect
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -150,6 +150,17 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
     # Cached grids after build_model() - used by data loading
     _grids: Optional[Dict[str, "HyperCommGrid"]] = field(default=None, repr=False)
 
+    # (parallelism config, default process group, grids, pg_collections) from the last process group creation.
+    # build_infra() reuses the groups while both keys are the same objects.
+    _process_group_cache: Optional[
+        Tuple[
+            MegatronMIMOParallelismConfig,
+            Optional[dist.ProcessGroup],
+            Dict[str, "HyperCommGrid"],
+            Dict[str, Optional[ProcessGroupCollection]],
+        ]
+    ] = field(default=None, init=False, repr=False, compare=False)
+
     # Freezing options
     freeze_language_model: bool = False
     freeze_modality_encoders: Dict[str, bool] = field(default_factory=dict)
@@ -188,7 +199,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         # providers whose ``build_language_model_spec`` actually wires the MTP
         # block advertise ``mimo_supports_mtp``. Others keep MTP disabled so the
         # constructed model and the HF export agree on the absence of MTP weights.
-        if hasattr(standard_provider, "mtp_num_layers") and not getattr(standard_provider, "mimo_supports_mtp", False):
+        # A zero layer count also becomes None, so "no MTP" has a single spelling.
+        if hasattr(standard_provider, "mtp_num_layers") and (
+            not getattr(standard_provider, "mimo_supports_mtp", False) or not standard_provider.mtp_num_layers
+        ):
             setattr(standard_provider, "mtp_num_layers", None)
 
         if self.language_model_spec is None:
@@ -251,8 +265,12 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         """Build MegatronMIMO parallelism infrastructure.
 
         This method builds HyperCommGrids, ProcessGroupCollections, and topology
-        for MegatronMIMO's heterogeneous parallelism. It is idempotent and does not
-        mutate provider state (results are not cached).
+        for MegatronMIMO's heterogeneous parallelism. The grids and their process
+        groups are created by the first call and reused while
+        ``megatron_mimo_parallelism_config`` and the default process group are the
+        same objects, so ``provide()``, ``provide_distributed_model()`` and the
+        training loop share one set of process groups instead of each creating its
+        own. Topology and output dimensionality are derived again on every call.
 
         Can be called before or after provide(). Call finalize() first to
         validate the parallelism configuration.
@@ -262,10 +280,9 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             and the list of modules this rank participates in.
         """
         if self.megatron_mimo_parallelism_config is not None:
-            grids = build_hypercomm_grids(self.megatron_mimo_parallelism_config)
+            grids, pg_collections = self._get_or_create_process_groups(self.megatron_mimo_parallelism_config)
             language_grid = grids.get(MIMO_LANGUAGE_MODULE_KEY)
             set_default_log_ranks({0, language_grid.rank_offset} if language_grid is not None else {0})
-            pg_collections = self._get_pg_collections_from_grids(grids)
         else:
             grids = {}
             pg_collections = {}
@@ -297,6 +314,26 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             participating_modules=participating_modules,
             module_output_ndim=output_ndim,
         )
+
+    def _get_or_create_process_groups(
+        self,
+        megatron_mimo_parallelism_config: MegatronMIMOParallelismConfig,
+    ) -> Tuple[Dict[str, "HyperCommGrid"], Dict[str, Optional[ProcessGroupCollection]]]:
+        """Return the HyperCommGrids and ProcessGroupCollections, creating their process groups once.
+
+        Creating the groups is collective over the default process group, and every created group can
+        hold its own NCCL communicator, so the groups are reused while the parallelism config and the
+        default process group are the same objects. Each call returns new dicts over the same grids
+        and collections.
+        """
+        default_group = dist.group.WORLD
+        cache = self._process_group_cache
+        if cache is None or cache[0] is not megatron_mimo_parallelism_config or cache[1] is not default_group:
+            grids = build_hypercomm_grids(megatron_mimo_parallelism_config)
+            pg_collections = self._get_pg_collections_from_grids(grids)
+            cache = (megatron_mimo_parallelism_config, default_group, grids, pg_collections)
+            object.__setattr__(self, "_process_group_cache", cache)
+        return dict(cache[2]), dict(cache[3])
 
     def _get_pg_collections_from_grids(
         self,
@@ -482,7 +519,9 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         if llm_pg is not None:
             mimo_model_kwargs["cp_group"] = llm_pg.cp
             mimo_model_kwargs["tp_group"] = llm_pg.tp
-        megatron_mimo_model = MimoModel(mimo_model_config, **mimo_model_kwargs)
+        # A family may need to unpack auxiliary features from its modality payload.
+        model_class = getattr(self.standard_provider, "mimo_model_class", MimoModel)
+        megatron_mimo_model = model_class(mimo_model_config, **mimo_model_kwargs)
 
         # Apply freezing
         self._apply_freezing(megatron_mimo_model)
@@ -509,6 +548,9 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             ]
         ] = None,
         post_wrap_hook: Optional[Callable[[List[MegatronModule]], List[MegatronModule]]] = None,
+        *,
+        use_layer_wise_distributed_optimizer: bool = False,
+        use_layer_wise_param_layout: bool = False,
     ) -> List[MegatronModule]:
         """Build MegatronMIMO model with heterogeneous parallelism and DDP wrapping.
 
@@ -542,6 +584,9 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             init_model_with_meta_device: Initialize model on meta device.
             pre_wrap_hook: Callable(s) to modify model before wrapping.
             post_wrap_hook: Callable to modify model after wrapping.
+            use_layer_wise_distributed_optimizer: Build shard-aligned layouts for layer-wise optimizers.
+            use_layer_wise_param_layout: Use shard-aligned DDP buffers for LayerWise optimizers.
+                False retains compact DDP buffers and variable-size parameter synchronization.
 
         Returns:
             List containing the wrapped MimoModel.
@@ -622,6 +667,8 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                     megatron_mimo_parallelism_config=self.megatron_mimo_parallelism_config,
                     grids=infra.module_to_grid_map,
                     pg_collections=infra.pg_collections,
+                    use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+                    use_layer_wise_param_layout=use_layer_wise_param_layout,
                 )
                 for m in model_list
             ]

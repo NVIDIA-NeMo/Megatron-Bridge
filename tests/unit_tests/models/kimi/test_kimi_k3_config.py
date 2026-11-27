@@ -1,0 +1,249 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+
+"""HF architecture and layer correspondence for Kimi K3."""
+
+from copy import deepcopy
+
+import pytest
+import torch
+from transformers import PretrainedConfig
+
+from megatron.bridge.models.kimi.kimi_k3_bridge import KimiK3Bridge
+from megatron.bridge.models.kimi.kimi_k3_config import kimi_k3_layer_pattern, kimi_k3_pipeline_pattern
+from tests.unit_tests.models.kimi.test_kimi_k3_bridge import kimi_k3_text_config as kimi_k3_text_config
+
+
+@pytest.mark.parametrize(
+    ("kda", "moe", "expected"),
+    [([1, 2, 4, 5], [0, 1, 1, 1, 1, 1], "K-KE+EKEKE+E"), ([], [0, 0], "+-+-"), ([1, 2], [1, 1], "KEKE")],
+)
+def test_pattern_from_hf_blocks(kda, moe, expected):
+    assert kimi_k3_layer_pattern(num_layers=len(moe), kda_layers=kda, moe_layers=moe) == expected
+
+
+@pytest.mark.parametrize("kda", [[0], [3], [1, 1]])
+def test_pattern_rejects_invalid_kda_indices(kda):
+    with pytest.raises(ValueError, match="unique one-based"):
+        kimi_k3_layer_pattern(num_layers=2, kda_layers=kda, moe_layers=[0, 1])
+
+
+@pytest.mark.parametrize("frequency", [1, 2])
+def test_native_config_roundtrip(kimi_k3_text_config, frequency):
+    text = deepcopy(kimi_k3_text_config)
+    text.moe_layer_freq = frequency
+    hf = PretrainedConfig(text_config=PretrainedConfig(**vars(text)))
+    bridge = KimiK3Bridge()
+    original = bridge.hf_config_to_model_config(hf)
+    exported = bridge.megatron_to_hf_config(original)
+    exported["text_config"] = PretrainedConfig(**exported["text_config"])
+    restored = bridge.hf_config_to_model_config(PretrainedConfig(**exported))
+    for field in (
+        "hybrid_layer_pattern",
+        "num_layers",
+        "hidden_size",
+        "num_attention_heads",
+        "q_lora_rank",
+        "kv_lora_rank",
+        "qk_head_dim",
+        "qk_pos_emb_head_dim",
+        "v_head_dim",
+        "moe_latent_size",
+        "moe_ffn_hidden_size",
+        "moe_shared_expert_intermediate_size",
+        "num_moe_experts",
+        "moe_router_topk",
+        "kimi_attn_res_block_size",
+        "linear_num_key_heads",
+        "linear_key_head_dim",
+        "kimi_kda_gate_lower_bound",
+    ):
+        assert getattr(original, field) == getattr(restored, field), field
+    assert original.num_layers == 2 * text.num_hidden_layers
+    assert original.kimi_attn_res_block_size == text.attn_res_block_size
+    assert original.kimi_linear_num_heads == text.linear_attn_config["num_heads"]
+    assert original.kimi_linear_head_dim == text.linear_attn_config["head_dim"]
+    assert not getattr(original, "enable_attention_residuals", False)
+    assert not original.moe_router_force_load_balancing
+
+
+def test_default_bridge_dispatches_to_hybrid():
+    from megatron.bridge.models.conversion.model_bridge import get_model_bridge
+    from megatron.bridge.models.kimi.kimi_k3_bridge import KimiK3Bridge
+    from megatron.bridge.models.kimi.kimi_k3_config import KimiK3ModelConfig
+
+    bridge = get_model_bridge("KimiK3ForConditionalGeneration")
+    assert type(bridge) is KimiK3Bridge
+    assert bridge.MODEL_CONFIG_CLASS is KimiK3ModelConfig
+
+
+@pytest.mark.parametrize(
+    ("pattern", "stages", "counts", "expected"),
+    [
+        ("K-KE+EKEKE+E", 2, None, "K-KE+E|KEKE+E"),
+        ("K-KE+EKEKE+E", 2, (4, 2), "K-KE+EKE|KE+E"),
+        ("K-KE+EKE|KE+E", 2, None, "K-KE+EKE|KE+E"),
+        ("K-KE+EKE|KE+E", 1, None, "K-KE+EKEKE+E"),
+        ("KE" * 93, 4, None, "|".join("KE" * n for n in (24, 23, 23, 23))),
+    ],
+)
+def test_pipeline_uses_complete_source_blocks(pattern, stages, counts, expected):
+    assert kimi_k3_pipeline_pattern(pattern, pipeline_size=stages, blocks_per_stage=counts) == expected
+
+
+@pytest.mark.parametrize(
+    ("pattern", "stages", "counts"),
+    [
+        ("K|EKE", 2, None),
+        ("KEKE|", 2, None),
+        ("KEKE", 3, None),
+        ("KEKE", 2, (1, 2)),
+        ("KEKE", 2, (0, 2)),
+        ("KK", 1, None),
+    ],
+)
+def test_pipeline_rejects_invalid_boundaries(pattern, stages, counts):
+    with pytest.raises(ValueError, match="Kimi K3"):
+        kimi_k3_pipeline_pattern(pattern, pipeline_size=stages, blocks_per_stage=counts)
+
+
+@pytest.mark.parametrize("local", [False, True])
+def test_library_recipe_consumes_canonical_model(kimi_k3_text_config, monkeypatch, tmp_path, local):
+    from types import SimpleNamespace
+
+    from megatron.bridge.recipes.kimi.kimi_k3 import kimi_k3_pretrain_config
+
+    text = deepcopy(kimi_k3_text_config)
+    text.num_hidden_layers = 24
+    text.linear_attn_config["kda_layers"] = [i for i in range(1, 25) if i % 4]
+    hf = PretrainedConfig(text_config=PretrainedConfig(**vars(text)))
+
+    hf_path = str(tmp_path) if local else "moonshotai/Kimi-K3"
+
+    def from_hf(path, **kwargs):
+        assert path == hf_path
+        assert kwargs == {"trust_remote_code": True}
+        return SimpleNamespace(get_model_config=lambda: KimiK3Bridge().hf_config_to_model_config(hf))
+
+    monkeypatch.setenv("KIMI_K3_HF_PATH", hf_path)
+    monkeypatch.setattr("megatron.bridge.recipes.kimi.gb300.kimi_k3.AutoBridge.from_hf_pretrained", from_hf)
+    from dataclasses import fields
+
+    from megatron.bridge.training.config import OptimizerConfig
+
+    if "chunked_optimizer_state_offload" not in {field.name for field in fields(OptimizerConfig)}:
+        with pytest.raises(RuntimeError, match="require scripts/switch_mcore.sh dev"):
+            kimi_k3_pretrain_config()
+        return
+    regular = kimi_k3_pretrain_config()
+    assert regular.model.hybrid_layer_pattern.startswith("K-")
+    assert not regular.model.moe_router_force_load_balancing
+    assert regular.model.pipeline_model_parallel_size == 4
+    assert regular.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert regular.tokenizer.tokenizer_model == hf_path
+    assert regular.tokenizer.vocab_file == (str(tmp_path / "tiktoken.model") if local else None)
+    assert regular.model.params_dtype == torch.bfloat16
+    assert regular.model.recompute_granularity == "full"
+    assert regular.model.recompute_num_layers == 2
+    assert regular.train.manual_gc and regular.train.manual_gc_interval == 10
+    assert regular.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    assert regular.optimizer.optimizer == "adam"
+    assert regular.optimizer.chunked_optimizer_state_offload
+    assert regular.optimizer.optimizer_state_offload_chunk_size_mb == 256
+    assert not regular.ddp.overlap_param_gather and not regular.ddp.overlap_grad_reduce
+    assert not regular.optimizer.overlap_param_gather
+    regular.optimizer.validate_run(ddp_config=regular.ddp, use_torch_fsdp2=False, ckpt_format="torch_dist")
+    assert regular.model.gradient_accumulation_fusion
+    assert regular.model.moe_flex_dispatcher_backend == "hybridep"
+    assert regular.ddp.check_for_nan_in_grad
+
+
+@pytest.mark.parametrize("partitioned", [False, True])
+def test_saved_config_roundtrip(kimi_k3_text_config, partitioned):
+    from megatron.bridge.models.kimi.kimi_k3_config import (
+        KimiK3ModelConfig,
+        KimiK3TransformerConfig,
+        kimi_k3_stack_spec,
+    )
+
+    hf = PretrainedConfig(text_config=PretrainedConfig(**vars(kimi_k3_text_config)))
+    config = KimiK3Bridge().hf_config_to_model_config(hf)
+    config.pipeline_model_parallel_size = 2
+    if partitioned:
+        config.finalize()
+    restored = KimiK3ModelConfig.from_dict(config.as_dict())
+    assert isinstance(restored.transformer, KimiK3TransformerConfig)
+    assert restored.hybrid_stack_spec is kimi_k3_stack_spec
+    assert restored.as_dict() == config.as_dict()
+    restored.finalize()
+    assert restored.hybrid_layer_pattern.count("|") == 1
+
+
+@pytest.mark.parametrize(
+    "field,value", [("linear_num_key_heads", 123), ("linear_key_head_dim", 123), ("linear_conv_kernel_dim", 123)]
+)
+def test_rejects_inconsistent_geometry(kimi_k3_text_config, field, value):
+    from megatron.bridge.models.kimi.kimi_k3_config import kimi_k3_stack_spec
+
+    hf = PretrainedConfig(text_config=PretrainedConfig(**vars(kimi_k3_text_config)))
+    config = KimiK3Bridge().hf_config_to_model_config(hf)
+    assert hasattr(config, field)
+    setattr(config, field, value)
+    with pytest.raises(ValueError, match="must agree"):
+        kimi_k3_stack_spec(config)
+    with pytest.raises(ValueError, match="must agree"):
+        KimiK3Bridge.megatron_to_hf_config(config)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("cuda_graph_impl", "local"),
+        ("fine_grained_activation_offloading", True),
+        ("overlap_moe_expert_parallel_comm", True),
+        ("moe_shared_expert_overlap", True),
+        ("enable_mhc_connections", True),
+    ],
+)
+def test_rejects_unsupported_stack_execution(kimi_k3_text_config, field, value):
+    from megatron.bridge.models.kimi.kimi_k3_config import kimi_k3_stack_spec
+
+    hf = PretrainedConfig(text_config=PretrainedConfig(**vars(kimi_k3_text_config)))
+    config = KimiK3Bridge().hf_config_to_model_config(hf)
+    assert hasattr(config, field)
+    setattr(config, field, value)
+    with pytest.raises(ValueError, match="Kimi K3"):
+        kimi_k3_stack_spec(config)
+
+
+@pytest.mark.parametrize("partitioned", [False, True])
+def test_actual_hybrid_flops_match_logical_blocks_without_mutation(kimi_k3_text_config, partitioned):
+    from types import SimpleNamespace
+
+    from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
+
+    hf = PretrainedConfig(text_config=PretrainedConfig(**vars(kimi_k3_text_config)))
+    model = KimiK3Bridge().hf_config_to_model_config(hf)
+    model.pipeline_model_parallel_size = 2 if partitioned else 1
+    model.finalize()
+    before = deepcopy(model.as_dict())
+    logical = deepcopy(model)
+    pattern = logical.hybrid_layer_pattern.replace("|", "")
+    logical.hybrid_layer_pattern = None
+    logical.is_hybrid_model = False
+    logical.num_layers = len(pattern) // 2
+    logical.moe_layer_freq = [int(layer == "E") for layer in pattern[1::2]]
+    dataset = SimpleNamespace(seq_length=128)
+    expected = num_floating_point_operations(SimpleNamespace(model=logical, dataset=dataset), batch_size=2)
+    cfg = SimpleNamespace(model=model, dataset=dataset)
+    assert num_floating_point_operations(cfg, batch_size=2) == expected
+    assert num_floating_point_operations(cfg, batch_size=2) == expected
+    assert model.as_dict() == before
+
+
+def test_hardware_recipe_is_public_and_legacy_name_is_alias():
+    from megatron.bridge import recipes
+    from megatron.bridge.recipes.kimi.gb300.kimi_k3 import kimi_k3_pretrain_512gpu_gb300_bf16_config
+
+    assert recipes.kimi_k3_pretrain_512gpu_gb300_bf16_config is kimi_k3_pretrain_512gpu_gb300_bf16_config
+    assert recipes.kimi_k3_pretrain_config is kimi_k3_pretrain_512gpu_gb300_bf16_config
+    assert "EARLY UNOPTIMIZED" in kimi_k3_pretrain_512gpu_gb300_bf16_config.__doc__

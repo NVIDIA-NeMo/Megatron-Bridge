@@ -173,6 +173,58 @@ class TestCreatePgCollectionFunction:
         call_kwargs = mock_hyper_grid.call_args[1]
         assert call_kwargs["shape"][3] == 2  # PP size
 
+    @patch("megatron.bridge.training.initialize.HyperCommGrid")
+    @patch("torch.distributed.get_world_size", return_value=8)
+    @patch("torch.distributed.new_subgroups_by_enumeration")
+    def test_create_pg_collection_sets_dp_cp_gtp_remat(
+        self, mock_subgroups, mock_world_size, mock_hyper_grid, mock_model_config
+    ):
+        """dp_cp_gtp_remat is the dp_cp group, distinct from the dp group."""
+        from megatron.bridge.training.initialize import _create_pg_collection
+
+        mock_model_config.context_parallel_size = 2
+        groups = {}
+        mock_grid_instance = MagicMock()
+        mock_grid_instance.create_pg.side_effect = lambda dims: groups.setdefault(tuple(dims), MagicMock())
+        mock_grid_instance._gen_rank_enum.return_value = [[0], [1], [2], [3], [4], [5], [6], [7]]
+        mock_hyper_grid.return_value = mock_grid_instance
+        mock_subgroups.return_value = (MagicMock(), [])
+
+        result = _create_pg_collection(mock_model_config, num_distributed_optimizer_instances=1)
+
+        assert result.dp_cp_gtp_remat is groups[("dp", "cp")]
+        assert result.dp_cp_gtp_remat is result.dp_cp
+        assert result.dp_cp_gtp_remat is not result.dp
+
+    @patch("megatron.bridge.training.initialize.HyperCommGrid")
+    @patch("torch.distributed.get_world_size", return_value=8)
+    @patch("torch.distributed.new_subgroups_by_enumeration")
+    def test_create_pg_collection_sets_expt_dp_gtp_remat(
+        self, mock_subgroups, mock_world_size, mock_hyper_grid, mock_model_config
+    ):
+        """expt_dp_gtp_remat is the expert grid's dp group, distinct from the dense dp group."""
+        from megatron.bridge.training.initialize import _create_pg_collection
+
+        mock_model_config.expert_model_parallel_size = 4
+        grid_groups = {}
+
+        def make_grid(**kwargs):
+            groups = grid_groups.setdefault(tuple(kwargs["dim_names"]), {})
+            grid = MagicMock()
+            grid.create_pg.side_effect = lambda dims: groups.setdefault(tuple(dims), MagicMock())
+            grid._gen_rank_enum.return_value = [[0], [1], [2], [3], [4], [5], [6], [7]]
+            return grid
+
+        mock_hyper_grid.side_effect = make_grid
+        mock_subgroups.return_value = (MagicMock(), [])
+
+        result = _create_pg_collection(mock_model_config, num_distributed_optimizer_instances=1)
+
+        expert_dp_group = grid_groups[("tp", "ep", "dp", "pp")][("dp",)]
+        assert result.expt_dp_gtp_remat is expert_dp_group
+        assert result.expt_dp_gtp_remat is result.expt_dp
+        assert result.expt_dp_gtp_remat is not result.dp
+
 
 class TestCreateDistTrainPgsFunction:
     """Tests for the _create_dist_train_pgs function."""
@@ -687,12 +739,12 @@ class TestSetupOptimizerWithPgCollection:
         assert call_kwargs["pg_collection"] is None
 
     @patch("megatron.bridge.training.optim.get_model_config")
-    @patch("megatron.bridge.training.optim.get_megatron_muon_optimizer")
+    @patch("megatron.bridge.training.optim.get_megatron_optimizer")
     @patch("megatron.bridge.training.optim.OptimizerParamScheduler")
     def test_setup_optimizer_passes_pg_collection_to_muon_optimizer(
-        self, mock_scheduler, mock_get_muon_optimizer, mock_get_model_config
+        self, mock_scheduler, mock_get_optimizer, mock_get_model_config
     ):
-        """Test that setup_optimizer passes pg_collection to muon optimizer."""
+        """Test that setup_optimizer passes pg_collection for Muon construction."""
         from megatron.core.optimizer import OptimizerConfig
 
         from megatron.bridge.training.config import SchedulerConfig
@@ -703,7 +755,7 @@ class TestSetupOptimizerWithPgCollection:
         mock_model = MagicMock()
         mock_pg_collection = MagicMock()
         mock_optimizer = MagicMock()
-        mock_get_muon_optimizer.return_value = mock_optimizer
+        mock_get_optimizer.return_value = mock_optimizer
 
         optimizer_config = OptimizerConfig(optimizer="muon", lr=1e-3)
         scheduler_config = SchedulerConfig()
@@ -717,9 +769,10 @@ class TestSetupOptimizerWithPgCollection:
             pg_collection=mock_pg_collection,
         )
 
-        # Verify pg_collection was passed to muon optimizer
-        mock_get_muon_optimizer.assert_called_once()
-        call_kwargs = mock_get_muon_optimizer.call_args[1]
+        # Verify pg_collection was passed through the unified optimizer factory.
+        mock_get_optimizer.assert_called_once()
+        call_kwargs = mock_get_optimizer.call_args[1]
+        assert call_kwargs["config"] is optimizer_config
         assert call_kwargs["pg_collection"] == mock_pg_collection
 
     @patch("megatron.bridge.training.optim.get_model_config")

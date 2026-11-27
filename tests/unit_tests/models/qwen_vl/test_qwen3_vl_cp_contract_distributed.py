@@ -24,6 +24,7 @@ uv run python -m torch.distributed.run --nproc_per_node=2 -m pytest \
 """
 
 import os
+from types import SimpleNamespace
 
 import megatron.core.parallel_state as parallel_state
 import pytest
@@ -32,6 +33,7 @@ import torch.distributed as dist
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.utils import get_batch_on_this_cp_rank
 
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import rope
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import _split_if_full_sequence
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
 
@@ -86,7 +88,7 @@ def test_full_length_input_ids_leave_the_model_at_one_shard(cp_group) -> None:
 def test_pre_sharded_input_ids_shard_twice(cp_group) -> None:
     """Why the GPT step cannot drive this model: its batch is already CP-sharded."""
     batch = {"tokens": torch.arange(_SEQ, device="cuda").view(1, _SEQ), "attention_mask": None}
-    pre_sharded = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=cp_group)["tokens"]
+    pre_sharded = get_batch_on_this_cp_rank(batch, dynamic_cp=False, cp_group=cp_group)["tokens"]
     assert pre_sharded.size(1) == _SEQ // _CP_SIZE
 
     assert _model_sequence_length(cp_group, pre_sharded) == _SEQ // _CP_SIZE**2
@@ -99,3 +101,33 @@ def test_rope_matches_hidden_states_for_full_length_position_ids(cp_group) -> No
     position_ids = torch.arange(_SEQ, device="cuda").view(1, -1).expand(3, 1, -1).contiguous()
 
     assert rotary(position_ids, rotary.mrope_section).shape[0] == _SEQ // _CP_SIZE
+
+
+@pytest.mark.gpu
+def test_fused_rope_on_a_cp_shard_matches_the_full_sequence(cp_group, monkeypatch) -> None:
+    """Fused RoPE pairs each local row with its CP-sliced rotary row, so a shard equals the full sequence's rows."""
+    if rope.fused_apply_rotary_pos_emb is None:
+        pytest.skip("requires Transformer Engine's fused RoPE")
+    monkeypatch.setattr(rope, "_FUSED_ROPE_FALLBACK_REASONS", set())
+    torch.manual_seed(0)  # identical inputs on both ranks
+    rotary = Qwen3VLMultimodalRotaryEmbedding(kv_channels=_KV_CHANNELS, cp_group=cp_group)
+    position_ids = torch.randint(0, 2 * _SEQ, (3, 2, _SEQ), device="cuda")  # micro batch 2, arbitrary MRoPE positions
+    query = torch.randn(_SEQ, 2, 4, _KV_CHANNELS, device="cuda").to(torch.bfloat16)
+    config = SimpleNamespace(apply_rope_fusion=True, apply_rotary_pos_emb_in_fp32=False, rotary_interleaved=False)
+
+    local_freqs = rotary(position_ids, rotary.mrope_section)  # sliced for this rank
+    rotary.is_thd_format = True  # the model's switch for inputs that are already per rank: no slicing
+    full_freqs = rotary(position_ids, rotary.mrope_section)
+    chunk = _SEQ // (2 * _CP_SIZE)
+    rank = cp_group.rank()
+    rows = torch.cat(
+        [
+            torch.arange(rank * chunk, (rank + 1) * chunk),
+            torch.arange((2 * _CP_SIZE - rank - 1) * chunk, (2 * _CP_SIZE - rank) * chunk),
+        ]
+    ).cuda()
+
+    local = rope.apply_rotary_pos_emb_absolute(query.index_select(0, rows), local_freqs, config)
+    full = rope.apply_rotary_pos_emb_absolute(query, full_freqs, config)
+    assert not rope._FUSED_ROPE_FALLBACK_REASONS  # both calls took the fused kernel
+    assert torch.equal(local, full.index_select(0, rows))

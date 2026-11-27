@@ -19,6 +19,7 @@ from typing import List, Optional
 
 from omegaconf import OmegaConf
 
+from megatron.bridge.models.deepseek.deepseek_v4_data import FixedTHDMockDatasetConfig
 from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
@@ -224,6 +225,8 @@ def apply_one_gpu_per_rank_device_mapping(recipe: ConfigContainer) -> ConfigCont
     through ``bootstrap.py`` (several devices visible) keeps the default local-rank selection.
     """
     if getattr(recipe.model, "moe_flex_dispatcher_backend", None) != "ncclep":
+        return recipe
+    if getattr(recipe.model, "moe_megakernel_backend", None) is not None:
         return recipe
     visible_devices = [device for device in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if device]
     if len(visible_devices) == 1:
@@ -548,12 +551,20 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             # Override the dataset configuration for LLM models.
             # For vlm models, use the default dataset configuration in model recipe,
             # becuase preprocess of dataset is different for each vlm model.
-            recipe.dataset = create_mock_dataset_config(
-                seq_length=recipe.model.seq_length,
-                num_workers=recipe.dataset.num_workers,
-                pin_memory=recipe.dataset.pin_memory,
-                persistent_workers=recipe.dataset.persistent_workers,
-            )
+            if isinstance(recipe.dataset, FixedTHDMockDatasetConfig):
+                # DSv4's benchmark owns its THD padding and contiguous-CP contract.
+                recipe.dataset.seq_length = recipe.model.seq_length
+                # Rebuild the packing specs, which validation compares with the model length.
+                recipe.dataset.finalize()
+            else:
+                recipe.dataset = create_mock_dataset_config(
+                    seq_length=recipe.model.seq_length,
+                    num_workers=recipe.dataset.num_workers,
+                    pin_memory=recipe.dataset.pin_memory,
+                    persistent_workers=recipe.dataset.persistent_workers,
+                    create_attention_mask=getattr(recipe.dataset, "create_attention_mask", True),
+                    prefetch_factor=getattr(recipe.dataset, "prefetch_factor", None),
+                )
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")

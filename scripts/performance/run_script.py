@@ -20,6 +20,7 @@ import re
 import sys
 
 from argument_parser import parse_cli_args
+from utils.mcore_patches import patch_skip_force_all_tensors_to_non_fp8
 from utils.utils import PerfRecipeNotFoundError, get_perf_optimized_recipe, get_perf_recipe_by_name
 
 
@@ -150,6 +151,7 @@ def _run_training(args, cli_overrides: list[str]) -> None:
     from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
     from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
     from megatron.bridge.training.config import runtime_config_update
+    from megatron.bridge.training.global_batch_packing import fixed_thd_dsv4_packing_enabled
     from megatron.bridge.training.gpt_step import forward_step
     from megatron.bridge.training.pretrain import pretrain
     from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
@@ -183,6 +185,11 @@ def _run_training(args, cli_overrides: list[str]) -> None:
         forward_step_func = qwen3_vl_forward_step
     elif args.domain == "diffusion":
         forward_step_func = WanForwardStep(mode=args.task)
+    elif fixed_thd_dsv4_packing_enabled(recipe.model):
+        # Fixed THD DSv4 batches use contiguous context-parallel partitioning.
+        from megatron.bridge.models.deepseek.deepseek_v4_step import forward_step as dsv4_forward_step
+
+        forward_step_func = dsv4_forward_step
     else:
         forward_step_func = forward_step
 
@@ -191,6 +198,7 @@ def _run_training(args, cli_overrides: list[str]) -> None:
 
 def main() -> None:
     """Parse the final training arguments and run the workload once."""
+    patch_skip_force_all_tensors_to_non_fp8()
     parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
     _run_training(args, cli_overrides)

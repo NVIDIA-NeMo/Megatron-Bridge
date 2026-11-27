@@ -150,6 +150,12 @@ def build_pretraining_data_loader(
         if multiprocessing_context is not None:
             worker_kwargs["multiprocessing_context"] = multiprocessing_context
 
+    # Own generator: otherwise every new iterator draws its base seed from the global CPU RNG,
+    # which on resume the checkpoint has already restored. initial_seed() reads the seed without
+    # consuming a draw, so a resumed loader gets the same base seed as a fresh one.
+    loader_generator = torch.Generator()
+    loader_generator.manual_seed(torch.initial_seed())
+
     # Torch dataloader.
     return DataLoader(
         dataset,
@@ -159,6 +165,7 @@ def build_pretraining_data_loader(
         collate_fn=collate_fn,
         persistent_workers=persistent_workers,
         worker_init_fn=maybe_worker_init_fn,
+        generator=loader_generator,
         **worker_kwargs,
     )
 

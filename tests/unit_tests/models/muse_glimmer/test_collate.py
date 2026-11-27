@@ -3,6 +3,7 @@
 import torch
 
 from megatron.bridge.data.collators.registry import resolve_model_collate
+from megatron.bridge.data.energon.hf_task_encoder import HFTaskEncoder
 from megatron.bridge.models.muse_glimmer.data.collate_fn import muse_glimmer_collate_fn
 
 
@@ -88,3 +89,28 @@ def test_muse_glimmer_collator_packs_sequences_and_concatenates_visual_inputs(mo
     assert torch.equal(batch["cu_seqlens_q_padded"], torch.tensor([0, 4, 12], dtype=torch.int32))
     assert batch["visual_inputs"].pixel_values.shape == (4, 12)
     assert torch.equal(batch["visual_inputs"].image_grid_thw, torch.tensor([[1, 2, 4], [1, 2, 4]]))
+
+
+def test_muse_glimmer_collator_runs_under_the_energon_task_encoder(monkeypatch):
+    monkeypatch.setattr(
+        "megatron.bridge.models.muse_glimmer.data.collate_fn.build_assistant_loss_mask",
+        lambda *args, **kwargs: torch.tensor([0.0, 0.0, 1.0, 1.0]),
+    )
+    examples = [{"conversation": [{"role": "user", "content": "image"}, {"role": "assistant", "content": "ok"}]}]
+    encoder = HFTaskEncoder(
+        processor=_MuseGlimmerProcessor(),
+        collate_fn=muse_glimmer_collate_fn,
+        seq_length=16,
+        pad_to_multiple_of=1,
+        min_pixels=1024,
+        max_pixels=4096,
+    )
+
+    batch = encoder.collate_fn(examples)
+
+    expected = muse_glimmer_collate_fn(examples, _MuseGlimmerProcessor(), sequence_length=16, pad_to_multiple_of=1)
+    assert batch.keys() == expected.keys()
+    for key in ("input_ids", "labels", "loss_mask", "attention_mask", "position_ids"):
+        assert torch.equal(batch[key], expected[key])
+    assert torch.equal(batch["visual_inputs"].pixel_values, expected["visual_inputs"].pixel_values)
+    assert torch.equal(batch["visual_inputs"].image_grid_thw, expected["visual_inputs"].image_grid_thw)

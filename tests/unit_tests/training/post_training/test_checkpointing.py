@@ -376,6 +376,7 @@ class TestPostTrainingCheckpointUtilities:
                     result = has_modelopt_state(str(checkpoint_dir))
                     assert result == expected
 
+    @patch("megatron.bridge.training.post_training.checkpointing.propagate_expert_allreduce_to_lsq_params")
     @patch("megatron.bridge.training.post_training.checkpointing._load_extra_state_from_sharded_checkpoint")
     @patch("megatron.bridge.training.post_training.checkpointing.mto.restore_from_modelopt_state")
     @patch("megatron.bridge.training.post_training.checkpointing.mto.ModeloptStateManager.is_converted")
@@ -386,6 +387,7 @@ class TestPostTrainingCheckpointUtilities:
         mock_is_converted,
         mock_restore_from_state,
         mock_load_extra_state,
+        mock_propagate_allreduce,
         mock_model_fixtures,
         tmp_path,
         single_rank_process_group,
@@ -434,6 +436,7 @@ class TestPostTrainingCheckpointUtilities:
         assert mock_restore_from_state.call_args.args[1]["modelopt_state_dict"] == [("quantization", {"value": 1})]
         assert unwrapped_model == [restored_model]
         mock_load_extra_state.assert_called_once_with(restored_model, str(iteration_path), prefix="")
+        mock_propagate_allreduce.assert_called_once_with(restored_model)
 
     def test_has_modelopt_state_file_instead_of_dir(self):
         """Test when modelopt_state exists but is a file, not a directory."""
@@ -578,6 +581,7 @@ class TestPostTrainingCheckpointUtilities:
 class TestLoadModeloptState:
     """Test load_modelopt_state function."""
 
+    @patch("megatron.bridge.training.post_training.checkpointing.propagate_expert_allreduce_to_lsq_params")
     @patch("megatron.bridge.training.post_training.checkpointing._load_extra_state_from_sharded_checkpoint")
     @patch("megatron.bridge.training.post_training.checkpointing.mto.restore_from_modelopt_state")
     @patch("megatron.bridge.training.post_training.checkpointing.mto.ModeloptStateManager.is_converted")
@@ -588,6 +592,7 @@ class TestLoadModeloptState:
         mock_is_converted,
         mock_restore_from_state,
         mock_load_extra_state,
+        mock_propagate_allreduce,
         mock_model_fixtures,
         tmp_path,
     ):
@@ -615,6 +620,7 @@ class TestLoadModeloptState:
         assert mock_restore_from_state.call_args.args[1]["modelopt_state_dict"] == [("quantization", {"value": 1})]
         assert unwrapped_model == [restored_model]
         mock_load_extra_state.assert_called_once_with(restored_model, str(checkpoint_path), prefix="")
+        mock_propagate_allreduce.assert_called_once_with(restored_model)
 
     @patch("megatron.bridge.training.post_training.checkpointing.restore_sharded_modelopt_state")
     @patch("megatron.bridge.training.post_training.checkpointing.unwrap_model")

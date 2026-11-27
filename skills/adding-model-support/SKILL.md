@@ -83,27 +83,29 @@ weight dtypes such as `float8_e4m3fn` (FP8) or `uint8`/`uint4` with accompanying
 - Safetensors contain `weight_scale_inv` keys alongside the main weight keys
 - The model card mentions FP8/FP4/INT4 weights
 
-**Why this matters:** The bridge's `import_ckpt` path does **not** automatically dequantize — it
-loads raw quantized values as-is. This produces a silently broken model (random-level loss, huge
-grad norms) instead of raising an error.
+**Why this matters:** Apart from fine-grained FP8 (below), the bridge's `import_ckpt` path does
+**not** automatically dequantize — it loads raw quantized values as-is. This produces a silently
+broken model (random-level loss, huge grad norms) instead of raising an error.
 
-**Fix:** Dequantize before or during conversion. The current in-repo pattern is to
+**Fine-grained FP8 needs no bridge code.** Checkpoints with `quant_method: "fp8"` store FP8 weights
+with a `<name>_scale_inv` block-scale companion, as DeepSeek-V3 does. The base `_load_hf_weights`
+dequantizes them with the checkpoint's `quantization_config.weight_block_size`. Do not dequantize
+them in `maybe_modify_loaded_hf_weight()`: that hook runs first, so a fixed 128x128 block there
+ignores a different declared block size.
+
+**Other formats:** Dequantize before or during conversion. The current in-repo pattern is to
 use a bridge hook plus the shared helpers in
-`src/megatron/bridge/models/conversion/quantization_utils.py`. Existing examples
-include `src/megatron/bridge/models/ministral3/ministral3_bridge.py`,
-`src/megatron/bridge/models/deepseek/deepseek_v3_bridge.py`, and
-`src/megatron/bridge/models/minimax_m2/minimax_m2_bridge.py`.
-
-Override `maybe_modify_loaded_hf_weight()` in the bridge class to dequantize on
-the fly during import:
+`src/megatron/bridge/models/conversion/quantization_utils.py`. For example,
+`src/megatron/bridge/models/gpt_oss/gpt_oss_bridge.py` dequantizes its MXFP4 experts, stored as
+`<name>_blocks` and `<name>_scales`, on the fly during import:
 
    ```python
    def maybe_modify_loaded_hf_weight(self, hf_param, hf_state_dict):
-       weight = hf_state_dict[hf_param]
-       scale_key = hf_param + "_scale_inv"
-       if weight.dtype == torch.float8_e4m3fn and scale_key in hf_state_dict:
-           return weight.to(torch.bfloat16) * hf_state_dict[scale_key].to(torch.bfloat16)
-       return weight
+       if isinstance(hf_param, str) and hf_param not in hf_state_dict:
+           return quantization_utils.dequantize_mxfp4(
+               hf_state_dict[hf_param + "_blocks"], hf_state_dict[hf_param + "_scales"]
+           )
+       return super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
    ```
 
 Always add a sanity check in the verification workflow (e.g., print `std` of a weight tensor —
@@ -330,14 +332,16 @@ class MyTransformerConfig(TransformerConfig):  # Bridge TransformerConfig
 
 
 @dataclass(kw_only=True)
-class MyModelConfig(ModelConfigOverrideMixin, HybridModelConfig):
+class MyModelConfig(BridgeHybridModelConfig):  # or BridgeGPTModelConfig
     builder: ClassVar[str] = "megatron.bridge.models.<model>.MyModelBuilder"
     transformer_config_class: ClassVar[type[TransformerConfig]] = MyTransformerConfig
     image_token_id: int = 0
 ```
 
-The builder subclasses Megatron Core's `GPTModelBuilder` or `HybridModelBuilder` and overrides
-`build_model()`. The bridge sets `MODEL_CONFIG_CLASS = MyModelConfig` and
+`BridgeHybridModelConfig` and `BridgeGPTModelConfig` provide strict overrides and serialization, so
+the subclass declares only its own fields. A model with Multi-Latent Attention subclasses
+`BridgeGPTMLAModelConfig` or `BridgeHybridMLAModelConfig` instead (see @skills/adding-model-support/llm-patterns.md). The builder subclasses Megatron Core's `GPTModelBuilder`
+or `HybridModelBuilder` and overrides `build_model()`. The bridge sets `MODEL_CONFIG_CLASS = MyModelConfig` and
 `USE_MODEL_CONFIG_FOR_CONVERSION = True`, and overrides `hf_config_to_model_config()` and
 `megatron_to_hf_config()`. Follow Muse Glimmer (`src/megatron/bridge/models/muse_glimmer/`).
 
@@ -357,37 +361,39 @@ If you're tempted to add a model-specific `if model_type == "..."` branch in sha
 pattern-matching on specific weight names in shared conversion logic, that's a signal to use a
 local subclass or hook override instead.
 
-### Update FLOPs calculator for new architectural blocks
+### Model-owned FLOPs accounting
 
-If the model introduces a new computational block that differs from standard attention or MLP
-(e.g., Gated DeltaNet / GDN linear attention, Multi-Token Prediction / MTP heads, Mamba SSM layers),
-update the FLOPs calculator in `src/megatron/bridge/training/utils/flop_utils.py` so that
-training throughput metrics (TFLOPs/GPU) are accurate.
+Always provide an `estimate_flops` function for new models, including custom
+blocks and multimodal wrappers. Follow Core's model-owned estimators (for
+example `SelfAttention`, `GatedDeltaNet`, and `MoELayer`): keep architecture formulas
+beside the model and compose reusable block estimates. Do not add model-family
+conditionals to `training/utils/flop_utils.py`.
 
-**When to update:** Any time the new block has different FLOPs-per-token than standard self-attention
-or standard MLP. Common cases:
-- Linear attention variants (GDN, RetNet, RWKV) — replace the `O(s²)` attention term with the
-  block's actual operation count
-- MTP / speculative decoding heads — add FLOPs for the extra projection and norm layers
-- SSM layers (Mamba) — different recurrence FLOPs than attention
-- Novel MoE routing — may change the effective expert count
+Implement the Core hook as a pure classmethod:
+`estimate_flops(config, *, total_real_tokens_in_batch, seqlen_squared_sum_in_batch)`.
+It returns forward FLOPs without constructing modules, mutating configs, or
+running collectives. Reuse Core estimates for standard blocks; count custom
+blocks locally. Apply backward multipliers outside these block hooks and keep
+detached indexer work separate.
 
-**How to update:**
+Expose the composed estimator through the model config so Bridge's shared training
+accounting can call it without allocating weights. The language estimator takes
+`batch_size`, runtime `seqlen_sum` and `seqlen_squared_sum`; a VLM additionally
+exposes `estimate_vision_flops` with additive per-image patch and merged-token
+statistics. The full model's `estimate_flops` composes its language and modality
+components. Ensure the training logger actually dispatches to these functions.
 
-1. Read the existing `transformer_flops()` function in `flop_utils.py` to understand the structure.
-2. Add a conditional block gated on a config attribute (e.g., `experimental_attention_variant`,
-   `mtp_num_layers`). Follow the existing MoE pattern for config validation — raise on invalid
-   types, assert list lengths, and use direct attribute access instead of `getattr` with fallback
-   defaults so that misconfigurations fail explicitly.
-3. Compute the per-layer FLOPs for the new block and blend it with the standard attention term
-   based on the layer pattern.
-4. Add unit tests in `tests/unit_tests/training/utils/test_flop_utils.py` that verify:
-   - New-block FLOPs differ from pure-attention baseline
-   - Exact formula matches hand-computed expected values
-   - Varying the block ratio (e.g., `linear_attention_freq`) changes FLOPs
+Count logical global work, not replicated TP/EP execution or GPU utilization.
+State the forward/backward multiplier and count detached or frozen operations
+according to the gradient work actually performed. Keep sequence-quadratic work
+based on summed squared lengths, and vision work based on individual images,
+not the square of all concatenated patches. Document approximations and omitted
+operations, especially sparse attention and selection. Never revise historical
+TFLOP/s measurements to imply that a new estimator was used in an earlier run.
 
-Reference PR: [#2925 — GDN FLOPs calculator](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/2925)
-adds GDN support with both the calculator code and comprehensive tests.
+Keep a few hand-computed tests covering the nonstandard blocks, forward versus
+training work, runtime sequence/vision statistics, and the logger dispatch.
+Avoid tests that simply duplicate the estimator's implementation.
 
 ## Phase 3: Recipe Support
 

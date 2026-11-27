@@ -21,6 +21,7 @@ import pytest
 import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.conversion.glu import interleave_glu_tensor
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
@@ -378,6 +379,56 @@ class TestColumnParallelMapping:
 
             assert "hf.weight" in result
             assert torch.equal(result["hf.weight"], full_weight)
+
+    @staticmethod
+    def _module_with_param(param_path, tensor):
+        root = torch.nn.Module()
+        module = root
+        *parents, leaf = param_path.split(".")
+        for name in parents:
+            child = torch.nn.Module()
+            module.add_module(name, child)
+            module = child
+        module.register_parameter(leaf, torch.nn.Parameter(tensor))
+        return root
+
+    @pytest.mark.parametrize(
+        "megatron_param",
+        [
+            "embedding.word_embeddings.weight",
+            "language_model.embedding.word_embeddings.weight",
+            "language_model.output_layer.weight",
+        ],
+    )
+    def test_hf_to_megatron_zero_pads_vocab_under_wrapper_prefix(self, mock_distributed_env, megatron_param):
+        _, mock_dist = mock_distributed_env(tp_size=2, tp_rank=0)
+        mapping = ColumnParallelMapping(megatron_param, "hf.weight")
+        # Local shard of a vocabulary padded from 1280 to 2560 rows for TP2.
+        module = self._module_with_param(megatron_param, torch.empty(1280, 4))
+        hf_weight = torch.randn(1280, 4)
+        mock_dist.scatter.side_effect = lambda output, scatter_list, src, group: output.copy_(scatter_list[0])
+
+        local = mapping.hf_to_megatron(hf_weight, module)
+
+        scattered = torch.cat(mock_dist.scatter.call_args[0][1], dim=0)
+        assert local.shape == (1280, 4)
+        assert scattered.shape == (2560, 4)
+        assert torch.equal(scattered[:1280], hf_weight)
+        assert torch.count_nonzero(scattered[1280:]) == 0
+
+    @pytest.mark.parametrize(
+        "megatron_param",
+        [
+            "language_model.decoder.layers.0.mlp.linear_fc1.weight",
+            "language_model.extra_output_layer.weight",
+        ],
+    )
+    def test_hf_to_megatron_rejects_padding_for_non_vocab_params(self, mock_distributed_env, megatron_param):
+        mock_distributed_env(tp_size=2, tp_rank=0)
+        mapping = ColumnParallelMapping(megatron_param, "hf.weight")
+        module = self._module_with_param(megatron_param, torch.empty(1280, 4))
+        with pytest.raises(AssertionError):
+            mapping.hf_to_megatron(torch.randn(1280, 4), module)
 
     def test_current_pp_stage_only_export_keeps_tp_gather(self, mock_distributed_env):
         _, mock_dist = mock_distributed_env(tp_size=2, pp_size=2)
@@ -953,6 +1004,148 @@ class TestGatedMLPMapping:
         assert torch.equal(result["gate.bias"], gate_bias)
         assert torch.equal(result["up.bias"], up_bias)
 
+    def test_interleaved_single_tp_round_trip(self, mock_distributed_env, monkeypatch):
+        """Import and export preserve logical gate/up rows with physical interleaving."""
+        monkeypatch.setenv("USE_ACT_FUSION_FOR_DENSE", "1")
+        mock_distributed_env()
+        config = SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=2)
+        mapping = GatedMLPMapping(
+            megatron_param="decoder.layers.0.mlp.linear_fc1.weight",
+            gate="model.layers.0.mlp.gate_proj.weight",
+            up="model.layers.0.mlp.up_proj.weight",
+        )
+        gate = torch.arange(16).reshape(4, 4)
+        up = torch.arange(100, 116).reshape(4, 4)
+        module = MockModule(config, weight_shape=(8, 4))
+
+        physical = mapping.hf_to_megatron({"gate": gate, "up": up}, module)
+        result = mapping.megatron_to_hf(physical, module)
+
+        expected_physical = interleave_glu_tensor(torch.cat((gate, up), dim=0), interleave_size=2)
+        assert torch.equal(physical, expected_physical)
+        assert torch.equal(result["model.layers.0.mlp.gate_proj.weight"], gate)
+        assert torch.equal(result["model.layers.0.mlp.up_proj.weight"], up)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("bias", [False, True])
+    def test_sequential_expert_ignores_grouped_interleave_size(self, mock_distributed_env, bias):
+        """Sequential expert import and export keep contiguous rows despite a retained tuning setting."""
+        mock_mpu, _ = mock_distributed_env()
+        single_rank_group = mock_mpu.get_tensor_model_parallel_group()
+        mock_mpu.get_expert_tensor_parallel_group.return_value = single_rank_group
+        mock_mpu.get_expert_model_parallel_group.return_value = single_rank_group
+        config = SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=32)
+        leaf = "bias" if bias else "weight"
+        mapping = GatedMLPMapping(
+            megatron_param=f"decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.{leaf}",
+            gate=f"gate.{leaf}",
+            up=f"up.{leaf}",
+        )
+        shape = (96,) if bias else (96, 4)
+        gate = torch.arange(torch.Size(shape).numel(), dtype=torch.float32).reshape(shape)
+        up = gate + 1000
+        contiguous = torch.cat((gate, up))
+        module = MockModule(config, weight_shape=(192, 4), has_bias=bias)
+        if bias:
+            module.bias = torch.nn.Parameter(torch.empty(192))
+
+        imported = mapping.hf_to_megatron({"gate": gate, "up": up}, module)
+        assert torch.equal(imported, contiguous)
+        exported = mapping.megatron_to_hf(contiguous, module)
+        assert torch.equal(exported[f"gate.{leaf}"], gate)
+        assert torch.equal(exported[f"up.{leaf}"], up)
+
+    def test_shared_expert_uses_its_own_interleave_size(self, mock_distributed_env):
+        """Shared experts select their dedicated layout configuration."""
+        mock_distributed_env()
+        config = SimpleNamespace(
+            gated_linear_unit=True,
+            moe_mlp_glu_interleave_size=None,
+            moe_shared_expert_glu_interleave_size=2,
+            use_grouped_gemm_for_shared_expert=True,
+        )
+        mapping = GatedMLPMapping(
+            megatron_param="decoder.layers.0.mlp.shared_experts.linear_fc1.weight",
+            gate="model.layers.0.mlp.shared_experts.gate_proj.weight",
+            up="model.layers.0.mlp.shared_experts.up_proj.weight",
+        )
+        gate = torch.arange(16).reshape(4, 4)
+        up = torch.arange(100, 116).reshape(4, 4)
+        module = MockModule(config, weight_shape=(8, 4))
+
+        physical = mapping.hf_to_megatron({"gate": gate, "up": up}, module)
+        result = mapping.megatron_to_hf(physical, module)
+
+        assert torch.equal(
+            physical,
+            interleave_glu_tensor(torch.cat((gate, up), dim=0), interleave_size=2),
+        )
+        assert torch.equal(result["model.layers.0.mlp.shared_experts.gate_proj.weight"], gate)
+        assert torch.equal(result["model.layers.0.mlp.shared_experts.up_proj.weight"], up)
+
+    def test_tp_round_trip_converts_each_local_shard(self, mock_distributed_env, monkeypatch):
+        """TP import/export converts each local shard before global assembly."""
+        monkeypatch.setenv("USE_ACT_FUSION_FOR_DENSE", "1")
+        mock_distributed_env(tp_size=2, tp_rank=0)
+        config = SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=2)
+        mapping = GatedMLPMapping(
+            megatron_param="decoder.layers.0.mlp.linear_fc1.weight",
+            gate="model.layers.0.mlp.gate_proj.weight",
+            up="model.layers.0.mlp.up_proj.weight",
+        )
+        gate = torch.arange(32).reshape(8, 4)
+        up = torch.arange(100, 132).reshape(8, 4)
+        module = MockModule(config, weight_shape=(8, 4))
+        physical_shards = [
+            interleave_glu_tensor(torch.cat((gate[:4], up[:4]), dim=0), interleave_size=2),
+            interleave_glu_tensor(torch.cat((gate[4:], up[4:]), dim=0), interleave_size=2),
+        ]
+        logical_shards = [torch.cat((gate[:4], up[:4]), dim=0), torch.cat((gate[4:], up[4:]), dim=0)]
+
+        with patch.object(mapping, "scatter_to_tp_ranks", return_value=physical_shards[0]) as scatter:
+            local_physical = mapping.hf_to_megatron({"gate": gate, "up": up}, module)
+        assert scatter.call_args.args[0] is not None
+        assert all(
+            torch.equal(actual, expected) for actual, expected in zip(scatter.call_args.args[0], physical_shards)
+        )
+
+        with patch.object(mapping, "gather_from_tp_ranks", return_value=logical_shards) as gather:
+            result = mapping.megatron_to_hf(local_physical, module)
+
+        assert torch.equal(gather.call_args.args[0], logical_shards[0])
+        assert torch.equal(result["model.layers.0.mlp.gate_proj.weight"], gate)
+        assert torch.equal(result["model.layers.0.mlp.up_proj.weight"], up)
+
+    def test_megatron_to_hf_deinterleaves_fsdp_tp_shards(self, mock_distributed_env, monkeypatch):
+        """FSDP full tensors preserve the physical boundary of each TP shard."""
+        monkeypatch.setenv("USE_ACT_FUSION_FOR_DENSE", "1")
+        mock_distributed_env(tp_size=2, tp_rank=0)
+        config = SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=2)
+        mapping = GatedMLPMapping(
+            megatron_param="decoder.layers.0.mlp.linear_fc1.weight",
+            gate="model.layers.0.mlp.gate_proj.weight",
+            up="model.layers.0.mlp.up_proj.weight",
+        )
+        gate = torch.arange(32).reshape(8, 4)
+        up = torch.arange(100, 132).reshape(8, 4)
+        physical = torch.cat(
+            [
+                interleave_glu_tensor(torch.cat((gate[:4], up[:4]), dim=0), interleave_size=2),
+                interleave_glu_tensor(torch.cat((gate[4:], up[4:]), dim=0), interleave_size=2),
+            ],
+            dim=0,
+        )
+        module = MockModule(config, weight_shape=(16, 4))
+
+        with (
+            patch("megatron.bridge.models.conversion.param_mapping._module_uses_fsdp", return_value=True),
+            patch.object(mapping, "gather_from_tp_ranks", side_effect=AssertionError("FSDP tensor is already full")),
+        ):
+            result = mapping.megatron_to_hf(physical, module)
+
+        assert torch.equal(result["model.layers.0.mlp.gate_proj.weight"], gate)
+        assert torch.equal(result["model.layers.0.mlp.up_proj.weight"], up)
+
 
 class TestMappingEdgeCases:
     """Test edge cases and error handling in param mappings."""
@@ -1124,6 +1317,20 @@ class TestMappingEdgeCases:
         assert mock_dist.all_gather_object.call_count == 1
         # broadcast should be called twice (once per call)
         assert mock_dist.broadcast.call_count == 2
+
+    def test_broadcast_from_pp_rank_preserves_fsdp_layout_metadata(self, mock_distributed_env):
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=1)
+        mapping = DirectMapping("weight", "weight")
+        spec = (torch.Size((16, 16)), torch.float32, None, None, True)
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [spec, None]
+        )
+        mock_dist.broadcast.side_effect = lambda tensor, src, group: None
+
+        result = mapping.broadcast_from_pp_rank(None)
+
+        assert result is not None
+        assert result._megatron_bridge_fsdp_full_tensor is True
 
     @pytest.mark.parametrize("pp_size", [1, 2])
     @pytest.mark.parametrize("value", [False, 0])

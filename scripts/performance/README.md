@@ -33,6 +33,10 @@ Use `deepseek_v3_pretrain_64gpu_gb300_fp8mx_proxy_config` with the training laun
 or select `--model_family_name deepseek --model_recipe_name deepseek_v3 --task pretrain
 --gpu gb300 --compute_dtype fp8_mx --num_gpus 64 --config_variant proxy` in the
 performance launcher, together with your normal Slurm/container arguments.
+Prefer the performance launcher for measurements: on NCCL EP it exposes one GPU per
+rank (`scripts/performance/bootstrap.py`). The training launcher leaves
+`CUDA_VISIBLE_DEVICES` unchanged, so NCCL EP buffers map into every visible GPU,
+which adds host overhead on Grace+Blackwell nodes.
 
 This mock-data debugging benchmark has 3 dense + 10 MoE decoder layers and one
 additional MTP layer. It uses PP=1 with no virtual pipeline or explicit stage
@@ -40,15 +44,14 @@ layout, TP=CP=ETP=1, EP=32, GBS=4096 and MBS=1. Thus dense DP=64, expert DP=2,
 and there are 64 microbatches per iteration. Its configuration matches the
 64-GPU VRNVL72 MXFP8 proxy, including per-layer shapes, full-iteration CUDA graphs,
 cuTeDSL fusion, MoE overlap, precision, optimizer and process environment. Both
-use the shared HybridEP base, without the production GB300 recipe's NCCL EP or
-`moe_use_grouped_tensor=True` overrides. HybridEP uses 32 ranks per NVLink domain,
-128-token combine chunks, `NVLINK_DOMAIN_SIZE=72`, and `USE_MNNVL=1`.
+inherit NCCL EP and `moe_use_grouped_tensor=True` from their 256-GPU MXFP8
+parents and set `NCCL_EP_HT_EM_PULL_PUSH=1` without HybridEP tuning variables.
 
 Both 64-GPU MXFP8 proxies explicitly set `NVTE_ALLOW_NONDETERMINISTIC_ALGO=1`:
 the fused SwiGLU scale-gradient reduction uses atomics, and TE versions that
 enforce determinism reject this path with the setting at zero. This changes the
 VRNVL72 proxy's previous kernel policy; rerun its baseline for a matched comparison.
-The 256-GPU recipes and NVFP4 proxies are unchanged.
+The 256-GPU recipes and NVFP4 proxies keep their previous `NVTE_ALLOW_NONDETERMINISTIC_ALGO` settings.
 
 All 13 decoder layers and MTP reside on each PP=1 rank; there is no pipeline
 communication. Memory fit, graph capture/replay and performance require a new GPU
@@ -56,8 +59,22 @@ run. The reduced depth, different dense/MoE proportions, DP group sizes and
 microbatch schedule mean this proxy is not convergence-equivalent to the full
 model or a direct predictor of its end-to-end throughput. Use matched software,
 launch settings and measurement windows for GB300/VRNVL72 comparisons, and
-revalidate improvements at scale. The production GB300 parent uses NCCL EP, so
-the proxy does not validate that dispatcher's behavior or performance.
+revalidate improvements at scale. Both proxies previously used HybridEP, so rerun
+any earlier proxy baseline before comparing.
+
+### DeepSeek V3 H100 proxies
+
+Use `deepseek_v3_pretrain_64gpu_h100_bf16_proxy_config` or
+`deepseek_v3_pretrain_64gpu_h100_fp8cs_proxy_config` with the training launcher, or select
+`--model_family_name deepseek --model_recipe_name deepseek_v3 --task pretrain --gpu h100
+--compute_dtype bf16 --num_gpus 64 --config_variant proxy` (or `--compute_dtype fp8_cs`) in the
+performance launcher. These mock-data debugging benchmarks have 3 dense + 10 MoE decoder layers and
+one MTP layer, with PP=1 and no virtual pipeline or explicit stage layout, TP=2, EP=64, GBS=1024 and
+MBS=1. Thus dense DP=32, expert DP=1, and there are 32 microbatches per iteration. Other settings and
+the process environment follow the 1024-GPU H100 recipes. The reduced depth means these proxies
+are not convergence-equivalent to the full model or a direct predictor of its end-to-end throughput.
+They are the only 64-GPU H100 DeepSeek V3 recipes: the full-depth model does not fit on 64 H100 GPUs,
+so use the 1024-GPU H100 recipes for full-depth runs.
 
 ## Setup Instructions
 

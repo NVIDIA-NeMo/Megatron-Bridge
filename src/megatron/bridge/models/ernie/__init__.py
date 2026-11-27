@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,9 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from megatron.bridge.models.ernie.configuration_ernie55 import Ernie55Config
+from megatron.bridge.models.ernie.ernie55_bridge import Ernie55Bridge
+from megatron.bridge.models.ernie.ernie55_builder import Ernie55ModelBuilder
+from megatron.bridge.models.ernie.ernie55_config import Ernie55ModelConfig, Ernie55TransformerConfig
+from megatron.bridge.models.ernie.ernie55_data import Ernie55SFTDatasetConfig
 from megatron.bridge.models.ernie.ernie_45_bridge import Ernie45Bridge
 
 
 __all__ = [
     "Ernie45Bridge",
+    "Ernie55Bridge",
+    "Ernie55Config",
+    "Ernie55ModelBuilder",
+    "Ernie55ModelConfig",
+    "Ernie55SFTDatasetConfig",
+    "Ernie55TransformerConfig",
 ]

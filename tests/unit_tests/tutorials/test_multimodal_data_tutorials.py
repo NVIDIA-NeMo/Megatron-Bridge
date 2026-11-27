@@ -3,6 +3,7 @@
 import json
 import runpy
 import struct
+import sys
 import tarfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -220,7 +221,7 @@ def test_medpix_energon_preparation_writes_real_schema_without_downloading(
     module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_medpix_data.py"))
     calls = []
 
-    def fake_load_dataset(dataset_id: str, *, split: str):
+    def fake_load_dataset(dataset_id: str, *, split: str, revision=None):
         calls.append((dataset_id, split))
         count = 2 if split.startswith("train") else 1
         return [
@@ -272,6 +273,38 @@ def test_medpix_energon_preparation_writes_real_schema_without_downloading(
     assert "conversation: conversation.json" in dataset_yaml
 
 
+def test_medpix_energon_preparation_loads_full_splits_at_a_pinned_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_medpix_data.py"))
+    calls = []
+
+    def fake_load_dataset(dataset_id: str, *, split: str, revision=None):
+        calls.append((dataset_id, split, revision))
+        return [{"image_id": Image.new("RGB", (8, 8)), "question": "Q?", "answer": "A."}]
+
+    main = module["main"]
+    monkeypatch.setitem(main.__globals__, "load_dataset", fake_load_dataset)
+    argv = ["prepare_medpix_data.py", "--output-dir", str(tmp_path), "--train-rows", "all"]
+    argv += ["--validation-rows", "all", "--revision", "abc123", "--skip-prepare"]
+    monkeypatch.setattr(sys, "argv", argv)
+    main()
+
+    assert calls == [
+        ("mmoukouba/MedPix-VQA", "train", "abc123"),
+        ("mmoukouba/MedPix-VQA", "validation", "abc123"),
+    ]
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["train_split"] == "train"
+    assert manifest["validation_split"] == "validation"
+    assert module["_row_count"]("16") == 16
+    prepare_medpix_data = module["prepare_medpix_data"]
+    with pytest.raises(ValueError, match="greater than zero"):
+        prepare_medpix_data(tmp_path, train_rows=0, run_prepare=False)
+    with pytest.raises(ValueError, match="greater than zero"):
+        prepare_medpix_data(tmp_path, validation_rows=0, run_prepare=False)
+
+
 def test_medpix_training_slice_override_preserves_hydra_brackets():
     from omegaconf import OmegaConf
 
@@ -293,7 +326,11 @@ def test_multimodal_tutorials_document_runnable_qwen_paths():
     assert "## Start with a hosted chat dataset" in hf_multimodal
     assert 'HFDatasetSourceConfig(dataset_name="medpix")' in hf_multimodal
     assert "--nproc_per_node=1" in hf_multimodal
-    assert "--dataset vlm-hf" in hf_multimodal
+    assert "--dataset local-vlm" in hf_multimodal
+    assert "--dataset medpix" in hf_multimodal
+    assert "--mode lora" in hf_multimodal
+    assert "--dataset vlm-hf" not in hf_multimodal
+    assert "--peft_scheme" not in hf_multimodal
     assert "dataset.source.path_or_dataset=json" in hf_multimodal
     assert "dataset.source.load_kwargs={data_files:{train:" in hf_multimodal
     assert "dataset.source.dataset_name=medpix" in hf_multimodal

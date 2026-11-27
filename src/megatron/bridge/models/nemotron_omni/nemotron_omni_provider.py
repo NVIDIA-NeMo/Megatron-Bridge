@@ -12,22 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
 import warnings
 from abc import ABC
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Callable, ClassVar, Literal, Optional
 
 from megatron.core import parallel_state
-from megatron.core.activations import fast_gelu, squared_relu
-from megatron.core.models.gpt.gpt_layer_specs import get_mlp_module_spec
+from megatron.core.activations import squared_relu
 from megatron.core.models.hybrid.hybrid_model import HybridModel as MCoreHybridModel
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
-from megatron.core.transformer.spec_utils import ModuleSpec, get_submodules
+from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
@@ -36,6 +33,16 @@ from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
     NemotronOmniModel,
 )
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
+from megatron.bridge.models.nemotron_omni.nemotron_omni_builder import (
+    _get_transformer_engine_projection_submodules,
+    _make_omni_vision_config,
+    _make_omni_vision_projection_config,
+    _make_radio_projection_config,
+    _make_radio_vision_config,
+    _make_sound_encoder,
+    _make_sound_projection_config,
+)
+from megatron.bridge.models.nemotron_omni.nemotron_omni_config import _validate_nemotron_omni_settings
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -47,11 +54,6 @@ NEMOTRON_OMNI_LLAVA_CONTRACT = "llava_collapse_expand_v1"
 # ``modality_submodules.<modality>.encoders.<key>`` attribute.
 _IMAGES_MODALITY_KEY = "images"
 _RADIO_ENCODER_KEY = "radio"
-
-
-def _get_transformer_engine_projection_submodules():
-    """Build the standard dense TE MLP submodules used by media projectors."""
-    return copy.deepcopy(get_submodules(get_mlp_module_spec(use_te=True)))
 
 
 @dataclass
@@ -122,102 +124,11 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
 
     def _build_vision_config(self, language_cfg):
         """Build RADIO ViT-H vision encoder config from a language config copy."""
-        if self.recompute_vision and self.radio_force_eval_mode:
-            raise ValueError("Vision recompute requires radio_force_eval_mode=False.")
-        vision_cfg = copy.deepcopy(language_cfg)
-        if not self.use_vision_backbone_fp8_arch:
-            vision_cfg.fp8 = None
-            vision_cfg.fp8_param = False
-        vision_cfg.sequence_parallel = False
-        vision_cfg.context_parallel_size = 1
-        vision_cfg.tp_comm_overlap = False
-        vision_cfg.mtp_num_layers = None
-        vision_cfg.num_layers = 32
-        vision_cfg.num_attention_heads = 16
-        vision_cfg.add_bias_linear = True
-        vision_cfg.add_qkv_bias = True
-        vision_cfg.hidden_size = 1280
-        vision_cfg.ffn_hidden_size = 5120
-        vision_cfg.gated_linear_unit = False
-        vision_cfg.activation_func = fast_gelu
-        vision_cfg.kv_channels = 80
-        vision_cfg.num_query_groups = 16
-        vision_cfg.layernorm_zero_centered_gamma = False
-        vision_cfg.apply_query_key_layer_scaling = False
-        vision_cfg.attention_softmax_in_fp32 = True
-        vision_cfg.normalization = "LayerNorm"
-        vision_cfg.qk_layernorm = False
-        vision_cfg.layernorm_epsilon = 1e-6
-        if self.recompute_vision:
-            granularity = (
-                self.vision_recompute_granularity
-                if self.vision_recompute_granularity is not None
-                else vision_cfg.recompute_granularity
-            )
-            if granularity is None:
-                raise ValueError("Vision recompute requires an effective recompute granularity.")
-            if granularity not in {"full", "selective"}:
-                raise ValueError("Vision recompute granularity must be 'full' or 'selective'.")
-            vision_cfg.recompute_granularity = granularity
-
-            if granularity == "selective":
-                if self.vision_recompute_method is not None or self.vision_recompute_num_layers is not None:
-                    raise ValueError("Selective vision recompute does not use a method or layer count.")
-                vision_cfg.recompute_method = None
-                vision_cfg.recompute_num_layers = None
-                if self.vision_recompute_modules is not None:
-                    if not self.vision_recompute_modules:
-                        raise ValueError("Selective vision recompute modules must not be empty.")
-                    vision_cfg.recompute_modules = list(self.vision_recompute_modules)
-            else:
-                if self.vision_recompute_modules is not None:
-                    raise ValueError("Full vision recompute does not use selective recompute modules.")
-                method = (
-                    self.vision_recompute_method
-                    if self.vision_recompute_method is not None
-                    else vision_cfg.recompute_method
-                )
-                num_layers = (
-                    self.vision_recompute_num_layers
-                    if self.vision_recompute_num_layers is not None
-                    else vision_cfg.recompute_num_layers
-                )
-                if method is None:
-                    raise ValueError("Full vision recompute requires a recompute method.")
-                if method not in {"uniform", "block"}:
-                    raise ValueError("Full vision recompute method must be 'uniform' or 'block'.")
-                if num_layers is None:
-                    raise ValueError("Full vision recompute requires a layer count.")
-                if (
-                    not isinstance(num_layers, int)
-                    or isinstance(num_layers, bool)
-                    or not 1 <= num_layers <= vision_cfg.num_layers
-                ):
-                    raise ValueError(
-                        f"Full vision recompute layer count must be an integer between 1 and {vision_cfg.num_layers}."
-                    )
-                vision_cfg.recompute_method = method
-                vision_cfg.recompute_num_layers = num_layers
-        else:
-            vision_cfg.recompute_granularity = None
-            vision_cfg.recompute_method = None
-            vision_cfg.recompute_num_layers = None
-        if self.vision_class_token_len is not None:
-            vision_cfg.class_token_len = self.vision_class_token_len
-        return vision_cfg
+        return _make_radio_vision_config(self, language_cfg)
 
     def _build_vision_projection_config(self, language_cfg):
         """Build vision projection MLP config from a language config copy."""
-        vision_proj_cfg = copy.deepcopy(language_cfg)
-        vision_proj_cfg.sequence_parallel = False
-        vision_proj_cfg.context_parallel_size = 1
-        vision_proj_cfg.tp_comm_overlap = False
-        vision_proj_cfg.recompute_granularity = None
-        vision_proj_cfg.recompute_method = None
-        vision_proj_cfg.recompute_num_layers = None
-        vision_proj_cfg.ffn_hidden_size = self.vision_proj_ffn_hidden_size
-        vision_proj_cfg.bias_activation_fusion = False
-        return vision_proj_cfg
+        return _make_radio_projection_config(self, language_cfg)
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None):
         return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
@@ -266,20 +177,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
     nemotron_omni_contract: Optional[str] = None
 
     def _validate_omni_config(self) -> None:
-        if self.dynamic_resolution is not True:
-            raise ValueError("Nemotron Omni only supports dynamic_resolution=True.")
-        if self.image_token_index is None or self.image_token_index <= 0:
-            raise ValueError(
-                "Nemotron Omni requires a positive image_token_index from the checkpoint configuration; "
-                f"got {self.image_token_index}. Construct the provider through AutoBridge or set it explicitly."
-            )
-        if self.has_sound and self.sound_context_token_id <= 0:
-            raise ValueError(
-                "Sound-enabled Nemotron Omni requires a positive sound_context_token_id from the checkpoint "
-                f"configuration; got {self.sound_context_token_id}."
-            )
-        if self.has_sound and self.sound_config is None:
-            raise ValueError("Sound-enabled Nemotron Omni requires sound_config from the checkpoint configuration.")
+        _validate_nemotron_omni_settings(self)
 
     def finalize(self) -> None:
         """Finalize a dynamic-resolution Nemotron Omni provider."""
@@ -316,20 +214,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         VL provider doesn't pin this; for Omni we always co-locate the
         vision encoder with the first PP stage.
         """
-        vision_cfg = super()._build_vision_config(language_cfg)
-        vision_cfg.pipeline_model_parallel_size = 1
-        vision_cfg.virtual_pipeline_model_parallel_size = None
-        vision_cfg.num_layers_in_first_pipeline_stage = None
-        vision_cfg.num_layers_in_last_pipeline_stage = None
-        vision_cfg.pipeline_model_parallel_layout = None
-        vision_cfg.account_for_embedding_in_pipeline_split = False
-        vision_cfg.account_for_loss_in_pipeline_split = False
-        if self.vision_final_layernorm:
-            # MCore places a final norm in the vision TransformerBlock when
-            # mtp_num_layers is non-None. Nemotron 3.5 Super VL was trained
-            # with that layout and its HF projector applies the same norm.
-            vision_cfg.mtp_num_layers = 1
-        return vision_cfg
+        return _make_omni_vision_config(self, language_cfg)
 
     def _build_vision_projection_config(self, language_cfg):
         """Build the vision projection MLP config.
@@ -338,50 +223,15 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         matching the HF checkpoint and vLLM implementation. Also pin the
         projector to PP=1 (see :meth:`_build_vision_config`).
         """
-        vision_proj_cfg = super()._build_vision_projection_config(language_cfg)
-        vision_proj_cfg.activation_func = squared_relu
-        vision_proj_cfg.pipeline_model_parallel_size = 1
-        vision_proj_cfg.virtual_pipeline_model_parallel_size = None
-        vision_proj_cfg.num_layers_in_first_pipeline_stage = None
-        vision_proj_cfg.num_layers_in_last_pipeline_stage = None
-        vision_proj_cfg.pipeline_model_parallel_layout = None
-        vision_proj_cfg.account_for_embedding_in_pipeline_split = False
-        vision_proj_cfg.account_for_loss_in_pipeline_split = False
-        return vision_proj_cfg
+        return _make_omni_vision_projection_config(self, language_cfg)
 
     def _build_sound_projection_config(self, language_cfg):
         """Build sound projection config (mirrors _build_vision_projection_config)."""
-        sound_proj_cfg = copy.deepcopy(language_cfg)
-        sound_proj_cfg.sequence_parallel = False
-        sound_proj_cfg.context_parallel_size = 1
-        sound_proj_cfg.tp_comm_overlap = False
-        sound_proj_cfg.recompute_granularity = None
-        sound_proj_cfg.recompute_method = None
-        sound_proj_cfg.recompute_num_layers = None
-        sound_proj_cfg.ffn_hidden_size = self.sound_projection_hidden_size
-        sound_proj_cfg.bias_activation_fusion = False
-        sound_proj_cfg.pipeline_model_parallel_size = 1
-        return sound_proj_cfg
+        return _make_sound_projection_config(self, language_cfg)
 
     def _build_sound_encoder(self):
         """Build BridgeSoundEncoder from sound_config dict."""
-        from megatron.bridge.models.nemotron_omni.nemotron_omni_sound import BridgeSoundEncoder
-
-        sc = self.sound_config
-        config = SimpleNamespace(
-            hidden_size=sc["hidden_size"],
-            num_hidden_layers=sc["num_hidden_layers"],
-            num_attention_heads=sc["num_attention_heads"],
-            intermediate_size=sc["intermediate_size"],
-            num_mel_bins=sc["num_mel_bins"],
-            subsampling_factor=sc["subsampling_factor"],
-            conv_kernel_size=sc.get("conv_kernel_size", 9),
-            use_bias=sc.get("convolution_bias", False),
-            sound_model_type=self.sound_model_type,
-            sound_pad_to_clip_duration=False,
-            sound_batch_split=1,
-        )
-        return BridgeSoundEncoder(config)
+        return _make_sound_encoder(self)
 
     def _build_sound_modules(self, language_cfg, *, add_encoder: bool):
         """Build optional sound modules on the encoder pipeline stage."""

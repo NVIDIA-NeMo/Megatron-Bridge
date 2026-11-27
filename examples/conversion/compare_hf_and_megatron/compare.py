@@ -91,11 +91,13 @@ Output:
 """
 
 import argparse
+import contextlib
 import gc
 import importlib
 import io
 import os
 import sys
+from collections.abc import Iterator
 from typing import Optional
 
 import torch
@@ -627,6 +629,30 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     return None
 
 
+@contextlib.contextmanager
+def _torch_kernel_fallbacks() -> Iterator[None]:
+    """Make transformers' kernel-backed model helpers run their PyTorch references.
+
+    transformers 5.15+ wraps helpers such as NemotronH's ``causal_conv1d_fn`` with
+    ``use_kernel_func_from_hub_with_fallback``, which binds an installed package (``causal_conv1d``,
+    ``mamba_ssm``, ``fla``) once at import without checking the tensor device. Those kernels are
+    CUDA-only, so a CPU forward fails with "Expected x.is_cuda() to be true". Since 5.17 the wrapper
+    calls its PyTorch reference while ``torch.export`` runs; inside this context it always does.
+    """
+    from transformers.integrations import hub_kernels
+
+    is_exporting = getattr(hub_kernels, "is_torchdynamo_exporting", None)
+    if is_exporting is None:
+        yield
+        return
+    print_rank_0("CPU HF reference: kernel-backed transformers helpers, if any, use their PyTorch implementations.")
+    try:
+        hub_kernels.is_torchdynamo_exporting = lambda: True
+        yield
+    finally:
+        hub_kernels.is_torchdynamo_exporting = is_exporting
+
+
 def _get_hf_forward_model(hf_model, pixel_values, pixel_values_videos=None):
     """Select a composite model's language backbone for text-only comparison."""
     language_model = getattr(hf_model, "language_model", None)
@@ -696,7 +722,9 @@ def _run_hf_inference(
         if mm_token_type_ids is not None:
             hf_inputs["mm_token_type_ids"] = mm_token_type_ids.to(hf_device)
 
-        hf_output = hf_forward_model(**hf_inputs)
+        on_cpu = torch.device(hf_device).type == "cpu"
+        with _torch_kernel_fallbacks() if on_cpu else contextlib.nullcontext():
+            hf_output = hf_forward_model(**hf_inputs)
 
         # Debug: Check output type
         print_rank_0(f"HF output type: {type(hf_output)}")
@@ -932,6 +960,19 @@ def _broadcast_hf_results(hf_logits, hf_next_token, device):
     return hf_logits, hf_next_token
 
 
+def _check_comparison_result(comparison_passed: bool, device: torch.device) -> None:
+    """Raise on every rank if any comparison rank failed the correlation gate."""
+    if torch.distributed.is_initialized():
+        result = torch.tensor(int(comparison_passed), dtype=torch.int32, device=device)
+        torch.distributed.all_reduce(result, op=torch.distributed.ReduceOp.MIN)
+        comparison_passed = bool(result.item())
+    if not comparison_passed:
+        raise ValueError(
+            "HF/Megatron comparison failed: next tokens must match and cosine similarity "
+            f"must be at least {SIMILARITY_THRESHOLD}. See the comparison output for details."
+        )
+
+
 def compare_models_one_step(args) -> None:
     """Compare 1-step generation between HF and Megatron models with debugging.
 
@@ -1067,6 +1108,8 @@ def compare_models_one_step(args) -> None:
         hf_logits, hf_next_token = _broadcast_hf_results(hf_logits, hf_next_token, input_ids.device)
         print_rank_0("HF results broadcast complete.")
 
+    comparison_passed = True
+
     # Run Megatron model forward pass
     print_rank_0("=== RUNNING MEGATRON MODEL (1-STEP) ===")
     with torch.no_grad():
@@ -1175,6 +1218,7 @@ def compare_models_one_step(args) -> None:
                 print(f"Logits diff - max: {diff.max():.6f}, mean: {diff.mean():.6f}")
                 cosine_sim = torch.cosine_similarity(hf_logits.unsqueeze(0), megatron_logits_cmp.unsqueeze(0))
                 cos_val = cosine_sim.item()
+                comparison_passed = token_match and cos_val >= SIMILARITY_THRESHOLD
                 percent = cos_val * 100.0
                 status_emoji = "✅" if cos_val >= SIMILARITY_THRESHOLD else "❌"
                 limit_text = "within" if cos_val >= SIMILARITY_THRESHOLD else "outside"
@@ -1192,6 +1236,9 @@ def compare_models_one_step(args) -> None:
         # Broadcast Megatron results from last rank to all ranks (following generate_from_hf.py pattern)
         if torch.distributed.is_initialized():
             torch.distributed.broadcast(megatron_next_token, get_last_rank())
+
+        if getattr(args, "fail_on_mismatch", False):
+            _check_comparison_result(comparison_passed, input_ids.device)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1245,9 +1292,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
     parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
     parser.add_argument(
+        "--fail-on-mismatch",
+        action="store_true",
+        help="Exit with an error on all ranks if next tokens differ or cosine similarity is below 0.99.",
+    )
+    parser.add_argument(
         "--hf-device",
         default="cuda",
-        help="CUDA device used by the rank-0 Hugging Face reference model (for example, cuda:2).",
+        help="Device used by the rank-0 Hugging Face reference model (for example, cuda:2 or cpu).",
     )
     parser.add_argument(
         "--model_class",
@@ -1281,11 +1333,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-if __name__ == "__main__":
-    args = build_parser().parse_args()
+def main(argv: list[str] | None = None) -> None:
+    """Run the comparison and tear down the process group once it has succeeded.
+
+    An error can be raised on one rank only, for example when rank 0 rejects an HF
+    reference produced from other input IDs, while the other ranks wait in a collective.
+    Destroying the process group on that rank can then wait for those ranks forever, as
+    ProcessGroupNCCL2 does, so the error is left to end the process instead, and torchrun
+    then stops the remaining ranks.
+
+    Args:
+        argv: Command-line arguments. Defaults to ``sys.argv[1:]``.
+    """
+    args = build_parser().parse_args(argv)
 
     maybe_initialize_distributed()
     compare_models_one_step(args)
-
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()
+
+
+if __name__ == "__main__":
+    main()

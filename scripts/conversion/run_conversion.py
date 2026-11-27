@@ -74,10 +74,16 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--save-every-n-ranks requires --distributed-save.")
         if args.device == "cpu" and not distributed_cpu and args.export_weight_dtype is not None:
             raise ValueError("--export-weight-dtype requires distributed CPU export or the GPU backend.")
+        if args.device == "cpu" and not distributed_cpu and args.quantized_export:
+            raise ValueError("--quantized-export requires distributed CPU export or the GPU backend.")
 
 
 def _run_import(args: argparse.Namespace) -> None:
     """Dispatch an import to the selected backend."""
+    if args.bagel_repo is not None:
+        from megatron.bridge.models.bagel.dependencies import configure_official_bagel_repo
+
+        configure_official_bagel_repo(args.bagel_repo)
     common_args = {
         "hf_model": args.hf_model,
         "hf_revision": args.hf_revision,
@@ -140,6 +146,7 @@ def _run_export(args: argparse.Namespace) -> None:
         save_every_n_ranks=args.save_every_n_ranks,
         distributed_timeout_minutes=args.distributed_timeout_minutes,
         export_weight_dtype=args.export_weight_dtype,
+        quantized_export=args.quantized_export,
         use_cpu=distributed_cpu,
     )
 

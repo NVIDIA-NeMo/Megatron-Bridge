@@ -331,38 +331,38 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-09</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-21</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>12.17197</dd>
+            <dd>12.17234</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>5.785674</dd>
+            <dd>5.780638</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>21,296.790 ms</dd>
+            <dd>21,348.290 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>692.930 TFLOP/s/GPU</dd>
+            <dd>691.370 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>24,618.170 tokens/s/GPU</dd>
+            <dd>24,558.782 tokens/s/GPU</dd>
           </div>
           <div>
             <dt>Peak allocated memory</dt>
-            <dd>162.430 GiB</dd>
+            <dd>158.940 GiB</dd>
           </div>
           <div>
             <dt>Peak reserved memory</dt>
-            <dd>166.630 GiB</dd>
+            <dd>167.800 GiB</dd>
           </div>
         </dl>
       </section>
@@ -378,7 +378,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On two complete four-GPU GB200 nodes in one segment-2 NVLink domain, the sequence-length-8,192, GBS/MBS 512/2 real-data RP2 convergence-verification run completes exactly 100 finite-loss optimizer steps with natural routing, Transformer Engine fused cross entropy, CUDA graphs disabled, finite LM/MTP-1/MTP-2 losses, and no skipped or NaN iterations. LM loss is 12.171970 -&gt; 5.785674; real-data steps 91-100 average 21,296.790 ms / 692.930 TFLOP/s/GPU with 162.430 GiB peak allocated and 166.630 GiB peak reserved memory. Complete 15-file, 430-GiB checkpoints with distributed metadata are written at steps 50 and 100.
+        <p>On two complete four-GPU GB200 nodes in one segment-2 NVLink domain, the sequence-length-8,192, GBS/MBS 512/2 real-data RP2 convergence-verification run completes exactly 100 finite-loss optimizer steps with natural routing, Transformer Engine fused cross entropy, CUDA graphs disabled, finite LM/MTP-1/MTP-2 losses, and no skipped or NaN iterations. LM loss is 12.17234 -&gt; 5.780638; real-data steps 91-100 average 21,348.290 ms / 691.370 TFLOP/s/GPU with 158.940 GiB peak allocated and 167.800 GiB peak reserved memory. Complete 15-file, 430-GiB checkpoints with distributed metadata are written at steps 50 and 100. Measured in the public NeMo 26.10.01 release container at this item&#x27;s Bridge commit.
 </p>
       </section>
     </article>
@@ -559,38 +559,38 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-09</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-21</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.4407797</dd>
+            <dd>0.4408245</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.2761015</dd>
+            <dd>0.2758881</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>9,533.730 ms</dd>
+            <dd>7,855.790 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>183.250 TFLOP/s/GPU</dd>
+            <dd>222.340 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>6,874.120 tokens/s/GPU</dd>
+            <dd>8,342.382 tokens/s/GPU</dd>
           </div>
           <div>
             <dt>Peak allocated memory</dt>
-            <dd>101.510 GiB</dd>
+            <dd>101.420 GiB</dd>
           </div>
           <div>
             <dt>Peak reserved memory</dt>
-            <dd>103.910 GiB</dd>
+            <dd>105.010 GiB</dd>
           </div>
         </dl>
       </section>
@@ -606,7 +606,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On two complete four-GPU GB200 nodes in one segment-2 NVLink domain, packed OpenMathInstruct-2 full SFT completes exactly 100 finite-loss optimizer steps with active MTP gradients. LM loss is 0.4407797 -&gt; 0.2761015, MTP-1 loss is 0.7373838 -&gt; 0.4145924, and MTP-2 loss is 0.8092746 -&gt; 0.4743617. Steps 91-100 average 9,533.730 ms / 183.250 TFLOP/s/GPU with 101.510 GiB peak allocated and 103.910 GiB peak reserved memory. No iteration is skipped or NaN, and the complete 12-file reloadable full-model checkpoint is written at step 100.
+        <p>On two complete four-GPU GB200 nodes in one segment-2 NVLink domain, packed OpenMathInstruct-2 full SFT completes exactly 100 finite-loss optimizer steps with active MTP gradients. LM loss is 0.4408245 -&gt; 0.2758881, MTP-1 loss is 0.5187955 -&gt; 0.3258408, and MTP-2 loss is 0.6007083 -&gt; 0.3771348. Steps 91-100 average 7,855.790 ms / 222.340 TFLOP/s/GPU with 101.420 GiB peak allocated and 105.010 GiB peak reserved memory. No iteration is skipped or NaN, and the complete 12-file reloadable full-model checkpoint is written at step 100. Measured in the public NeMo 26.10.01 release container at this item&#x27;s Bridge commit; MTP losses cover completion tokens only (SFT loss mask), as in the GB200 long-context SFT leaf.
 </p>
       </section>
     </article>
@@ -669,30 +669,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-12</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-06</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.4268849</dd>
+            <dd>0.4268937</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.2653473</dd>
+            <dd>0.2648948</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>41,101.830 ms</dd>
+            <dd>31,931.380 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>420.700 TFLOP/s/GPU</dd>
+            <dd>437.850 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>12,755.831 tokens/s/GPU</dd>
+            <dd>16,419.209 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -703,12 +703,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe nemotron_3_5_lightning_sft_config --mode sft --dataset openmathinstruct2 --max_steps 100 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 --context_parallel_size 2 --expert_tensor_parallel_size 1 --expert_model_parallel_size 8 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000 model.moe_flex_dispatcher_backend=hybridep &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;469216e3f46f4dacf476b382e192485ea51a143e&quot;}&#x27; dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}&#x27; model.cp_comm_type=a2a model.cross_entropy_loss_fusion=false model.calculate_per_token_loss=true model.recompute_granularity=selective &#x27;model.recompute_modules=[moe,layernorm,core_attn,mlp]&#x27; model.recompute_method=null model.recompute_num_layers=null model.moe_router_force_load_balancing=false ddp.average_in_collective=false ddp.overlap_param_gather=false optimizer.overlap_param_gather=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-gb200/long-sft-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe nemotron_3_5_lightning_sft_32k_config --mode sft --dataset openmathinstruct2 --max_steps 100 --lr 5e-6 --min_lr 0 --warmup_iters 10 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000 &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;469216e3f46f4dacf476b382e192485ea51a143e&quot;}&#x27; dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}&#x27; scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-gb200/long-sft-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K steps with LM loss 0.4268849 -&gt; 0.2653473 and MTP-1 loss 0.7321853 -&gt; 0.4469699. All 100 steps have finite LM/MTP losses and no skipped or NaN iterations. Steps 91-100 average 41,101.830 ms / 420.700 TFLOP/s/GPU. The complete step-100 checkpoint has distributed metadata, saved run configuration and training state, 12 files, and a latest marker of 100.
+        <p>Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K steps with LM loss 0.4268937 -&gt; 0.2648948 and MTP-1 loss 0.5040868 -&gt; 0.3120846. All 100 steps have finite LM/MTP losses and no skipped or NaN iterations. Steps 91-100 average 31,931.380 ms / 437.850 TFLOP/s/GPU. The complete step-100 checkpoint has distributed metadata, saved run configuration and training state, 12 files, and a latest marker of 100. This leaf&#x27;s MTP losses cover completion tokens only (SFT loss mask); the H100 long-context leaf&#x27;s default bridge_commit predates that masking and computes MTP loss over every token, so the two leaves have different MTP objectives and are not convergence-comparable.
 </p>
       </section>
     </article>
@@ -771,30 +771,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-10-09</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-21</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.4406565</dd>
+            <dd>0.440778</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.2857773</dd>
+            <dd>0.2893645</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>21,602.620 ms</dd>
+            <dd>21,336.240 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>80.940 TFLOP/s/GPU</dd>
+            <dd>82.010 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>3,033.706 tokens/s/GPU</dd>
+            <dd>3,071.581 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -810,7 +810,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss steps with 48 rank-local adapter attachment records covering MTP attention, expert, and shared-expert layers, LM loss 0.4406565 -&gt; 0.2857773, finite MTP-1 loss 0.7370399 -&gt; 0.4370756, and no skipped or NaN iterations. Steps 91-100 average 21,602.620 ms / 80.940 TFLOP/s/GPU, and the complete 12-file adapter checkpoint is written at step 100 with a latest marker of 100.
+        <p>Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss steps with adapters attached to MTP attention, expert, and shared-expert layers, LM loss 0.440778 -&gt; 0.2893645, finite MTP-1 loss 0.5188039 -&gt; 0.3485382, and no skipped or NaN iterations. Steps 91-100 average 21,336.240 ms / 82.010 TFLOP/s/GPU, and the complete 12-file adapter checkpoint is written at step 100 with a latest marker of 100. Measured in the public NeMo 26.10.01 release container at this item&#x27;s Bridge commit; MTP losses cover completion tokens only (SFT loss mask), as in the GB200 long-context SFT leaf.
 </p>
       </section>
     </article>

@@ -20,6 +20,7 @@ import torch.nn as nn
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.common.embeddings.rope_utils import (
     _apply_rotary_pos_emb_bshd,
+    fused_apply_rotary_pos_emb,
     get_pos_emb_on_this_cp_rank,
 )
 from megatron.core.packed_seq_params import PackedSeqParams
@@ -30,6 +31,11 @@ from torch import Tensor
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_q_cu_seqlens
+from megatron.bridge.utils.common_utils import warn_rank_0
+
+
+# Reasons already reported by _warn_fused_rope_fallback: each one is reported once per process.
+_FUSED_ROPE_FALLBACK_REASONS: set[str] = set()
 
 
 def _get_flat_packed_ranges(
@@ -160,6 +166,9 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         position_ids: torch.Tensor,
         mrope_section: List[int] | None,
         packed_seq_params: Optional[PackedSeqParams] = None,
+        *,
+        cp_group: torch.distributed.ProcessGroup | None = None,
+        position_ids_cp_sharded: bool = False,
         **kwargs,
     ) -> Tensor:
         """Forward pass of multimodal RoPE embedding.
@@ -169,6 +178,9 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             mrope_section (list[int]): Multimodal rope section is for channel dimension of temporal,
                 height and width in rope calculation.
             packed_seq_params (PackedSeqParams, optional): Packed sequence params. Defaults to None.
+            cp_group (ProcessGroup, optional): Runtime CP group; defaults to the construction group.
+            position_ids_cp_sharded (bool): Whether ``position_ids`` already hold only this CP rank's part of
+                the sequence. The embedding is then returned without slicing it for the rank again.
         Returns:
             Tensor: Embeddings after applying RoPE.
         """
@@ -180,12 +192,8 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         if self.seq_len_interpolation_factor is not None:
             seq *= 1 / self.seq_len_interpolation_factor
 
-        # shape (3, bs, dim, 1)
-        inv_freq_expanded = self.inv_freq[None, None, :, None].expand(3, seq.shape[1], -1, 1)
-        # shape (3, bs, 1, seq_length)
-        seq_expanded = seq[:, :, None, :].float()
         # shape (3, bs, seq_length, dim)
-        freqs = (inv_freq_expanded @ seq_expanded).transpose(2, 3)
+        freqs = seq[..., None] * self.inv_freq
         if mrope_section is not None:
             freqs = self.apply_interleaved_mrope(freqs, mrope_section)
         else:
@@ -195,10 +203,11 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
 
         # shape (seq_length, bs, 1, 2 * dim)
         emb = emb[..., None, :].transpose(0, 1).contiguous()
-        if self.cp_group.size() > 1 and not self.is_thd_format:
+        cp_group = self.cp_group if cp_group is None else cp_group
+        if cp_group.size() > 1 and not (self.is_thd_format or position_ids_cp_sharded):
             # slice rotary_pos_emb along sequence dimension and select the parition of the current
             # CP rank
-            emb = get_pos_emb_on_this_cp_rank(emb, 0, self.cp_group)
+            emb = get_pos_emb_on_this_cp_rank(emb, 0, cp_group)
         return emb
 
     def get_rotary_seq_len(
@@ -262,11 +271,11 @@ def _build_llm_rope_positions(
     st = 0
     remain_images, remain_videos = image_nums, video_nums
     for _ in range(image_nums + video_nums):
-        if image_token_id in input_tokens and remain_images > 0:
+        if remain_images > 0 and image_token_id in input_tokens:
             ed_image = input_tokens.index(image_token_id, st)
         else:
             ed_image = len(input_tokens) + 1
-        if video_token_id in input_tokens and remain_videos > 0:
+        if remain_videos > 0 and video_token_id in input_tokens:
             ed_video = input_tokens.index(video_token_id, st)
         else:
             ed_video = len(input_tokens) + 1
@@ -450,35 +459,120 @@ def apply_rotary_pos_emb_thd_absolute(
     return _apply_rotary_pos_emb_bshd(t[:, None], freqs, rotary_interleaved=rotary_interleaved).squeeze(1)
 
 
+def _fused_rope_unsupported_reason(t: Tensor, freqs: Tensor, cu_seqlens: Tensor | None) -> str | None:
+    """Return why Transformer Engine's fused RoPE cannot replace the unfused code here, or None if it can.
+
+    The unfused code pairs row ``i`` of ``freqs`` with position ``i`` of ``t`` (token ``i`` for packed input),
+    broadcasting it over the heads, and over the batch when ``freqs`` has a single batch column. Transformer
+    Engine's SBHD kernel does the same for a dense ``[rows, 1, 1, rotary_dim]`` table, so any input that can be
+    presented in that form takes the fused path. Only tensor metadata is read: the check does not synchronize
+    with the device and is safe during CUDA graph capture.
+
+    Args:
+        t: Query or key, ``[s, b, h, d]``, or ``[t, h, d]`` when ``cu_seqlens`` is given.
+        freqs: Rotary angles, one row per position (and sample) or per packed token.
+        cu_seqlens: Packed-sequence boundaries, or None for ``sbhd`` input.
+
+    Returns:
+        A short reason when the inputs need the unfused implementation, else None.
+    """
+    if fused_apply_rotary_pos_emb is None:
+        return "Transformer Engine's fused RoPE is not available"
+    if not t.is_cuda:
+        return "the input is not on a CUDA device"
+    if t.numel() == 0:
+        return "the input is empty"
+    # The kernel computes element offsets in 32-bit integers.
+    span = t.storage_offset() + sum((size - 1) * stride for size, stride in zip(t.shape, t.stride()))
+    if max(span, t.numel()) >= 2**31:
+        return "the input is too large for the kernel's 32-bit element offsets"
+    if freqs.requires_grad:
+        return "the rotary frequencies require gradients, which the fused kernel does not compute"
+    if freqs.dim() != 4 or freqs.size(2) != 1:
+        return "the rotary frequencies are not shaped [rows, batch, 1, rotary_dim]"
+    rotary_dim = freqs.size(3)
+    if rotary_dim % 2 or rotary_dim > t.size(-1):
+        return "the rotary dimension is odd or larger than the head dimension"
+    if cu_seqlens is None:
+        if t.dim() != 4 or freqs.size(0) != t.size(0) or freqs.size(1) not in (1, t.size(1)):
+            return "the rotary frequencies do not hold one row per sequence position"
+    elif t.dim() != 3 or freqs.size(0) != t.size(0) or freqs.size(1) != 1:
+        return "the packed rotary frequencies do not hold one row per token"
+    return None
+
+
+def _warn_fused_rope_fallback(reason: str) -> None:
+    """Report, once per reason and process, that apply_rope_fusion fell back to the unfused implementation."""
+    if reason not in _FUSED_ROPE_FALLBACK_REASONS:
+        _FUSED_ROPE_FALLBACK_REASONS.add(reason)
+        warn_rank_0(f"apply_rope_fusion is enabled, but {reason}; using the unfused RoPE implementation.")
+
+
+def _apply_fused_rotary_pos_emb_absolute(t: Tensor, freqs: Tensor, *, rotary_interleaved: bool) -> Tensor:
+    """Apply per-token RoPE with Transformer Engine's fused SBHD kernel.
+
+    The kernel computes in FP32, rounds once to ``t``'s dtype and returns a new contiguous tensor. Callers check the
+    inputs with :func:`_fused_rope_unsupported_reason` first.
+    """
+    # The kernel reads freqs as a dense [rows, rotary_dim] table without checking its strides.
+    freqs = freqs.contiguous()
+    # Unlike the unfused code, which saves cos and sin, the kernel saves freqs itself and reads it again in the
+    # backward. A CUDA graph static input that holds freqs must therefore keep a sample's values until that sample's
+    # backward has run. Transformer Engine's per-layer graphs and Megatron-Core's local graphs reuse a static input
+    # only after that backward; any new grouping of graphed callables must keep this guarantee.
+    if t.dim() == 3:
+        # Packed THD: one sequence of batch size 1 whose token i takes freqs row i, as in the unfused code. Transformer
+        # Engine's THD mode is not used: it restarts the row index at every cu_seqlens boundary.
+        return fused_apply_rotary_pos_emb(t.unsqueeze(1), freqs, interleaved=rotary_interleaved).squeeze(1)
+    if freqs.size(1) == 1:
+        # One row per position, shared by every sample of the micro batch.
+        return fused_apply_rotary_pos_emb(t, freqs, interleaved=rotary_interleaved)
+    # One row per (position, sample), as MRoPE has for micro batch > 1: the kernel takes one row per position, so the
+    # micro batch is presented as one sequence of s * b rows. reshape is a view when t's sequence and batch dims merge,
+    # which holds for q and k split from the QKV projection, and a copy otherwise.
+    seq_len, batch = t.shape[:2]
+    out = fused_apply_rotary_pos_emb(
+        t.reshape(seq_len * batch, 1, *t.shape[2:]),
+        freqs.view(seq_len * batch, 1, 1, freqs.size(3)),
+        interleaved=rotary_interleaved,
+    )
+    return out.view(t.shape)
+
+
 def apply_rotary_pos_emb_absolute(
     t: Tensor,
     freqs: Tensor,
     config: Qwen3VLTransformerConfig,
     cu_seqlens: Optional[Tensor] = None,
-):
-    """
-    Reroute to the appropriate apply_rotary_pos_emb function depending on
-    bshd (conventional) / thd (packed seq) format
+) -> Tensor:
+    """Apply Qwen's per-token rotary embedding to a query or key tensor.
 
-    In Qwen3-VL, the shape of freqs is (seq_length, bs, 1, 2 * dim) instead of [max_seqlen, 1, 1, 2 * dim]
+    Unlike Megatron-Core's ``apply_rotary_pos_emb``, ``freqs`` is not a table indexed by the position within a
+    sequence: row ``i`` holds the angles of position ``i`` of ``t`` (token ``i`` for packed input), already sliced
+    for this context-parallel rank, so ``cu_seqlens`` is not needed to pair them.
+
+    With ``config.apply_rope_fusion``, Transformer Engine's fused kernel runs whenever it computes the same rotation
+    (see :func:`_fused_rope_unsupported_reason`); other inputs use the unfused implementation, with one warning per
+    reason. The kernel computes in FP32 and rounds once to ``t``'s dtype, which is what
+    ``config.apply_rotary_pos_emb_in_fp32`` asks for, so ``t`` is passed to it without casts.
+
+    Args:
+        t: Query or key, ``[s, b, h, d]``, or ``[t, h, d]`` for packed (``thd``) input.
+        freqs: Rotary angles. For ``[s, b, h, d]`` input, ``[s, b, 1, rotary_dim]`` (one row per position and
+            sample, as MRoPE produces) or ``[s, 1, 1, rotary_dim]``; for packed input, ``[t, 1, 1, rotary_dim]``.
+        config: The attention config; reads ``apply_rope_fusion``, ``apply_rotary_pos_emb_in_fp32`` and
+            ``rotary_interleaved``.
+        cu_seqlens: Packed-sequence boundaries for ``thd`` input, or None.
+
+    Returns:
+        ``t`` with its first ``rotary_dim`` channels rotated, in ``t``'s dtype.
     """
-    # Fused RoPE (TE kernels) is not supported for Qwen3-VL / Qwen3.5/3.6-VL because:
-    # 1. This function uses per-token absolute freqs with shape (seq_len, bs, 1, 2*dim),
-    #    which differs from the standard mcore format (max_seqlen, 1, 1, 2*dim).
-    #    TE's fused_apply_rotary_pos_emb / fused_apply_rotary_pos_emb_thd expect the
-    #    standard format and would produce incorrect results with absolute freqs.
-    # 2. Qwen3VLSelfAttention calls this function directly, bypassing the mcore
-    #    apply_rotary_pos_emb() dispatcher that routes to fused kernels.
-    # 3. validate_rope_fusion_compatibility() already blocks fusion for mrope models
-    #    (position_embedding_type='mrope'), so provide() resets the flag to False.
-    #    This assert is a safety net in case the flag is forced on after provide().
-    assert not config.apply_rope_fusion, (
-        "apply_rope_fusion is not supported for Qwen3-VL / Qwen3.5/3.6-VL models. "
-        "This code path uses per-token absolute positional frequencies that are incompatible "
-        "with TE's fused RoPE kernels. Setting apply_rope_fusion=True would not actually "
-        "enable fusion (Qwen3VLSelfAttention bypasses the fused dispatch), but the flag "
-        "must remain False to avoid misleading configuration state."
-    )
+    if config.apply_rope_fusion:
+        reason = _fused_rope_unsupported_reason(t, freqs, cu_seqlens)
+        if reason is None:
+            return _apply_fused_rotary_pos_emb_absolute(t, freqs, rotary_interleaved=config.rotary_interleaved)
+        _warn_fused_rope_fallback(reason)
+
     orig_t_dtype = t.dtype
     if config.apply_rotary_pos_emb_in_fp32:
         t = t.float()

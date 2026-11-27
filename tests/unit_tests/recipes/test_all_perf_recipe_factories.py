@@ -18,11 +18,14 @@ import importlib
 import inspect
 import pkgutil
 from collections.abc import Callable
+from dataclasses import fields
 
 import pytest
 
+from megatron.bridge.models.transformer_config import MLATransformerConfig
 from megatron.bridge.training.config import ConfigContainer, MockVLMSFTDatasetConfig
 from tests.unit_tests.recipes.recipe_test_utils import (
+    assert_ncclep_bounds_packed_tokens,
     discover_recipe_factories,
     exported_recipe_factory_keys,
     patch_recipe_construction_dependencies,
@@ -35,6 +38,18 @@ pytestmark = pytest.mark.unit
 
 _PERF_RECIPES_PACKAGE = importlib.import_module("megatron.bridge.perf_recipes")
 _PERF_RECIPE_FACTORIES = discover_recipe_factories(_PERF_RECIPES_PACKAGE)
+_HAS_KIMI_K3_DEV_FIELDS = "attn_res_norm_fusion" in {field.name for field in fields(MLATransformerConfig)}
+_PERF_RECIPE_PARAMS = tuple(
+    pytest.param(
+        factory,
+        id=recipe_factory_id(factory),
+        marks=pytest.mark.skipif(
+            factory.__module__.endswith(".kimi_k3") and not _HAS_KIMI_K3_DEV_FIELDS,
+            reason="Kimi K3 benchmarks require the pinned MCore dev configuration.",
+        ),
+    )
+    for factory in _PERF_RECIPE_FACTORIES
+)
 _PERF_RECIPE_FAMILY_PACKAGES = tuple(
     importlib.import_module(module_info.name)
     for module_info in pkgutil.iter_modules(
@@ -62,7 +77,7 @@ def test_all_perf_recipe_factories_are_exported() -> None:
         assert getattr(family_package, factory.__name__) is factory
 
 
-@pytest.mark.parametrize("recipe_factory", _PERF_RECIPE_FACTORIES, ids=recipe_factory_id)
+@pytest.mark.parametrize("recipe_factory", _PERF_RECIPE_PARAMS)
 def test_perf_recipe_factory_builds_config(recipe_factory: Callable[..., object]) -> None:
     """Every performance recipe can be built without GPU or network access."""
     inspect.signature(recipe_factory).bind()
@@ -90,3 +105,9 @@ def test_perf_recipe_factory_builds_config(recipe_factory: Callable[..., object]
     if "pretrain" in recipe_factory.__name__ and isinstance(cfg.dataset, MockVLMSFTDatasetConfig):
         assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
         assert cfg.tokenizer.vocab_size == cfg.model.vocab_size
+
+
+@pytest.mark.parametrize("recipe_factory", _PERF_RECIPE_PARAMS)
+def test_ncclep_perf_recipe_bounds_packed_tokens(recipe_factory: Callable[..., object]) -> None:
+    """NCCL EP sizes its buffers once, so recipes that feed it packed sequences declare the bound."""
+    assert_ncclep_bounds_packed_tokens(recipe_factory())

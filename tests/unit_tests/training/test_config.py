@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 
 from megatron.bridge.data.builders import (
     DirectHFSFTDatasetConfig,
@@ -62,6 +63,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TrainingConfig,
     ValidationConfig,
+    _sync_mxfp8_reuse_grad_buf_settings,
     _validate_and_sync_distributed_optimizer_settings,
     _validate_mixed_precision_consistency,
     apply_environment_variables,
@@ -551,15 +553,21 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_deterministic_mode_rejects_moe_aux_loss_fusion(self, isolated_determinism_state):
-        """Deterministic mode rejects the MoE aux-loss fusion but keeps fused TopK routing."""
+        """Deterministic mode rejects MoE aux-loss fusion unless TE has a deterministic fused kernel."""
         gpt_model_cfg = create_test_gpt_config(deterministic_mode=True, cross_entropy_loss_fusion=False)
         gpt_model_cfg.moe_router_fusion = True
         gpt_model_cfg.moe_router_aux_loss_fusion = True
 
         container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
+        te_support = "megatron.core.extensions.transformer_engine.te_supports_deterministic_moe_aux_loss"
         try:
-            with pytest.raises(AssertionError, match="moe_router_aux_loss_fusion=False"):
+            with patch(te_support, return_value=False):
+                with pytest.raises(AssertionError, match="moe_router_aux_loss_fusion=False"):
+                    container._validate_and_apply_deterministic_mode()
+
+            # Transformer Engine builds with a deterministic fused aux-loss kernel keep the fusion.
+            with patch(te_support, return_value=True):
                 container._validate_and_apply_deterministic_mode()
 
             gpt_model_cfg.moe_router_aux_loss_fusion = False
@@ -2463,14 +2471,14 @@ class TestConfigContainerValidation:
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
+        ddp_cfg = create_test_ddp_config(use_megatron_fsdp=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
             model_config=gpt_model_cfg,
             train_config=train_cfg,
             scheduler_config=sched_cfg,
-            dist_config=dist_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             container.ddp.average_in_collective = True
@@ -2484,7 +2492,6 @@ class TestConfigContainerValidation:
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
         # Create optimizer config with reuse_grad_buf_for_mxfp8_param_ag=True
         optimizer_cfg = create_test_optimizer_config(reuse_grad_buf_for_mxfp8_param_ag=True)
         # Create ddp config with reuse_grad_buf_for_mxfp8_param_ag=True
@@ -2498,7 +2505,6 @@ class TestConfigContainerValidation:
             model_config=gpt_model_cfg,
             train_config=train_cfg,
             scheduler_config=sched_cfg,
-            dist_config=dist_cfg,
             optimizer_config=optimizer_cfg,
             ddp_config=ddp_cfg,
         )
@@ -2611,11 +2617,13 @@ class TestConfigContainerValidation:
             model_config=gpt_model_cfg,
             train_config=create_test_training_config(train_iters=500, global_batch_size=16),
             scheduler_config=create_test_scheduler_config(),
-            dist_config=create_test_distributed_init_config(use_megatron_fsdp=use_megatron_fsdp),
+            ddp_config=create_test_ddp_config(use_megatron_fsdp=use_megatron_fsdp),
         )
         try:
             container.ddp.fp8_param_gather = fp8_param_gather
-            container.ddp.reuse_grad_buf_for_mxfp8_param_ag = reuse_grad_buffer
+            # Deliberately disagree: GTP must validate the optimizer's effective setting.
+            container.ddp.reuse_grad_buf_for_mxfp8_param_ag = not reuse_grad_buffer
+            container.optimizer.reuse_grad_buf_for_mxfp8_param_ag = reuse_grad_buffer
             if error_match is None:
                 container.validate()
             else:
@@ -2629,7 +2637,7 @@ class TestConfigContainerValidation:
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True, use_torch_fsdp2=True)
+        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -2637,9 +2645,10 @@ class TestConfigContainerValidation:
             train_config=train_cfg,
             scheduler_config=sched_cfg,
             dist_config=dist_cfg,
+            ddp_config=create_test_ddp_config(use_megatron_fsdp=True),
         )
         try:
-            with pytest.raises(ValueError):
+            with pytest.raises(ValueError, match="use_megatron_fsdp and use_torch_fsdp2 are mutually exclusive"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -2649,7 +2658,7 @@ class TestConfigContainerValidation:
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True, use_tp_pp_dp_mapping=True)
+        dist_cfg = create_test_distributed_init_config(use_tp_pp_dp_mapping=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -2657,6 +2666,7 @@ class TestConfigContainerValidation:
             train_config=train_cfg,
             scheduler_config=sched_cfg,
             dist_config=dist_cfg,
+            ddp_config=create_test_ddp_config(use_megatron_fsdp=True),
         )
         try:
             with pytest.raises(AssertionError):
@@ -3695,6 +3705,33 @@ class TestCheckpointConfig:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_also_save_hf_checkpoint_accepts_builder_source_metadata_during_container_validation(self):
+        """Test that a builder-backed config's recorded source satisfies HF extra export validation."""
+        model_cfg = BridgeGPTModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                ffn_hidden_size=256,
+                use_cpu_initialization=True,
+            ),
+            vocab_size=256,
+            seq_length=512,
+            extra_checkpoint_metadata={"hf_model_id": "hf/model"},
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            dataset_config_override=create_test_gpt_dataset_config(sequence_length=512),
+            tokenizer_config=create_test_tokenizer_config(tokenizer_model=None),
+            checkpoint_config=create_test_checkpoint_config(also_save_hf_checkpoint=True),
+        )
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_also_save_hf_checkpoint_accepts_tokenizer_model_during_container_validation(self):
         """Test that tokenizer.tokenizer_model satisfies HF extra export validation."""
         checkpoint_cfg = create_test_checkpoint_config(also_save_hf_checkpoint=True)
@@ -3788,7 +3825,7 @@ class TestCheckpointConfig:
             async_save=True, save="/tmp/test_checkpoint", ckpt_format="fsdp_dtensor"
         )
         # Enable Megatron FSDP so the format validation passes and we reach the async_save check
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
+        ddp_cfg = create_test_ddp_config(use_megatron_fsdp=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3796,7 +3833,7 @@ class TestCheckpointConfig:
             train_config=train_cfg,
             scheduler_config=sched_cfg,
             checkpoint_config=ckpt_cfg,
-            dist_config=dist_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             container.validate()
@@ -3809,7 +3846,7 @@ class TestCheckpointConfig:
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
         ckpt_cfg = create_test_checkpoint_config(save="/tmp/test_checkpoint", ckpt_format="fsdp_dtensor")
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
+        ddp_cfg = create_test_ddp_config(use_megatron_fsdp=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3817,13 +3854,12 @@ class TestCheckpointConfig:
             train_config=train_cfg,
             scheduler_config=sched_cfg,
             checkpoint_config=ckpt_cfg,
-            dist_config=dist_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             # Should not raise error - fsdp_dtensor with Megatron FSDP is allowed
             container.validate()
             assert container.checkpoint.ckpt_format == "fsdp_dtensor"
-            assert container.dist.use_megatron_fsdp is True
             assert container.ddp.use_megatron_fsdp is True
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -3834,7 +3870,7 @@ class TestCheckpointConfig:
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
         ckpt_cfg = create_test_checkpoint_config(save="/tmp/test_checkpoint", ckpt_format="fsdp_dtensor")
-        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=False)
+        ddp_cfg = create_test_ddp_config(use_megatron_fsdp=False)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3842,7 +3878,7 @@ class TestCheckpointConfig:
             train_config=train_cfg,
             scheduler_config=sched_cfg,
             checkpoint_config=ckpt_cfg,
-            dist_config=dist_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             # Should raise error - fsdp_dtensor without Megatron FSDP is not allowed
@@ -4185,6 +4221,105 @@ class TestRuntimeConfigUpdate:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @staticmethod
+    def _ncclep_binding_cfg(backend="ncclep", dispatcher="flex", megakernel=None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            model=SimpleNamespace(
+                moe_token_dispatcher_type=dispatcher,
+                moe_flex_dispatcher_backend=backend,
+                moe_megakernel_backend=megakernel,
+            ),
+            dist=SimpleNamespace(external_gpu_device_mapping=False),
+        )
+
+    @pytest.mark.parametrize("visible", ["0,1,2,3", "5"])
+    def test_ncclep_one_gpu_per_rank_is_noop_for_moe_megakernel(self, monkeypatch, visible):
+        """The megakernel owns dispatch/combine; its symmetric-memory buffers need each rank's device index."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "2")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
+        monkeypatch.setattr("torch.cuda.is_initialized", lambda: False)
+        cfg = self._ncclep_binding_cfg(megakernel="mok")
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == visible
+        assert cfg.dist.external_gpu_device_mapping is False
+
+    def test_ncclep_one_gpu_per_rank_narrows_visible_devices(self, monkeypatch):
+        """NCCL EP recipes keep only the local rank's GPU and switch the trainer to device 0."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "2")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "4,5,6,7")
+        monkeypatch.setattr("torch.cuda.is_initialized", lambda: False)
+        cfg = self._ncclep_binding_cfg()
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "6"
+        assert cfg.dist.external_gpu_device_mapping is True
+
+    def test_ncclep_one_gpu_per_rank_uses_local_rank_when_no_device_list(self, monkeypatch):
+        """Without a CUDA_VISIBLE_DEVICES list the local rank itself selects the device."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.delenv("LOCAL_RANK", raising=False)
+        monkeypatch.setenv("SLURM_LOCALID", "3")
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+        monkeypatch.setattr("torch.cuda.is_initialized", lambda: False)
+        cfg = self._ncclep_binding_cfg()
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "3"
+        assert cfg.dist.external_gpu_device_mapping is True
+
+    def test_ncclep_one_gpu_per_rank_single_visible_device_only_sets_mapping(self, monkeypatch):
+        """A launcher that already binds one GPU per task keeps its list; only the mapping flips."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "1")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "5")
+        cfg = self._ncclep_binding_cfg()
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "5"
+        assert cfg.dist.external_gpu_device_mapping is True
+
+    @pytest.mark.parametrize("backend,dispatcher", [("hybridep", "flex"), ("ncclep", "alltoall")])
+    def test_ncclep_one_gpu_per_rank_is_noop_for_other_dispatchers(self, monkeypatch, backend, dispatcher):
+        """HybridEP and non-flex recipes keep the launcher's device list and local-rank selection."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "2")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+        cfg = self._ncclep_binding_cfg(backend=backend, dispatcher=dispatcher)
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
+        assert cfg.dist.external_gpu_device_mapping is False
+
+    def test_ncclep_one_gpu_per_rank_skips_after_cuda_init(self, monkeypatch):
+        """Once CUDA is initialized the device list cannot change: warn and leave everything alone."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "2")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+        monkeypatch.setattr("torch.cuda.is_initialized", lambda: True)
+        cfg = self._ncclep_binding_cfg()
+
+        with pytest.warns(UserWarning, match="CUDA was initialized"):
+            apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
+        assert cfg.dist.external_gpu_device_mapping is False
+
     @pytest.mark.parametrize("env_vars", [{"": "1"}, {1: "bad-name"}, {"VALID_NAME": ["not", "scalar"]}])
     def test_recipe_environment_variables_reject_invalid_values(self, env_vars):
         """Invalid recipe environment mappings should fail before training starts."""
@@ -4214,6 +4349,29 @@ class TestRuntimeConfigUpdate:
                 "TORCHINDUCTOR_WORKER_START": "fork",
                 "USE_MNNVL": 1,
             }
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_layer_wise_param_layout_is_serializable_and_overridable(self, tmp_path):
+        """The recipe override path preserves the LayerWise layout choice."""
+        from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+        gpt_cfg = create_test_gpt_config()
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+        config_path = tmp_path / "recipe.yaml"
+
+        try:
+            assert full_cfg.optimizer.use_layer_wise_param_layout is False
+            assert full_cfg.to_dict()["optimizer"]["use_layer_wise_param_layout"] is False
+            process_config_with_overrides(
+                full_cfg,
+                cli_overrides=["optimizer.use_layer_wise_param_layout=true"],
+            )
+            assert full_cfg.optimizer.use_layer_wise_param_layout is True
+
+            full_cfg.to_yaml(str(config_path))
+            restored_cfg = ConfigContainer.from_yaml(str(config_path))
+            assert restored_cfg.optimizer.use_layer_wise_param_layout is True
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -4416,8 +4574,9 @@ class TestRuntimeConfigUpdate:
 
             # Verify configs are finalized
             if isinstance(full_cfg.dataset, GPTDatasetConfig):
-                # Computed fields should now be set
-                assert getattr(full_cfg.dataset, "split", None) is not None
+                # Megatron Core leaves ``split`` as given and derives the split matrix;
+                # mock data always uses an even split.
+                assert full_cfg.dataset.split_matrix is not None
 
             # Verify model config is finalized (computed fields set)
             assert full_cfg.model.num_query_groups is not None
@@ -4642,6 +4801,112 @@ class TestDistributedOptimizerValidation:
                     assert expected_part in call_args
             else:
                 assert len(overlap_warnings) == 0
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        "model_fp8, ddp_reuse, optimizer_reuse, optimizer_fp8_recipe, expected_reuse, expected_fp8_recipe, warns",
+        [
+            ("e4m3", True, False, None, False, "mxfp8", True),
+            ("e4m3", False, True, None, True, "mxfp8", True),
+            ("e4m3", True, True, "tensorwise", True, "mxfp8", False),
+            (None, True, False, None, False, "mxfp8", True),
+            ("e4m3", False, False, None, False, "mxfp8", False),
+            ("e4m3", False, False, "delayed", False, "mxfp8", False),
+            ("e4m3", True, True, "mxfp8", True, "mxfp8", False),
+        ],
+    )
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_reuse_grad_buf_for_mxfp8_param_ag_sync_scenarios(
+        self,
+        mock_warn_rank_0,
+        model_fp8,
+        ddp_reuse,
+        optimizer_reuse,
+        optimizer_fp8_recipe,
+        expected_reuse,
+        expected_fp8_recipe,
+        warns,
+    ):
+        """The optimizer owns reuse (including False); the model owns FP8 recipe."""
+        gpt_model_cfg = create_test_gpt_config(fp8=model_fp8, fp8_recipe="mxfp8")
+        ddp_cfg = create_test_ddp_config(reuse_grad_buf_for_mxfp8_param_ag=ddp_reuse)
+        optimizer_cfg = create_test_optimizer_config(
+            reuse_grad_buf_for_mxfp8_param_ag=optimizer_reuse, fp8_recipe=optimizer_fp8_recipe
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            ddp_config=ddp_cfg,
+            optimizer_config=optimizer_cfg,
+        )
+
+        try:
+            _sync_mxfp8_reuse_grad_buf_settings(container)
+
+            assert container.ddp.reuse_grad_buf_for_mxfp8_param_ag is expected_reuse
+            assert container.optimizer.reuse_grad_buf_for_mxfp8_param_ag is expected_reuse
+            assert container.optimizer.fp8_recipe == expected_fp8_recipe
+
+            reuse_warnings = [
+                call
+                for call in mock_warn_rank_0.call_args_list
+                if call[0] and "reuse_grad_buf_for_mxfp8_param_ag settings were not in sync" in call[0][0]
+            ]
+            assert len(reuse_warnings) == (1 if warns else 0)
+            recipe_warnings = [call for call in mock_warn_rank_0.call_args_list if "fp8_recipe settings" in call[0][0]]
+            assert len(recipe_warnings) == int(optimizer_fp8_recipe not in (None, expected_fp8_recipe))
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("optimizer_reuse", [False, True])
+    @pytest.mark.parametrize("optimizer_fp8_recipe", [None, "delayed", "tensorwise"])
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_validate_syncs_reuse_grad_buf_for_mxfp8_param_ag(
+        self, mock_warn_rank_0, optimizer_reuse, optimizer_fp8_recipe
+    ):
+        """Resolve conflicts before optimizer finalization, including the manual MXFP8 path."""
+        gpt_model_cfg = create_test_gpt_config(bf16=True, fp8="e4m3", fp8_recipe="mxfp8")
+        ddp_cfg = create_test_ddp_config(reuse_grad_buf_for_mxfp8_param_ag=not optimizer_reuse)
+        optimizer_cfg = create_test_optimizer_config(
+            bf16=True,
+            use_distributed_optimizer=True,
+            use_precision_aware_optimizer=True,
+            main_params_dtype=torch.float32,
+            optimizer_cpu_offload=False,
+            reuse_grad_buf_for_mxfp8_param_ag=optimizer_reuse,
+            fp8_recipe=optimizer_fp8_recipe,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            ddp_config=ddp_cfg,
+            optimizer_config=optimizer_cfg,
+        )
+
+        try:
+            assert container.mixed_precision is None
+            original_finalize = container.optimizer.finalize
+
+            def check_effective_settings() -> None:
+                assert container.optimizer.fp8_recipe == "mxfp8"
+                assert container.ddp.reuse_grad_buf_for_mxfp8_param_ag is optimizer_reuse
+                original_finalize()
+
+            with patch.object(container.optimizer, "finalize", side_effect=check_effective_settings) as finalize:
+                container.validate()
+                finalize.assert_called_once()
+
+            assert container.ddp.reuse_grad_buf_for_mxfp8_param_ag is optimizer_reuse
+            assert container.optimizer.reuse_grad_buf_for_mxfp8_param_ag is optimizer_reuse
+            assert container.optimizer.fp8_recipe == "mxfp8"
+            # This is the MCore predicate that otherwise omits the main parameter
+            # shards consumed by MXFP8 gradient-buffer reuse (NVBug 7111493).
+            assert container.optimizer.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is False
 
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -5076,6 +5341,181 @@ class TestEpochBasedTraining:
             megatron_mimo_runtime_config_update(cfg)
         assert os.environ["TORCHINDUCTOR_WORKER_START"] == "fork"
 
+    @pytest.mark.parametrize("ddp_overlap,optimizer_overlap", [(True, False), (False, True), (True, True)])
+    @pytest.mark.parametrize("ddp_reuse,optimizer_reuse", [(True, False), (False, True), (True, True)])
+    def test_megatron_mimo_runtime_config_update_rejects_mxfp8_overlap_param_gather(
+        self, ddp_overlap, optimizer_overlap, ddp_reuse, optimizer_reuse
+    ):
+        cfg = MagicMock()
+        cfg.env_vars = {}
+        cfg.train.num_epochs = None
+        cfg.profiling = None
+        cfg.ddp = DistributedDataParallelConfig(
+            use_distributed_optimizer=True,
+            overlap_param_gather=ddp_overlap,
+            reuse_grad_buf_for_mxfp8_param_ag=ddp_reuse,
+            fp8_param_gather=ddp_reuse,
+            grad_reduce_in_fp32=True,
+        )
+        cfg.optimizer = OptimizerConfig(
+            use_distributed_optimizer=True,
+            overlap_param_gather=optimizer_overlap,
+            reuse_grad_buf_for_mxfp8_param_ag=optimizer_reuse,
+        )
+
+        with pytest.raises(ValueError, match="overlap_param_gather with reuse_grad_buf_for_mxfp8_param_ag"):
+            megatron_mimo_runtime_config_update(cfg)
+
+    @pytest.mark.parametrize(
+        ("overlap", "ddp_reuse", "optimizer_reuse"),
+        [(False, False, False), (False, True, False), (False, False, True), (False, True, True), (True, False, False)],
+    )
+    def test_megatron_mimo_runtime_config_update_accepts_supported_gather_configs(
+        self, overlap, ddp_reuse, optimizer_reuse
+    ):
+        cfg = MagicMock()
+        cfg.env_vars = {}
+        cfg.train.num_epochs = None
+        cfg.profiling = None
+        cfg.ddp = DistributedDataParallelConfig(
+            use_distributed_optimizer=True,
+            overlap_param_gather=overlap,
+            reuse_grad_buf_for_mxfp8_param_ag=ddp_reuse,
+            fp8_param_gather=ddp_reuse,
+            grad_reduce_in_fp32=True,
+        )
+        cfg.optimizer = OptimizerConfig(
+            use_distributed_optimizer=True,
+            overlap_param_gather=overlap,
+            reuse_grad_buf_for_mxfp8_param_ag=optimizer_reuse,
+        )
+
+        megatron_mimo_runtime_config_update(cfg)
+
+        assert cfg.ddp.overlap_param_gather is overlap
+        assert cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag is ddp_reuse
+        assert cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag is optimizer_reuse
+
+
+class TestDDPFinalization:
+    def test_recipe_edits_are_resolved_only_at_finalization(self):
+        ddp = DistributedDataParallelConfig(num_buckets=0)
+        assert ddp.expert_data_parallel_sharding_strategy is None
+
+        ddp.num_buckets = 2
+        ddp.data_parallel_sharding_strategy = "optim_grads_params"
+        ddp.outer_dp_sharding_strategy = "optim"
+        ddp.megatron_fsdp_max_pool_double_buffer = True
+        ddp.finalize()
+
+        assert ddp.expert_data_parallel_sharding_strategy == "optim_grads_params"
+        assert ddp.expert_outer_dp_sharding_strategy == "optim"
+        assert ddp.fsdp_double_buffer is True
+
+        ddp.num_buckets = 0
+        with pytest.raises(AssertionError, match="num_buckets must be greater than 0"):
+            ddp.finalize()
+
+    def test_repeated_finalization_preserves_resolved_buckets(self):
+        ddp = DistributedDataParallelConfig(num_buckets=2, overlap_grad_reduce=True)
+        ddp.finalize()
+        ddp.resolve_bucket_size(num_parameters=128, data_parallel_size=2)
+        ddp.finalize()
+        ddp.finalize()
+
+        assert ddp.bucket_size == 64
+        assert ddp.num_buckets == 2
+
+    @pytest.mark.parametrize("ddp_cls", [DistributedDataParallelConfig, MCoreDistributedDataParallelConfig])
+    def test_mimo_applies_precision_policy_before_ddp_finalization(self, ddp_cls):
+        cfg = MagicMock()
+        cfg.env_vars = {}
+        cfg.train.num_epochs = None
+        cfg.profiling = None
+        cfg.ddp = ddp_cls(
+            use_megatron_fsdp=True,
+            grad_reduce_in_fp32=True,
+            megatron_fsdp_main_grads_dtype=torch.bfloat16,
+            megatron_fsdp_grad_comm_dtype=torch.bfloat16,
+        )
+        cfg.optimizer = OptimizerConfig()
+
+        megatron_mimo_runtime_config_update(cfg)
+
+        assert cfg.ddp.grad_reduce_in_fp32 is False
+        assert cfg.ddp.megatron_fsdp_main_grads_dtype == torch.bfloat16
+        assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.bfloat16
+
+
+class TestMegatronFSDPGradDtypePolicy:
+    """Megatron-FSDP gradient precision follows its explicit dtype fields."""
+
+    @staticmethod
+    def _fsdp_ddp_config(**kwargs) -> DistributedDataParallelConfig:
+        base = {
+            "grad_reduce_in_fp32": True,
+            "use_distributed_optimizer": True,
+            "use_megatron_fsdp": True,
+            "data_parallel_sharding_strategy": "optim_grads_params",
+            "average_in_collective": False,
+        }
+        base.update(kwargs)
+        return DistributedDataParallelConfig(**base)
+
+    @pytest.mark.parametrize(
+        ("main_grads_dtype", "grad_comm_dtype"),
+        [(None, None), (torch.bfloat16, torch.bfloat16), (torch.float32, torch.bfloat16)],
+    )
+    def test_finalize_clears_flag_when_fsdp_dtypes_do_not_request_fp32(self, main_grads_dtype, grad_comm_dtype):
+        ddp = self._fsdp_ddp_config(
+            megatron_fsdp_main_grads_dtype=main_grads_dtype,
+            megatron_fsdp_grad_comm_dtype=grad_comm_dtype,
+        )
+
+        ddp.finalize()
+
+        assert ddp.grad_reduce_in_fp32 is False
+        assert ddp.megatron_fsdp_main_grads_dtype == main_grads_dtype
+        assert ddp.megatron_fsdp_grad_comm_dtype == grad_comm_dtype
+
+    @pytest.mark.parametrize("grad_comm_dtype", [None, torch.float32])
+    def test_finalize_keeps_flag_when_fsdp_dtypes_request_fp32(self, grad_comm_dtype):
+        ddp = self._fsdp_ddp_config(
+            megatron_fsdp_main_grads_dtype=torch.float32,
+            megatron_fsdp_grad_comm_dtype=grad_comm_dtype,
+        )
+
+        ddp.finalize()
+
+        assert ddp.grad_reduce_in_fp32 is True
+
+    def test_finalize_keeps_flag_without_megatron_fsdp(self):
+        ddp = DistributedDataParallelConfig(grad_reduce_in_fp32=True, use_distributed_optimizer=True)
+
+        ddp.finalize()
+
+        assert ddp.grad_reduce_in_fp32 is True
+
+    def test_validate_applies_policy_to_mcore_ddp_config(self):
+        """Recipes may construct Megatron Core's DDP config and finalize it through Bridge."""
+        ddp = MCoreDistributedDataParallelConfig(grad_reduce_in_fp32=True, use_distributed_optimizer=True)
+        ddp.use_megatron_fsdp = True
+        ddp.data_parallel_sharding_strategy = "optim_grads_params"
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(),
+            train_config=create_test_training_config(train_iters=500, global_batch_size=16),
+            scheduler_config=create_test_scheduler_config(),
+            ddp_config=ddp,
+        )
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert container.ddp is ddp
+        assert ddp.grad_reduce_in_fp32 is False
+
 
 class TestDatasetSequenceLengthValidation:
     """Tests for dataset sequence length validation with different dataset types."""
@@ -5409,15 +5849,14 @@ class TestTokenizerConfig:
             )
 
 
-@pytest.mark.parametrize("backend", ["torch", "megatron_dist", "megatron_ddp"])
+@pytest.mark.parametrize("backend", ["torch", "megatron"])
 def test_shortcut_moe_rejects_fsdp(backend):
     cfg, original, module = create_test_config_container(
         1, create_test_gpt_config(moe_shortcut_connection=True, num_moe_experts=4)
     )
     try:
         cfg.dist.use_torch_fsdp2 = backend == "torch"
-        cfg.dist.use_megatron_fsdp = backend == "megatron_dist"
-        cfg.ddp.use_megatron_fsdp = backend == "megatron_ddp"
+        cfg.ddp.use_megatron_fsdp = backend == "megatron"
         with pytest.raises(ValueError, match="moe_shortcut_connection"):
             cfg.validate()
     finally:
@@ -5434,6 +5873,7 @@ def test_layerwise_optimizer_rejects_single_grouped_weight(use_recipe):
             cfg.optimizer, cfg.scheduler = distributed_muon_with_cosine_annealing()
             assert not cfg.optimizer.use_layer_wise_distributed_optimizer
         else:
+            cfg.optimizer.optimizer = "muon"
             cfg.optimizer.use_layer_wise_distributed_optimizer = True
         with pytest.raises(ValueError, match="moe_single_grouped_weight"):
             cfg.validate()
@@ -5502,6 +5942,113 @@ def test_fsdp_v1_meta_initialization_checks_all_strategies(expert, monkeypatch):
                 cfg._validate_and_apply_megatron_fsdp_v1_configs()
         else:
             cfg._validate_and_apply_megatron_fsdp_v1_configs()
+    finally:
+        restore_get_world_size_safe(original, module)
+
+
+class TestFixedTHDDeepSeekV4PackingValidation:
+    @pytest.fixture
+    def fixed_thd_config(self, monkeypatch):
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        model_cfg = create_test_gpt_config(
+            num_layers=4,
+            pipeline_model_parallel_size=2,
+            context_parallel_size=2,
+            experimental_attention_variant="dsv4_hybrid",
+            sequence_packing_scheduler="dp_balanced",
+            pad_packed_seq_alignment="max",
+            calculate_per_token_loss=True,
+            cuda_graph_thd_max_packed_sequences=8,
+            attention_cp_layout="contiguous",
+            linear_cp_layout="contiguous",
+        )
+        # These tests isolate Bridge's data routing contract; the tiny GPT
+        # stand-in does not implement DSv4's model geometry or kernels.
+        monkeypatch.setattr(model_cfg, "finalize", lambda: None)
+        dataset_cfg = create_test_gpt_sft_dataset_config(512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512, pad_cu_seqlens=True)
+        dataset_cfg.dataset_kwargs = {"pad_to_max_length": True}
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=create_test_training_config(micro_batch_size=1, global_batch_size=8),
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+        try:
+            yield container
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fixed_thd_keeps_scheduler_marker_without_probing_online_scheduler(self, fixed_thd_config, monkeypatch):
+        from megatron.bridge.training import global_batch_packing
+
+        probe = MagicMock(side_effect=AssertionError("Prepacked batches must not probe the online scheduler"))
+        monkeypatch.setattr(global_batch_packing, "probe_global_batch_packing_support", probe)
+
+        fixed_thd_config.validate()
+
+        probe.assert_not_called()
+        assert fixed_thd_config.model.sequence_packing_scheduler == "dp_balanced"
+        assert not global_batch_packing.global_batch_packing_enabled(fixed_thd_config.model)
+
+    def test_fixed_thd_mock_dataset_satisfies_static_contract(self, fixed_thd_config):
+        from megatron.bridge.models.deepseek.deepseek_v4_data import FixedTHDMockDatasetConfig
+
+        fixed_thd_config.dataset = FixedTHDMockDatasetConfig(
+            seq_length=512, vocab_size=128, seed=1234, metadata_capacity=8
+        )
+
+        fixed_thd_config.validate()
+
+    def test_explicit_online_request_is_not_silently_ignored(self, fixed_thd_config):
+        fixed_thd_config.dataset.enable_global_batch_packing = True
+        with pytest.raises(ValueError, match="does not run the online scheduler"):
+            fixed_thd_config.validate()
+
+    @pytest.mark.parametrize("missing_contract", ["offline", "specs", "boundaries", "fixed_width"])
+    def test_fixed_thd_requires_static_prepacked_data(self, fixed_thd_config, missing_contract):
+        dataset = fixed_thd_config.dataset
+        if missing_contract == "offline":
+            dataset.enable_offline_packing = False
+        elif missing_contract == "specs":
+            dataset.offline_packing_specs = None
+        elif missing_contract == "boundaries":
+            dataset.offline_packing_specs.pad_cu_seqlens = False
+        else:
+            dataset.dataset_kwargs = {"pad_to_max_length": False}
+        with pytest.raises(ValueError, match="Fixed-THD DSv4 requires dataset.enable_offline_packing"):
+            fixed_thd_config.validate()
+
+    def test_invalid_fixed_thd_contract_does_not_bypass_dataset_validation(self, fixed_thd_config):
+        fixed_thd_config.model.pad_packed_seq_alignment = "cp"
+
+        with pytest.raises(ValueError, match="driven by the dataset"):
+            fixed_thd_config.validate()
+
+    def test_fixed_thd_requires_model_token_width(self, fixed_thd_config):
+        fixed_thd_config.dataset.offline_packing_specs.packed_sequence_size = 256
+        with pytest.raises(ValueError, match="packed_sequence_size=model.seq_length"):
+            fixed_thd_config.validate()
+
+
+@pytest.mark.parametrize("dense", ["no_shard", "optim", "optim_grads", "optim_grads_params"])
+@pytest.mark.parametrize("expert", [None, "no_shard", "optim_grads_params"])
+def test_fsdp_v2_preserves_sharding_strategies(dense, expert):
+    # MFSDP V2 maps every strategy to DTensor placements, so ZeRO-2 dense with ZeRO-3
+    # experts (as in the DeepSeek-V3 HSDP recipe) must reach Megatron-Core unchanged.
+    cfg, original, module = create_test_config_container(1, create_test_gpt_config())
+    try:
+        cfg.checkpoint.save = cfg.checkpoint.load = None
+        cfg.ddp.megatron_fsdp_version = 2
+        cfg.ddp.data_parallel_sharding_strategy = dense
+        cfg.ddp.expert_data_parallel_sharding_strategy = expert
+        cfg._validate_and_apply_megatron_fsdp_configs()
+        assert cfg.ddp.data_parallel_sharding_strategy == dense
+        assert cfg.ddp.expert_data_parallel_sharding_strategy == expert
+        assert not cfg.ddp.use_distributed_optimizer and not cfg.optimizer.use_distributed_optimizer
     finally:
         restore_get_world_size_safe(original, module)
 

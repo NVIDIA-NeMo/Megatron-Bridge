@@ -30,8 +30,12 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction
 
 pytestmark = pytest.mark.unit
 
-# GB300 perf recipes dispatch through NCCL EP (no HybridEP topology in their environment).
-_NCCLEP_RECIPES = {qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config}
+# B200, B300, and GB300 perf recipes use NCCL EP without HybridEP topology environment variables.
+_NCCLEP_RECIPES = {
+    qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config,
+    qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
+}
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +57,7 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
             qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config,
             256,
             32,
-            (1, 8, 3, 8),
+            (1, 8, 2, 8),
             1,
             8,
         ),

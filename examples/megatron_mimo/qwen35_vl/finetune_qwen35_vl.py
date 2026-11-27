@@ -94,6 +94,7 @@ G_COMPONENT_KEY_TO_FIELD = {
     "pp": "pipeline_model_parallel_size",
     "dp": "data_parallel_size",
     "cp": "context_parallel_size",
+    "ep": "expert_model_parallel_size",
     "etp": "expert_tensor_parallel_size",
     "rank_offset": "rank_offset",
 }
@@ -197,7 +198,7 @@ def _tokenizer_pad_token_id(args: argparse.Namespace) -> int | None:
 
 def _parse_component_spec(raw: str) -> tuple[str, ModuleParallelismConfig]:
     if "=" not in raw:
-        raise ValueError(f"Invalid --component {raw!r}; expected name=tp=N[,pp=N,dp=N,rank_offset=N]")
+        raise ValueError(f"Invalid --component {raw!r}; expected name=tp=N[,pp=N,dp=N,ep=N,etp=N,rank_offset=N]")
 
     name, _, payload = raw.partition("=")
     parsed: dict[str, int] = {}
@@ -294,8 +295,10 @@ def _batch_spec_for_rank(cfg: Any) -> MIMOBatchSpec:
     )
 
     if module_name == MIMO_LANGUAGE_MODULE_KEY:
+        # The last language stage runs MTP, which re-embeds shifted input_ids.
+        mtp_active = bool(getattr(getattr(cfg.model, "standard_provider", None), "mtp_num_layers", None))
         return MIMOBatchSpec(
-            input_ids=is_first_pp or reorder_active,
+            input_ids=is_first_pp or reorder_active or (is_last_pp and mtp_active),
             # Qwen3.5-VL mRoPE needs position_ids on every language PP stage.
             position_ids=True,
             labels=is_last_pp,
@@ -391,7 +394,10 @@ def _build_mimo_provider(
     standard_provider.bf16 = not args.fp32
     standard_provider.fp16 = False
     standard_provider.use_cpu_initialization = True
-    if hasattr(standard_provider, "mtp_num_layers"):
+    if args.enable_mtp:
+        if not getattr(standard_provider, "mtp_num_layers", None):
+            raise ValueError(f"--enable-mtp requires MTP layers in the HF config of {args.hf_model}.")
+    elif hasattr(standard_provider, "mtp_num_layers"):
         standard_provider.mtp_num_layers = None
     if hasattr(standard_provider, "_enable_in_batch_packing"):
         standard_provider._enable_in_batch_packing = False
@@ -1244,7 +1250,7 @@ def _parse_args() -> argparse.Namespace:
         "--component",
         action="append",
         default=None,
-        help="Component layout: name=tp=N[,pp=N,cp=N,dp=N,rank_offset=N]",
+        help="Component layout: name=tp=N[,pp=N,cp=N,dp=N,ep=N,etp=N,rank_offset=N]",
     )
     parser.add_argument("--experiment-root", type=str, default=G_EXAMPLE_ROOT)
     parser.add_argument("--run-name", type=str, default=None)
@@ -1279,6 +1285,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--freeze-vision", type=_str2bool, default=False)
     parser.add_argument("--freeze-llm", type=_str2bool, default=False)
     parser.add_argument("--freeze-projector", type=_str2bool, default=False)
+    parser.add_argument(
+        "--enable-mtp",
+        action="store_true",
+        help="Train the Multi-Token Prediction layers from the HF config. Load a MegatronMIMO checkpoint "
+        "converted with MTP weights, or pass --allow-random-init.",
+    )
     parser.add_argument("--lr", type=float, default=5.0e-6)
     parser.add_argument("--min-lr", type=float, default=5.0e-7)
     parser.add_argument("--weight-decay", type=float, default=0.1)

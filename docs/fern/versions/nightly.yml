@@ -13,6 +13,9 @@ navigation:
     path: ./nightly/pages/performance-summary-archive.mdx
 - section: Guides
   contents:
+  - page: Unified Megatron-LM
+    path: ./nightly/unified-megatron.mdx
+    slug: unified-megatron
   - page: Parallelisms Guide
     path: ./nightly/pages/parallelisms.mdx
   - page: Performance Tuning Guide
@@ -85,6 +88,10 @@ navigation:
     - page: GPT OSS 120B
       path: ./nightly/pages/models/gpt_oss/gpt-oss-120b.mdx
     section: GPT-OSS
+  - contents:
+    - page: Inkling 2
+      path: ./nightly/pages/models/inkling/inkling2.mdx
+    section: Inkling
   - contents:
     - page: Kimi K2
       path: ./nightly/pages/models/kimi/kimi-k2.mdx
@@ -172,6 +179,8 @@ navigation:
   - contents:
     - page: Step-3.5-Flash
       path: ./nightly/pages/models/stepfun/step35.mdx
+    - page: Step-3.7-Flash
+      path: ./nightly/pages/models/stepfun/step37.mdx
     section: StepFun
 - section: Training and Customization
   contents:

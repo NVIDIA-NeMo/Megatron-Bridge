@@ -65,6 +65,8 @@ main() {
     apt-get update
     apt-get install -y wget curl git cmake
 
+    bash "$(dirname "${BASH_SOURCE[0]}")/../../scripts/prepare_mcore.sh"
+
     # Install CUDA
     if [[ "$BASE_IMAGE" == "ubuntu" ]]; then
         rm /etc/apt/sources.list.d/cuda*.list || true
@@ -109,6 +111,15 @@ main() {
             )
         else
             UV_ARGS=()
+        fi
+
+        if [[ "$BASE_IMAGE" == "pytorch" ]]; then
+            # uv never installs nvidia-cutlass-dsl (pyproject.toml overrides it with
+            # sys_platform == 'never'), so the venv uses the base image's system copy.
+            # Reinstall it at the docker/Dockerfile.ci version: flashinfer and
+            # cuDNN Frontend need a newer release than some NGC PyTorch images ship.
+            pip uninstall -y nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-cu13
+            pip install "nvidia-cutlass-dsl[cu13]==4.8.0"
         fi
 
         # Install uv

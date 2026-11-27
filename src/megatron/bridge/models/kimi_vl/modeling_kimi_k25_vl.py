@@ -13,13 +13,16 @@
 # limitations under the License.
 
 import logging
-from typing import List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional
 
 import torch
 from megatron.core import parallel_state
+from megatron.core.models.gpt import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.transformer_config import TransformerConfig
 from torch import Tensor
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.utils import is_flash_attn_2_available
@@ -27,6 +30,10 @@ from transformers.utils import is_flash_attn_2_available
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.kimi_vl.kimi_k25_vl_config import KimiK25VLModelConfig
 
 
 logger = logging.getLogger(__name__)
@@ -106,10 +113,19 @@ class KimiK25VLModel(MegatronModule):
     """
     Kimi K2.5 Vision-Language (VL) model wrapper for Megatron.
     Args:
-        config (GPTModelProvider): Model provider containing configuration for language and vision modules.
+        config (GPTModelProvider | TransformerConfig): Model provider containing configuration for language
+            and vision modules, or the transformer config of a builder-backed model config.
         pre_process (bool, optional): Whether to construct the vision tower and projector. Default: True.
         post_process (bool, optional): Whether to apply post-processing. Default: True.
         vp_stage (Optional[int], optional): Pipeline stage for model parallelism. Default: None.
+        model_config (KimiK25VLModelConfig, optional): Builder-backed model config. It owns the
+            vision-language settings that a provider carries itself. Default: None, which reads them
+            from ``config``.
+        build_language_model (Callable, optional): Builds the language model from ``pre_process``,
+            ``post_process`` and ``vp_stage``. Default: None, which uses the provider's
+            ``provide_language_model()``.
+        pg_collection (ProcessGroupCollection, optional): Process groups a builder passes. Default: None,
+            which uses the provider's.
 
     Attributes:
         pre_process (bool): If True, enables vision and multimodal components.
@@ -141,22 +157,29 @@ class KimiK25VLModel(MegatronModule):
 
     def __init__(
         self,
-        config: GPTModelProvider,
+        config: GPTModelProvider | TransformerConfig,
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: Optional[int] = None,
+        *,
+        model_config: Optional["KimiK25VLModelConfig"] = None,
+        build_language_model: Optional[Callable[..., GPTModel]] = None,
+        pg_collection: Optional[ProcessGroupCollection] = None,
     ) -> None:
         super().__init__(config=config)
+        settings = config if model_config is None else model_config
+        if pg_collection is not None:
+            self.pg_collection = pg_collection
 
         self.pre_process = pre_process
         self.post_process = post_process
         self.vp_stage = vp_stage
 
-        if config.hf_model_path is None:
+        if settings.hf_model_path is None:
             raise ValueError("hf_model_path must be set.")
 
         if pre_process:
-            trust_remote_code = bool(getattr(config, "trust_remote_code", False))
+            trust_remote_code = bool(getattr(settings, "trust_remote_code", False))
             if not trust_remote_code:
                 raise ValueError(
                     "Kimi K2.5 VL vision components require loading custom HuggingFace model code. "
@@ -166,7 +189,7 @@ class KimiK25VLModel(MegatronModule):
             # Load vision tower and projector classes from the custom HuggingFace model code
             MoonViT3dPretrainedModel = get_class_from_dynamic_module(
                 "modeling_kimi_k25.MoonViT3dPretrainedModel",
-                config.hf_model_path,
+                settings.hf_model_path,
                 trust_remote_code=trust_remote_code,
             )
             # Patch MoonViT3dEncoder to add missing use_deterministic_attn attribute
@@ -186,36 +209,36 @@ class KimiK25VLModel(MegatronModule):
 
             PatchMergerMLP = get_class_from_dynamic_module(
                 "modeling_kimi_k25.PatchMergerMLP",
-                config.hf_model_path,
+                settings.hf_model_path,
                 trust_remote_code=trust_remote_code,
             )
             ProjectorConfig = get_class_from_dynamic_module(
                 "modeling_kimi_k25.ProjectorConfig",
-                config.hf_model_path,
+                settings.hf_model_path,
                 trust_remote_code=trust_remote_code,
             )
             VisionTowerConfig = get_class_from_dynamic_module(
                 "modeling_kimi_k25.VisionTowerConfig",
-                config.hf_model_path,
+                settings.hf_model_path,
                 trust_remote_code=trust_remote_code,
             )
 
             # load vision config from hf model path
             from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 
-            config.vision_config = safe_load_config_with_retry(
-                config.hf_model_path, trust_remote_code=trust_remote_code
+            settings.vision_config = safe_load_config_with_retry(
+                settings.hf_model_path, trust_remote_code=trust_remote_code
             ).vision_config
 
-            self.vision_tower_config = VisionTowerConfig(config.vision_config)
-            self.projector_config = ProjectorConfig(config.vision_config)
+            self.vision_tower_config = VisionTowerConfig(settings.vision_config)
+            self.projector_config = ProjectorConfig(settings.vision_config)
 
             # Patch: some versions of MoonViT3dEncoder.__init__ reference
             # self.use_deterministic_attn before setting it.  Inject a default
             # via the class so the attribute lookup succeeds.
             MoonViT3dEncoder = get_class_from_dynamic_module(
                 "modeling_kimi_k25.MoonViT3dEncoder",
-                config.hf_model_path,
+                settings.hf_model_path,
                 trust_remote_code=trust_remote_code,
             )
             if not hasattr(MoonViT3dEncoder, "use_deterministic_attn"):
@@ -227,16 +250,20 @@ class KimiK25VLModel(MegatronModule):
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
             hook_hf_module_setattr_for_tp_grad_sync(self.vision_tower)
             hook_hf_module_setattr_for_tp_grad_sync(self.mm_projector)
-        self.language_model = self.config.provide_language_model(
+        if build_language_model is None:
+            build_language_model = self.config.provide_language_model
+        self.language_model = build_language_model(
             pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
         )
 
         # Finalize grad requires these to be bound with module
-        self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
+        self.share_embeddings_and_output_weights = settings.share_embeddings_and_output_weights
         self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
 
         # don't use huggingface's function for PP
-        self.media_placeholder_token_id = config.media_placeholder_token_id
+        self.media_placeholder_token_id = settings.media_placeholder_token_id
+        self.pad_token_id = settings.pad_token_id
+        self.ignore_index = settings.ignore_index
 
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
@@ -273,8 +300,8 @@ class KimiK25VLModel(MegatronModule):
         num_images = len(image_features)
 
         image_token_index = self.media_placeholder_token_id
-        pad_token_id = self.config.pad_token_id
-        ignore_index = self.config.ignore_index
+        pad_token_id = self.pad_token_id
+        ignore_index = self.ignore_index
 
         batch_size, sequence_length = input_ids.shape
 
@@ -495,7 +522,11 @@ class KimiK25VLModel(MegatronModule):
                 )
 
             if self.config.sequence_parallel:
-                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+                # A builder passes the model its process groups; a provider carries them.
+                pg_collection = getattr(self, "pg_collection", None)
+                if pg_collection is None:
+                    pg_collection = self.config._pg_collection
+                tp_group = pg_collection.tp if pg_collection is not None else None
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         if cp_size > 1:

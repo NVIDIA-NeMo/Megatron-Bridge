@@ -21,10 +21,11 @@ Usage::
 
   AutoBridge.from_hf_pretrained("google/gemma-4-E4B-it")
     └─ Gemma4VLBridge (registered for Gemma4ForConditionalGeneration)
-         ├─ provider_bridge()  Dense: text mode → Gemma4DenseProvider (pretraining)
-         │                            auto/vl   → Gemma4DenseVLProvider (full VL)
-         │                     MoE:   text mode → Gemma4ModelProvider (text-only training)
-         │                            auto/vl   → Gemma4VLModelProvider (full VL)
+         ├─ get_model_config()  Dense: text mode → Gemma4DenseModelConfig (pretraining)
+         │                             auto/vl   → Gemma4DenseVLModelConfig (full VL)
+         │                      MoE:   text mode → Gemma4ModelConfig (text-only training)
+         │                             auto/vl   → Gemma4VLModelConfig (full VL)
+         ├─ provider_bridge()   Deprecated provider counterparts of the configs above
          └─ mapping_registry()  Dense: text → _dense_mapping_registry("")
                                         vl   → _dense_vl_mapping_registry()
                                  MoE:   text → _moe_mapping_registry()
@@ -33,6 +34,7 @@ Usage::
 
 import os
 from dataclasses import asdict, is_dataclass
+from typing import Any
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -43,17 +45,13 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.conversion.transformers_compat import (
-    rope_local_base_freq_from_hf,
-    rope_theta_from_hf,
-)
 from megatron.bridge.models.gemma.gemma4_bridge import (
     Gemma4Bridge,
-    _attention_config_value,
     _Gemma4QKVMapping,
-    _infer_attn_pattern,
 )
-from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider
+from megatron.bridge.models.gemma.gemma4_config import Gemma4DenseModelConfig, Gemma4ModelConfig
+from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider, Gemma4ModelProvider
+from megatron.bridge.models.gemma_vl.gemma4_vl_config import Gemma4DenseVLModelConfig, Gemma4VLModelConfig
 from megatron.bridge.models.gemma_vl.gemma4_vl_provider import (
     Gemma4DenseVLProvider,
     Gemma4VLModelProvider,
@@ -78,107 +76,99 @@ class Gemma4VLBridge(Gemma4Bridge):
 
     Inherits all Dense/MoE logic from Gemma4Bridge and adds VL-specific:
     - vision_tower and embed_vision weight mappings
-    - Dense E4B VL provider construction
+    - Dense and MoE vision-language builder configs, and their deprecated providers
     - ``GEMMA4_CONVERSION_MODE`` dispatch (text / auto / vl)
+
+    In text mode, ``get_model_config()`` returns the Gemma 4 text builder config.
     """
+
+    MODEL_CONFIG_CLASS = Gemma4VLModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
+
+    def hf_config_to_model_config(
+        self, hf_config: Any
+    ) -> Gemma4VLModelConfig | Gemma4DenseVLModelConfig | Gemma4ModelConfig | Gemma4DenseModelConfig:
+        """Build the Gemma 4 vision-language builder config, or the text one in ``GEMMA4_CONVERSION_MODE=text``."""
+        if self._conversion_mode() == "text":
+            return super().hf_config_to_model_config(hf_config.text_config)
+        config_class = (
+            Gemma4VLModelConfig
+            if getattr(hf_config.text_config, "enable_moe_block", False)
+            else Gemma4DenseVLModelConfig
+        )
+        return self._build_model_config(config_class, self.hf_config_to_model_config_kwargs(hf_config))
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face Gemma 4 vision-language config to builder config kwargs.
+
+        The language-model fields are the Gemma 4 text bridge's, read from ``text_config``, with the
+        values the vision-language providers have always used where they differ.
+        """
+        text_config = hf_config.text_config
+        config_kwargs = self._text_model_config_kwargs(text_config)
+        if not getattr(text_config, "enable_moe_block", False):
+            # The dense language model never reads this flag; the dense vision-language provider has
+            # always carried the text provider's value.
+            config_kwargs["scatter_embedding_sequence_parallel"] = True
+        else:
+            # The MoE vision-language provider keeps the checkpoint's dtype, which the text model
+            # pins to bf16, and leaves sequence-parallel scattering of the embeddings to Gemma4VLModel.
+            text_kwargs = self._hf_config_to_megatron_kwargs(text_config)
+            config_kwargs.update(
+                bf16=text_kwargs["bf16"],
+                params_dtype=text_kwargs["params_dtype"],
+                scatter_embedding_sequence_parallel=False,
+            )
+        config_kwargs.update(
+            vision_config=hf_config.vision_config,
+            text_config=text_config,
+            audio_config=getattr(hf_config, "audio_config", None),
+            vision_soft_tokens_per_image=getattr(hf_config, "vision_soft_tokens_per_image", 280),
+            bos_token_id=getattr(hf_config, "bos_token_id", 2),
+            eos_token_id=getattr(hf_config, "eos_token_id", 1),
+            image_token_id=getattr(hf_config, "image_token_id", 258_880),
+            video_token_id=getattr(hf_config, "video_token_id", 258_884),
+            audio_token_id=getattr(hf_config, "audio_token_id", 258_881),
+        )
+        return config_kwargs
+
+    def hf_config_to_provider_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     def provider_bridge(
         self, hf_pretrained: PreTrainedCausalLM
-    ) -> "Gemma4VLModelProvider | Gemma4DenseVLProvider | Gemma4DenseProvider":
+    ) -> "Gemma4VLModelProvider | Gemma4DenseVLProvider | Gemma4ModelProvider | Gemma4DenseProvider":
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
-        vision_config = hf_config.vision_config
-
-        if not getattr(text_config, "enable_moe_block", False):
-            self._is_dense = True
-            if self._conversion_mode() == "text":
-                return self._build_dense_provider(text_config)
-            return self._build_dense_vl_provider(hf_config, text_config, vision_config)
-
-        self._is_dense = False
+        dense = not getattr(text_config, "enable_moe_block", False)
+        self._is_dense = dense
         if self._conversion_mode() == "text":
-            return self._build_moe_provider(text_config)
+            return self._build_dense_provider(text_config) if dense else self._build_moe_provider(text_config)
 
-        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
-        provider_kwargs["num_query_groups"] = _attention_config_value(
-            text_config,
-            "sliding_attention",
-            "num_key_value_heads",
-            4,
-        )
-        provider = Gemma4VLModelProvider(**provider_kwargs)
-
-        provider.window_size = getattr(text_config, "sliding_window", 1024)
-        provider.rotary_base = (
-            rope_local_base_freq_from_hf(text_config),
-            rope_theta_from_hf(text_config),
-        )
-
-        head_dim = _attention_config_value(text_config, "sliding_attention", "head_dim", 256)
-        provider.softmax_scale = 1.0
-        provider.kv_channels = head_dim
-        provider.qk_layernorm = True
-
-        provider.global_head_dim = _attention_config_value(
-            text_config,
-            "full_attention",
-            "head_dim",
-            512,
-            legacy_field_name="global_head_dim",
-        )
-        provider.num_global_key_value_heads = _attention_config_value(
-            text_config,
-            "full_attention",
-            "num_key_value_heads",
-            2,
-            legacy_field_name="num_global_key_value_heads",
-        )
-        provider.attention_k_eq_v = getattr(text_config, "attention_k_eq_v", False)
-
-        rope_params = getattr(text_config, "rope_parameters", {})
-        if isinstance(rope_params, dict):
-            full_attn_rope = rope_params.get("full_attention", {})
-            provider.global_rotary_percent = full_attn_rope.get("partial_rotary_factor", 0.25)
-
-        layer_types = getattr(text_config, "layer_types", None)
-        if layer_types:
-            provider.interleaved_attn_pattern = _infer_attn_pattern(layer_types)
-
-        if getattr(text_config, "enable_moe_block", False):
-            provider.num_moe_experts = getattr(text_config, "num_experts", None) or 128
-            provider.moe_router_topk = getattr(text_config, "top_k_experts", None) or 8
-            provider.moe_ffn_hidden_size = getattr(text_config, "moe_intermediate_size", None) or 704
-            provider.moe_shared_expert_intermediate_size = getattr(text_config, "intermediate_size", 2112)
-            provider.moe_shared_expert_overlap = False
-            provider.moe_shared_expert_gate = False
-            provider.moe_layer_freq = 1
-
-        provider.final_logit_softcapping = getattr(text_config, "final_logit_softcapping", 30.0)
-        provider.make_vocab_size_divisible_by = 128
-
-        provider.vision_config = vision_config
-        provider.text_config = text_config
-        provider.audio_config = getattr(hf_config, "audio_config", None)
-        provider.vision_soft_tokens_per_image = getattr(hf_config, "vision_soft_tokens_per_image", 280)
-        provider.bos_token_id = getattr(hf_config, "bos_token_id", 2)
-        provider.eos_token_id = getattr(hf_config, "eos_token_id", 1)
-        provider.image_token_id = getattr(hf_config, "image_token_id", 258_880)
-        provider.video_token_id = getattr(hf_config, "video_token_id", 258_884)
-        provider.audio_token_id = getattr(hf_config, "audio_token_id", 258_881)
-
-        return provider
+        provider_class = Gemma4DenseVLProvider if dense else Gemma4VLModelProvider
+        return provider_class(**self.hf_config_to_provider_kwargs(hf_config))
 
     @classmethod
     def megatron_to_hf_config(
         cls,
-        provider: Gemma4VLModelProvider | Gemma4DenseVLProvider | Gemma4DenseProvider,
+        provider: (
+            Gemma4VLModelProvider
+            | Gemma4DenseVLProvider
+            | Gemma4DenseProvider
+            | Gemma4VLModelConfig
+            | Gemma4DenseVLModelConfig
+            | Gemma4ModelConfig
+            | Gemma4DenseModelConfig
+        ),
     ) -> dict:
-        """Convert a Gemma 4 VL provider config back to Hugging Face config."""
+        """Convert a Gemma 4 VL provider or builder config back to Hugging Face config."""
         text_config = super().megatron_to_hf_config(provider)
         text_config.pop("architectures", None)
         text_config["model_type"] = "gemma4_text"
 
-        if not isinstance(provider, (Gemma4VLModelProvider, Gemma4DenseVLProvider)):
+        vl_configs = (Gemma4VLModelProvider, Gemma4DenseVLProvider, Gemma4VLModelConfig, Gemma4DenseVLModelConfig)
+        if not isinstance(provider, vl_configs):
             text_config["architectures"] = ["Gemma4ForCausalLM"]
             return text_config
 
@@ -216,26 +206,6 @@ class Gemma4VLBridge(Gemma4Bridge):
             raise ValueError(f"Invalid GEMMA4_CONVERSION_MODE={mode!r}; expected auto, text, vl, or audio.")
         # "audio" is treated as full VL+audio conversion (same as "vl"/"auto")
         return mode
-
-    def _build_dense_vl_provider(self, hf_config, text_config, vision_config) -> Gemma4DenseVLProvider:
-        """Build a Dense VL provider by copying all Dense provider fields."""
-        from dataclasses import fields
-
-        text_provider = self._build_dense_provider(text_config)
-        provider = Gemma4DenseVLProvider()
-        for f in fields(Gemma4DenseProvider):
-            setattr(provider, f.name, getattr(text_provider, f.name))
-
-        provider.vision_config = vision_config
-        provider.text_config = text_config
-        provider.audio_config = getattr(hf_config, "audio_config", None)
-        provider.vision_soft_tokens_per_image = getattr(hf_config, "vision_soft_tokens_per_image", 280)
-        provider.bos_token_id = getattr(hf_config, "bos_token_id", 2)
-        provider.eos_token_id = getattr(hf_config, "eos_token_id", 1)
-        provider.image_token_id = getattr(hf_config, "image_token_id", 258_880)
-        provider.video_token_id = getattr(hf_config, "video_token_id", 258_884)
-        provider.audio_token_id = getattr(hf_config, "audio_token_id", 258_881)
-        return provider
 
     def _text_config(self):
         hf_config = getattr(self, "hf_config", None)

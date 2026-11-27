@@ -4,7 +4,7 @@
 
 Choose a model to open its interactive import/export and training configurations. Every option comes directly from an authoritative YAML verification card; independent fields are never combined into synthetic commands.
 
-Current inventory: **30 model cards** and **428 concrete configurations**.
+Current inventory: **33 model cards** and **467 concrete configurations**.
 
 Each model page lets you select import/export, pretraining, benchmarking, SFT, LoRA, or long-context SFT and immediately see the exact command and expected result for the recorded precision and GPU.
 
@@ -105,7 +105,7 @@ Choose a model to inspect its recorded import/export, training, and precision co
     <div class="verification-provider-models">
       <a class="verification-model-link" href="kimi/kimi-k3.html#verified-kimi-k3">
         <strong title="moonshotai/Kimi-K3">Kimi-K3</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </a>
       <a class="verification-model-link" href="moonlight/moonlight.html#verified-moonlight-16b-a3b">
         <strong title="moonshotai/Moonlight-16B-A3B">Moonlight-16B-A3B</strong>
@@ -172,7 +172,7 @@ Choose a model to inspect its recorded import/export, training, and precision co
   <section class="verification-provider-card">
     <header class="verification-provider-heading">
       <strong>Qwen</strong>
-      <span>5 models</span>
+      <span>7 models</span>
     </header>
     <div class="verification-provider-models">
       <a class="verification-model-link" href="qwen/qwen3-235b-a22b.html#verified-qwen3-235b-a22b">
@@ -194,6 +194,14 @@ Choose a model to inspect its recorded import/export, training, and precision co
       <a class="verification-model-link" href="qwen/qwen3.8-27b.html#verified-qwen3.8-27b">
         <strong title="Qwen/Qwen3.8-27B">Qwen3.8-27B</strong>
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </a>
+      <a class="verification-model-link" href="qwen/qwen3.8-flash-next.html#verified-qwen3.8-flash-next">
+        <strong title="Qwen/Qwen3.8-Flash-Next">Qwen3.8-Flash-Next</strong>
+        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
+      </a>
+      <a class="verification-model-link" href="qwen/qwen3.8-flash-next-text-only.html#verified-qwen3.8-flash-next-text-only">
+        <strong title="Qwen/Qwen3.8-Flash-Next">Qwen3.8-Flash-Next</strong>
+        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
       </a>
     </div>
   </section>
@@ -217,6 +225,18 @@ Choose a model to inspect its recorded import/export, training, and precision co
     <div class="verification-provider-models">
       <a class="verification-model-link" href="stepfun/step35.html#verified-step35-flash">
         <strong title="stepfun-ai/Step-3.5-Flash">Step-3.5-Flash</strong>
+        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
+      </a>
+    </div>
+  </section>
+  <section class="verification-provider-card">
+    <header class="verification-provider-heading">
+      <strong>thinkingmachines</strong>
+      <span>1 model</span>
+    </header>
+    <div class="verification-provider-models">
+      <a class="verification-model-link" href="inkling/inkling2.html#verified-inkling-2-small">
+        <strong title="thinkingmachines/Inkling-2-Small">Inkling-2-Small</strong>
         <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
       </a>
     </div>

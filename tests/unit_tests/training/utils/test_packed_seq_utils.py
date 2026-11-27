@@ -94,9 +94,9 @@ def test_get_packed_seq_cp_partition_indices_uses_padded_boundaries(monkeypatch)
 
     cp_group = FakeProcessGroup()
 
-    def fake_get_batch_on_this_cp_rank(batch, *, is_hybrid_cp, cp_group):
+    def fake_get_batch_on_this_cp_rank(batch, *, dynamic_cp, cp_group):
         seen["batch"] = batch
-        seen["is_hybrid_cp"] = is_hybrid_cp
+        seen["dynamic_cp"] = dynamic_cp
         seen["cp_group"] = cp_group
         return {**batch, "tokens": torch.tensor([[0, 1, 14, 15]], dtype=torch.int64)}
 
@@ -124,7 +124,7 @@ def test_get_packed_seq_cp_partition_indices_uses_padded_boundaries(monkeypatch)
 
     assert torch.equal(seen["batch"]["cu_seqlens"], padded.unsqueeze(0))
     assert seen["batch"]["tokens"].shape == (1, 16)
-    assert seen["is_hybrid_cp"] is False
+    assert seen["dynamic_cp"] is False
     assert seen["cp_group"] is cp_group
     assert torch.equal(index, torch.tensor([0, 1, 14, 15], dtype=torch.long))
 

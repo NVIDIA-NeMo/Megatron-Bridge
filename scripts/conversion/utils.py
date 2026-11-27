@@ -197,6 +197,19 @@ def _uses_model_builder(bridge: AutoBridge) -> bool:
     return getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False)
 
 
+def _pad_vocab_for_tensor_parallelism(config, tp: int) -> None:
+    """Pad the vocabulary when tensor parallelism does not divide it.
+
+    Megatron splits the embedding and output layer across tensor-parallel ranks, so a vocabulary
+    that ``tp`` does not divide fails with ``AssertionError: <vocab> is not divisible by <tp>``.
+    Import pads those rows and export trims them again, so the checkpoint round-trips exactly.
+    Vocabularies that ``tp`` divides stay unpadded.
+    """
+    vocab_size = getattr(config, "vocab_size", None)
+    if vocab_size and vocab_size % tp and hasattr(config, "should_pad_vocab"):
+        config.should_pad_vocab = True
+
+
 def _configure_model_provider(
     model_provider: GPTModelProvider,
     *,
@@ -209,6 +222,7 @@ def _configure_model_provider(
 ) -> None:
     """Apply distributed parallelism and dtype settings to a model provider."""
     model_provider.tensor_model_parallel_size = tp
+    _pad_vocab_for_tensor_parallelism(model_provider, tp)
     model_provider.pipeline_model_parallel_size = pp
     model_provider.expert_model_parallel_size = ep
     model_provider.expert_tensor_parallel_size = etp
@@ -230,14 +244,26 @@ def _configure_model_config(
 ) -> None:
     """Apply distributed parallelism and dtype settings to a builder config."""
     _configure_model_provider(model_config.transformer, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype, use_cpu=use_cpu)
+    _pad_vocab_for_tensor_parallelism(model_config, tp)
 
 
 def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:
     """Generate a bridge-specific pipeline layout when the model requires one.
 
-    A bridge returns ``None`` when the default pipeline split already applies.
+    A bridge returns ``None`` when the default pipeline split already applies. A bridge whose
+    stage boundaries also live in other fields, such as the ``|`` segments of a hybrid layer
+    pattern, implements ``configure_pipeline_layout`` to update the model config in place instead.
     """
-    if pp <= 1 or not hasattr(bridge._model_bridge, "generate_pipeline_layout"):
+    if pp <= 1:
+        return False
+    if hasattr(bridge._model_bridge, "configure_pipeline_layout"):
+        bridge._model_bridge.configure_pipeline_layout(model_provider)
+        from megatron.bridge.utils.common_utils import print_rank_0
+
+        stage_sizes = [stage.count("decoder") for stage in model_provider.pipeline_model_parallel_layout or []]
+        print_rank_0(f"Configured pipeline layout for PP={pp} ({stage_sizes} decoder layers per stage)")
+        return True
+    if not hasattr(bridge._model_bridge, "generate_pipeline_layout"):
         return False
     num_layers = bridge.hf_pretrained.config.num_hidden_layers
     # The layout must match the model being built, which may omit the checkpoint's MTP layers.

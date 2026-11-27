@@ -295,6 +295,10 @@ Examples:
         action="store_true",
         help="Reduce peak GPU memory while saving large imported checkpoints at the cost of additional runtime.",
     )
+    import_parser.add_argument(
+        "--bagel-repo",
+        help="Official ByteDance-Seed/Bagel source checkout to import BAGEL checkpoints.",
+    )
 
     export_parser = subparsers.add_parser(
         "export",
@@ -327,7 +331,21 @@ Examples:
     export_parser.add_argument(
         "--export-weight-dtype",
         choices=DTYPE_CHOICES,
-        help="Cast exported Hugging Face weights to this dtype (GPU backend only).",
+        help=(
+            "Cast exported Hugging Face weights to this dtype (GPU backend only). Bridges whose checkpoint "
+            "format pins tensors to FP32 keep those tensors in FP32."
+        ),
+    )
+    export_parser.add_argument(
+        "--quantized-export",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Save a ModelOpt-quantized checkpoint in its deployment format: packed weights and scales, with the "
+            "quantization_config that vLLM, SGLang and TensorRT-LLM read (default: when the checkpoint has "
+            "enabled ModelOpt weight quantizers; GPU and distributed CPU export only). Rank 0 writes it. "
+            "--no-quantized-export saves BF16 weights with quantizer sidecars instead."
+        ),
     )
 
     roundtrip_parser = subparsers.add_parser(
@@ -406,6 +424,8 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
     if args.command == "import":
         if args.low_memory_save:
             worker_args.append("--low-memory-save")
+        if args.bagel_repo is not None:
+            worker_args.extend(["--bagel-repo", args.bagel_repo])
     elif args.command == "export":
         worker_args.extend(["--hf-path", args.hf_path])
         if args.no_progress:
@@ -420,4 +440,6 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
         worker_args.extend(["--save-every-n-ranks", str(args.save_every_n_ranks)])
         if args.export_weight_dtype is not None:
             worker_args.extend(["--export-weight-dtype", args.export_weight_dtype])
+        if args.quantized_export is not None:
+            worker_args.append("--quantized-export" if args.quantized_export else "--no-quantized-export")
     return worker_args

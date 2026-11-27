@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+import functools
 import re
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, MegatronParamMapping
 from megatron.bridge.models.conversion.quant_mapping import convert_to_amax_map, derive_kv_bmm_amax_map
@@ -115,12 +115,13 @@ class MegatronMappingRegistry:
         if extra_mappings:
             self.mappings.extend(extra_mappings)
 
-    def _add_quantization_mappings(self) -> None:
-        """Add quantization mappings for weight quantizers and input quantizers."""
-        original_mappings = list(self.mappings)
-        self.mappings.extend(convert_to_amax_map(original_mappings, ".weight_quantizer._amax"))
-        self.mappings.extend(convert_to_amax_map(original_mappings, ".input_quantizer._amax"))
-        self.mappings.extend(derive_kv_bmm_amax_map(original_mappings))
+    def _build_quantization_mappings(self) -> List[MegatronParamMapping]:
+        """Derive ModelOpt quantizer-state (amax) mappings from the weight mappings."""
+        return [
+            *convert_to_amax_map(self.mappings, ".weight_quantizer._amax"),
+            *convert_to_amax_map(self.mappings, ".input_quantizer._amax"),
+            *derive_kv_bmm_amax_map(self.mappings),
+        ]
 
     def _convert_pattern_to_regex(self, pattern: str) -> str:
         """Convert a pattern with wildcards to regex pattern.
@@ -148,6 +149,38 @@ class MegatronMappingRegistry:
 
         return regex_pattern
 
+    @staticmethod
+    @functools.lru_cache(maxsize=None)
+    def _wildcard_capture_order(pattern: str) -> Optional[Tuple[int, ...]]:
+        """Return how to reorder a pattern's regex groups into ``resolve()`` order.
+
+        The regex built by ``_convert_pattern_to_regex`` yields one group per
+        wildcard in text order, while ``MegatronParamMapping._resolve_names``
+        consumes captures as all ``**`` values first and all ``*`` values second
+        (each in text order). When a ``*`` appears before a ``**`` the two orders
+        differ, so the groups have to be permuted before resolving.
+
+        Args:
+            pattern: Pattern string with * and ** wildcards
+
+        Returns:
+            Tuple of group indices in ``resolve()`` order, or None when the text
+            order already matches it.
+        """
+        kinds = re.findall(r"\*\*|\*", pattern)
+        order = tuple(i for i, kind in enumerate(kinds) if kind == "**") + tuple(
+            i for i, kind in enumerate(kinds) if kind == "*"
+        )
+        return None if order == tuple(range(len(kinds))) else order
+
+    def _captures_for_resolve(self, pattern: str, match: re.Match) -> Tuple[str, ...]:
+        """Return the captures of ``match`` (made from ``pattern``) in ``resolve()`` order."""
+        groups = match.groups()
+        order = self._wildcard_capture_order(pattern)
+        if order is None:
+            return groups
+        return tuple(groups[i] for i in order)
+
     def __init__(self, *mappings: MegatronParamMapping):
         """
         Initialize MegatronMappingRegistry with weight mappings.
@@ -158,14 +191,15 @@ class MegatronMappingRegistry:
         self.mappings = list(mappings)
         self._pg_collection = None
         self._add_separate_layernorm_mappings()
-        if int(os.environ.get("ENABLE_BRIDGE_QUANT_MAPPING", "0")):
-            self._add_quantization_mappings()
+        # Derived mappings for ModelOpt quantizer state: lookups resolve them, but they are not
+        # listed with the weight mappings, so registries rebuilt from those do not duplicate them.
+        self._quantization_mappings = self._build_quantization_mappings()
 
         # Pre-compile patterns for efficiency
         self._compiled_patterns = []
         self._reverse_patterns = []  # For hf_param -> megatron lookups
 
-        for mapping in self.mappings:
+        for mapping in [*self.mappings, *self._quantization_mappings]:
             # Compile source patterns
             if "*" in mapping.megatron_param:
                 # Convert glob pattern to regex with support for * and **
@@ -195,7 +229,7 @@ class MegatronMappingRegistry:
     def set_process_groups_from_pg_collection(self, pg_collection: Any) -> None:
         """Install a process-group collection on all mappings returned by this registry."""
         self._pg_collection = pg_collection
-        for mapping in self.mappings:
+        for mapping in [*self.mappings, *self._quantization_mappings]:
             mapping.set_process_groups_from_pg_collection(pg_collection)
 
     def _prepare_mapping(self, mapping: MegatronParamMapping) -> MegatronParamMapping:
@@ -243,7 +277,8 @@ class MegatronMappingRegistry:
                 match = pattern.match(megatron_param_name)
                 if match:
                     # Return resolved mapping with wildcards replaced
-                    return self.resolve_mapping(mapping, match.groups())
+                    captures = self._captures_for_resolve(mapping.megatron_param, match)
+                    return self.resolve_mapping(mapping, captures)
         return None
 
     def hf_to_megatron_lookup(self, hf_param_name: str) -> Optional[MegatronParamMapping]:
@@ -271,7 +306,7 @@ class MegatronMappingRegistry:
                     # Pattern match
                     match = pattern.match(hf_param_name)
                     if match:
-                        return self.resolve_mapping(mapping, match.groups())
+                        return self.resolve_mapping(mapping, self._captures_for_resolve(mapping.hf_param, match))
             else:
                 # Dict destination - check each pattern
                 patterns_dict = pattern_info
@@ -285,7 +320,8 @@ class MegatronMappingRegistry:
                         # Pattern match
                         match = pattern.match(hf_param_name)
                         if match:
-                            return self.resolve_mapping(mapping, match.groups())
+                            captures = self._captures_for_resolve(mapping.hf_param[key], match)
+                            return self.resolve_mapping(mapping, captures)
         return None
 
     def get_all_mappings(self) -> List[MegatronParamMapping]:

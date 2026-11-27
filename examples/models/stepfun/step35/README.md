@@ -111,7 +111,7 @@ Before launching, ensure the following environment variables are set:
 
 ### Multi-Node Pretrain via Slurm (PP=8, EP=8, 8 nodes, 64 gpus)
 
-[slurm_pretrain.sh](slurm_pretrain.sh)
+[slurm_pretrain.sh](slurm_pretrain.sh) (8 nodes x 8 H100 80GB)
 
 * launches one srun task per GPU and translates Slurm env vars to
   `torch.distributed` env vars inside the container,
@@ -119,7 +119,14 @@ Before launching, ensure the following environment variables are set:
   `model.num_layers_in_last_pipeline_stage=3`,
 * turns on the Step-3.5-Flash sliding-attention skip pattern
   (`model.window_size=[512,0]` and the `model.window_attn_skip_freq` mask
-  matching `layer_types`), and
+  matching `layer_types`),
+* offloads the optimizer to CPU (`optimizer.use_precision_aware_optimizer=true`,
+  `optimizer.optimizer_cpu_offload=true`, `optimizer.optimizer_offload_fraction=1.0`)
+  because at 64 GPUs expert data parallel is 1, so routed-expert optimizer
+  state is unsharded: persistent weights, gradients and optimizer state take
+  about 69 GB per GPU, and the training peak with activations and MoE
+  workspaces does not fit in 80 GB (the offloaded state needs several
+  hundred GB of host memory per node), and
 * loads the pre-converted Megatron checkpoint as a fine-tune source
   (`checkpoint.finetune=true`, `load_optim=false`, `load_rng=false`,
   `exit_on_missing_checkpoint=true`).
@@ -143,25 +150,31 @@ model.num_layers_in_last_pipeline_stage=3
 model.seq_length=4096
 train.micro_batch_size=1
 train.global_batch_size=1024
+
+# Optimizer CPU offload
+optimizer.use_precision_aware_optimizer=true
+optimizer.optimizer_cpu_offload=true
+optimizer.optimizer_offload_fraction=1.0
 ```
 
 ### Hybrid Attention (Full / Sliding)
 
-`Step35Bridge.provider_bridge` populates `provider.layer_types` from the HF
-`layer_types` list and writes the sliding-layer shape overrides into
-`provider.sliding_attention_setting`:
+`Step35Bridge` copies the HF `layer_types` list (main decoder layers followed by
+the MTP layers) into the model config's `layer_types` and writes the
+sliding-layer shape overrides into `sliding_attention_setting`. For
+Step-3.5-Flash:
 
 ```python
-provider.sliding_attention_setting = {
-    "rotary_percent": 1.0,
+sliding_attention_setting = {
+    "window_size": [512, 0],
     "num_attention_heads": 96,
     "num_query_groups": 8,
-    "head_dim": 128,
+    "kv_channels": 128,
 }
 ```
 
 `Step35DecoderLayer` deep-copies the config and overrides
-`rotary_percent` / `num_attention_heads` / `num_query_groups` / `kv_channels`
+`window_size` / `num_attention_heads` / `num_query_groups` / `kv_channels`
 when the resolved global layer index is marked `"sliding_attention"` in
 `layer_types`. The training-time sliding-window mask is controlled separately
 through `model.window_size` and `model.window_attn_skip_freq` (see the

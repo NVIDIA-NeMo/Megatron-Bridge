@@ -12,12 +12,14 @@ Key design notes (per PR 3212):
 from __future__ import annotations
 
 import logging
+import math
 from functools import partial
 from typing import Dict, Iterable, Optional, Tuple
 
 import torch
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+from megatron.core.utils import unwrap_model
 
 from megatron.bridge.data.megatron_mimo.dp_utils import slice_batch_for_megatron_mimo
 from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
@@ -53,6 +55,33 @@ def resolve_step_packing(dataset_cfg: object) -> bool:
     return True
 
 
+def _language_packing_alignment(megatron_mimo_model: MimoModel) -> int:
+    """Return the length multiple for each packed language sequence on this rank.
+
+    MimoModel's partition adapter shards a packed batch for context parallelism one sequence at
+    a time, in 2 * CP zigzag chunks, and sequence parallelism then splits each CP rank's tokens
+    over the tensor-parallel group. This is the rule ``ConfigContainer`` applies to the other
+    in-batch packing paths, taken from the groups the adapter shards with.
+
+    Args:
+        megatron_mimo_model: The unwrapped MimoModel of a language rank.
+
+    Returns:
+        ``lcm(2 * CP if CP > 1 else 1, CP * TP if sequence parallel with TP > 1 else 1)``.
+    """
+    partition_adapter = megatron_mimo_model.partition_adapter
+    if partition_adapter is None:
+        return 1
+    partition_cfg = partition_adapter.cfg
+    cp_size = partition_cfg.cp_group.size() if partition_cfg.use_cp else 1
+    tp_size = 1
+    if partition_cfg.seq_parallel and partition_cfg.tp_group is not None:
+        tp_size = partition_cfg.tp_group.size()
+    cp_multiple = 2 * cp_size if cp_size > 1 else 1
+    sp_multiple = cp_size * tp_size if tp_size > 1 else 1
+    return math.lcm(cp_multiple, sp_multiple)
+
+
 def _get_module_dp_info(
     megatron_mimo_model: MimoModel,
 ) -> Tuple[int, int]:
@@ -78,6 +107,18 @@ def _get_module_dp_info(
             return dp_rank, dp_size
 
     return 0, 1
+
+
+def _language_stage_owns_mtp(megatron_mimo_model: MimoModel) -> bool:
+    """Return whether this rank's language stage runs the MTP block.
+
+    The MTP block re-embeds shifted token IDs, so its stage needs ``input_ids``
+    even when it is not the first language stage.
+    """
+    language_model = getattr(megatron_mimo_model, "language_model", None)
+    if language_model is None:
+        return False
+    return bool(getattr(unwrap_model(language_model), "mtp_process", False))
 
 
 def loss_func(
@@ -188,7 +229,8 @@ def forward_step(
     # Determine if this rank needs a data iterator.
     # - LLM ranks: all stages need metadata such as position_ids for models
     #   with position-dependent decoder blocks. First stage consumes input_ids;
-    #   last stage consumes labels/loss_mask.
+    #   last stage consumes labels/loss_mask. The stage that runs MTP also
+    #   consumes input_ids.
     # - Modality ranks: only first stage needs raw modality inputs.
     needs_data = True
     is_language_first_stage = False
@@ -260,7 +302,8 @@ def forward_step(
                     )
                 pack_lengths = mask.to(torch.bool).sum(dim=1).to(torch.long)
             if not is_language_first_stage:
-                data_batch["input_ids"] = None
+                if not _language_stage_owns_mtp(megatron_mimo_model):
+                    data_batch["input_ids"] = None
                 data_batch["modality_inputs"] = None
             if not is_language_last_stage:
                 data_batch["labels"] = None
@@ -271,15 +314,25 @@ def forward_step(
         # in order, so vision embeddings (via bridge) still align. Fires on ALL language stages:
         # the first stage packs input_ids, intermediate/last stages pack labels/loss_mask to the
         # SAME [1, T] using the caller-supplied lengths (from the batch's attention_mask), so
-        # packed-logits and label shapes match under PP>1.
+        # packed-logits and label shapes match under PP>1. Each sequence is padded to the
+        # language module's CP/SP multiple, which every stage derives the same way.
         if (
             pack_sequences_enabled
             and megatron_mimo_model.role is not None
             and megatron_mimo_model.role.has_language_module
         ):
-            data_batch, packing_kwargs = pack_language_shard(data_batch, lengths=pack_lengths)
+            data_batch, packing_kwargs = pack_language_shard(
+                data_batch,
+                lengths=pack_lengths,
+                pad_to_multiple_of=_language_packing_alignment(megatron_mimo_model),
+            )
             if packing_kwargs is not None:
-                data_batch["packing_kwargs"] = packing_kwargs
+                cu_seqlens = packing_kwargs["cu_seqlens_q"]
+                data_batch["cu_seqlens"] = cu_seqlens.unsqueeze(0)
+                data_batch["cu_seqlens_padded"] = packing_kwargs["cu_seqlens_q_padded"].unsqueeze(0)
+                data_batch["max_seqlen"] = torch.tensor(
+                    [packing_kwargs["max_seqlen_q"]], dtype=torch.int32, device=cu_seqlens.device
+                )
         # The padding mask only feeds data-path lengths; the model runs causal attention and must get None.
         data_batch["attention_mask"] = None
     else:

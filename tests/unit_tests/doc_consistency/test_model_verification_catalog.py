@@ -430,14 +430,17 @@ def test_commands_and_paragraphs_match_output_format(
     generator: ModuleType, catalog: dict[str, object], fern: bool
 ) -> None:
     command = 'echo "${MODEL}" && printf "{a,b}\\n"\necho done'
-    expected_result = "First line.\nSecond line with <value>.\n"
+    expected_result = 'First line.\nSecond line with <value>, {"loss": 0.5} and ${MODEL}.\n'
     entry = dict(_models(catalog)["qwen3-30b-a3b"]["entries"][0])
     entry.update(commands=[command], expected_result=expected_result)
     page = "\n".join(generator._model_combination_detail(entry, heading_level=4, fern=fern))
     escaped_command = html.escape(command)
     if fern:
         escaped_command = escaped_command.replace("{", "&#123;").replace("}", "&#125;")
-        assert "<p>First line. Second line with &lt;value&gt;.</p>" in page
+        assert (
+            "<p>First line. Second line with &lt;value&gt;, "
+            "&#123;&quot;loss&quot;: 0.5&#125; and $&#123;MODEL&#125;.</p>"
+        ) in page
         assert "\n</p>" not in page
     else:
         assert f"<p>{html.escape(expected_result)}</p>" in page
@@ -506,3 +509,17 @@ def test_non_benchmark_card_commands_do_not_launch_benchmark_recipes() -> None:
                         offenders.append(f"{card_path.parent.name}/{item_name}: {recipe_name}")
 
     assert offenders == []
+
+
+def test_conversion_only_card_keeps_interactive_import_export_controls(
+    generator: ModuleType, catalog: dict[str, object]
+):
+    model = _models(catalog)["kimi-k3"]
+    expected = {"hf_to_megatron_cpu", "hf_to_megatron_gpu", "megatron_to_hf_cpu", "megatron_to_hf_gpu"}
+    assert {entry["workflow"] for entry in model["entries"]} == expected
+    for fern in (False, True):
+        page = generator.render_model_section([model], fern=fern)
+        assert 'class="verification-model-explorer"' in page
+        assert 'data-capability-tab="import-export"' in page
+        assert 'data-capability-tab="pretrain"' not in page
+        assert page.count('class="verification-model-detail"') == 4

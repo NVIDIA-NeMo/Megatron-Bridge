@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Optional
 
 import torch
@@ -22,11 +23,13 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.enums import ModelType
 from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_layer import TransformerLayer
 from torch import nn
 from torch.nn import functional as F
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLVisionTransformerBlock
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_layer import Qwen3VLRotaryTransformerLayer
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     Qwen3VLVisionPatchEmbed,
     Qwen3VLVisionPatchMerger,
@@ -109,6 +112,10 @@ def _vision_forward_packed_attention_setup(
     return packed_seq_params, None
 
 
+class Qwen3VLVisionTransformerLayer(Qwen3VLRotaryTransformerLayer):
+    """Keep vision graph wrappers separate from the language model's layers."""
+
+
 class Qwen3VLVisionModel(VisionModule):
     """Qwen3 ViT vision model.
 
@@ -153,6 +160,10 @@ class Qwen3VLVisionModel(VisionModule):
         self.post_process = post_process
 
         # Transformer layers.
+        if transformer_layer_spec.module is TransformerLayer:
+            transformer_layer_spec = deepcopy(transformer_layer_spec)
+            transformer_layer_spec.module = Qwen3VLVisionTransformerLayer
+            transformer_layer_spec.params["rotary_dim"] = head_dim
         self.decoder = Qwen3VLVisionTransformerBlock(
             config=transformer_config,
             spec=transformer_layer_spec,
