@@ -637,6 +637,27 @@ def test_merge_lora_adapter_weights_grouped_expert_fused_fc1_uses_expert_tp(monk
     torch.testing.assert_close(updated["model.layers.0.mlp.experts.0.up_proj.weight"], expected_up)
 
 
+def test_select_expert_adapter_weight_per_expert_gathered_tensor(monkeypatch):
+    bridge = DummyBridge()
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        lambda: 2,
+    )
+
+    gathered = [
+        torch.stack([torch.full((2, 2), 1.0), torch.full((2, 2), 2.0)], dim=0),
+        torch.stack([torch.full((2, 2), 3.0), torch.full((2, 2), 4.0)], dim=0),
+    ]
+
+    selected = bridge._select_expert_adapter_weight(
+        gathered[0],
+        gathered,
+        expert_idx=3,
+        num_experts=4,
+    )
+    torch.testing.assert_close(selected, torch.full((2, 2), 4.0))
+
+
 def _set_expert_parallel(monkeypatch, size):
     monkeypatch.setattr(
         "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
@@ -776,27 +797,6 @@ def test_adapter_tasks_for_base_finds_a_sequential_expert_by_its_local_index():
         "decoder.layers.0.mlp.experts.local_experts.1.linear_fc1.to_wrap.weight",
     ) == ["fc1 adapter"]
     assert find(tasks, "decoder.layers.0.mlp.linear_fc1", "decoder.layers.0.mlp.linear_fc1.to_wrap.weight") is None
-
-
-def test_select_expert_adapter_weight_per_expert_gathered_tensor(monkeypatch):
-    bridge = DummyBridge()
-    monkeypatch.setattr(
-        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
-        lambda: 2,
-    )
-
-    gathered = [
-        torch.stack([torch.full((2, 2), 1.0), torch.full((2, 2), 2.0)], dim=0),
-        torch.stack([torch.full((2, 2), 3.0), torch.full((2, 2), 4.0)], dim=0),
-    ]
-
-    selected = bridge._select_expert_adapter_weight(
-        gathered[0],
-        gathered,
-        expert_idx=3,
-        num_experts=4,
-    )
-    torch.testing.assert_close(selected, torch.full((2, 2), 4.0))
 
 
 def test_merge_canonical_adapter_from_weights(monkeypatch):
