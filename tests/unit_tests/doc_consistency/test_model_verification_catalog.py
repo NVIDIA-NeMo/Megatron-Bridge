@@ -509,3 +509,17 @@ def test_non_benchmark_card_commands_do_not_launch_benchmark_recipes() -> None:
                         offenders.append(f"{card_path.parent.name}/{item_name}: {recipe_name}")
 
     assert offenders == []
+
+
+def test_conversion_only_card_keeps_interactive_import_export_controls(
+    generator: ModuleType, catalog: dict[str, object]
+):
+    model = _models(catalog)["kimi-k3"]
+    expected = {"hf_to_megatron_cpu", "hf_to_megatron_gpu", "megatron_to_hf_cpu", "megatron_to_hf_gpu"}
+    assert {entry["workflow"] for entry in model["entries"]} == expected
+    for fern in (False, True):
+        page = generator.render_model_section([model], fern=fern)
+        assert 'class="verification-model-explorer"' in page
+        assert 'data-capability-tab="import-export"' in page
+        assert 'data-capability-tab="pretrain"' not in page
+        assert page.count('class="verification-model-detail"') == 4
