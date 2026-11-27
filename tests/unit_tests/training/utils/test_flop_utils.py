@@ -2546,11 +2546,71 @@ class TestDynamicSparseAttentionFlops:
 
 
 @pytest.mark.unit
+class TestGLMSplitHybridFlopsConfigIsolation:
+    """FLOPs for GLM's split Hybrid pattern on a builder-backed model config."""
+
+    @staticmethod
+    def _glm5_config():
+        from megatron.bridge.models.glm_moe_dsa.glm5_config import GLM5ModelConfig
+
+        transformer = GLM5ModelConfig.transformer_config_class(num_layers=4, hidden_size=16, num_attention_heads=2)
+        model = GLM5ModelConfig(transformer=transformer, vocab_size=128, seq_length=8)
+        overrides = {
+            "hybrid_layer_pattern": "D-DE",
+            "make_vocab_size_divisible_by": 1,
+            "ffn_hidden_size": 32,
+            "kv_channels": 4,
+            "num_query_groups": 2,
+            "num_moe_experts": 4,
+            "moe_ffn_hidden_size": 8,
+            "moe_router_topk": 2,
+            "multi_latent_attention": True,
+            "experimental_attention_variant": "dsa",
+            "q_lora_rank": 4,
+            "kv_lora_rank": 4,
+            "qk_head_dim": 4,
+            "qk_pos_emb_head_dim": 2,
+            "v_head_dim": 4,
+            "dsa_indexer_n_heads": 2,
+            "dsa_indexer_head_dim": 2,
+            "dsa_indexer_topk": 2,
+        }
+        for name, value in overrides.items():
+            setattr(model, name, value)
+        return MockConfigContainer(model=model)
+
+    def test_flops_leave_model_config_unchanged(self):
+        """Computing FLOPs must not change the caller's layer count or MoE schedule."""
+        cfg = self._glm5_config()
+
+        num_floating_point_operations(cfg, batch_size=1)
+
+        assert cfg.model.num_layers == 4
+        assert cfg.model.moe_layer_freq == 1
+
+    def test_flops_match_flat_config_in_logical_coordinates(self):
+        """The builder-backed config costs the same as an equivalent flat config."""
+        cfg = self._glm5_config()
+        flat = MockModelConfig(
+            **{
+                f.name: getattr(cfg.model, f.name)
+                for f in MockModelConfig.__dataclass_fields__.values()
+                if f.name != "vision_config" and hasattr(cfg.model, f.name)
+            }
+        )
+
+        expected = num_floating_point_operations(MockConfigContainer(model=flat), batch_size=1)
+
+        assert num_floating_point_operations(cfg, batch_size=1) == expected
+        assert num_floating_point_operations(cfg, batch_size=1) == expected
+
+
+@pytest.mark.unit
 class TestKimiK3KdaFlops:
     """Tests for Kimi K3's KDA (Kimi Delta Attention) hybrid attention schedule.
 
-    The K3 provider subclasses ``MLAModelProvider``, so the MLA branch costs every
-    layer as full multi-latent attention. Layers listed in ``kimi_kda_layers`` are
+    The logical-block MLA estimator initially costs every block as full
+    multi-latent attention. Layers listed in ``kimi_kda_layers`` are
     linear-attention blocks and must be re-costed with the KDA per-layer formula.
     """
 
@@ -2602,6 +2662,37 @@ class TestKimiK3KdaFlops:
         )
         defaults.update(overrides)
         return defaults
+
+    @pytest.mark.parametrize("num_blocks", [6, 24, 93])
+    @pytest.mark.parametrize("partitioned", [False, True])
+    def test_split_hybrid_matches_logical_block_flops(self, num_blocks, partitioned):
+        kda = tuple(i + 1 for i in range(num_blocks) if i % 4 != 3)
+        moe = [int(i > 0) for i in range(num_blocks)]
+        pattern = "".join(("K" if i + 1 in kda else "+") + ("E" if moe[i] else "-") for i in range(num_blocks))
+        if partitioned:
+            split = 2 * (num_blocks // 2)
+            pattern = pattern[:split] + "|" + pattern[split:]
+        kwargs = self._base_kwargs(
+            num_layers=num_blocks,
+            seq_length=8192,
+            kimi_kda_layers=kda,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=128,
+            moe_layer_freq=moe,
+        )
+        logical = MockConfigContainer(model=MockModelConfig(**kwargs))
+        split = MockConfigContainer(model=MockModelConfig(**{**kwargs, "num_layers": 2 * num_blocks}))
+        split.model.hybrid_layer_pattern = pattern
+        split.model.is_hybrid_model = True
+        # Derive both schedules from the actual pattern, including proxy overrides.
+        split.model.kimi_kda_layers = ()
+        split.model.moe_layer_freq = 1
+        expected = num_floating_point_operations(logical, batch_size=2)
+        assert num_floating_point_operations(split, batch_size=2) == expected
+        assert split.model.num_layers == 2 * num_blocks
+        assert split.model.kimi_kda_layers == ()
+        assert split.model.moe_layer_freq == 1
 
     def test_kda_layers_change_flops(self):
         """Marking layers as KDA must not leave the pure-MLA total unchanged."""

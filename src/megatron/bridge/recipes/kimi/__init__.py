@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .gb300 import kimi_k3_pretrain_512gpu_gb300_bf16_config
 from .kimi_k2 import kimi_k2_pretrain_config
+from .kimi_k3 import kimi_k3_pretrain_config
 
 
 __all__ = [
     "kimi_k2_pretrain_config",
+    "kimi_k3_pretrain_config",
+    "kimi_k3_pretrain_512gpu_gb300_bf16_config",
 ]

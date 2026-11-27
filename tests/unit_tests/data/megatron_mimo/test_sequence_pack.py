@@ -176,6 +176,95 @@ class TestPackingKwargs:
 
 
 @pytest.mark.unit
+class TestAlignmentPadding:
+    """Context and sequence parallelism shard each packed sequence, so each one is padded."""
+
+    def test_pads_each_sequence_after_its_real_tokens(self):
+        tokens = _padded([[1, 2, 3], [4, 5], [6, 7, 8, 9]], 8, 0)
+        labels = _padded([[11, 12, 13], [14, 15], [16, 17, 18, 19]], 8, -100)
+        loss_mask = _padded([[1, 1, 1], [1, 1], [1, 1, 1, 1]], 8, 0)
+        out = assemble_packed_sequence(
+            [0, 1, 2], tokens, [3, 2, 4], labels=labels, loss_mask=loss_mask, pad_to_multiple_of=4
+        )
+        assert out["cu_seqlens"].tolist() == [0, 3, 5, 9]
+        assert out["cu_seqlens_padded"].tolist() == [0, 4, 8, 12]
+        assert out["cu_seqlens_padded"].dtype == torch.int32
+        assert out["input_ids"][0].tolist() == [1, 2, 3, 0, 4, 5, 0, 0, 6, 7, 8, 9]
+        assert out["labels"][0].tolist() == [11, 12, 13, -100, 14, 15, -100, -100, 16, 17, 18, 19]
+        assert out["loss_mask"][0].tolist() == [1, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 1]
+        assert out["max_seqlen"] == 4
+
+    @pytest.mark.parametrize("multiple", [1, 2, 4, 6, 12])
+    def test_every_padded_span_is_a_multiple(self, multiple):
+        lengths = [1823, 1301, 7, 1]  # the first two come from a failing packed CP2 run
+        tokens = torch.zeros(len(lengths), max(lengths), dtype=torch.long)
+        for row, length in enumerate(lengths):
+            tokens[row, :length] = torch.arange(1, length + 1)
+        out = assemble_packed_sequence(list(range(len(lengths))), tokens, lengths, pad_to_multiple_of=multiple)
+        spans = out["cu_seqlens_padded"].diff()
+        real = torch.tensor(lengths, dtype=spans.dtype)
+        assert (spans % multiple == 0).all()
+        assert ((spans >= real) & (spans - real < multiple)).all()
+        assert out["cu_seqlens"].diff().tolist() == lengths
+        assert out["input_ids"].shape == (1, int(out["cu_seqlens_padded"][-1]))
+        for start, length in zip(out["cu_seqlens_padded"].tolist(), lengths):
+            assert out["input_ids"][0, start : start + length].tolist() == list(range(1, length + 1))
+
+    def test_padding_continues_positions(self):
+        tokens = _padded([[1, 2, 3], [4, 5]], 4, 0)
+        pos = _padded([[0, 1, 2], [0, 1]], 4, 0)
+        out = assemble_packed_sequence([0, 1], tokens, [3, 2], position_ids=pos, pad_to_multiple_of=4)
+        assert out["position_ids"][0].tolist() == [0, 1, 2, 3, 0, 1, 2, 3]
+
+    def test_mrope_padding_continues_after_the_largest_axis(self):
+        tokens = _padded([[1, 2, 3]], 3, 0)
+        pos = torch.tensor([[[0, 1, 2]], [[0, 1, 5]], [[0, 1, 4]]])  # [3, B=1, S=3]
+        out = assemble_packed_sequence([0], tokens, [3], position_ids=pos, pad_to_multiple_of=4)
+        assert out["position_ids"].shape == (3, 1, 4)
+        assert out["position_ids"][:, 0, :3].tolist() == pos[:, 0].tolist()
+        assert out["position_ids"][:, 0, 3].tolist() == [6, 6, 6]
+
+    def test_rejects_multiple_below_one(self):
+        with pytest.raises(ValueError, match="pad_to_multiple_of"):
+            assemble_packed_sequence([0], _padded([[1]], 1, 0), [1], pad_to_multiple_of=0)
+
+    def test_packing_kwargs_carry_real_and_padded_boundaries(self):
+        from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
+
+        batch = {
+            "input_ids": torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]]),
+            "labels": torch.tensor([[1, 2, 3, -100], [4, 5, -100, -100]]),
+            "loss_mask": torch.tensor([[1, 1, 1, 0], [1, 1, 0, 0]]),
+            "position_ids": torch.arange(3 * 2 * 4).reshape(3, 2, 4),
+        }
+        packed, kw = pack_language_shard(batch, lengths=torch.tensor([3, 2]), pad_to_multiple_of=4)
+        assert packed["input_ids"].tolist() == [[1, 2, 3, 0, 4, 5, 0, 0]]
+        assert packed["position_ids"].shape == (3, 1, 8)
+        assert kw["cu_seqlens_q"].tolist() == kw["cu_seqlens_kv"].tolist() == [0, 3, 5]
+        assert kw["cu_seqlens_q_padded"].tolist() == kw["cu_seqlens_kv_padded"].tolist() == [0, 4, 8]
+        assert kw["max_seqlen_q"] == kw["max_seqlen_kv"] == 4
+
+    def test_pp_stages_pack_to_the_same_padded_length(self):
+        from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
+
+        lengths = torch.tensor([3, 2])
+        first, kw_first = pack_language_shard(
+            {"input_ids": torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]])}, lengths=lengths, pad_to_multiple_of=4
+        )
+        last, kw_last = pack_language_shard(
+            {
+                "input_ids": None,
+                "labels": torch.tensor([[1, 2, 3, -100], [4, 5, -100, -100]]),
+                "loss_mask": torch.tensor([[1, 1, 1, 0], [1, 1, 0, 0]]),
+            },
+            lengths=lengths,
+            pad_to_multiple_of=4,
+        )
+        assert first["input_ids"].shape == last["labels"].shape == last["loss_mask"].shape == (1, 8)
+        assert kw_last["cu_seqlens_q_padded"].tolist() == kw_first["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
+
+
+@pytest.mark.unit
 class TestPPConsistentPacking:
     """F5: input_ids and labels/loss_mask pack to the same [1, T] from the caller-provided lengths."""
 

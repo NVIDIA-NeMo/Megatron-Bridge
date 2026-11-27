@@ -132,6 +132,28 @@ This uses the same semicolon-separated `KEY=VALUE` format as the training launch
 Values become sbatch parameters, not srun flags or conversion-worker arguments.
 The launcher retains control of `export` to preserve name-only environment forwarding.
 
+## ModelOpt-quantized checkpoints
+
+GPU and distributed CPU export save a Megatron checkpoint quantized with ModelOpt (e.g. by
+`examples/quantization/quantize.py`) as a quantized Hugging Face checkpoint: packed weights and scales, with the
+`quantization_config` in `config.json` that vLLM, SGLang and TensorRT-LLM read. This happens automatically when the
+checkpoint has enabled ModelOpt weight quantizers, at any TP, PP, EP and ETP, and rank 0 writes the files.
+
+```bash
+./scripts/conversion/convert.sh export \
+  --executor local \
+  --device gpu \
+  --gpus-per-node 2 \
+  --tp 2 \
+  --hf-model Qwen/Qwen3-0.6B \
+  --megatron-path ./qwen3_0_6b_fp8/iter_0000000 \
+  --hf-path ./qwen3_0_6b_fp8_hf
+```
+
+Pass `--no-quantized-export` to save BF16 weights with ModelOpt quantizer sidecars instead, as checkpoints with
+folded weights are saved, or `--quantized-export` to fail when the checkpoint has no enabled weight quantizers.
+Single-process CPU export always saves BF16 weights.
+
 ## Distributed round-trip validation
 
 Like `import` and `export`, the `roundtrip` command runs the shared

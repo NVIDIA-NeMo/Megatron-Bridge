@@ -189,6 +189,20 @@ class TestMiMoV2FlashConversion:
                     "    return _mb_orig_eager_attn(*args, **kwargs)\n"
                     "import sys as _mb_sys\n"
                     "_mb_sys.modules[__name__].eager_attention_forward = eager_attention_forward\n"
+                    "import inspect as _mb_inspect\n"
+                    "def _mb_fit_mask_kwargs(fn):\n"
+                    "    params = _mb_inspect.signature(fn).parameters\n"
+                    "    if 'input_embeds' in params:\n"
+                    "        return fn\n"
+                    "    def wrapper(*args, **kwargs):\n"
+                    "        if 'input_embeds' in kwargs:\n"
+                    "            kwargs['inputs_embeds'] = kwargs.pop('input_embeds')\n"
+                    "        if 'cache_position' not in params:\n"
+                    "            kwargs.pop('cache_position', None)\n"
+                    "        return fn(*args, **kwargs)\n"
+                    "    return wrapper\n"
+                    "create_causal_mask = _mb_fit_mask_kwargs(create_causal_mask)\n"
+                    "create_sliding_window_causal_mask = _mb_fit_mask_kwargs(create_sliding_window_causal_mask)\n"
                 )
                 modeling_file.write_text(src + shim)
 

@@ -980,6 +980,19 @@ class TestDeepSeekV4HybridMappingLayout:
         assert attn_hc.megatron_param == "decoder.layers.6.hyper_connection.mapping_proj.weight"
         assert moe_hc.megatron_param == "decoder.layers.7.hyper_connection.mapping_proj.weight"
 
+    @pytest.mark.parametrize("suffix", ["", ".weight"])
+    @pytest.mark.parametrize(
+        ("megatron_prefix", "hf_prefix"),
+        [("decoder.layers.6", "layers.3"), ("mtp.layers.0.mtp_model_layer.layers.0", "mtp.0")],
+    )
+    def test_grouped_output_projection_mapping(self, bridge_with_mtp, suffix, megatron_prefix, hf_prefix):
+        registry = bridge_with_mtp.mapping_registry()
+        mapping = registry.megatron_to_hf_lookup(
+            f"{megatron_prefix}.inner_layer.self_attention.linear_o_group_proj{suffix}"
+        )
+        assert isinstance(mapping, ReplicatedMapping)
+        assert mapping.hf_param == f"{hf_prefix}.attn.wo_a.weight"
+
     def test_mapping_resolves_hybrid_final_norm(self, bridge_with_mtp):
         registry = bridge_with_mtp.mapping_registry()
         final_norm = registry.megatron_to_hf_lookup("decoder.final_norm.weight")

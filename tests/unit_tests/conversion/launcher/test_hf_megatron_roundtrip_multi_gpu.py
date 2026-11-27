@@ -154,6 +154,7 @@ def test_roundtrip_synchronizes_result_and_saves_before_reporting_summary(
             return [object()]
 
     class FakeBridge:
+        _model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=False)
         hf_pretrained = SimpleNamespace(state={"weight": torch.ones(1)})
 
         def to_megatron_provider(self, load_weights):
@@ -193,3 +194,131 @@ def test_roundtrip_synchronizes_result_and_saves_before_reporting_summary(
     assert event_names.index("save") < event_names.index("report")
     save_kwargs = next(event[1] for event in events if event[0] == "save")
     assert save_kwargs["distributed_save"] is True
+
+
+class _BuilderBackedBridge:
+    """Bridge stand-in for a family that only supports builder-backed configs."""
+
+    _model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=True)
+    hf_pretrained = SimpleNamespace(state={"weight": torch.ones(1)})
+
+    def __init__(self, events):
+        self.events = events
+        self.model_config = SimpleNamespace(
+            transformer=SimpleNamespace(),
+            finalize=lambda: events.append(("finalize", None)),
+        )
+
+    def to_megatron_provider(self, *args, **kwargs):
+        raise NotImplementedError("provider path is not supported")
+
+    def get_model_config(self):
+        return self.model_config
+
+    def get_model(self, model_config, **kwargs):
+        self.events.append(("get_model", (model_config, kwargs)))
+        return [object()]
+
+    def _get_or_initialize_pg_collection(self, transformer_config):
+        self.events.append(("pg_collection", transformer_config))
+
+    def load_megatron_model(self, path, **kwargs):
+        self.events.append(("load_megatron_model", (path, kwargs)))
+        return [SimpleNamespace(cuda=lambda: "loaded")]
+
+    def export_hf_weights(self, model, show_progress):
+        yield "weight", torch.ones(1)
+
+    def save_hf_pretrained(self, model, path, **kwargs):
+        self.events.append(("save", path))
+
+
+def _run_builder_backed_main(monkeypatch: pytest.MonkeyPatch, **main_kwargs):
+    module = _load_roundtrip_module(monkeypatch)
+    events = []
+    fake_bridge = _BuilderBackedBridge(events)
+    monkeypatch.setattr(
+        module,
+        "AutoBridge",
+        SimpleNamespace(from_hf_pretrained=lambda *args, **kwargs: fake_bridge),
+    )
+    monkeypatch.setattr(module.torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(module, "_synchronize_weight_verification", lambda all_match: not all_match)
+    monkeypatch.setattr(module, "_print_verification_results", lambda *args, **kwargs: None)
+    monkeypatch.setenv("WORLD_SIZE", "4")
+
+    module.main(hf_model_id="example/model", tp=2, pp=1, ep=2, etp=1, skip_save=True, **main_kwargs)
+    return fake_bridge, events
+
+
+def test_roundtrip_builds_builder_backed_models_from_model_config(monkeypatch: pytest.MonkeyPatch):
+    fake_bridge, events = _run_builder_backed_main(monkeypatch)
+
+    model_config, kwargs = next(payload for name, payload in events if name == "get_model")
+    assert model_config is fake_bridge.model_config
+    assert kwargs == {"wrap_with_ddp": False}
+    transformer = model_config.transformer
+    assert transformer.tensor_model_parallel_size == 2
+    assert transformer.pipeline_model_parallel_size == 1
+    assert transformer.expert_model_parallel_size == 2
+    assert transformer.expert_tensor_parallel_size == 1
+    assert transformer.params_dtype is torch.bfloat16
+    assert transformer.pipeline_dtype is torch.bfloat16
+
+
+def test_roundtrip_loads_builder_backed_megatron_checkpoint(monkeypatch: pytest.MonkeyPatch):
+    fake_bridge, events = _run_builder_backed_main(monkeypatch, megatron_load_path="/ckpt")
+
+    names = [name for name, _ in events]
+    assert names[:3] == ["finalize", "pg_collection", "load_megatron_model"]
+    assert "get_model" not in names
+    assert events[1][1] is fake_bridge.model_config.transformer
+    path, kwargs = events[2][1]
+    assert path == "/ckpt"
+    assert kwargs["mp_overrides"]["tensor_model_parallel_size"] == 2
+    assert kwargs["mp_overrides"]["expert_model_parallel_size"] == 2
+
+
+def test_roundtrip_loads_legacy_provider_megatron_checkpoint(monkeypatch: pytest.MonkeyPatch):
+    module = _load_roundtrip_module(monkeypatch)
+    events = []
+
+    class FakeProvider:
+        def finalize(self):
+            events.append(("finalize", None))
+
+        def initialize_model_parallel(self, seed):
+            events.append(("initialize_model_parallel", seed))
+
+        def provide_distributed_model(self, wrap_with_ddp):
+            events.append(("provide_distributed_model", wrap_with_ddp))
+            return [object()]
+
+    class FakeBridge(_BuilderBackedBridge):
+        _model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=False)
+
+        def to_megatron_provider(self, load_weights):
+            self.events.append(("to_megatron_provider", load_weights))
+            self.provider = FakeProvider()
+            return self.provider
+
+    fake_bridge = FakeBridge(events)
+    monkeypatch.setattr(
+        module,
+        "AutoBridge",
+        SimpleNamespace(from_hf_pretrained=lambda *args, **kwargs: fake_bridge),
+    )
+    monkeypatch.setattr(module.torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(module, "_synchronize_weight_verification", lambda all_match: not all_match)
+    monkeypatch.setattr(module, "_print_verification_results", lambda *args, **kwargs: None)
+    monkeypatch.setenv("WORLD_SIZE", "2")
+
+    module.main(hf_model_id="example/model", tp=2, megatron_load_path="/ckpt", skip_save=True)
+
+    names = [name for name, _ in events]
+    assert names[:4] == ["to_megatron_provider", "finalize", "initialize_model_parallel", "load_megatron_model"]
+    assert events[0][1] is False
+    assert events[2][1] == 0
+    assert "provide_distributed_model" not in names
+    assert "get_model" not in names
+    assert fake_bridge.provider.tensor_model_parallel_size == 2

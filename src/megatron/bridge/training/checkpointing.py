@@ -3551,6 +3551,10 @@ def _load_checkpoint_from_path(
         mlflow_utils.on_load_checkpoint_success(checkpoint_name, load_dir, state.mlflow_logger)
         comet_utils.on_load_checkpoint_success(checkpoint_name, load_dir, state.comet_logger)
 
+    # Drop the loaded tensors so empty_cache can return them to the device.
+    del state_dict
+    load_kwargs.clear()
+    gc.collect()
     torch.cuda.empty_cache()
 
     if state.train_state.step > 0:

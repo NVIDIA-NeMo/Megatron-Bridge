@@ -3,6 +3,8 @@
 Megatron Bridge supports the public `google/diffusiongemma-26B-A4B-it`
 checkpoint for block-diffusion SFT.
 
+For the example scripts, see the [DiffusionGemma examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/diffusion_gemma/README.md).
+
 ## What is implemented
 
 - HF ↔ Megatron conversion and exact checkpoint tensor coverage.

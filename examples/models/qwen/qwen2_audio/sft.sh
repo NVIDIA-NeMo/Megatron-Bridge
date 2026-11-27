@@ -59,7 +59,7 @@ WANDB_PROJECT=megatron-bridge-${MODEL_NAME}
 SEQ_LENGTH=16384
 TRAIN_ITERS=11250
 GLOBAL_BATCH_SIZE=32
-MICRO_BATCH_SIZE=4
+MICRO_BATCH_SIZE=2
 EVAL_INTERVAL=1000
 EVAL_ITERS=10
 LR=2e-5
@@ -84,7 +84,7 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         checkpoint.save_interval=$SAVE_INTERVAL \
         checkpoint.save_optim=False \
         dataset.hf_processor_path=$HF_MODEL \
-        model.seq_length=$SEQ_LENGTH \
+        dataset.seq_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP \
         model.freeze_language_model=false \

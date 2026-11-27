@@ -8,6 +8,7 @@ import torch
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.ssm.mamba_context_parallel import MambaContextParallel
 from megatron.core.ssm.mamba_mixer import MambaMixer, MambaMixerSubmodules
 from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
 from megatron.core.transformer.enums import AttnMaskType
@@ -46,15 +47,22 @@ def _run_mamba_mixer_with_static_cache_namespace(
 class FalconH1MambaMixer(MambaMixer):
     """Mamba mixer with Falcon H1 projection multipliers."""
 
-    def _scale_zxbc_dt(self, zxbc_dt: torch.Tensor, *, use_context_parallel_dims: bool) -> torch.Tensor:
+    def _scale_zxbc_dt(
+        self,
+        zxbc_dt: torch.Tensor,
+        *,
+        use_context_parallel_dims: bool,
+        runtime_cp: Optional[MambaContextParallel] = None,
+    ) -> torch.Tensor:
         multipliers = self.config.ssm_multipliers
         if tuple(multipliers) == (1.0, 1.0, 1.0, 1.0, 1.0):
             return zxbc_dt
 
         if use_context_parallel_dims:
-            d_inner = self.cp.d_inner_local_tpcp
-            d_group_state = self.cp.ngroups_local_tpcp * self.d_state
-            nheads = self.cp.nheads_local_tpcp
+            cp = self.cp if runtime_cp is None else runtime_cp
+            d_inner = cp.d_inner_local_tpcp
+            d_group_state = cp.ngroups_local_tpcp * self.d_state
+            nheads = cp.nheads_local_tpcp
         else:
             d_inner = self.d_inner_local_tp
             d_group_state = self.ngroups_local_tp * self.d_state
@@ -70,21 +78,45 @@ class FalconH1MambaMixer(MambaMixer):
         scale = torch.cat(pieces).view(*([1] * (zxbc_dt.dim() - 1)), -1)
         return zxbc_dt * scale
 
-    def _ssm_training(self, zxBCdt: torch.Tensor, packed_seq_params: Optional[PackedSeqParams] = None) -> torch.Tensor:
+    def _ssm_training(
+        self,
+        zxBCdt: torch.Tensor,
+        packed_seq_params: Optional[PackedSeqParams] = None,
+        runtime_cp: Optional[MambaContextParallel] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        # Forward MCore SSM layout flags (e.g. ``batch_first``) unchanged. The projection
+        # multipliers scale the last dim, so they apply to either layout.
         return super()._ssm_training(
-            self._scale_zxbc_dt(zxBCdt, use_context_parallel_dims=True),
+            self._scale_zxbc_dt(zxBCdt, use_context_parallel_dims=True, runtime_cp=runtime_cp),
             packed_seq_params,
+            runtime_cp=runtime_cp,
+            **kwargs,
         )
 
-    def _ssm_prefill(self, zxBCdt: torch.Tensor, *args, **kwargs) -> torch.Tensor:
-        return super()._ssm_prefill(
-            self._scale_zxbc_dt(zxBCdt, use_context_parallel_dims=True),
+    def _static_prefill(
+        self,
+        zxBCdt: torch.Tensor,
+        conv_state: Optional[torch.Tensor],
+        ssm_state: Optional[torch.Tensor],
+        runtime_cp: Optional[MambaContextParallel] = None,
+    ) -> torch.Tensor:
+        return super()._static_prefill(
+            self._scale_zxbc_dt(zxBCdt, use_context_parallel_dims=True, runtime_cp=runtime_cp),
+            conv_state=conv_state,
+            ssm_state=ssm_state,
+            runtime_cp=runtime_cp,
+        )
+
+    def ssm_prefill(self, zxBCdt: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+        return super().ssm_prefill(
+            self._scale_zxbc_dt(zxBCdt, use_context_parallel_dims=False),
             *args,
             **kwargs,
         )
 
-    def _ssm_decode(self, zxBCdt: torch.Tensor, *args, **kwargs) -> torch.Tensor:
-        return super()._ssm_decode(
+    def ssm_decode(self, zxBCdt: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+        return super().ssm_decode(
             self._scale_zxbc_dt(zxBCdt, use_context_parallel_dims=False),
             *args,
             **kwargs,

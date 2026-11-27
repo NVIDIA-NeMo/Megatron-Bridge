@@ -475,6 +475,11 @@ def nemotron_3_super_sft_16gpu_h100_bf16_32k_config(
     # cross-stage tied-embedding reduction and PP send/recv operations.
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    # The first step compiles and autotunes Triton kernels (mostly the Mamba layers') stage by
+    # stage through the eight-stage pipeline. With an empty Triton cache, iteration 1 takes about
+    # 13.5 minutes on H100 and stage 0 waits about 11 of them for its first backward, past the
+    # 10-minute default timeout. 30 minutes leaves room for about 2.6 times that wait.
+    cfg.dist.distributed_timeout_minutes = 30
     # Keep the complete process environment visible on the recipe and PP
     # sends/receives ordered for the long-context PP8 schedule.
     cfg.env_vars = {
