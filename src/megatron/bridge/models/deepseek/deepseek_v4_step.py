@@ -33,6 +33,7 @@ from typing import Iterable
 import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
     is_pp_last_stage,
@@ -41,6 +42,7 @@ from megatron.core.pipeline_parallel.utils import (
 )
 from megatron.core.utils import get_batch_on_this_cp_rank
 
+from megatron.bridge.models.deepseek.deepseek_v4_data import FixedTHDMockDatasetConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import (
     _create_loss_function,
@@ -55,6 +57,7 @@ from megatron.bridge.training.gpt_step import (
     get_batch_from_iterator,
 )
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 
 
 logger = logging.getLogger(__name__)
@@ -81,17 +84,29 @@ _DSV4_LEGACY_PACKED_SEQ_PARAM_KEYS = (
 )
 
 
-def _packed_metadata_for_forward(batch: dict) -> dict | None:
-    """Extract global packed-sequence boundaries for native DSv4 attention.
+def _packed_metadata_for_forward(batch: dict, *, include_padding_mask: bool = False) -> dict | None:
+    """Extract global boundaries, preserving native DSv4 router-padding semantics.
 
-    Unlike gpt_step, this does not forward ``padding_mask`` to the model, so
-    MoE router statistics still count alignment padding in DSv4 packed batches.
+    Only the fixed THD benchmark requests padding_mask forwarding. Normal native
+    packed batches continue counting alignment padding in router statistics.
     """
     if batch.get("cu_seqlens_q") is not None:
-        return {k: batch[k] for k in _DSV4_CURRENT_PACKED_SEQ_PARAM_KEYS if batch.get(k) is not None}
-    if batch.get("cu_seqlens") is not None:
-        return {k: batch[k] for k in _DSV4_LEGACY_PACKED_SEQ_PARAM_KEYS if batch.get(k) is not None}
-    return None
+        keys = _DSV4_CURRENT_PACKED_SEQ_PARAM_KEYS
+    elif batch.get("cu_seqlens") is not None:
+        keys = _DSV4_LEGACY_PACKED_SEQ_PARAM_KEYS
+    else:
+        return None
+    metadata = {key: batch[key] for key in keys if batch.get(key) is not None}
+    if include_padding_mask and batch.get("padding_mask") is not None:
+        metadata["padding_mask"] = batch["padding_mask"]
+    return metadata
+
+
+def _get_dsv4_packed_seq_params(batch: dict) -> PackedSeqParams:
+    """Build packed-sequence parameters without the SSM sequence index."""
+    # DSv4 has no SSM layers, so it does not need the seq_idx allocation that
+    # PackedSeqParams derives from total_tokens for generic hybrid models.
+    return get_packed_seq_params({key: value for key, value in batch.items() if key != "total_tokens"})
 
 
 # Sequence-length metadata keys — excluded from token-dimension slicing.
@@ -253,7 +268,7 @@ def get_batch(  # pragma: no cover
         batch["loss_mask"],
         batch.get("attention_mask"),
         batch["position_ids"],
-        _packed_metadata_for_forward(batch),
+        _packed_metadata_for_forward(batch, include_padding_mask=isinstance(cfg.dataset, FixedTHDMockDatasetConfig)),
     )
 
 
@@ -262,7 +277,12 @@ def forward_step(  # pragma: no cover
 ):
     """Forward training step for DSv4 with contiguous CP partition support."""
     output, loss_mask = _forward_step_common(
-        state, data_iterator, model, return_schedule_plan, _get_batch_fn=get_batch
+        state,
+        data_iterator,
+        model,
+        return_schedule_plan,
+        _get_batch_fn=get_batch,
+        _get_packed_seq_params_fn=_get_dsv4_packed_seq_params,
     )
     return output, _create_loss_function(
         loss_mask,

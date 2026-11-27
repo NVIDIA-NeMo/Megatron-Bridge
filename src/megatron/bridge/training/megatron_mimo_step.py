@@ -12,6 +12,7 @@ Key design notes (per PR 3212):
 from __future__ import annotations
 
 import logging
+import math
 from functools import partial
 from typing import Dict, Iterable, Optional, Tuple
 
@@ -52,6 +53,33 @@ def resolve_step_packing(dataset_cfg: object) -> bool:
             "megatron_mimo_step requires step-time in-batch packing; set defer_in_batch_packing_to_step=True"
         )
     return True
+
+
+def _language_packing_alignment(megatron_mimo_model: MimoModel) -> int:
+    """Return the length multiple for each packed language sequence on this rank.
+
+    MimoModel's partition adapter shards a packed batch for context parallelism one sequence at
+    a time, in 2 * CP zigzag chunks, and sequence parallelism then splits each CP rank's tokens
+    over the tensor-parallel group. This is the rule ``ConfigContainer`` applies to the other
+    in-batch packing paths, taken from the groups the adapter shards with.
+
+    Args:
+        megatron_mimo_model: The unwrapped MimoModel of a language rank.
+
+    Returns:
+        ``lcm(2 * CP if CP > 1 else 1, CP * TP if sequence parallel with TP > 1 else 1)``.
+    """
+    partition_adapter = megatron_mimo_model.partition_adapter
+    if partition_adapter is None:
+        return 1
+    partition_cfg = partition_adapter.cfg
+    cp_size = partition_cfg.cp_group.size() if partition_cfg.use_cp else 1
+    tp_size = 1
+    if partition_cfg.seq_parallel and partition_cfg.tp_group is not None:
+        tp_size = partition_cfg.tp_group.size()
+    cp_multiple = 2 * cp_size if cp_size > 1 else 1
+    sp_multiple = cp_size * tp_size if tp_size > 1 else 1
+    return math.lcm(cp_multiple, sp_multiple)
 
 
 def _get_module_dp_info(
@@ -286,13 +314,18 @@ def forward_step(
         # in order, so vision embeddings (via bridge) still align. Fires on ALL language stages:
         # the first stage packs input_ids, intermediate/last stages pack labels/loss_mask to the
         # SAME [1, T] using the caller-supplied lengths (from the batch's attention_mask), so
-        # packed-logits and label shapes match under PP>1.
+        # packed-logits and label shapes match under PP>1. Each sequence is padded to the
+        # language module's CP/SP multiple, which every stage derives the same way.
         if (
             pack_sequences_enabled
             and megatron_mimo_model.role is not None
             and megatron_mimo_model.role.has_language_module
         ):
-            data_batch, packing_kwargs = pack_language_shard(data_batch, lengths=pack_lengths)
+            data_batch, packing_kwargs = pack_language_shard(
+                data_batch,
+                lengths=pack_lengths,
+                pad_to_multiple_of=_language_packing_alignment(megatron_mimo_model),
+            )
             if packing_kwargs is not None:
                 cu_seqlens = packing_kwargs["cu_seqlens_q"]
                 data_batch["cu_seqlens"] = cu_seqlens.unsqueeze(0)

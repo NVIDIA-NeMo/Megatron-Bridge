@@ -19,7 +19,10 @@ import torch
 from transformers import LlamaConfig
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.recipes.llama import llama31_405b_pretrain_64gpu_gb200_fp8mx_config
+from megatron.bridge.recipes.llama import (
+    llama31_405b_pretrain_64gpu_gb200_fp8mx_config,
+    llama31_405b_pretrain_64gpu_vrnvl72_fp8mx_config,
+)
 from megatron.bridge.recipes.llama.h100.llama3 import llama31_405b_pretrain_256gpu_h100_bf16_config
 from megatron.bridge.training.config import runtime_config_update
 
@@ -54,21 +57,31 @@ def offline_llama405b():
 
 
 @pytest.mark.unit
-def test_llama405b_64gpu_runtime_contract(offline_llama405b, monkeypatch):
+@pytest.mark.parametrize(
+    "recipe,tp,vpp,dp,tp_overlap,create_attention_mask",
+    [
+        (llama31_405b_pretrain_64gpu_gb200_fp8mx_config, 8, 8, 1, True, True),
+        (llama31_405b_pretrain_64gpu_vrnvl72_fp8mx_config, 4, 4, 2, False, False),
+    ],
+)
+def test_llama405b_64gpu_runtime_contract(
+    offline_llama405b, monkeypatch, recipe, tp, vpp, dp, tp_overlap, create_attention_mask
+):
     """Finalization must preserve the full model, precision, and measured execution settings."""
     monkeypatch.setenv("WORLD_SIZE", "64")
     monkeypatch.setenv("RANK", "0")
-    cfg = llama31_405b_pretrain_64gpu_gb200_fp8mx_config()
+    cfg = recipe()
     runtime_config_update(cfg)
     model = cfg.model
     assert (model.num_layers, model.hidden_size, model.ffn_hidden_size) == (126, 16384, 53248)
     assert (model.num_attention_heads, model.num_query_groups, model.vocab_size) == (128, 8, 128256)
-    assert (model.tensor_model_parallel_size, model.pipeline_model_parallel_size) == (8, 8)
+    assert (model.tensor_model_parallel_size, model.pipeline_model_parallel_size) == (tp, 8)
     assert (model.virtual_pipeline_model_parallel_size, model.context_parallel_size, cfg.data_parallel_size) == (
-        8,
+        vpp,
         1,
-        1,
+        dp,
     )
+    assert tp * model.pipeline_model_parallel_size * model.context_parallel_size * cfg.data_parallel_size == 64
     assert (model.seq_length, cfg.dataset.seq_length) == (8192, 8192)
     assert (cfg.train.global_batch_size, cfg.train.micro_batch_size) == (1536, 1)
     assert model.sequence_parallel
@@ -88,15 +101,21 @@ def test_llama405b_64gpu_runtime_contract(offline_llama405b, monkeypatch):
     assert not cfg.optimizer.optimizer_cuda_graph
     assert cfg.rng.te_rng_tracker and model.use_te_rng_tracker
     assert not cfg.ddp.grad_reduce_in_fp32
-    assert model.tp_comm_overlap
+    assert model.tp_comm_overlap is tp_overlap
+    assert cfg.comm_overlap.tp_comm_overlap is tp_overlap
     assert cfg.comm_overlap.tp_comm_overlap_cfg is None
+    assert cfg.dataset.create_attention_mask is create_attention_mask
+    assert not cfg.dataset.reset_attention_mask and not cfg.dataset.reset_position_ids
 
 
 @pytest.mark.unit
-def test_llama405b_64gpu_retains_training_defaults(offline_llama405b):
+@pytest.mark.parametrize(
+    "recipe", [llama31_405b_pretrain_64gpu_gb200_fp8mx_config, llama31_405b_pretrain_64gpu_vrnvl72_fp8mx_config]
+)
+def test_llama405b_64gpu_retains_training_defaults(offline_llama405b, recipe):
     """A capacity recipe must retain checkpointing, checks, and the training schedule."""
     baseline = llama31_405b_pretrain_256gpu_h100_bf16_config()
-    cfg = llama31_405b_pretrain_64gpu_gb200_fp8mx_config()
+    cfg = recipe()
     assert cfg.train.train_iters == baseline.train.train_iters
     assert cfg.scheduler == baseline.scheduler
     assert cfg.checkpoint == baseline.checkpoint

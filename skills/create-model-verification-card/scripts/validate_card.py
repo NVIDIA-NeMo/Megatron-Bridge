@@ -58,6 +58,7 @@ OPTIONAL_ITEM_NAMES = (
     "pretrain_fsdp",
     "pretrain_weak_scaling",
 )
+IMPORT_EXPORT_ITEMS = REQUIRED_ITEM_NAMES[:4]
 ITEM_NAMES = REQUIRED_ITEM_NAMES + OPTIONAL_ITEM_NAMES
 MODEL_LEVEL_INDEX_SCOPE = (
     "hf_to_megatron_cpu",
@@ -457,34 +458,40 @@ def _validate_verification_index(
     items: Mapping[str, Any] | None,
     hardware_groups: Mapping[str, Mapping[str, Mapping[str, Any]]],
     errors: list[str],
+    verification_scope: str = "full",
 ) -> None:
     """Validate the compact index as an exact projection of detailed items."""
     path = ("verification_index",)
     verification_index = _as_mapping(value, path=path, errors=errors)
     if verification_index is None:
         return
+    conversion_only = verification_scope == "import_export"
+    model_scope = IMPORT_EXPORT_ITEMS if conversion_only else MODEL_LEVEL_INDEX_SCOPE
     _check_keys(
         verification_index,
-        allowed=VERIFICATION_INDEX_KEYS,
-        required=frozenset({"model_level", "training"}),
+        allowed=frozenset({"model_level"}) if conversion_only else VERIFICATION_INDEX_KEYS,
+        required=frozenset({"model_level"}) if conversion_only else frozenset({"model_level", "training"}),
         path=path,
         errors=errors,
     )
 
     model_statuses: dict[str, str] = {}
     if items is not None:
-        for item_name in MODEL_LEVEL_INDEX_SCOPE:
+        for item_name in model_scope:
             item = items.get(item_name)
             status = _item_status(item if isinstance(item, Mapping) else None)
             if status is not None:
                 model_statuses[item_name] = status
     _validate_index_status_buckets(
         verification_index.get("model_level"),
-        scope=MODEL_LEVEL_INDEX_SCOPE,
+        scope=model_scope,
         expected_statuses=model_statuses,
         path=(*path, "model_level"),
         errors=errors,
     )
+
+    if conversion_only:
+        return
 
     training_path = (*path, "training")
     training = _as_mapping(verification_index.get("training"), path=training_path, errors=errors)
@@ -2018,7 +2025,11 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
 
 def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...]) -> list[str]:
     errors: list[str] = []
-    _check_keys(card, allowed=TOP_LEVEL_KEYS, required=TOP_LEVEL_KEYS, path=(), errors=errors)
+    _check_keys(card, allowed=TOP_LEVEL_KEYS | {"verification_scope"}, required=TOP_LEVEL_KEYS, path=(), errors=errors)
+    verification_scope = card.get("verification_scope", "full")
+    if verification_scope not in ("full", "import_export"):
+        errors.append("/verification_scope: expected full or import_export")
+    conversion_only = verification_scope == "import_export"
 
     for name in ("title", "summary"):
         value = card.get(name)
@@ -2066,9 +2077,11 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
     hardware_groups: dict[str, dict[str, Mapping[str, Any]]] = {}
     if items is not None:
         item_names = set(items)
-        for name in sorted(item_names - set(ITEM_NAMES)):
+        allowed_items = IMPORT_EXPORT_ITEMS if conversion_only else ITEM_NAMES
+        required_items = IMPORT_EXPORT_ITEMS if conversion_only else REQUIRED_ITEM_NAMES
+        for name in sorted(item_names - set(allowed_items)):
             errors.append(f"{_pointer('items', name)}: unknown verification item")
-        for name in sorted(set(REQUIRED_ITEM_NAMES) - item_names):
+        for name in sorted(set(required_items) - item_names):
             errors.append(f"{_pointer('items', name)}: required verification item is missing")
         model_revision = model.get("hf_revision") if model is not None else None
         if not isinstance(model_revision, str):
@@ -2177,13 +2190,14 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
         items=items,
         hardware_groups=hardware_groups,
         errors=errors,
+        verification_scope=verification_scope,
     )
 
     summary = card.get("summary")
     if isinstance(summary, str) and items is not None:
         normalized_summary = " ".join(summary.split())
         has_performance_disclaimer = normalized_summary.startswith(PERFORMANCE_DISCLAIMERS)
-        if not has_canonical_performance_recipe and not has_performance_disclaimer:
+        if not conversion_only and not has_canonical_performance_recipe and not has_performance_disclaimer:
             errors.append(
                 f"{_pointer('summary')}: cards without a canonical pretrain_performance recipe "
                 "must start with the no-canonical-performance-result disclaimer"

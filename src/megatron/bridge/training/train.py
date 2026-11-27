@@ -57,11 +57,20 @@ from megatron.core.transformer.cuda_graphs import (
     CudaGraphManager,
     TECudaGraphHelper,
     VisionTECudaGraphHelper,
-    get_vision_te_cuda_graph_seq_length,
 )
 from megatron.core.transformer.cuda_graphs import (
     delete_cuda_graphs as delete_local_cuda_graphs,
 )
+
+
+try:
+    from megatron.core.transformer.cuda_graphs import get_vision_te_cuda_graph_seq_length
+except ImportError:
+    # MCore dev also supports non-TE vision graphs and renamed this helper.
+    from megatron.core.transformer.cuda_graphs import (
+        get_vision_cuda_graph_seq_length as get_vision_te_cuda_graph_seq_length,
+    )
+
 from megatron.core.utils import (
     check_param_hashes_across_dp_replicas,
     get_attr_wrapped_model,

@@ -332,7 +332,7 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: |-
-        Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights.
+        Qwen3.6 on GB300 is unverified; the command above has not been executed for its pinned weights. Build its Energon input first with uv run python tutorials/data/energon/prepare_medpix_data.py --output-dir work/data/medpix/energon-pinned --revision 69eb219d477ab8699296da1fd6b89beb768042d3 --train-rows all, which packages every training row of mmoukouba/MedPix-VQA at that revision; checkpoint_resume reuses it.
 
         Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: ad196b9a6d14ef62979fc8532af62a7d6ea0fe66. Verified on 2026-11-04.
         Executed Qwen3.5 command(s):
@@ -389,6 +389,7 @@ items:
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: c53f6734f429c4ae769ccc3869798ff0b74cb8e4  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -406,19 +407,19 @@ items:
         model.hf_model_id=Qwen/Qwen3.6-35B-A3B
         model.bos_token_id=248044
         logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/gb200-sft/resolved-config.yaml
-      last_verified: 2026-07-30
+      last_verified: 2026-11-09
       metrics:
-        initial_loss: 2.212866
-        final_loss: 0.9978729
-        last_10_steps_step_time_ms_avg: 9899.640
-        last_10_steps_model_tflops_per_gpu_avg: 38.180
-        last_10_steps_tokens_per_second_per_gpu_avg: 1655.010
+        initial_loss: 2.209864
+        final_loss: 0.9722831
+        last_10_steps_step_time_ms_avg: 5580.560
+        last_10_steps_model_tflops_per_gpu_avg: 67.550
+        last_10_steps_tokens_per_second_per_gpu_avg: 2935.906
       expected_result: >
-        On 8x GB200, the shared Qwen3.5/Qwen3.6-VL functional recipe completed
-        exactly 100 MedPix SFT steps at TP1/PP1/CP1/EP8/ETP1, MBS1/GBS32,
-        natural routing, HybridEP, no activation recompute, and BF16 gradient
-        reduction. Loss was finite from 2.212866 to 0.9978729 with zero skipped
-        or NaN iterations. Steps 91-100 averaged 9,899.640 ms and 38.180 model
+        On 8x GB200, measured at this item's Bridge commit, the shared Qwen3.5/Qwen3.6-VL functional
+        recipe completed exactly 100 MedPix SFT steps at TP1/PP1/CP1/EP8/ETP1,
+        MBS1/GBS32, natural routing, HybridEP, no activation recompute, and BF16 gradient
+        reduction. Loss was finite from 2.209864 to 0.9722831 with zero skipped
+        or NaN iterations. Steps 91-100 averaged 5,580.560 ms and 67.550 model
         TFLOP/s/GPU. The recipe intentionally disables checkpoint output for
         this bounded functional run; reload/export coverage remains represented
         by the H100 SFT and sft_export_inference items.

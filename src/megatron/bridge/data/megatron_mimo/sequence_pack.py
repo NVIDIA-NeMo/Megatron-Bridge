@@ -20,6 +20,10 @@ with ``cu_seqlens`` boundaries. Downstream, the ``cu_seqlens`` make attention bl
 per example (the qwen3-vl attention / flash-attn path already honors this), so packing does
 not leak attention across examples.
 
+Context and sequence parallelism shard a packed batch one sequence at a time, so each example
+can be padded at its end to a length multiple (``pad_to_multiple_of``). ``cu_seqlens`` then
+keep the real boundaries and ``cu_seqlens_padded`` the physical ones.
+
 This module packs the **whole shard** as one group — there is no per-pack length budget here,
 so the assembled pack is the entire shard.
 """
@@ -39,6 +43,7 @@ def assemble_packed_sequence(
     labels: Optional[torch.Tensor] = None,
     loss_mask: Optional[torch.Tensor] = None,
     position_ids: Optional[torch.Tensor] = None,
+    pad_to_multiple_of: int = 1,
 ) -> Dict[str, Any]:
     """Concatenate one group's real tokens into a single packed sequence (THD layout).
 
@@ -56,19 +61,25 @@ def assemble_packed_sequence(
         position_ids: Optional padded position ids. Both 2-D ``[B, S]`` and Qwen-VL MRoPE
             3-D ``[3, B, S]`` are handled; each sample's real slice is concatenated, so the
             packed positions are per-sample-reset (each sample's positions already start at 0).
+        pad_to_multiple_of: Length multiple for each sample's physical span. Padding follows
+            the sample's real tokens: token ``0``, label ``-100``, loss mask ``0``, and positions
+            that continue after the sample's largest real position. ``1`` packs tightly.
 
     Returns:
         Dict with ``input_ids`` / ``labels`` / ``loss_mask`` as packed ``[1, T]`` tensors
-        (T = sum of the group's real lengths; ``input_ids`` is ``None`` when ``tokens`` is
+        (T = sum of the group's padded lengths; ``input_ids`` is ``None`` when ``tokens`` is
         ``None``), ``position_ids`` as ``[1, T]`` (2-D input) or ``[3, 1, T]`` (MRoPE input),
-        ``cu_seqlens`` (``int32``, length ``len(group)+1``), and ``max_seqlen`` (int).
+        ``cu_seqlens`` (real boundaries) and ``cu_seqlens_padded`` (physical boundaries), both
+        ``int32`` with length ``len(group)+1``, and ``max_seqlen`` (int), the longest physical span.
 
     Raises:
-        ValueError: If ``position_ids`` is neither 2-D ``[B, S]`` nor 3-D MRoPE ``[3, B, S]``;
-            if none of ``tokens`` / ``labels`` / ``loss_mask`` / ``position_ids`` is a tensor
-            (no device or shape to pack to); or if the group's segment lengths sum to zero
-            (an empty packed shard cannot be built).
+        ValueError: If ``pad_to_multiple_of`` is below 1; if ``position_ids`` is neither 2-D
+            ``[B, S]`` nor 3-D MRoPE ``[3, B, S]``; if none of ``tokens`` / ``labels`` /
+            ``loss_mask`` / ``position_ids`` is a tensor (no device or shape to pack to); or if
+            the group's segment lengths sum to zero (an empty packed shard cannot be built).
     """
+    if pad_to_multiple_of < 1:
+        raise ValueError(f"pad_to_multiple_of must be at least 1 (got {pad_to_multiple_of}).")
     if position_ids is not None and position_ids.dim() not in (2, 3):
         raise ValueError(f"position_ids must be 2-D [B, S] or 3-D MRoPE [3, B, S] (got {position_ids.dim()}-D).")
     if position_ids is not None and position_ids.dim() == 3 and position_ids.size(0) != 3:
@@ -79,50 +90,53 @@ def assemble_packed_sequence(
         raise ValueError("assemble_packed_sequence needs at least one of tokens/labels/loss_mask/position_ids.")
     device = ref.device
     seglens = [int(lengths[i]) for i in group]
+    padded_seglens = [-(-seg // pad_to_multiple_of) * pad_to_multiple_of for seg in seglens]
     # Build the cumulative offsets in pure Python (seglens is already host-side), then move the
-    # cu_seqlens tensor to device in one copy — avoids per-element GPU scatter writes and the
-    # blocking ``.item()`` D2H sync this runs on the per-step pack path.
+    # cu_seqlens tensors to device in one copy each — avoids per-element GPU scatter writes and
+    # the blocking ``.item()`` D2H sync this runs on the per-step pack path.
     cu = [0]
-    for seg in seglens:
+    cu_padded = [0]
+    for seg, padded_seg in zip(seglens, padded_seglens):
         cu.append(cu[-1] + seg)
-    total = cu[-1]
-    if total <= 0:
+        cu_padded.append(cu_padded[-1] + padded_seg)
+    if cu[-1] <= 0:
         raise ValueError("assemble_packed_sequence cannot build an empty packed shard; all segment lengths are zero.")
+    total = cu_padded[-1]
     cu_seqlens = torch.tensor(cu, dtype=torch.int32, device=device)
+    cu_seqlens_padded = torch.tensor(cu_padded, dtype=torch.int32, device=device)
 
     def _concat(src: Optional[torch.Tensor], pad: int) -> Optional[torch.Tensor]:
         if src is None:
             return None
         out = torch.full((1, total), pad, dtype=src.dtype, device=device)
-        offset = 0
-        for i, seg in zip(group, seglens):
-            out[0, offset : offset + seg] = src[i, :seg]
-            offset += seg
+        for i, seg, start in zip(group, seglens, cu_padded):
+            out[0, start : start + seg] = src[i, :seg]
         return out
 
-    def _concat_mrope(src: torch.Tensor) -> torch.Tensor:
-        # MRoPE [3, B, S] -> [3, 1, T]: concat each sample's real [3, seg] slice along T.
-        out = torch.zeros((3, 1, total), dtype=src.dtype, device=device)
-        offset = 0
-        for i, seg in zip(group, seglens):
-            out[:, 0, offset : offset + seg] = src[:, i, :seg]
-            offset += seg
+    def _concat_position_ids(src: torch.Tensor) -> torch.Tensor:
+        # [B, S] -> [1, T], or MRoPE [3, B, S] -> [3, 1, T]. Padding continues after the sample's
+        # largest real position on every axis, as text that followed the sample would.
+        mrope = src.dim() == 3
+        out = torch.zeros((3, 1, total) if mrope else (1, total), dtype=src.dtype, device=device)
+        rows = out[:, 0] if mrope else out  # [axes, T] view of out
+        for i, seg, padded_seg, start in zip(group, seglens, padded_seglens, cu_padded):
+            real = src[:, i, :seg] if mrope else src[i, :seg].unsqueeze(0)
+            rows[:, start : start + seg] = real
+            if padded_seg > seg:
+                first_pad_position = real[:, -1].max() + 1
+                rows[:, start + seg : start + padded_seg] = first_pad_position + torch.arange(
+                    padded_seg - seg, dtype=src.dtype, device=device
+                )
         return out
-
-    if position_ids is None:
-        packed_position_ids: Optional[torch.Tensor] = None
-    elif position_ids.dim() == 3:
-        packed_position_ids = _concat_mrope(position_ids)
-    else:
-        packed_position_ids = _concat(position_ids, 0)
 
     return {
         "input_ids": _concat(tokens, 0),
         "labels": _concat(labels, -100),
         "loss_mask": _concat(loss_mask, 0),
-        "position_ids": packed_position_ids,
+        "position_ids": None if position_ids is None else _concat_position_ids(position_ids),
         "cu_seqlens": cu_seqlens,
-        "max_seqlen": max(seglens) if seglens else 0,
+        "cu_seqlens_padded": cu_seqlens_padded,
+        "max_seqlen": max(padded_seglens) if padded_seglens else 0,
     }
 
 
@@ -130,6 +144,7 @@ def pack_language_shard(
     data_batch: Dict[str, Any],
     *,
     lengths: torch.Tensor | None = None,
+    pad_to_multiple_of: int = 1,
 ) -> "tuple[Dict[str, Any], Dict[str, Any]] | tuple[Dict[str, Any], None]":
     """Pack a per-DP-shard language batch ``[bs, S]`` into a single packed sequence ``[1, T]``.
 
@@ -156,6 +171,9 @@ def pack_language_shard(
             or MRoPE ``[3, bs, S]``).
         lengths: Per-sample real token lengths ``[bs]`` from the caller. When ``None`` the batch
             is returned unchanged (no supported length source).
+        pad_to_multiple_of: Length multiple for each sample's physical span in the pack (see
+            ``assemble_packed_sequence``). Language context and sequence parallelism need it;
+            ``1`` packs tightly.
 
     Returns:
         ``(packed_batch, packing_kwargs)``. ``packing_kwargs`` is ``None`` (and the batch is
@@ -197,6 +215,7 @@ def pack_language_shard(
         labels=labels,
         loss_mask=loss_mask,
         position_ids=position_ids,
+        pad_to_multiple_of=pad_to_multiple_of,
     )
 
     packed_batch = dict(data_batch)
@@ -208,16 +227,16 @@ def pack_language_shard(
     packed_batch["attention_mask"] = None  # block-diagonal attention comes from cu_seqlens
 
     cu = pack["cu_seqlens"]
+    cu_padded = pack["cu_seqlens_padded"]
     max_seqlen = int(pack["max_seqlen"])
-    # The packed sequence is tight (segments concatenated with no inter-segment padding), so the
-    # padded cu_seqlens coincide with the unpadded ones. They must still be populated because
-    # the MIMO CP>1 THD partition path dereferences cu_seqlens_q_padded / cu_seqlens_kv_padded.
-    # validation-pending (multi-node): the live CP>1 partition is verified on the 16xH100 rig.
+    # The padded boundaries equal the real ones unless pad_to_multiple_of pads a sample. Megatron-
+    # Core's packed CP sharding splits each padded span, and attention then runs over the padded
+    # spans, so max_seqlen is the longest padded span.
     packing_kwargs = {
         "cu_seqlens_q": cu,
         "cu_seqlens_kv": cu,
-        "cu_seqlens_q_padded": cu,
-        "cu_seqlens_kv_padded": cu,
+        "cu_seqlens_q_padded": cu_padded,
+        "cu_seqlens_kv_padded": cu_padded,
         "max_seqlen_q": max_seqlen,
         "max_seqlen_kv": max_seqlen,
     }

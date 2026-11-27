@@ -361,37 +361,39 @@ If you're tempted to add a model-specific `if model_type == "..."` branch in sha
 pattern-matching on specific weight names in shared conversion logic, that's a signal to use a
 local subclass or hook override instead.
 
-### Update FLOPs calculator for new architectural blocks
+### Model-owned FLOPs accounting
 
-If the model introduces a new computational block that differs from standard attention or MLP
-(e.g., Gated DeltaNet / GDN linear attention, Multi-Token Prediction / MTP heads, Mamba SSM layers),
-update the FLOPs calculator in `src/megatron/bridge/training/utils/flop_utils.py` so that
-training throughput metrics (TFLOPs/GPU) are accurate.
+Always provide an `estimate_flops` function for new models, including custom
+blocks and multimodal wrappers. Follow Core's model-owned estimators (for
+example `SelfAttention`, `GatedDeltaNet`, and `MoELayer`): keep architecture formulas
+beside the model and compose reusable block estimates. Do not add model-family
+conditionals to `training/utils/flop_utils.py`.
 
-**When to update:** Any time the new block has different FLOPs-per-token than standard self-attention
-or standard MLP. Common cases:
-- Linear attention variants (GDN, RetNet, RWKV) — replace the `O(s²)` attention term with the
-  block's actual operation count
-- MTP / speculative decoding heads — add FLOPs for the extra projection and norm layers
-- SSM layers (Mamba) — different recurrence FLOPs than attention
-- Novel MoE routing — may change the effective expert count
+Implement the Core hook as a pure classmethod:
+`estimate_flops(config, *, total_real_tokens_in_batch, seqlen_squared_sum_in_batch)`.
+It returns forward FLOPs without constructing modules, mutating configs, or
+running collectives. Reuse Core estimates for standard blocks; count custom
+blocks locally. Apply backward multipliers outside these block hooks and keep
+detached indexer work separate.
 
-**How to update:**
+Expose the composed estimator through the model config so Bridge's shared training
+accounting can call it without allocating weights. The language estimator takes
+`batch_size`, runtime `seqlen_sum` and `seqlen_squared_sum`; a VLM additionally
+exposes `estimate_vision_flops` with additive per-image patch and merged-token
+statistics. The full model's `estimate_flops` composes its language and modality
+components. Ensure the training logger actually dispatches to these functions.
 
-1. Read the existing `transformer_flops()` function in `flop_utils.py` to understand the structure.
-2. Add a conditional block gated on a config attribute (e.g., `experimental_attention_variant`,
-   `mtp_num_layers`). Follow the existing MoE pattern for config validation — raise on invalid
-   types, assert list lengths, and use direct attribute access instead of `getattr` with fallback
-   defaults so that misconfigurations fail explicitly.
-3. Compute the per-layer FLOPs for the new block and blend it with the standard attention term
-   based on the layer pattern.
-4. Add unit tests in `tests/unit_tests/training/utils/test_flop_utils.py` that verify:
-   - New-block FLOPs differ from pure-attention baseline
-   - Exact formula matches hand-computed expected values
-   - Varying the block ratio (e.g., `linear_attention_freq`) changes FLOPs
+Count logical global work, not replicated TP/EP execution or GPU utilization.
+State the forward/backward multiplier and count detached or frozen operations
+according to the gradient work actually performed. Keep sequence-quadratic work
+based on summed squared lengths, and vision work based on individual images,
+not the square of all concatenated patches. Document approximations and omitted
+operations, especially sparse attention and selection. Never revise historical
+TFLOP/s measurements to imply that a new estimator was used in an earlier run.
 
-Reference PR: [#2925 — GDN FLOPs calculator](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/2925)
-adds GDN support with both the calculator code and comprehensive tests.
+Keep a few hand-computed tests covering the nonstandard blocks, forward versus
+training work, runtime sequence/vision statistics, and the logger dispatch.
+Avoid tests that simply duplicate the estimator's implementation.
 
 ## Phase 3: Recipe Support
 

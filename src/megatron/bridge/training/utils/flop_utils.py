@@ -13,9 +13,10 @@
 # limitations under the License.
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import torch
@@ -523,10 +524,10 @@ def accumulate_flops_metadata(
 def _get_vision_config(cfg: ConfigContainer):
     """Return a direct or thinker-nested vision config when available."""
     vision_config = getattr(cfg.model, "vision_config", None)
-    if vision_config is not None:
-        return vision_config
-    thinker_config = getattr(cfg.model, "thinker_config", None)
-    return getattr(thinker_config, "vision_config", None)
+    if vision_config is None:
+        thinker_config = getattr(cfg.model, "thinker_config", None)
+        vision_config = getattr(thinker_config, "vision_config", None)
+    return SimpleNamespace(**vision_config) if isinstance(vision_config, Mapping) else vision_config
 
 
 def vit_flops_from_patch_stats(
@@ -537,6 +538,9 @@ def vit_flops_from_patch_stats(
     merged_token_sum: int | torch.Tensor,
 ) -> int | torch.Tensor:
     """Calculate ViT FLOPS from additive per-attention-sequence statistics."""
+    estimator = getattr(cfg.model, "estimate_vision_flops", None)
+    if estimator is not None:
+        return estimator(patch_sum=patch_sum, patch_squared_sum=patch_squared_sum, merged_token_sum=merged_token_sum)
     vision_config = _get_vision_config(cfg)
     if vision_config is None:
         return 0
@@ -717,6 +721,19 @@ def num_floating_point_operations(
     """
     peft = getattr(cfg, "peft", None)
     is_lora = isinstance(peft, LoRA)
+    estimator = getattr(cfg.model, "estimate_flops", None)
+    if estimator is not None and peft is None:
+        language_flops = estimator(
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+        )
+        # Legacy callers only know aggregate patches; retain their equal-image approximation.
+        vision_flops = 0
+        if num_vision_patches > 0:
+            patches_per_image = num_vision_patches / batch_size if batch_size > 0 else num_vision_patches
+            vision_flops = vit_flops(cfg, batch_size, patches_per_image)
+        return language_flops + vision_flops
     runtime_flops_estimator = getattr(cfg.model, "_get_num_floating_point_operations_with_runtime_stats", None)
     if runtime_flops_estimator is not None and not is_lora:
         return runtime_flops_estimator(
@@ -725,6 +742,24 @@ def num_floating_point_operations(
             seqlen_squared_sum=seqlen_squared_sum,
             cross_seqlen_sum=cross_seqlen_sum,
             cross_seqlen_product_sum=cross_seqlen_product_sum,
+        )
+
+    if (
+        not is_lora
+        and getattr(cfg.model, "experimental_attention_variant", None) == "kda"
+        and getattr(cfg.model, "hybrid_layer_pattern", None)
+        and hasattr(cfg.model, "transformer")
+    ):
+        # Core's native Hybrid counter includes KDA, MLA, AttnRes and MTP.
+        # The generic Bridge Hybrid counter below only counts the older symbols.
+        from megatron.training.training import num_floating_point_operations as native_hybrid_flops
+
+        return native_hybrid_flops(
+            cfg.model,
+            batch_size,
+            sequence_length=cfg.dataset.seq_length,
+            total_real_tokens_in_batch=seqlen_sum,
+            seqlen_squared_sum_in_batch=seqlen_squared_sum,
         )
 
     # Compute effective sequence length from actual values or fall back to config.
@@ -1587,9 +1622,9 @@ def num_floating_point_operations(
                 gdn_self_attn_per_layer * num_gdn_layers + standard_self_attn_per_layer * num_standard_attn_layers
             )
 
-        # Handle Kimi K3's KDA (Kimi Delta Attention) hybrid schedule. The K3 provider
-        # subclasses MLAModelProvider, so the branches above cost every layer as MLA --
-        # including the quadratic core-attention term. Layers listed in `kimi_kda_layers`
+        # Handle Kimi K3's KDA (Kimi Delta Attention) schedule. The MLA estimator
+        # above initially costs every logical block as full MLA attention.
+        # Layers listed in `kimi_kda_layers`
         # are linear-attention blocks instead, so replace their share of the MLA cost
         # with the KDA per-layer cost.
         kimi_kda_layers = getattr(cfg.model, "kimi_kda_layers", None)
@@ -1725,6 +1760,22 @@ def num_floating_point_operations(
                 cfg.model.transformer = copy.copy(cfg.model.transformer)
             cfg.model.num_layers = len(main) // 2
             cfg.model.moe_layer_freq = [int(main[i] == "E") for i in range(1, len(main), 2)]
+            return transformer_flops()
+
+    # Kimi splits each logical block into KDA/MLA attention and a dense/MoE
+    # layer. Reuse its paired-block estimator so K and + retain their costs.
+    if pattern and getattr(cfg.model, "kimi_linear_num_heads", None):
+        import copy
+
+        main = pattern.split("/")[0].replace("|", "")
+        if len(main) % 2 == 0 and all(main[i : i + 2] in ("K-", "KE", "+-", "+E") for i in range(0, len(main), 2)):
+            cfg = copy.copy(cfg)
+            cfg.model = copy.copy(cfg.model)
+            if hasattr(cfg.model, "transformer"):
+                cfg.model.transformer = copy.copy(cfg.model.transformer)
+            cfg.model.num_layers = len(main) // 2
+            cfg.model.moe_layer_freq = [int(layer == "E") for layer in main[1::2]]
+            cfg.model.kimi_kda_layers = tuple(i + 1 for i, layer in enumerate(main[::2]) if layer == "K")
             return transformer_flops()
 
     # Main entrypoint for FLOPs calculation. Mirror MCore's hybrid detection:

@@ -1,0 +1,200 @@
+title: qwen3_8_flash_next_vlm
+summary: 'Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing
+  and throughput metrics are functional verification observations, not standalone optimized performance results.
+  This VLM card covers text_only=False: full language, vision encoder and projector import/export, plus image SFT.
+  All 1,627 supported tensors passed exact GPU roundtrip comparison, and 100 image-SFT updates are verified. The
+  recipe is EARLY, UNOPTIMIZED. Text-only frozen-PLE pretraining is recorded separately in the qwen3.8-flash-next-text-only
+  card.'
+verification_index:
+  model_level:
+    verified:
+    - hf_to_megatron_gpu
+    - megatron_to_hf_gpu
+    unverified:
+    - hf_to_megatron_cpu
+    - megatron_to_hf_cpu
+    - manual_forward_pass
+    - inference
+  training:
+    GB200:
+      verified:
+      - sft
+      unverified:
+      - pretrain
+      - sft_export_inference
+      - sft_long_context
+      - peft
+      - checkpoint_resume
+model:
+  hf_id: Qwen/Qwen3.8-Flash-Next
+  hf_revision: de4b8e4d43b917e7706784d8bb445c9af86a3540  # pragma: allowlist secret
+  architecture: Qwen4ExpForConditionalGeneration
+  min_transformers_version: 5.16.1
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.10
+  bridge_commit: 1359a94264fadc590826edd29638b60bda554f5d  # pragma: allowlist secret
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: CPU import and persisted-checkpoint reload have not been verified.
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: ./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --tp
+      4 --pp 1 --ep 8 --etp 1 --hf-model Qwen/Qwen3.8-Flash-Next --hf-revision de4b8e4d43b917e7706784d8bb445c9af86a3540
+      --torch-dtype bfloat16 --megatron-path work/checkpoints/qwen3.8-flash-next-vl
+    last_verified: '2026-11-22'
+    expected_result: Full language/vision import persisted a native checkpoint that reloaded in a fresh export process.
+      The supported full-VL roundtrip retained exact tensor keys, shapes, dtypes and bytes. MTP is unsupported and
+      excluded.
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: CPU export, reload, and weight equality have not been verified.
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    command: ./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --tp
+      4 --pp 1 --ep 8 --etp 1 --hf-model Qwen/Qwen3.8-Flash-Next --hf-revision de4b8e4d43b917e7706784d8bb445c9af86a3540
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16 --distributed-save --megatron-path work/checkpoints/qwen3.8-flash-next-vl
+      --hf-path work/exports/exported-hf
+    last_verified: '2026-11-22'
+    expected_result: 'Fresh native reload and export completed. All 1,627 supported tensors match the pinned HF
+      checkpoint exactly by key, shape, dtype and bytes: 333 vision tensors, 1,624 BF16 tensors and three I64 PLE
+      buffers. The 31 unsupported MTP tensors are excluded. Reloaded config fields match except provenance metadata
+      and unsupported MTP configuration; tokenizer and image-processor configuration and a processed image batch
+      agree. An auxiliary asset checker failed on integer-key diagnostic formatting after successful export and
+      weight comparison, causing the original wrapper to exit unsuccessfully. The repaired checker passed separately
+      on the same preserved export in the released container. This does not verify inference or training-trajectory
+      equivalence.'
+    bridge_commit: 195182b68ef07ccf4b6569da1f51e75dc8c712d8  # pragma: allowlist secret
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: The public model-comparison command has not been qualified on this revision. Historical component-level
+      numerical investigations and metadata/kernel checks do not establish complete HF/Bridge forward or training-trajectory
+      parity.
+  inference:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: Standalone deterministic generation has not been verified. Cached generation is unsupported
+      by the current model implementation.
+  pretrain:
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: Full-VLM pretraining with image inputs has not been verified. The fixed-4096-token frozen-PLE
+        Muon run belongs to the separate text-only card.
+  sft:
+    GB200:
+      status: verified
+      precision: bf16
+      enabled_features:
+        moe_dispatcher: hybridep
+      command: ./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe qwen38_flash_next_sft_64gpu_gb200_bf16_config
+        --mode sft --step-func qwen3_vl_step --max_steps 100 --pretrained_checkpoint work/cache/qwen3.8-flash-next
+        dataset.path=work/data/datacomp-8192
+        logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/sft/resolved-config.yaml
+        logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/sft/tensorboard
+      bridge_commit: def1f75cbfac2b7376fb84fe89bd4a3da14d53af  # pragma: allowlist secret
+      last_verified: '2026-11-23'
+      metrics:
+        initial_loss: 4.365921497344971
+        final_loss: 1.9951726198196411
+        last_10_steps_step_time_ms_avg: 1513.917350769043
+        last_10_steps_model_tflops_per_gpu_avg: 28.944172859191895
+        last_10_steps_tokens_per_second_per_gpu_avg: 676.390953231249
+      expected_result: 'EARLY, UNOPTIMIZED recipe. Completed 100 native Energon image-SFT updates from the full pinned
+        HF checkpoint. The bounded dataset contains the first 8,192 complete image-caption pairs from two retained
+        DataComp shards, in shard/member order, with no skipped samples. Each ChatML conversation uses the prompt "Describe
+        this image." and supervises the original caption; image bytes are preserved. PLE lookup tables are frozen and
+        EP-sharded; detached QSA indexer weights are frozen. Remaining language modules, vision encoder and projector
+        are trainable. Configuration: 64 GB200 GPUs, TP4/SP, EP64/ETP1, PP1/CP1, fixed padded unpacked sequence 4096,
+        MBS1/GBS16, BF16 with FP32 gradient reduction, distributed Adam, constant LR 1e-6, zero weight decay and clip 1.
+        Natural routing, HybridEP, MoE fusions and manual GC every 100 steps are enabled. CUDA graphs, recomputation,
+        gradient/parameter overlap, shared-expert overlap, evaluation and checkpoint saving are disabled.
+        All 64 ranks completed 100 finite, unskipped updates with zero NaN iterations. Full frozen PLE/indexer hashes
+        were unchanged; selected language/vision parameters and FP32 Adam samples changed. Real image inputs and encoder
+        execution were observed. The run consumed 1,600 conversations and 37,805 supervised tokens, counted once across
+        dense-DP representatives. Preclip gradient norms ranged from 19.290594 to 163.363068. Final-ten metrics use
+        updates 91-100. Native timings include lightweight verification callbacks; no profiler was active. Periodic
+        GC runs after step-100 logging, so this window excludes that endpoint collection. Throughput counts padded
+        slots, not supervised tokens; short captions leave substantial padding. TFLOPs estimate model matrix work,
+        with a dense QSA surrogate and approximate GDN recurrence, rather than hardware utilization. These are bounded
+        functional observations, not held-out quality, convergence or cross-layout numerical equivalence. Dataset,
+        sequence length and trainable parameters differ from the historical 2K Nemotron SFT run, so the two results
+        are not a controlled performance comparison.'
+  sft_export_inference:
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: SFT checkpoint export, reload, and deterministic HF generation remain unverified.
+  sft_long_context:
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: Long-context SFT with packing and context parallelism has not been verified.
+  peft:
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: Parameter-efficient finetuning has not been verified.
+  checkpoint_resume:
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: []
+        loss_relative_tolerance: 0.01
+        loss_absolute_tolerance: 1.0e-06
+        sentinels_match: null
+      expected_result: Full optimizer/RNG checkpoint resume and loss sentinels have not been verified.

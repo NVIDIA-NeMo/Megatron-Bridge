@@ -146,7 +146,6 @@ if _Version(_transformers_version) >= _Version("5.23"):
 from megatron.bridge.models.kimi import (
     KimiK2Bridge,
     KimiK3Bridge,
-    KimiK3ModelProvider,
 )
 from megatron.bridge.models.kimi_vl import (
     KimiK25VLBridge,
@@ -211,6 +210,10 @@ from megatron.bridge.models.nemotronh import (
 from megatron.bridge.models.olmoe import (
     OlMoEBridge,
     OlMoEModelProvider,
+)
+from megatron.bridge.models.qwen import (
+    Qwen4ExpBridge,
+    Qwen4ExpTextBridge,
 )
 from megatron.bridge.models.qwen3_asr import (
     Qwen3ASRBridge,
@@ -318,7 +321,6 @@ __all__ = [
     "HybridModelProvider",
     "KimiK2Bridge",
     "KimiK3Bridge",
-    "KimiK3ModelProvider",
     "KimiK25VLModel",
     "KimiK25VLBridge",
     "KimiK25VLModelConfig",
@@ -374,6 +376,8 @@ __all__ = [
     "Qwen3VLMoEModelProvider",
     "Qwen3VLBridge",
     "Qwen3VLMoEBridge",
+    "Qwen4ExpBridge",
+    "Qwen4ExpTextBridge",
     "Qwen35VLBridge",
     "Qwen35TokenClassificationBridge",
     "Qwen35TokenClassificationModelProvider",

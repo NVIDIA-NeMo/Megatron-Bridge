@@ -10,9 +10,53 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMI
 
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
+    from torch.distributed import ProcessGroupNCCL
 
 
 EXPERT_VIEW_NAME = "expert"
+
+
+def _lazy_nccl_pg_options() -> "ProcessGroupNCCL.Options | None":
+    """Return new NCCL options that create a MegatronMIMO group's communicator on first use.
+
+    PyTorch builds whose ``nccl`` backend is ProcessGroupNCCL2 bind the default process group to a
+    device, so every later ``new_group`` splits its NCCL communicator eagerly, even if the group
+    never communicates. MegatronMIMO creates every parallelism group of every module on every
+    rank, so eager splitting holds NCCL buffers for groups the rank never uses. ``lazy_init``
+    instead creates a group's communicator at the group's first operation. That creation is
+    collective over all members, so every member must take part in the first operation: MIMO
+    groups are used by collectives over the whole group, and every pipeline stage issues its
+    point-to-point operations on its pipeline group during the warm-up phase.
+
+    Returns:
+        Options with ``lazy_init=True`` when the default process group is a ProcessGroupNCCL2 group
+        bound to a device and PyTorch has the option, else None (default options). ``lazy_init`` is
+        specific to ProcessGroupNCCL2; on the legacy backend it would only replace the split with an
+        eager per-group initialization. Each call returns a new object because PyTorch writes
+        per-group settings into the options it is given.
+    """
+    if not dist.is_initialized() or dist.get_backend() != dist.Backend.NCCL:
+        return None
+    default_group = dist.group.WORLD
+    device = getattr(default_group, "bound_device_id", None)
+    nccl2_backend = getattr(dist, "ProcessGroupNCCL2", None)
+    if device is None or nccl2_backend is None:
+        return None
+    try:
+        backend = default_group._get_backend(device)
+    except RuntimeError:
+        return None
+    # TORCH_DISTRIBUTED_DEBUG=DETAIL wraps backends for collective checks; look through it as PyTorch's split does.
+    debug_wrapper = getattr(getattr(dist, "distributed_c10d", None), "_ProcessGroupWrapper", None)
+    while debug_wrapper is not None and isinstance(backend, debug_wrapper):
+        backend = backend.wrapped_pg
+    if not isinstance(backend, nccl2_backend):
+        return None
+    options = dist.ProcessGroupNCCL.Options()
+    if not hasattr(options, "lazy_init"):
+        return None
+    options.lazy_init = True
+    return options
 
 
 def build_hypercomm_grids(
@@ -27,6 +71,10 @@ def build_hypercomm_grids(
     rank span. Dense process groups (tp/cp/dp/pp) come from the base view; expert-parallel groups
     (expt_tp/ep/expt_dp) come from the expert view, matching the contract mcore's
     ``get_mimo_optimizer`` expects.
+
+    The groups are created with lazy NCCL initialization when the backend would otherwise split
+    every group eagerly (see ``_lazy_nccl_pg_options``), so a group allocates NCCL resources only
+    once it communicates.
 
     Args:
         megatron_mimo_parallelism_config: MegatronMIMOParallelismConfig specifying parallelism per module.
@@ -74,7 +122,7 @@ def build_hypercomm_grids(
             ["tp", "dp", "cp"],
             ["tp", "cp", "dp", "pp"],
         ):
-            _ = grid.create_pg(dims)
+            _ = grid.create_pg(dims, pg_options=_lazy_nccl_pg_options())
 
         for dims in (
             ["ep"],
@@ -83,7 +131,7 @@ def build_hypercomm_grids(
             ["expt_tp", "ep"],
             ["expt_tp", "ep", "pp"],
         ):
-            _ = grid.create_pg(dims, view=EXPERT_VIEW_NAME)
+            _ = grid.create_pg(dims, view=EXPERT_VIEW_NAME, pg_options=_lazy_nccl_pg_options())
 
         grids[module_name] = grid
 
@@ -120,12 +168,12 @@ def populate_embedding_and_position_groups(
 
         # Every global rank must create every derived group in the same order.
         pos_embd_ranks = [pp_ranks[0]]
-        pos_embd_pg = dist.new_group(ranks=pos_embd_ranks)
+        pos_embd_pg = dist.new_group(ranks=pos_embd_ranks, pg_options=_lazy_nccl_pg_options())
 
         embd_ranks = [pp_ranks[0]]
         if len(pp_ranks) > 1 and pp_ranks[-1] != pp_ranks[0]:
             embd_ranks.append(pp_ranks[-1])
-        embd_pg = dist.new_group(ranks=embd_ranks)
+        embd_pg = dist.new_group(ranks=embd_ranks, pg_options=_lazy_nccl_pg_options())
 
         if current_rank in pos_embd_ranks:
             local_pos_embd_pg = pos_embd_pg

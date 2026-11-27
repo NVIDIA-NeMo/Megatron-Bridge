@@ -63,6 +63,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TrainingConfig,
     ValidationConfig,
+    _sync_mxfp8_reuse_grad_buf_settings,
     _validate_and_sync_distributed_optimizer_settings,
     _validate_mixed_precision_consistency,
     apply_environment_variables,
@@ -2640,7 +2641,9 @@ class TestConfigContainerValidation:
         )
         try:
             container.ddp.fp8_param_gather = fp8_param_gather
-            container.ddp.reuse_grad_buf_for_mxfp8_param_ag = reuse_grad_buffer
+            # Deliberately disagree: GTP must validate the optimizer's effective setting.
+            container.ddp.reuse_grad_buf_for_mxfp8_param_ag = not reuse_grad_buffer
+            container.optimizer.reuse_grad_buf_for_mxfp8_param_ag = reuse_grad_buffer
             if error_match is None:
                 container.validate()
             else:
@@ -4239,13 +4242,32 @@ class TestRuntimeConfigUpdate:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     @staticmethod
-    def _ncclep_binding_cfg(backend="ncclep", dispatcher="flex"):
+    def _ncclep_binding_cfg(backend="ncclep", dispatcher="flex", megakernel=None):
         from types import SimpleNamespace
 
         return SimpleNamespace(
-            model=SimpleNamespace(moe_token_dispatcher_type=dispatcher, moe_flex_dispatcher_backend=backend),
+            model=SimpleNamespace(
+                moe_token_dispatcher_type=dispatcher,
+                moe_flex_dispatcher_backend=backend,
+                moe_megakernel_backend=megakernel,
+            ),
             dist=SimpleNamespace(external_gpu_device_mapping=False),
         )
+
+    @pytest.mark.parametrize("visible", ["0,1,2,3", "5"])
+    def test_ncclep_one_gpu_per_rank_is_noop_for_moe_megakernel(self, monkeypatch, visible):
+        """The megakernel owns dispatch/combine; its symmetric-memory buffers need each rank's device index."""
+        from megatron.bridge.training.config import apply_ncclep_one_gpu_per_rank
+
+        monkeypatch.setenv("LOCAL_RANK", "2")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
+        monkeypatch.setattr("torch.cuda.is_initialized", lambda: False)
+        cfg = self._ncclep_binding_cfg(megakernel="mok")
+
+        apply_ncclep_one_gpu_per_rank(cfg)
+
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == visible
+        assert cfg.dist.external_gpu_device_mapping is False
 
     def test_ncclep_one_gpu_per_rank_narrows_visible_devices(self, monkeypatch):
         """NCCL EP recipes keep only the local rank's GPU and switch the trainer to device 0."""
@@ -4799,6 +4821,112 @@ class TestDistributedOptimizerValidation:
                     assert expected_part in call_args
             else:
                 assert len(overlap_warnings) == 0
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        "model_fp8, ddp_reuse, optimizer_reuse, optimizer_fp8_recipe, expected_reuse, expected_fp8_recipe, warns",
+        [
+            ("e4m3", True, False, None, False, "mxfp8", True),
+            ("e4m3", False, True, None, True, "mxfp8", True),
+            ("e4m3", True, True, "tensorwise", True, "mxfp8", False),
+            (None, True, False, None, False, "mxfp8", True),
+            ("e4m3", False, False, None, False, "mxfp8", False),
+            ("e4m3", False, False, "delayed", False, "mxfp8", False),
+            ("e4m3", True, True, "mxfp8", True, "mxfp8", False),
+        ],
+    )
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_reuse_grad_buf_for_mxfp8_param_ag_sync_scenarios(
+        self,
+        mock_warn_rank_0,
+        model_fp8,
+        ddp_reuse,
+        optimizer_reuse,
+        optimizer_fp8_recipe,
+        expected_reuse,
+        expected_fp8_recipe,
+        warns,
+    ):
+        """The optimizer owns reuse (including False); the model owns FP8 recipe."""
+        gpt_model_cfg = create_test_gpt_config(fp8=model_fp8, fp8_recipe="mxfp8")
+        ddp_cfg = create_test_ddp_config(reuse_grad_buf_for_mxfp8_param_ag=ddp_reuse)
+        optimizer_cfg = create_test_optimizer_config(
+            reuse_grad_buf_for_mxfp8_param_ag=optimizer_reuse, fp8_recipe=optimizer_fp8_recipe
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            ddp_config=ddp_cfg,
+            optimizer_config=optimizer_cfg,
+        )
+
+        try:
+            _sync_mxfp8_reuse_grad_buf_settings(container)
+
+            assert container.ddp.reuse_grad_buf_for_mxfp8_param_ag is expected_reuse
+            assert container.optimizer.reuse_grad_buf_for_mxfp8_param_ag is expected_reuse
+            assert container.optimizer.fp8_recipe == expected_fp8_recipe
+
+            reuse_warnings = [
+                call
+                for call in mock_warn_rank_0.call_args_list
+                if call[0] and "reuse_grad_buf_for_mxfp8_param_ag settings were not in sync" in call[0][0]
+            ]
+            assert len(reuse_warnings) == (1 if warns else 0)
+            recipe_warnings = [call for call in mock_warn_rank_0.call_args_list if "fp8_recipe settings" in call[0][0]]
+            assert len(recipe_warnings) == int(optimizer_fp8_recipe not in (None, expected_fp8_recipe))
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("optimizer_reuse", [False, True])
+    @pytest.mark.parametrize("optimizer_fp8_recipe", [None, "delayed", "tensorwise"])
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_validate_syncs_reuse_grad_buf_for_mxfp8_param_ag(
+        self, mock_warn_rank_0, optimizer_reuse, optimizer_fp8_recipe
+    ):
+        """Resolve conflicts before optimizer finalization, including the manual MXFP8 path."""
+        gpt_model_cfg = create_test_gpt_config(bf16=True, fp8="e4m3", fp8_recipe="mxfp8")
+        ddp_cfg = create_test_ddp_config(reuse_grad_buf_for_mxfp8_param_ag=not optimizer_reuse)
+        optimizer_cfg = create_test_optimizer_config(
+            bf16=True,
+            use_distributed_optimizer=True,
+            use_precision_aware_optimizer=True,
+            main_params_dtype=torch.float32,
+            optimizer_cpu_offload=False,
+            reuse_grad_buf_for_mxfp8_param_ag=optimizer_reuse,
+            fp8_recipe=optimizer_fp8_recipe,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            ddp_config=ddp_cfg,
+            optimizer_config=optimizer_cfg,
+        )
+
+        try:
+            assert container.mixed_precision is None
+            original_finalize = container.optimizer.finalize
+
+            def check_effective_settings() -> None:
+                assert container.optimizer.fp8_recipe == "mxfp8"
+                assert container.ddp.reuse_grad_buf_for_mxfp8_param_ag is optimizer_reuse
+                original_finalize()
+
+            with patch.object(container.optimizer, "finalize", side_effect=check_effective_settings) as finalize:
+                container.validate()
+                finalize.assert_called_once()
+
+            assert container.ddp.reuse_grad_buf_for_mxfp8_param_ag is optimizer_reuse
+            assert container.optimizer.reuse_grad_buf_for_mxfp8_param_ag is optimizer_reuse
+            assert container.optimizer.fp8_recipe == "mxfp8"
+            # This is the MCore predicate that otherwise omits the main parameter
+            # shards consumed by MXFP8 gradient-buffer reuse (NVBug 7111493).
+            assert container.optimizer.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is False
 
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -5836,6 +5964,94 @@ def test_fsdp_v1_meta_initialization_checks_all_strategies(expert, monkeypatch):
             cfg._validate_and_apply_megatron_fsdp_v1_configs()
     finally:
         restore_get_world_size_safe(original, module)
+
+
+class TestFixedTHDDeepSeekV4PackingValidation:
+    @pytest.fixture
+    def fixed_thd_config(self, monkeypatch):
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        model_cfg = create_test_gpt_config(
+            num_layers=4,
+            pipeline_model_parallel_size=2,
+            context_parallel_size=2,
+            experimental_attention_variant="dsv4_hybrid",
+            sequence_packing_scheduler="dp_balanced",
+            pad_packed_seq_alignment="max",
+            calculate_per_token_loss=True,
+            cuda_graph_thd_max_packed_sequences=8,
+            attention_cp_layout="contiguous",
+            linear_cp_layout="contiguous",
+        )
+        # These tests isolate Bridge's data routing contract; the tiny GPT
+        # stand-in does not implement DSv4's model geometry or kernels.
+        monkeypatch.setattr(model_cfg, "finalize", lambda: None)
+        dataset_cfg = create_test_gpt_sft_dataset_config(512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512, pad_cu_seqlens=True)
+        dataset_cfg.dataset_kwargs = {"pad_to_max_length": True}
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=create_test_training_config(micro_batch_size=1, global_batch_size=8),
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+        try:
+            yield container
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fixed_thd_keeps_scheduler_marker_without_probing_online_scheduler(self, fixed_thd_config, monkeypatch):
+        from megatron.bridge.training import global_batch_packing
+
+        probe = MagicMock(side_effect=AssertionError("Prepacked batches must not probe the online scheduler"))
+        monkeypatch.setattr(global_batch_packing, "probe_global_batch_packing_support", probe)
+
+        fixed_thd_config.validate()
+
+        probe.assert_not_called()
+        assert fixed_thd_config.model.sequence_packing_scheduler == "dp_balanced"
+        assert not global_batch_packing.global_batch_packing_enabled(fixed_thd_config.model)
+
+    def test_fixed_thd_mock_dataset_satisfies_static_contract(self, fixed_thd_config):
+        from megatron.bridge.models.deepseek.deepseek_v4_data import FixedTHDMockDatasetConfig
+
+        fixed_thd_config.dataset = FixedTHDMockDatasetConfig(
+            seq_length=512, vocab_size=128, seed=1234, metadata_capacity=8
+        )
+
+        fixed_thd_config.validate()
+
+    def test_explicit_online_request_is_not_silently_ignored(self, fixed_thd_config):
+        fixed_thd_config.dataset.enable_global_batch_packing = True
+        with pytest.raises(ValueError, match="does not run the online scheduler"):
+            fixed_thd_config.validate()
+
+    @pytest.mark.parametrize("missing_contract", ["offline", "specs", "boundaries", "fixed_width"])
+    def test_fixed_thd_requires_static_prepacked_data(self, fixed_thd_config, missing_contract):
+        dataset = fixed_thd_config.dataset
+        if missing_contract == "offline":
+            dataset.enable_offline_packing = False
+        elif missing_contract == "specs":
+            dataset.offline_packing_specs = None
+        elif missing_contract == "boundaries":
+            dataset.offline_packing_specs.pad_cu_seqlens = False
+        else:
+            dataset.dataset_kwargs = {"pad_to_max_length": False}
+        with pytest.raises(ValueError, match="Fixed-THD DSv4 requires dataset.enable_offline_packing"):
+            fixed_thd_config.validate()
+
+    def test_invalid_fixed_thd_contract_does_not_bypass_dataset_validation(self, fixed_thd_config):
+        fixed_thd_config.model.pad_packed_seq_alignment = "cp"
+
+        with pytest.raises(ValueError, match="driven by the dataset"):
+            fixed_thd_config.validate()
+
+    def test_fixed_thd_requires_model_token_width(self, fixed_thd_config):
+        fixed_thd_config.dataset.offline_packing_specs.packed_sequence_size = 256
+        with pytest.raises(ValueError, match="packed_sequence_size=model.seq_length"):
+            fixed_thd_config.validate()
 
 
 @pytest.mark.parametrize("dense", ["no_shard", "optim", "optim_grads", "optim_grads_params"])
