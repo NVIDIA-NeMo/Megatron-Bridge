@@ -144,6 +144,9 @@ def build_shards(data_root: Path, output_dir: Path, split: str, samples_per_shar
             sink.write(sample)
             written += 1
 
+    if written == 0:
+        Path(pattern % 0).unlink(missing_ok=True)
+
     logger.info(f"  {split}: wrote {written} samples, skipped {skipped} (missing video/audio)")
     return written
 

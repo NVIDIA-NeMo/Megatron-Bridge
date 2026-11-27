@@ -21,6 +21,7 @@ import pytest
 import torch
 
 import megatron.bridge.models.deepseek.deepseek_v4_step as dsv4_step
+from megatron.bridge.models.deepseek.deepseek_v4_data import FixedTHDMockDatasetConfig
 from megatron.bridge.models.deepseek.deepseek_v4_step import _partition_packed_batch_contiguous
 
 
@@ -260,3 +261,79 @@ def test_native_cp_requires_packed_metadata(monkeypatch):
     )
     with pytest.raises(ValueError, match="requires packed THD metadata"):
         dsv4_step.get_batch(iter(()), cfg, pg_collection=SimpleNamespace(cp=cp_group, pp=object()))
+
+
+@pytest.mark.unit
+class TestFixedTHDBatches:
+    @pytest.mark.parametrize(("pp_rank", "pp_size", "vp_stage"), [(0, 4, 0), (1, 4, 2), (3, 4, 3), (0, 1, None)])
+    def test_contiguous_cp_retains_padding_metadata_on_every_pipeline_stage(
+        self, monkeypatch, pp_rank, pp_size, vp_stage
+    ):
+        """First, middle, MTP and PP1 stages see the same global THD boundaries."""
+        monkeypatch.setattr(torch.Tensor, "cuda", lambda self, **kwargs: self)
+        monkeypatch.setattr(dsv4_step.parallel_state, "get_context_parallel_rank", lambda: 1)
+        monkeypatch.setattr(dsv4_step, "is_pp_first_stage", lambda group: pp_rank == 0)
+        monkeypatch.setattr(dsv4_step, "is_pp_last_stage", lambda group: pp_rank == pp_size - 1)
+        monkeypatch.setattr(dsv4_step, "is_vp_first_stage", lambda **kwargs: vp_stage == 0)
+        monkeypatch.setattr(dsv4_step, "is_vp_last_stage", lambda **kwargs: vp_stage == 3)
+        cfg = SimpleNamespace(
+            model=SimpleNamespace(
+                virtual_pipeline_model_parallel_size=4 if pp_size > 1 else None,
+                pipeline_model_parallel_layout=None,
+                attention_cp_layout="contiguous",
+                linear_cp_layout="contiguous",
+            ),
+            dataset=FixedTHDMockDatasetConfig(seq_length=8, vocab_size=256, seed=1234, metadata_capacity=2),
+        )
+        batch = {
+            "tokens": torch.arange(8).unsqueeze(0),
+            "labels": torch.arange(8).unsqueeze(0),
+            "position_ids": torch.arange(8).unsqueeze(0),
+            "loss_mask": torch.tensor([[1.0] * 7 + [0.0]]),
+            "cu_seqlens_q": torch.tensor([[0, 7, 7]], dtype=torch.int32),
+            "cu_seqlens_kv": torch.tensor([[0, 7, 7]], dtype=torch.int32),
+            "cu_seqlens_q_padded": torch.tensor([[0, 8, 8]], dtype=torch.int32),
+            "cu_seqlens_kv_padded": torch.tensor([[0, 8, 8]], dtype=torch.int32),
+            "max_seqlen_q": torch.tensor([8], dtype=torch.int32),
+            "max_seqlen_kv": torch.tensor([8], dtype=torch.int32),
+            "pad_between_seqs": torch.tensor([True]),
+            "padding_mask": torch.tensor([[False] * 7 + [True]]),
+        }
+        result = dsv4_step.get_batch(
+            iter([batch]),
+            cfg,
+            use_mtp=True,
+            pg_collection=SimpleNamespace(pp=object(), cp=SimpleNamespace(size=lambda: 2, rank=lambda: 1)),
+            vp_stage=vp_stage,
+        )
+        tokens, _, _, _, _, metadata = result
+        assert tokens.tolist() == [[4, 5, 6, 7]]
+        assert metadata["cu_seqlens_q"].tolist() == [[0, 7, 7]]
+        assert metadata["cu_seqlens_q_padded"].tolist() == [[0, 8, 8]]
+        assert metadata["max_seqlen_q"].item() == 8
+        assert metadata["pad_between_seqs"].item() is True
+        assert metadata["padding_mask"].tolist() == [[False, False, False, True]]
+
+    def test_packed_params_omit_ssm_sequence_index(self, monkeypatch):
+        """DSv4 has no SSM layers, so total_tokens never reaches PackedSeqParams."""
+        boundaries = torch.tensor([0, 7, 7], dtype=torch.int32)
+        metadata = {"cu_seqlens_q": boundaries, "total_tokens": 4}
+        params = object()
+        build = Mock(return_value=params)
+        monkeypatch.setattr(dsv4_step, "get_packed_seq_params", build)
+
+        assert dsv4_step._get_dsv4_packed_seq_params(metadata) is params
+        build.assert_called_once_with({"cu_seqlens_q": boundaries})
+        assert metadata["total_tokens"] == 4
+
+
+@pytest.mark.parametrize("boundary_key", ["cu_seqlens", "cu_seqlens_q"])
+def test_padding_mask_requires_explicit_fixed_thd_opt_in(boundary_key):
+    boundaries = torch.tensor([[0, 7, 8]], dtype=torch.int32)
+    mask = torch.tensor([[False] * 7 + [True]])
+    batch = {boundary_key: boundaries, "padding_mask": mask}
+    native = dsv4_step._packed_metadata_for_forward(batch)
+    fixed_thd = dsv4_step._packed_metadata_for_forward(batch, include_padding_mask=True)
+    assert native[boundary_key] is fixed_thd[boundary_key] is boundaries
+    assert "padding_mask" not in native
+    assert fixed_thd["padding_mask"] is mask

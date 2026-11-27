@@ -168,6 +168,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         packed_seq_params: Optional[PackedSeqParams] = None,
         *,
         cp_group: torch.distributed.ProcessGroup | None = None,
+        position_ids_cp_sharded: bool = False,
         **kwargs,
     ) -> Tensor:
         """Forward pass of multimodal RoPE embedding.
@@ -178,6 +179,8 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
                 height and width in rope calculation.
             packed_seq_params (PackedSeqParams, optional): Packed sequence params. Defaults to None.
             cp_group (ProcessGroup, optional): Runtime CP group; defaults to the construction group.
+            position_ids_cp_sharded (bool): Whether ``position_ids`` already hold only this CP rank's part of
+                the sequence. The embedding is then returned without slicing it for the rank again.
         Returns:
             Tensor: Embeddings after applying RoPE.
         """
@@ -201,7 +204,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         # shape (seq_length, bs, 1, 2 * dim)
         emb = emb[..., None, :].transpose(0, 1).contiguous()
         cp_group = self.cp_group if cp_group is None else cp_group
-        if cp_group.size() > 1 and not self.is_thd_format:
+        if cp_group.size() > 1 and not (self.is_thd_format or position_ids_cp_sharded):
             # slice rotary_pos_emb along sequence dimension and select the parition of the current
             # CP rank
             emb = get_pos_emb_on_this_cp_rank(emb, 0, cp_group)
@@ -268,11 +271,11 @@ def _build_llm_rope_positions(
     st = 0
     remain_images, remain_videos = image_nums, video_nums
     for _ in range(image_nums + video_nums):
-        if image_token_id in input_tokens and remain_images > 0:
+        if remain_images > 0 and image_token_id in input_tokens:
             ed_image = input_tokens.index(image_token_id, st)
         else:
             ed_image = len(input_tokens) + 1
-        if video_token_id in input_tokens and remain_videos > 0:
+        if remain_videos > 0 and video_token_id in input_tokens:
             ed_video = input_tokens.index(video_token_id, st)
         else:
             ed_video = len(input_tokens) + 1

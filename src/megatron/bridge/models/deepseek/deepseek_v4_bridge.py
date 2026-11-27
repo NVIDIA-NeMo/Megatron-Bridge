@@ -740,7 +740,8 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 # KV (single projection) / KV norm
                 AutoMapping(f"{inner}.self_attention.linear_kv_proj.weight", f"{ck}.attn.wkv.weight"),
                 AutoMapping(f"{inner}.self_attention.kv_layernorm.weight", f"{ck}.attn.kv_norm.weight"),
-                # Factored output projection: wo_a (group param) + wo_b (row-parallel linear)
+                # MLM #7971 adds a TE module; the fallback keeps the bare 2D parameter.
+                ReplicatedMapping(f"{inner}.self_attention.linear_o_group_proj.weight", f"{ck}.attn.wo_a.weight"),
                 ReplicatedMapping(f"{inner}.self_attention.linear_o_group_proj", f"{ck}.attn.wo_a.weight"),
                 AutoMapping(f"{inner}.self_attention.linear_proj.weight", f"{ck}.attn.wo_b.weight"),
                 # Attention sink: split by TP (size = num_heads // TP on each rank)
