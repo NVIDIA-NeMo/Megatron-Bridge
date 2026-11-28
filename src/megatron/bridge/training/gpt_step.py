@@ -15,7 +15,7 @@
 import logging
 from dataclasses import dataclass
 from functools import partial, wraps
-from typing import Iterable
+from typing import Callable, Iterable
 
 import modelopt.torch.distill as mtd
 import torch
@@ -586,6 +586,8 @@ def _forward_step_common(
     model: GPTModel,
     return_schedule_plan: bool = False,
     *,
+    output_processor: Callable[..., torch.Tensor] | None = None,
+    output_processor_context: object = None,
     _get_batch_fn=None,
     _get_packed_seq_params_fn=None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -596,6 +598,8 @@ def _forward_step_common(
         data_iterator: Input data iterator
         model: The GPT Model
         return_schedule_plan (bool): Whether to return the schedule plan instead of the output tensor
+        output_processor: Optional Megatron Core output processor.
+        output_processor_context: Opaque context forwarded to the output processor for this invocation.
 
     Returns:
         tuple containing the output tensor and loss mask
@@ -658,12 +662,20 @@ def _forward_step_common(
             cu_seqlens_unpadded_argmin=packed.flops_cu_seqlens_unpadded_argmin,
         )
 
+    output_processor_args = {}
+    if output_processor is not None or output_processor_context is not None:
+        output_processor_args = {
+            "output_processor": output_processor,
+            "output_processor_context": output_processor_context,
+        }
+
     forward_args = {
         "input_ids": tokens,
         "position_ids": position_ids,
         "attention_mask": attention_mask,
         "labels": labels,
         "loss_mask": loss_mask,
+        **output_processor_args,
     }
 
     # Packed sequences and padding masks: one representation for every packing mode.
@@ -699,6 +711,7 @@ def _forward_step_common(
                 loss_mask=loss_mask,
                 packed_seq_params=forward_args.get("packed_seq_params"),
                 padding_mask=forward_args.get("padding_mask"),
+                **output_processor_args,
             )
             return schedule_plan, loss_mask
         else:
@@ -708,7 +721,13 @@ def _forward_step_common(
 
 
 def forward_step(
-    state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False
+    state: GlobalState,
+    data_iterator: Iterable,
+    model: GPTModel,
+    return_schedule_plan: bool = False,
+    *,
+    output_processor: Callable[..., torch.Tensor] | None = None,
+    output_processor_context: object = None,
 ) -> tuple[torch.Tensor, partial]:
     """Forward training step.
 
@@ -717,11 +736,26 @@ def forward_step(
         data_iterator: Input data iterator
         model: The GPT Model
         return_schedule_plan (bool): Whether to return the schedule plan instead of the output tensor
+        output_processor: Optional callable following Megatron Core's GPT output-processor contract.
+            Core invokes it on post-process stages with decoder hidden states, output-layer helpers,
+            prepared labels and loss mask, and context. Also forwarded when building a schedule plan.
+        output_processor_context: Opaque, invocation-local context passed unchanged to Core. Bridge
+            does not move, broadcast, shard, or pack its contents.
 
     Returns:
-        tuple containing the output tensor and the loss function
+        Tuple containing the output tensor (or schedule plan) and the standard masked language-model
+        loss function. If the processor returns a tensor incompatible with that loss, a custom
+        forward-step wrapper must replace the returned loss function. Processing applies in both
+        training and evaluation; omitting the processor and context preserves the default model call.
     """
-    output, loss_mask = _forward_step_common(state, data_iterator, model, return_schedule_plan)
+    output, loss_mask = _forward_step_common(
+        state,
+        data_iterator,
+        model,
+        return_schedule_plan,
+        output_processor=output_processor,
+        output_processor_context=output_processor_context,
+    )
 
     loss_function = _create_loss_function(
         loss_mask,
