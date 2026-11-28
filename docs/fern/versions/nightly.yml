@@ -81,6 +81,8 @@ navigation:
       path: ./nightly/pages/models/glm/glm5.mdx
     - page: GLM-5.2
       path: ./nightly/pages/models/glm/glm5-2.mdx
+    - page: GLM-5.3-Flash
+      path: ./nightly/pages/models/glm/glm5-next.mdx
     section: GLM
   - contents:
     - page: GPT OSS 20B
