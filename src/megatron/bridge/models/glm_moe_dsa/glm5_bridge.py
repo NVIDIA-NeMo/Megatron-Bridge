@@ -19,6 +19,7 @@ from typing import Any
 import torch
 from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.transformer.enums import AttnBackend
+from megatron.core.transformer.experimental_attention_variant.dsa import is_dsa_skip_topk_layer
 from transformers import GlmMoeDsaForCausalLM, PretrainedConfig
 
 from megatron.bridge.models.conversion import quantization_utils
@@ -34,6 +35,27 @@ from megatron.bridge.models.glm_moe_dsa.glm5_provider import GLM5ModelProvider, 
 
 
 logger = logging.getLogger(__name__)
+
+
+def _glm_hybrid_pattern_from_hf_config(hf_config: PretrainedConfig) -> str:
+    """Build the GLM hybrid pattern from the HF config's per-layer MLP types.
+
+    Transformers builds each GLM-5 decoder layer from ``mlp_layer_types`` and only derives that list from
+    ``first_k_dense_replace`` when it is unset, so ``mlp_layer_types`` wins whenever it is present.
+    """
+    num_layers = hf_config.num_hidden_layers
+    mlp_layer_types = getattr(hf_config, "mlp_layer_types", None)
+    if mlp_layer_types is None:
+        return glm_hybrid_pattern(num_layers=num_layers, first_k_dense_replace=hf_config.first_k_dense_replace)
+    mlp_layer_types = list(mlp_layer_types)
+    if len(mlp_layer_types) != num_layers:
+        raise ValueError(
+            f"GLM-5 mlp_layer_types has {len(mlp_layer_types)} entries but num_hidden_layers is {num_layers}."
+        )
+    unsupported = sorted(set(mlp_layer_types) - {"dense", "sparse"})
+    if unsupported:
+        raise ValueError(f"Unsupported GLM-5 mlp_layer_types: {unsupported}.")
+    return "".join("D-" if layer_type == "dense" else "DE" for layer_type in mlp_layer_types)
 
 
 @MegatronModelBridge.register_bridge(
@@ -69,10 +91,24 @@ class GLM5Bridge(MegatronModelBridge):
         """Export HF block counts and preserve the reference model's context length."""
         config = super().megatron_to_hf_config(provider)
         pattern = provider.hybrid_layer_pattern.split("/")[0].replace("|", "")
-        config["num_hidden_layers"] = pattern.count("D")
-        config["first_k_dense_replace"] = pattern.count("-")
-        config["index_topk_freq"] = provider.dsa_indexer_topk_freq
-        config["index_skip_topk_offset"] = provider.dsa_indexer_skip_topk_offset
+        mlp_layer_types = ["dense" if pattern[i + 1] == "-" else "sparse" for i in range(0, len(pattern), 2)]
+        num_layers = len(mlp_layer_types)
+        topk_freq = provider.dsa_indexer_topk_freq
+        skip_topk_offset = provider.dsa_indexer_skip_topk_offset
+        config["num_hidden_layers"] = num_layers
+        # Transformers builds the layers from the per-layer lists below; write them so the export does not
+        # backfill the reference checkpoint's lists, whose length and pattern may differ from this model's.
+        config["mlp_layer_types"] = mlp_layer_types
+        config["first_k_dense_replace"] = next(
+            (index for index, layer_type in enumerate(mlp_layer_types) if layer_type != "dense"), num_layers
+        )
+        config["layer_types"] = ["indexed_attention"] * num_layers
+        config["index_topk_freq"] = topk_freq
+        config["index_skip_topk_offset"] = skip_topk_offset
+        config["indexer_types"] = [
+            "shared" if is_dsa_skip_topk_layer(layer_number, skip_topk_offset or 0, topk_freq or 1) else "full"
+            for layer_number in range(1, num_layers + 1)
+        ]
         # Training seq_length is not the pretrained context limit. Let the HF
         # reference config supply max_position_embeddings (or use its default).
         config.pop("max_position_embeddings", None)
@@ -93,9 +129,7 @@ class GLM5Bridge(MegatronModelBridge):
     def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Map a GLM-5 HF config to ``GLM5ModelConfig`` kwargs, as ``GLM5ModelProvider`` was configured."""
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
-        hybrid_layer_pattern = glm_hybrid_pattern(
-            num_layers=hf_config.num_hidden_layers, first_k_dense_replace=hf_config.first_k_dense_replace
-        )
+        hybrid_layer_pattern = _glm_hybrid_pattern_from_hf_config(hf_config)
         config_kwargs.update(
             normalization="RMSNorm",
             gated_linear_unit=True,
