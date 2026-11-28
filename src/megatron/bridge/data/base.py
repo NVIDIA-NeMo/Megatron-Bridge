@@ -50,6 +50,11 @@ class DataloaderConfig:
     """Number of batches each dataloader worker loads in advance. ``None`` keeps PyTorch's default
     (2). Ignored when ``num_workers`` is 0."""
 
+    multiprocessing_context: str | None = None
+    """Start method for dataloader worker processes (``"fork"``, ``"spawn"`` or ``"forkserver"``).
+    ``None`` keeps PyTorch's default (the platform default, ``fork`` on Linux). Ignored when ``num_workers``
+    is 0. ``spawn`` needs a picklable dataset and collate function."""
+
     trust_remote_code: bool | None = None
     """Whether remote code is trusted for a configured Hugging Face path."""
 
