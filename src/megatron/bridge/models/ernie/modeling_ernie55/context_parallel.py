@@ -76,6 +76,7 @@ micro-batches.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import functools
 import importlib
@@ -610,9 +611,11 @@ class ContiguousBackwardOwners:
         from megatron.core.context_parallel_layout import CpPartitionModeConverter
 
         def convert(source, target):
+            # Gradient conversion runs after the layer has restored the activation layout.
+            # Keep the converter's mutable layout tag private and share the prebuilt routes.
             return CpPartitionModeConverter(
                 cp_group=cp_group,
-                packed_seq_params=packed_seq_params,
+                packed_seq_params=copy.copy(packed_seq_params),
                 source_partition_mode=source,
                 target_partition_mode=target,
                 config=config,
