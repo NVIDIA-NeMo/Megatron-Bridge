@@ -356,8 +356,10 @@ class MuseGlimmerVisionAttention(nn.Module):
         query_dtype, key_dtype = query.dtype, key.dtype
         cosine = cosine[:, None, :].float()
         sine = sine[:, None, :].float()
-        query = ((query.float() * cosine) + (_rotate_half(query.float()) * sine)).to(query_dtype)
-        key = ((key.float() * cosine) + (_rotate_half(key.float()) * sine)).to(key_dtype)
+        query_fp32 = query.float()
+        key_fp32 = key.float()
+        query = ((query_fp32 * cosine) + (_rotate_half(query_fp32) * sine)).to(query_dtype)
+        key = ((key_fp32 * cosine) + (_rotate_half(key_fp32) * sine)).to(key_dtype)
 
         outputs = []
         boundaries = cu_seqlens.tolist()
