@@ -28,6 +28,11 @@ if (
 
     _BAGEL_EXPORTS = ["BagelBridge", "BagelConfig", "BagelModelProvider"]
 
+from megatron.bridge.models.apertus import APERTUS1P5_AVAILABLE, ApertusBridge
+
+
+if APERTUS1P5_AVAILABLE:
+    from megatron.bridge.models.apertus import Apertus1p5Bridge
 from megatron.bridge.models.bailing import (
     BailingMoeV2Bridge,
 )
@@ -283,6 +288,7 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    "ApertusBridge",
     "BailingMoeV2Bridge",
     "BertModelProvider",
     # DeepSeek Models
@@ -436,3 +442,5 @@ __all__ = [
 ] + _BAGEL_EXPORTS
 
 __all__ += _INKLING_EXPORTS
+if APERTUS1P5_AVAILABLE:
+    __all__.append("Apertus1p5Bridge")
