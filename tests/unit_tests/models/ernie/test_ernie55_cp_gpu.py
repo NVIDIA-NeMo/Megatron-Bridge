@@ -47,8 +47,9 @@ deterministic backward) is gated at 3 times its noise instead.
 * ``test_d_layer_cp4_full_recompute``: the D layer at CP = 4 through Megatron-Core's full recompute
   (``tensor_parallel.checkpoint``) on the padded 8K pack. The no-grad forward (the plain top-k hook,
   as in every D-layer forward of a run with full recompute) and the replay (the loss hook) must both
-  get the packed arguments and run the ``PACKED_THD_GENERAL`` executor, select identical top-k sets,
-  and give the forward's output again; output and gradients match CP = 1 within the gates.
+  get the packed arguments and select identical top-k sets. The packed scorer runs twice with the
+  default settings and once with checkpoint top-k reuse. The replay then uses the original selection
+  in the same slot order. Both variants compare the output, KL and gradients against CP = 1.
 * ``test_d_layer_cp4_packed_scoring_speedup``: forward plus backward of the D layer at CP = 4 on the
   32K pack with ``PACKED_THD_GENERAL`` against the same layer forced onto ``UNFUSED_BOUNDS``;
   logs both times and requires a speedup.
@@ -86,6 +87,7 @@ import inspect
 import itertools
 import logging
 import os
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -486,7 +488,15 @@ def _run(
     module.zero_grad(set_to_none=True)
     try:
         hidden = hidden.detach().clone().requires_grad_(True)
-        output = tensor_parallel.checkpoint(forward, False, hidden) if recompute else forward(hidden)
+        if recompute:
+            checkpoint_forward = forward
+            if module.config.ernie_reuse_checkpoint_topk:
+                from megatron.core.recompute import with_checkpoint_topk_cache
+
+                checkpoint_forward = with_checkpoint_topk_cache(forward)
+            output = tensor_parallel.checkpoint(checkpoint_forward, False, hidden)
+        else:
+            output = forward(hidden)
         output.backward(grad_output * scale)
     finally:
         if capture_d:
@@ -815,18 +825,35 @@ def test_d_layer_cp4_matches_cp1(cp4, monkeypatch, layout):
     _assert_all_ranks(failures, f"D layer CP4 vs CP1 ({layout})")
 
 
-def test_d_layer_cp4_full_recompute(cp4, monkeypatch):
-    """Full recompute at CP = 4: both passes request and run PACKED_THD_GENERAL and select the same keys.
+@pytest.mark.parametrize(
+    ("reuse_topk", "overlap_with_backward_owners"),
+    [(False, False), (True, False), (True, True)],
+    ids=["rescore", "reuse", "reuse-overlap-contiguous-backward"],
+)
+def test_d_layer_cp4_full_recompute(cp4, monkeypatch, reuse_topk, overlap_with_backward_owners):
+    """Full recompute at CP = 4: replay either scores again or consumes the cached selection.
 
     With Megatron-Core's full recompute every D-layer forward runs without autograd, so without the
     indexer loss (the plain top-k hook), and the backward replays it with the loss hook. If the two
     passes selected different keys, the gradient would belong to another function than the output.
     """
-    from megatron.bridge.models.ernie.modeling_ernie55 import INDEXER_SCORING_PACKED_THD_GENERAL
+    from megatron.bridge.models.ernie.modeling_ernie55 import INDEXER_SCORING_PACKED_THD_GENERAL, context_parallel
 
     doc_lens, padded_lens = _D_LAYOUTS["padded-multi-document-8k"]
     total = sum(padded_lens)
-    cp_module, cp1_module = _twins("dsa_layer", cp4, seed=2024)
+    cp_module, cp1_module = _twins(
+        "dsa_layer",
+        cp4,
+        seed=2024,
+        config_overrides=dict(
+            recompute_granularity="full",
+            recompute_method="uniform",
+            recompute_num_layers=1,
+            ernie_reuse_checkpoint_topk=reuse_topk,
+            ernie_overlap_latent_kv_gather=overlap_with_backward_owners,
+            ernie_dsa_contiguous_backward=overlap_with_backward_owners,
+        ),
+    )
     hidden, grad_output = _inputs(cp_module.config.hidden_size, total, seed=17)
     rows = _rank_rows(total, cp4.rank)
     cp1_params = _packed_seq_params(doc_lens, padded_lens=padded_lens)
@@ -836,15 +863,32 @@ def test_d_layer_cp4_full_recompute(cp4, monkeypatch):
     counts = _spy_scoring_executors(monkeypatch)
     hooks = _spy_topk_hooks(monkeypatch)
     cp_params = _packed_seq_params(doc_lens, padded_lens=padded_lens, prebuild_group=cp4.cp.cp)
-    cp_run = _run(
-        cp_module, hidden[rows], grad_output[rows], cp_params, scale=float(CP), capture_d=True, recompute=True
-    )
+    with (
+        patch.object(context_parallel, "DeferredLatentKV", wraps=context_parallel.DeferredLatentKV) as deferred,
+        patch.object(context_parallel, "gather_cp_rows", wraps=context_parallel.gather_cp_rows) as gather,
+    ):
+        cp_run = _run(
+            cp_module, hidden[rows], grad_output[rows], cp_params, scale=float(CP), capture_d=True, recompute=True
+        )
 
     failures = _compare(cp_run, cp1_run, rows, cp4, "D full recompute (padded 8K)", noise)
+    if overlap_with_backward_owners:
+        # Only the no-grad forward can defer the latent gather. The replay must route dKV to contiguous owners.
+        owner_gathers = sum(call.kwargs.get("backward_owners") is not None for call in gather.call_args_list)
+        if (deferred.call_count, owner_gathers) != (1, 1):
+            failures.append(
+                f"expected one deferred gather and one contiguous-owner gather, got {deferred.call_count} and {owner_gathers}"
+            )
     # The plain hook in the no-grad forward, then the loss hook in the replay.
     failures += _hook_failures(hooks, ["run_fused_qk_topk", "run_fused_qk_topk_with_loss"], cp_params)
-    if counts != {"packed_thd_general": 2, "packed_single_segments": 0}:
-        failures.append(f"scoring executors {counts}, expected PACKED_THD_GENERAL once per pass")
+    expected_scans = 1 if reuse_topk else 2
+    if counts != {"packed_thd_general": expected_scans, "packed_single_segments": 0}:
+        failures.append(f"scoring executors {counts}, expected {expected_scans} packed dense scans")
+    if len(hooks) == 2:
+        recorded = hooks[0][1].get("return_selected_scores", False)
+        reused = hooks[1][1].get("cached_topk") is not None
+        if (recorded, reused) != (reuse_topk, reuse_topk):
+            failures.append(f"top-k cache record={recorded}, reuse={reused}, expected both {reuse_topk}")
     if cp_run.plan != INDEXER_SCORING_PACKED_THD_GENERAL:
         failures.append(f"requested scoring plan {cp_run.plan}")
     if cp_params.cp_partition_mode != "contiguous":
@@ -860,6 +904,8 @@ def test_d_layer_cp4_full_recompute(cp4, monkeypatch):
         mismatched_rows = int((~_same_selection(forward_topk, replay_topk)).sum())
         if mismatched_rows:
             failures.append(f"{mismatched_rows} rows select different keys in the no-grad forward and the replay")
+        if reuse_topk and not torch.equal(forward_topk, replay_topk):
+            failures.append("checkpoint replay changed the order of the saved attention slots")
         forward_output, replay_output = (output.float() for output in cp_run.passes)
         replay_cosine, replay_rel_err = _cosine(replay_output, forward_output), _rel_err(replay_output, forward_output)
         if replay_cosine < _FORWARD_MIN_COSINE or replay_rel_err > _FORWARD_MAX_REL_ERR:

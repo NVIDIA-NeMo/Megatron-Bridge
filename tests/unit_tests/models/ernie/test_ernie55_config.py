@@ -86,6 +86,7 @@ ERNIE_FIELDS = {
     "ernie_fused_ops": True,
     "ernie_fused_situ_prob": False,
     "ernie_fused_mhc": False,
+    "ernie_reuse_checkpoint_topk": False,
     "ernie_muon_ns_batch_size": 1,
     "ernie_cp_key_gather_inverse_grad": False,
     "ernie_overlap_latent_kv_gather": False,
@@ -138,10 +139,32 @@ class TestErnie55TransformerConfig:
             _config(ernie_vha_rank=None)
 
     @pytest.mark.parametrize("value", ["false", 0, None])
-    @pytest.mark.parametrize("flag", ["ernie_fused_ops", "ernie_fused_situ_prob", "ernie_fused_mhc"])
-    def test_finalize_rejects_a_fused_flag_that_is_not_a_bool(self, flag, value):
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            "ernie_fused_ops",
+            "ernie_fused_situ_prob",
+            "ernie_fused_mhc",
+            "ernie_reuse_checkpoint_topk",
+            "ernie_overlap_latent_kv_gather",
+        ],
+    )
+    def test_finalize_rejects_a_non_boolean_optimization_flag(self, flag, value):
         with pytest.raises(ValueError, match=f"{flag} must be a bool"):
             _config(**{flag: value})
+
+    def test_checkpoint_topk_requires_full_recompute(self):
+        with pytest.raises(ValueError, match="requires full-layer recomputation"):
+            _config(ernie_reuse_checkpoint_topk=True)
+
+    def test_checkpoint_topk_requires_cudnn(self):
+        with pytest.raises(ValueError, match="requires dsa_kernel_backend='cudnn'"):
+            _config(
+                ernie_reuse_checkpoint_topk=True,
+                recompute_granularity="full",
+                recompute_method="uniform",
+                recompute_num_layers=1,
+            )
 
     @pytest.mark.parametrize("value", [0, -2, True, 2.0, "4", None])
     def test_finalize_rejects_a_muon_batch_size_that_is_not_a_positive_int(self, value):
