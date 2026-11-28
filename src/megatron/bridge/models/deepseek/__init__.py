@@ -14,9 +14,13 @@
 
 from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge  # noqa: F401
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge  # noqa: F401
+from megatron.bridge.models.deepseek.deepseek_v41_bridge import DeepSeekV41Bridge  # noqa: F401
+from megatron.bridge.models.deepseek.deepseek_v41_provider import DeepSeekV41ModelProvider  # noqa: F401
 
 
 __all__ = [
     "DeepSeekV3Bridge",
     "DeepSeekV4Bridge",
+    "DeepSeekV41Bridge",
+    "DeepSeekV41ModelProvider",
 ]

@@ -232,6 +232,10 @@ class MegatronPeftBridge:
         )
 
         base_mapping = mapping_registry.megatron_to_hf_lookup(f"{global_base_prefix}{base_suffix}")
+        if base_mapping is None and base_suffix == ".weight":
+            # DeepSeek V4's grouped output projection is a bare replicated
+            # parameter, so its base mapping is registered without `.weight`.
+            base_mapping = mapping_registry.megatron_to_hf_lookup(global_base_prefix)
         assert base_mapping is not None, (
             f"Expected mapping for adapter base '{global_base_prefix}{base_suffix}' but none found"
         )
@@ -260,6 +264,11 @@ class MegatronPeftBridge:
         """Return all HF base parameter names associated with this adapter."""
 
         base_mapping = mapping_registry.megatron_to_hf_lookup(f"{global_base_prefix}{base_suffix}")
+        if base_mapping is None and base_suffix == ".weight":
+            # See `_resolve_hf_adapter_param_name`: the grouped output
+            # projection's base is a plain parameter without a `.weight`
+            # suffix in the mapping registry.
+            base_mapping = mapping_registry.megatron_to_hf_lookup(global_base_prefix)
         if base_mapping is None:
             return []
 
