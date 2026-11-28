@@ -108,6 +108,7 @@ def glm51_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     }
     block_counts = [6, 4] + [8] * 6 + [4] * 5
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -198,4 +199,5 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     }
     block_counts = [6, 4] + [8] * 6 + [4] * 5
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

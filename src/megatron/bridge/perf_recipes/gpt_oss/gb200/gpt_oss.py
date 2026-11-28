@@ -79,6 +79,7 @@ def gpt_oss_20b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -138,6 +139,7 @@ def gpt_oss_20b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -189,6 +191,7 @@ def gpt_oss_20b_pretrain_72gpu_gb200_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -244,6 +247,7 @@ def gpt_oss_20b_pretrain_72gpu_gb200_fp8mx_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -298,6 +302,7 @@ def gpt_oss_20b_pretrain_512gpu_gb200_fp8mx_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -338,6 +343,7 @@ def gpt_oss_120b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -383,4 +389,5 @@ def gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

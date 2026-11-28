@@ -157,6 +157,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
 
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -180,6 +181,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_deterministic_config() -> ConfigCon
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -203,6 +205,7 @@ def nemotron_3_5_lightning_pretrain_8k_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 50
     cfg.env_vars["NVLINK_DOMAIN_SIZE"] = 72
     cfg.env_vars["USE_MNNVL"] = 1
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -228,6 +231,7 @@ def nemotron_3_5_lightning_pretrain_8k_deterministic_config() -> ConfigContainer
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -252,6 +256,7 @@ def nemotron_3_5_lightning_pretrain_8k_fsdp_config() -> ConfigContainer:
 
     cfg.checkpoint.load = None
     cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -286,6 +291,7 @@ def nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config() -> ConfigCo
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -328,6 +334,7 @@ def nemotron_3_5_lightning_sft_32k_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -344,6 +351,7 @@ def nemotron_3_5_lightning_sft_32k_deterministic_config() -> ConfigContainer:
         **COMMON_RECIPE_ENV_VARS,
         **DETERMINISM_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 

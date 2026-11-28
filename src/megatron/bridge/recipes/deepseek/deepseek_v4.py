@@ -138,6 +138,7 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_config() -> ConfigContainer:
         enable_offline_packing=True,
         pad_seq_to_mult=2 * cfg.model.context_parallel_size,
     )
+    cfg.forward_step = "megatron.bridge.models.deepseek.deepseek_v4_step:forward_step"
     return cfg
 
 
@@ -150,4 +151,5 @@ def deepseek_v4_flash_peft_openmath_thinking_packed_config() -> ConfigContainer:
     """
     cfg = deepseek_v4_flash_sft_openmath_thinking_packed_config()
     _apply_deepseek_v4_lora(cfg)
+    cfg.forward_step = "megatron.bridge.models.deepseek.deepseek_v4_step:forward_step"
     return cfg

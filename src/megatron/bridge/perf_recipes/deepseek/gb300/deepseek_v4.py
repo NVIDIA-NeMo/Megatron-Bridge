@@ -68,6 +68,7 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -292,6 +293,7 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         # the legacy backend until the image carries both upstream fixes.
         "TORCH_DIST_USE_NCCL2": 0,
     }
+    cfg.forward_step = "megatron.bridge.models.deepseek.deepseek_v4_step:forward_step"
     return cfg
 
 
@@ -338,6 +340,7 @@ def deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config() -> ConfigContainer
         # Legacy NCCL backend; see the full recipe.
         "TORCH_DIST_USE_NCCL2": 0,
     }
+    cfg.forward_step = "megatron.bridge.models.deepseek.deepseek_v4_step:forward_step"
     return cfg
 
 
@@ -456,4 +459,5 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

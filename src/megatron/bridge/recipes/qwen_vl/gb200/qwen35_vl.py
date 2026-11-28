@@ -112,6 +112,7 @@ def qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -215,6 +216,7 @@ def qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config() -> ConfigContainer
     """Return shared Qwen3.5/Qwen3.6-VL 35B-A3B SFT for eight GB200 GPUs."""
     cfg = qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config()
     _apply_qwen35_vl_35b_a3b_gb200_functional_defaults(cfg)
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -328,6 +330,7 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config() -> ConfigContai
     """
     cfg = _qwen35_vl_35b_a3b_long_context_common()
     cfg.mixed_precision = bf16_mixed()
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -359,6 +362,7 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_fp8mx_config() -> ConfigConta
         "CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL": 1,
         "NVTE_GROUPED_LINEAR_SINGLE_PARAM": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -366,6 +370,7 @@ def qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config() -> ConfigContaine
     """Return shared Qwen3.5/Qwen3.6-VL 35B-A3B LoRA for eight GB200 GPUs."""
     cfg = qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config()
     _apply_qwen35_vl_35b_a3b_gb200_functional_defaults(cfg)
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 

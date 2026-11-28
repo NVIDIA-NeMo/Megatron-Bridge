@@ -107,6 +107,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 

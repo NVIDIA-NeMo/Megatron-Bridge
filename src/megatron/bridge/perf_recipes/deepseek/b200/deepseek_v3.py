@@ -72,6 +72,7 @@ def deepseek_v3_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -120,6 +121,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8cs_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -169,6 +171,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -206,6 +209,7 @@ def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -254,6 +258,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep16_ncclep_fullcg_config() -> Config
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -297,6 +302,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_ep8_ncclep_config() -> ConfigContaine
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -345,4 +351,5 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_large_scale_config() -> ConfigContain
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

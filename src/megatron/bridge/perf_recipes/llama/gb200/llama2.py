@@ -63,6 +63,7 @@ def llama2_70b_peft_4gpu_gb200_fp8ds_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -107,6 +108,7 @@ def llama2_70b_peft_8gpu_gb200_fp8ds_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -150,6 +152,7 @@ def llama2_70b_peft_72gpu_gb200_fp8ds_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -193,4 +196,5 @@ def llama2_70b_peft_512gpu_gb200_fp8ds_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

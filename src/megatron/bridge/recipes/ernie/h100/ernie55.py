@@ -120,4 +120,5 @@ def ernie55_sft_128gpu_h100_bf16_config(*, hf_path: str | None = None) -> Config
         "NCCL_NVLS_ENABLE": 0,
         "PYTORCH_ALLOC_CONF": "expandable_segments:True",
     }
+    cfg.forward_step = "megatron.bridge.models.ernie.ernie55_step:forward_step"
     return cfg

@@ -74,6 +74,7 @@ def gpt_oss_20b_pretrain_8gpu_b300_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -122,6 +123,7 @@ def gpt_oss_20b_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -170,6 +172,7 @@ def gpt_oss_20b_pretrain_64gpu_b300_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -218,6 +221,7 @@ def gpt_oss_20b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -265,6 +269,7 @@ def gpt_oss_120b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -312,4 +317,5 @@ def gpt_oss_120b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

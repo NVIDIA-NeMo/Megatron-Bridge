@@ -138,6 +138,7 @@ def wan_1_3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.diffusion.models.wan.wan_step:WanForwardStep"
     return cfg
 
 
@@ -251,6 +252,7 @@ def wan_14b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.diffusion.models.wan.wan_step:WanForwardStep"
     return cfg
 
 
@@ -276,6 +278,7 @@ def wan_1_3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.diffusion.models.wan.wan_step:WanForwardStep"
     return cfg
 
 
@@ -301,6 +304,7 @@ def wan_14b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.diffusion.models.wan.wan_step:WanForwardStep"
     return cfg
 
 
@@ -322,6 +326,7 @@ def wan_1_3b_text2image_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.diffusion.models.wan.wan_step:WanForwardStep"
     return cfg
 
 
@@ -343,6 +348,7 @@ def wan_1_3b_text2video_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.diffusion.models.wan.wan_step:WanForwardStep"
     return cfg
 
 

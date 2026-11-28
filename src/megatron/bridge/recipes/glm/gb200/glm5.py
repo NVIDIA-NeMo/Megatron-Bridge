@@ -36,12 +36,16 @@ _TULU3_REVISION = "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"  # pragma: allowlis
 
 def glm52_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     """GLM-5.2 bounded pretraining on 192 GB200 GPUs."""
-    return _glm_pretrain_config(model_id=_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION)
+    cfg = _glm_pretrain_config(model_id=_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION)
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
+    return cfg
 
 
 def glm5_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     """GLM-5 bounded pretraining on 192 GB200 GPUs."""
-    return _glm_pretrain_config(model_id=_GLM5_MODEL_ID, revision=_GLM5_MODEL_REVISION)
+    cfg = _glm_pretrain_config(model_id=_GLM5_MODEL_ID, revision=_GLM5_MODEL_REVISION)
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
+    return cfg
 
 
 def _glm_pretrain_config(*, model_id: str, revision: str) -> ConfigContainer:
@@ -215,17 +219,22 @@ def glm52_proxy_pretrain_16gpu_gb200_bf16_config() -> ConfigContainer:
         glm_hybrid_pattern(num_layers=8, first_k_dense_replace=3), [6, 2]
     )
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
 def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     """GLM-5.2 bounded full SFT on 192 GB200 GPUs."""
-    return _glm_sft_config(model_id=_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION, data_slug="glm5-2")
+    cfg = _glm_sft_config(model_id=_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION, data_slug="glm5-2")
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
+    return cfg
 
 
 def glm5_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     """GLM-5 bounded full SFT on 192 GB200 GPUs."""
-    return _glm_sft_config(model_id=_GLM5_MODEL_ID, revision=_GLM5_MODEL_REVISION, data_slug="glm5")
+    cfg = _glm_sft_config(model_id=_GLM5_MODEL_ID, revision=_GLM5_MODEL_REVISION, data_slug="glm5")
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
+    return cfg
 
 
 def _glm_sft_config(*, model_id: str, revision: str, data_slug: str) -> ConfigContainer:
@@ -339,12 +348,16 @@ def _glm_sft_config(*, model_id: str, revision: str, data_slug: str) -> ConfigCo
 
 def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     """GLM-5.2 128K packed SFT with context parallelism on 192 GB200 GPUs."""
-    return _glm_sft_128k_config(model_id=_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION, data_slug="glm5-2")
+    cfg = _glm_sft_128k_config(model_id=_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION, data_slug="glm5-2")
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
+    return cfg
 
 
 def glm5_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     """GLM-5 128K packed SFT with context parallelism on 192 GB200 GPUs."""
-    return _glm_sft_128k_config(model_id=_GLM5_MODEL_ID, revision=_GLM5_MODEL_REVISION, data_slug="glm5")
+    cfg = _glm_sft_128k_config(model_id=_GLM5_MODEL_ID, revision=_GLM5_MODEL_REVISION, data_slug="glm5")
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
+    return cfg
 
 
 def _glm_sft_128k_config(*, model_id: str, revision: str, data_slug: str) -> ConfigContainer:
@@ -456,9 +469,11 @@ def _glm_sft_128k_config(*, model_id: str, revision: str, data_slug: str) -> Con
 
 def glm52_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """GLM-5.2 bounded PEFT on 192 GB200 GPUs."""
-    return _glm_peft_config(
+    cfg = _glm_peft_config(
         model_id=_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION, data_slug="glm5-2", peft_scheme=peft_scheme
     )
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
+    return cfg
 
 
 def glm5_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
@@ -469,6 +484,7 @@ def glm5_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
     # GLM-5 uses the fully fused cuDNN indexer path, whose sparse-score kernel
     # requires a 64-aligned top-k width. Keep K=2048 even for underfilled packs.
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 

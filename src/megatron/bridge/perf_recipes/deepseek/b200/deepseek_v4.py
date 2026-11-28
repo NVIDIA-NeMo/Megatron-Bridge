@@ -68,6 +68,7 @@ def deepseek_v4_flash_pretrain_128gpu_b200_fp8mx_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -89,4 +90,5 @@ def deepseek_v4_flash_pretrain_128gpu_b200_fp8mx_ncclep_config() -> ConfigContai
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

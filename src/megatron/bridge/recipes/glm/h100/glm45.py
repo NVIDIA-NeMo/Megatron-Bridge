@@ -154,6 +154,7 @@ def glm45_355b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -278,6 +279,7 @@ def glm45_air_106b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -420,6 +422,7 @@ def glm45_355b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -557,6 +560,7 @@ def glm45_air_106b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -706,6 +710,7 @@ def glm45_355b_peft_16gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -850,6 +855,7 @@ def glm45_air_106b_peft_8gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 

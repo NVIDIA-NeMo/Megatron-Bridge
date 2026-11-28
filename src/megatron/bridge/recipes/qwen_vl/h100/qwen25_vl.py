@@ -137,6 +137,7 @@ def qwen25_vl_3b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -249,6 +250,7 @@ def qwen25_vl_7b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -361,6 +363,7 @@ def qwen25_vl_32b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -473,6 +476,7 @@ def qwen25_vl_72b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -594,6 +598,7 @@ def qwen25_vl_3b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") ->
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -715,6 +720,7 @@ def qwen25_vl_7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") ->
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -836,6 +842,7 @@ def qwen25_vl_32b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -957,6 +964,7 @@ def qwen25_vl_72b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 

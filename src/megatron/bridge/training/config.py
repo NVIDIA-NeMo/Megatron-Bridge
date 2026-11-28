@@ -1030,6 +1030,13 @@ class InProcessRestartConfig:
 class ConfigContainer(Container):
     """Top-level container holding all configuration objects."""
 
+    forward_step: str | None = None
+    """Default training step as ``module:attribute``; explicit caller steps take precedence.
+
+    Resolved lazily by pretrain/finetune after configuration overrides. The recipe
+    owns this choice because the step depends on its objective and dataset format.
+    """
+
     env_vars: dict[str, str | int | float | bool] = field(default_factory=dict)
     """Environment variable defaults applied before runtime config finalization.
 

@@ -106,6 +106,7 @@ def muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config() -> ConfigConta
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -177,6 +178,7 @@ def muse_glimmer_30b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -248,6 +250,7 @@ def muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config() -> ConfigContaine
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -325,6 +328,7 @@ def muse_glimmer_30b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 

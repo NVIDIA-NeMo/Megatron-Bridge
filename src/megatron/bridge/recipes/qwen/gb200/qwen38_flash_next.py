@@ -129,4 +129,5 @@ def qwen38_flash_next_text_frozen_ngram_pretrain_32gpu_gb200_bf16_muon_config(
     # Muon's layer-wise distribution is separate from the flat distributed Adam
     # buffers selected by this DDP flag. Parameter-gather overlap stays off.
     cfg.ddp.use_distributed_optimizer = False
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

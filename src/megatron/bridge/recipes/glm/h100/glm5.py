@@ -128,6 +128,7 @@ def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -216,6 +217,7 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -299,6 +301,7 @@ def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -399,6 +402,7 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 

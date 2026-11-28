@@ -108,9 +108,11 @@ from recipe_runner import (  # noqa: E402
     apply_determinism,
     apply_runtime_environment,
     bootstrap_recipe_environment,
+    get_config_forward_step,
     load_forward_step,
     load_recipe,
     run_config,
+    step_registry_name,
     sync_finetuning_cp_invariants,
     sync_model_dataset_sequence_length,
     sync_model_pipeline_layout,
@@ -538,7 +540,7 @@ def main(argv: list[str] | None = None) -> None:
         validate_benchmark_recipe_scope(
             benchmark_metadata,
             mode=args.mode,
-            step_func=args.step_func,
+            step_func=step_registry_name(args.step_func) if args.step_func is not None else None,
             dataset=args.dataset,
         )
 
@@ -600,11 +602,23 @@ def main(argv: list[str] | None = None) -> None:
     recipe = sync_model_dataset_sequence_length(recipe)
 
     native_energon_packing = getattr(getattr(recipe, "dataset", None), "packing_buffer_size", None) is not None
-    step_func_name = args.step_func or recipe_step(
-        recipe_name,
-        native_energon_packing=native_energon_packing,
-    )
-    step_func_name = _resolve_step_for_mode(step_func_name, args.mode)
+    step_func_name = args.step_func
+    if step_func_name is None:
+        step_func_name = get_config_forward_step(recipe)
+    if step_func_name is None:
+        step_func_name = recipe_step(recipe_name, native_energon_packing=native_energon_packing)
+    # Mode and benchmark guards still apply when the default comes from the config.
+    step_alias = step_registry_name(step_func_name)
+    checked_step = _resolve_step_for_mode(step_alias, args.mode)
+    if checked_step != step_alias:
+        step_func_name = checked_step
+    if benchmark_metadata is not None:
+        validate_benchmark_recipe_scope(
+            benchmark_metadata,
+            mode=args.mode,
+            step_func=checked_step,
+            native_energon_packing=native_energon_packing,
+        )
     forward_step = load_forward_step(step_func_name, mode=step_mode)
     run_config(
         config=recipe,

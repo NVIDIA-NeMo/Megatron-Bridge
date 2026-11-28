@@ -59,6 +59,7 @@ def nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -93,6 +94,7 @@ def nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -124,6 +126,7 @@ def nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -151,6 +154,7 @@ def nemotron_3_super_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -183,6 +187,7 @@ def nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -218,6 +223,7 @@ def nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -257,6 +263,7 @@ def nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config(*, num_gpus: int = 256
         # Enable TE's CuteDSL fused grouped MLP kernel on Rubin.
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -294,6 +301,7 @@ def nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config(*, num_gpus: int = 256
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -331,6 +339,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContaine
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -364,4 +373,5 @@ def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContain
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

@@ -61,6 +61,7 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 10,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 10,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -117,6 +118,7 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -128,6 +130,7 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_fp8ds_config() -> ConfigContainer:
     """
     cfg = qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config()
     cfg.mixed_precision = _perf_precision("fp8_ds")
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -179,6 +182,7 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -230,6 +234,7 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -252,6 +257,7 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_large_scale_config() -> ConfigCon
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -278,6 +284,7 @@ def qwen3_30b_a3b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -304,6 +311,7 @@ def qwen3_30b_a3b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -347,6 +355,7 @@ def qwen3_next_80b_a3b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -369,6 +378,7 @@ def qwen3_next_80b_a3b_pretrain_128gpu_h100_fp8cs_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -421,6 +431,7 @@ def qwen3_30b_a3b_pretrain_32gpu_h100_bf16_dev_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -482,6 +493,7 @@ def qwen3_30b_a3b_pretrain_32gpu_h100_fp8sc_dev_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -547,4 +559,5 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_hybridep_dev_config() -> ConfigCon
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

@@ -374,4 +374,5 @@ def ernie55_sft_64gpu_gb300_bf16_config(*, hf_path: str | None = None) -> Config
     hf_config, path = _ernie55_hf_config(hf_path)
     cfg = _ernie55_production_config(hf_config)
     cfg.checkpoint.pretrained_checkpoint = path
+    cfg.forward_step = "megatron.bridge.models.ernie.ernie55_step:forward_step"
     return cfg

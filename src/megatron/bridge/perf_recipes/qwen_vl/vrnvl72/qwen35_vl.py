@@ -56,6 +56,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -85,6 +86,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -159,6 +161,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         # checks it when it registers the fusion; without it the op fuser runs the unfused path.
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -185,6 +188,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -211,6 +215,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8cs_config() -> ConfigContainer
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -237,6 +242,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_vrnvl72_fp8mx_config() -> ConfigContainer
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -265,6 +271,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -294,6 +301,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config() -> ConfigContainer
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -358,4 +366,5 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer
         # registers the fusion; without it the op fuser runs the unfused path.
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg

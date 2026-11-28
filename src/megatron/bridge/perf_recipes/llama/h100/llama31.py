@@ -63,6 +63,7 @@ def llama31_405b_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
         # Pipeline communication tuning for this layout.
         "NCCL_P2P_NET_CHUNKSIZE": 2097152,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -104,6 +105,7 @@ def llama31_405b_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
         # Pipeline communication tuning for this layout.
         "NCCL_P2P_NET_CHUNKSIZE": 2097152,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -127,6 +129,7 @@ def llama31_405b_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
         # Pipeline communication tuning for this layout.
         "NCCL_P2P_NET_CHUNKSIZE": 2097152,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -150,4 +153,5 @@ def llama31_405b_pretrain_512gpu_h100_fp8cs_config() -> ConfigContainer:
         # Pipeline communication tuning for this layout.
         "NCCL_P2P_NET_CHUNKSIZE": 2097152,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

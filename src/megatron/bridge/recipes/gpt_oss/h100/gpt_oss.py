@@ -156,6 +156,7 @@ def gpt_oss_20b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -271,6 +272,7 @@ def gpt_oss_120b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -283,6 +285,7 @@ def gpt_oss_20b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -418,6 +421,7 @@ def gpt_oss_20b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -435,6 +439,7 @@ def gpt_oss_20b_sft_8gpu_h100_bf16_32k_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -565,6 +570,7 @@ def gpt_oss_120b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -611,6 +617,7 @@ def gpt_oss_120b_sft_48gpu_h100_bf16_32k_config() -> ConfigContainer:
         # images; builds without the switch ignore it.
         "TORCH_DIST_USE_NCCL2": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -623,6 +630,7 @@ def gpt_oss_20b_sft_8gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -767,6 +775,7 @@ def gpt_oss_20b_peft_1gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -906,6 +915,7 @@ def gpt_oss_120b_peft_8gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -920,6 +930,7 @@ def gpt_oss_20b_peft_1gpu_h100_fp8cs_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -939,6 +950,7 @@ def gpt_oss_20b_pretrain_16gpu_h100_fp8mx_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -952,6 +964,7 @@ def gpt_oss_20b_sft_8gpu_h100_fp8mx_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -966,6 +979,7 @@ def gpt_oss_20b_peft_1gpu_h100_fp8mx_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -985,6 +999,7 @@ def gpt_oss_20b_sft_8gpu_h100_bf16_openmathinstruct2_thinking_packed_config() ->
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 

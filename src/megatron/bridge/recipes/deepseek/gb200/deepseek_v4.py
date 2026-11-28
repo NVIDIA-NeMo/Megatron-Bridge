@@ -139,6 +139,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
         **COMMON_RECIPE_ENV_VARS,
         "NVTE_CPU_OFFLOAD_V1": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -188,6 +189,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.model.moe_router_padding_for_fp8 = True
     cfg.model.quant_recipe = _deepseek_v4_mxfp8_quant_recipe()
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -246,6 +248,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config() -> ConfigConta
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -288,6 +291,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config() -> ConfigContainer
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = True
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -445,6 +449,7 @@ def deepseek_v4_flash_proxy_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -493,6 +498,7 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigConta
         **cfg.env_vars,
         "NVTE_CPU_OFFLOAD_V1": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.deepseek.deepseek_v4_step:forward_step"
     return cfg
 
 
@@ -520,4 +526,5 @@ def deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config() -> ConfigCont
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.deepseek.deepseek_v4_step:forward_step"
     return cfg

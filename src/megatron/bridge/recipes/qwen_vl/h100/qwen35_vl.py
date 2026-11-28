@@ -174,6 +174,7 @@ def qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -223,6 +224,7 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -280,6 +282,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -349,6 +352,7 @@ def qwen35_vl_35b_a3b_pretrain_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -402,6 +406,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -455,6 +460,7 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -561,6 +567,7 @@ def qwen35_vl_800m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -662,6 +669,7 @@ def qwen35_vl_2b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -763,6 +771,7 @@ def qwen35_vl_4b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -864,6 +873,7 @@ def qwen35_vl_9b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -973,6 +983,7 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
         # communicators lazy, as on earlier images; builds without the switch ignore it.
         "TORCH_DIST_USE_NCCL2": 0,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -1153,6 +1164,7 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -1183,6 +1195,7 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config() -> ConfigContain
     cfg.dataset.in_batch_packing_pad_to_multiple_of = 4
 
     cfg.ddp.average_in_collective = False
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -1312,6 +1325,7 @@ def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -1425,6 +1439,7 @@ def qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -1538,6 +1553,7 @@ def qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -1645,6 +1661,7 @@ def qwen35_vl_800m_peft_1gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -1747,6 +1764,7 @@ def qwen35_vl_2b_peft_1gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -1849,6 +1867,7 @@ def qwen35_vl_4b_peft_1gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -1951,6 +1970,7 @@ def qwen35_vl_9b_peft_1gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -2053,6 +2073,7 @@ def qwen35_vl_27b_peft_2gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -2175,6 +2196,7 @@ def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -2201,6 +2223,7 @@ def qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -2317,6 +2340,7 @@ def qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -2433,6 +2457,7 @@ def qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 

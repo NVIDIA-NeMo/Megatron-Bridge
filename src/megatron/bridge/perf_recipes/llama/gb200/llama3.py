@@ -70,6 +70,7 @@ def llama3_8b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -112,6 +113,7 @@ def llama3_8b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -152,6 +154,7 @@ def llama3_8b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -197,6 +200,7 @@ def llama3_8b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
         # FP8 recipe TE uses for the DPA enabled above.
         "NVTE_DPA_FP8_RECIPE": "Float8CurrentScaling",
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -250,6 +254,7 @@ def llama3_70b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -303,6 +308,7 @@ def llama3_70b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -341,6 +347,7 @@ def llama3_70b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
         # Pipeline communication tuning for this layout.
         "NCCL_P2P_NET_CHUNKSIZE": 2097152,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -386,6 +393,7 @@ def llama3_70b_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -434,6 +442,7 @@ def llama3_8b_sft_8gpu_gb200_bf16_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -482,6 +491,7 @@ def llama3_8b_sft_8gpu_gb200_fp8cs_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -534,6 +544,7 @@ def llama3_70b_sft_32gpu_gb200_bf16_config() -> ConfigContainer:
         # Pipeline communication tuning for this layout.
         "NCCL_P2P_NET_CHUNKSIZE": 2097152,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -586,6 +597,7 @@ def llama3_70b_sft_32gpu_gb200_fp8cs_config() -> ConfigContainer:
         # Pipeline communication tuning for this layout.
         "NCCL_P2P_NET_CHUNKSIZE": 2097152,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -637,6 +649,7 @@ def llama3_70b_peft_8gpu_gb200_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -686,6 +699,7 @@ def llama3_70b_peft_8gpu_gb200_fp8cs_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -735,6 +749,7 @@ def llama3_70b_peft_8gpu_gb200_fp8mx_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -760,6 +775,7 @@ def llama3_8b_sft_8gpu_gb200_fp8mx_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -787,6 +803,7 @@ def llama3_70b_sft_32gpu_gb200_fp8mx_config() -> ConfigContainer:
         # Pipeline communication tuning for this layout.
         "NCCL_P2P_NET_CHUNKSIZE": 2097152,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -808,6 +825,7 @@ def llama3_8b_pretrain_32gpu_gb200_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -829,6 +847,7 @@ def llama3_8b_pretrain_32gpu_gb200_fp8cs_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -851,6 +870,7 @@ def llama3_70b_pretrain_32gpu_gb200_bf16_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -873,4 +893,5 @@ def llama3_70b_pretrain_32gpu_gb200_fp8cs_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

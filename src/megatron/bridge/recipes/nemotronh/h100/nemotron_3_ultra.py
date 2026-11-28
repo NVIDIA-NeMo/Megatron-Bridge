@@ -140,6 +140,7 @@ def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -257,6 +258,7 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -374,6 +376,7 @@ def nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config() -> C
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -487,6 +490,7 @@ def nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config(
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 

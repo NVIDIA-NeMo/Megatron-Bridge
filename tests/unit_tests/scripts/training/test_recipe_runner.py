@@ -701,3 +701,10 @@ def test_run_config_dryrun_uses_logger_save_path(recipe_runner: ModuleType, monk
     recipe_runner.run_config(config=config, mode="pretrain", step_func=object(), dryrun=True)
 
     assert saved_paths == ["resolved.yaml"]
+
+
+def test_import_reference_retains_existing_alias_validation(recipe_runner):
+    assert recipe_runner.step_registry_name("megatron.bridge.training.gpt_step:forward_step") == "llm_step"
+    assert recipe_runner.step_registry_name("megatron.bridge.training.dpo_step:forward_step") == "dpo_step"
+    assert recipe_runner.step_registry_name("custom.steps:forward_step") == "custom.steps:forward_step"
+    assert recipe_runner.step_registry_name("VLM_STEP") == "VLM_STEP"

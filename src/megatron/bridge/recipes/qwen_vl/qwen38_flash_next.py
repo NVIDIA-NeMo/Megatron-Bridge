@@ -172,4 +172,5 @@ def qwen38_flash_next_sft_64gpu_gb200_bf16_config(
         rng=RNGConfig(seed=1234),
         mixed_precision=precision,
     )
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

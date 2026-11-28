@@ -69,6 +69,7 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -117,6 +118,7 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -154,6 +156,7 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8sc_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -197,6 +200,7 @@ def deepseek_v3_pretrain_64gpu_h100_bf16_proxy_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -240,6 +244,7 @@ def deepseek_v3_pretrain_64gpu_h100_fp8cs_proxy_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -269,4 +274,5 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8sc_large_scale_config() -> ConfigContai
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

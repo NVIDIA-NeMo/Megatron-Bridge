@@ -102,6 +102,7 @@ def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config() -> "ConfigContainer":
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_omni.qwen3_omni_step:forward_step"
     return cfg
 
 
@@ -137,6 +138,7 @@ def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_hf_json_config() -> "ConfigContainer":
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_omni.qwen3_omni_step:forward_step"
     return cfg
 
 

@@ -37,9 +37,11 @@ def nemotron_3_super_pretrain_config(
     trust_remote_code: bool = False,
 ) -> ConfigContainer:
     """Return the convergence-oriented 64-H100 Nemotron 3 Super pretraining config."""
-    return _nemotron_3_super_pretrain_64gpu_h100_bf16_config(
+    cfg = _nemotron_3_super_pretrain_64gpu_h100_bf16_config(
         hf_path=hf_path, text_only=text_only, revision=revision, trust_remote_code=trust_remote_code
     )
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
+    return cfg
 
 
 __all__ = [

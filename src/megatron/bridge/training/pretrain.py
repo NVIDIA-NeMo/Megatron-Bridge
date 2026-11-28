@@ -23,6 +23,7 @@ from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import Callback, CallbackManager, normalize_callbacks
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.eval import evaluate_and_print_results
+from megatron.bridge.training.forward_step import resolve_forward_step
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.setup import setup
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 @experimental_fn
 def pretrain(
     config: ConfigContainer,
-    forward_step_func: ForwardStepCallable,
+    forward_step_func: ForwardStepCallable | None = None,
     callbacks: list[Callback] | CallbackManager | None = None,
 ) -> None:
     """Main function to run the training pipeline.
@@ -50,7 +51,8 @@ def pretrain(
 
     Args:
         config: The main configuration container holding all necessary parameters.
-        forward_step_func: A callable (function or functor) that performs a single
+        forward_step_func: Optional override; when omitted, use config.forward_step.
+                          A callable (function or functor) that performs a single
                           forward and backward step, returning the loss and any computed
                           metrics. Supports the following signatures:
                           - 2 args: (data_iterator, model)
@@ -73,6 +75,7 @@ def pretrain(
     """
     # Apply runtime config updates prior to creating/attaching GlobalState
     runtime_config_update(config)
+    forward_step_func = resolve_forward_step(config, forward_step_func, mode="pretrain")
 
     # Create a single GlobalState instance regardless of restart path
     state = GlobalState()

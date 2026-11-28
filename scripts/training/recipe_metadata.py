@@ -285,6 +285,7 @@ def validate_benchmark_recipe_scope(
     mode: str,
     step_func: str | None = None,
     dataset: str | None = None,
+    native_energon_packing: bool = False,
 ) -> None:
     """Validate task, forward step, and dataset selection for a benchmark recipe."""
     if mode not in PUBLIC_MODES:
@@ -297,7 +298,7 @@ def validate_benchmark_recipe_scope(
     if metadata.task == "peft" and mode != "lora":
         raise ValueError("Benchmark PEFT recipes are fixed LoRA configs; omit --mode or pass --mode lora.")
 
-    expected_step = recipe_step(metadata.recipe_name)
+    expected_step = recipe_step(metadata.recipe_name, native_energon_packing=native_energon_packing)
     if step_func is not None and not recipe_steps_match(step_func, expected_step):
         raise ValueError(
             f"Benchmark recipe '{metadata.recipe_name}' uses the canonical {expected_step} forward step; "

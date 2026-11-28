@@ -115,4 +115,5 @@ def diffusion_gemma_26b_sft_config(
     if validation_path:
         cfg.validation.eval_interval = 100
         cfg.validation.eval_iters = 16
+    cfg.forward_step = "megatron.bridge.training.diffusion_gemma_step:forward_step"
     return cfg

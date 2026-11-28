@@ -135,6 +135,7 @@ def minimax_m3_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -207,6 +208,7 @@ def minimax_m3_sft_128gpu_h100_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 

@@ -155,6 +155,7 @@ def qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_bf16_config(
     """
     cfg = _qwen35_text_35b_a3b_long_context_common(seq_length, hf_path=hf_path, hf_revision=hf_revision)
     cfg.mixed_precision = bf16_mixed()
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -192,6 +193,7 @@ def qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config(
         "CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL": 1,
         "NVTE_GROUPED_LINEAR_SINGLE_PARAM": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -266,6 +268,7 @@ def qwen35_text_9b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.rerun_state_machine.check_for_nan_in_loss = False
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -288,6 +291,7 @@ def qwen35_text_9b_pretrain_8gpu_gb200_bf16_deterministic_config() -> ConfigCont
     cfg.env_vars = {
         **DETERMINISM_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -385,6 +389,7 @@ def qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     # NVLink domain itself, so only its dispatcher mode is declared here
     # (high-throughput expert-major, pull dispatch / push combine).
     cfg.env_vars = {"NCCL_EP_HT_EM_PULL_PUSH": 1}
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -467,4 +472,5 @@ def qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config() -> ConfigContain
     cfg.optimizer.exp_avg_dtype = torch.bfloat16
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
     cfg.ddp.use_distributed_optimizer = True
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
