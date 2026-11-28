@@ -642,7 +642,7 @@ Qwen3.5 observed metrics: {&quot;final_loss&quot;: 0.03088333, &quot;initial_los
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Qwen3.6 on eight GB300 GPUs at this item&#x27;s Bridge commit: the command above completed all 100 MedPix-VQA SFT steps from the card&#x27;s imported-megatron checkpoint with finite losses and zero skipped or NaN iterations, and step 100 saved the final checkpoint. The persisted runtime config records TP1/PP1/CP1/EP8/ETP1, sequence length 4096 and MBS1/GBS32. Metrics average steps 91-100; token-slot throughput uses 4096 times GBS32 per step. The imported-megatron checkpoint must be produced by the hf_to_megatron_gpu command at this same Bridge commit; a checkpoint imported at the card-wide commit does not load here. At this commit the recipe dispatches MoE tokens with NCCL EP, which has no HybridEP combine-chunk setting, so the command passes no NUM_OF_TOKENS_PER_CHUNK_COMBINE_API override. Run on a NeMo nightly base container (2026-11-16). This verifies bounded full-model SFT, not full convergence.
+        <p>Qwen3.6 on eight GB300 GPUs at this item&#x27;s Bridge commit: the command above completed all 100 MedPix-VQA SFT steps from the card&#x27;s imported-megatron checkpoint with finite losses and zero skipped or NaN iterations, and step 100 saved the final checkpoint. The persisted runtime config records TP1/PP1/CP1/EP8/ETP1, sequence length 4096 and MBS1/GBS32. Metrics average steps 91-100; token-slot throughput uses 4096 times GBS32 per step. The imported-megatron checkpoint must be produced by the hf_to_megatron_gpu import (TP2/EP8) at this same Bridge commit; a checkpoint imported at the card-wide commit uses the previous GPT-based layout and does not load with the Hybrid implementation. At this commit the recipe dispatches MoE tokens with NCCL EP, which has no HybridEP combine-chunk setting, so the command passes no NUM_OF_TOKENS_PER_CHUNK_COMBINE_API override. This verifies bounded full-model SFT, not full convergence.
 
 Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.
 Executed Qwen3.5 command(s):
@@ -872,30 +872,30 @@ Qwen3.5 observed metrics: {&quot;final_loss&quot;: 1.024277, &quot;initial_loss&
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB300</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-11-16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-11-18</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>2.211639</dd>
+            <dd>2.211273</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>1.275493</dd>
+            <dd>1.315504</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>4,353.950 ms</dd>
+            <dd>6,963.170 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>86.580 TFLOP/s/GPU</dd>
+            <dd>54.120 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>3,763.020 tokens/s/GPU</dd>
+            <dd>2,352.951 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -906,12 +906,12 @@ Qwen3.5 observed metrics: {&quot;final_loss&quot;: 1.024277, &quot;initial_loss&
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config --mode lora --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 &#x27;dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}&#x27; &#x27;dataset.source.adapter_kwargs={resized_height:448,resized_width:448}&#x27; dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B &#x27;dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}&#x27; env_vars.NUM_OF_TOKENS_PER_CHUNK_COMBINE_API=64 checkpoint.load=null --save_dir work/model-verification/qwen3.6-35b-a3b/peft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/peft/resolved-config.yaml</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --wait --recipe qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config --mode lora --dataset medpix --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 &#x27;dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}&#x27; &#x27;dataset.source.adapter_kwargs={resized_height:448,resized_width:448}&#x27; dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B &#x27;dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}&#x27; checkpoint.load=null --save_dir work/model-verification/qwen3.6-35b-a3b/peft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/peft/resolved-config.yaml</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Qwen3.6 on eight GB300 GPUs: the command above, loading the card&#x27;s imported-megatron checkpoint, completed all 100 MedPix-VQA LoRA steps with finite losses and zero skipped or NaN iterations, and step 100 saved the adapter checkpoint. The persisted runtime config records TP1/PP1/CP1/EP8/ETP1, sequence length 4096 and MBS1/GBS32. Metrics average steps 91-100; token-slot throughput uses 4096 times GBS32 per step. Run at this card&#x27;s Bridge commit on a NeMo nightly base container (2026-11-16). This verifies bounded adapter training, not full convergence.
+        <p>Qwen3.6 on eight GB300 GPUs at this item&#x27;s Bridge commit: the command above, loading the card&#x27;s imported-megatron checkpoint, completed all 100 MedPix-VQA LoRA steps with finite losses and zero skipped or NaN iterations, and step 100 saved the adapter checkpoint. The runtime config records TP1/PP1/CP1/EP8/ETP1, sequence length 4096 and MBS1/GBS32. Metrics average steps 91-100; token-slot throughput uses 4096 times GBS32 per step. The imported-megatron checkpoint must be produced by the hf_to_megatron_gpu import (TP2/EP8) at this same Bridge commit; a checkpoint imported at the card-wide commit uses the previous GPT-based layout and does not load with the Hybrid implementation. At this commit the recipe dispatches MoE tokens with NCCL EP, which has no HybridEP combine-chunk setting, so the command passes no NUM_OF_TOKENS_PER_CHUNK_COMBINE_API override. This verifies bounded adapter training, not full convergence.
 
 Supplementary shared-Hybrid-implementation validation only: Qwen/Qwen3.5-35B-A3B, revision 59d61f3ce65a6d9863b86d2e96597125219dc754, NeMo 26.10. These observations do not verify the Qwen3.6 checkpoint. Bridge commit: 3152313c10d1043350edb588c5c87aee9b8389de. Verified on 2026-11-03.
 Executed Qwen3.5 command(s):
