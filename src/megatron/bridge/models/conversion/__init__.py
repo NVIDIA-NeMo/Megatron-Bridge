@@ -35,6 +35,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
 )
 from megatron.bridge.models.conversion.utils import weights_verification_table
+from megatron.bridge.models.conversion.weight_update_manifest import (
+    WeightUpdateManifest,
+    WeightUpdateMode,
+    WeightUpdateRecorder,
+    WeightUpdateTensor,
+)
 
 
 __all__ = [
@@ -56,4 +62,8 @@ __all__ = [
     "HCAlphaMapping",
     "InitOnlyMapping",
     "weights_verification_table",
+    "WeightUpdateManifest",
+    "WeightUpdateMode",
+    "WeightUpdateRecorder",
+    "WeightUpdateTensor",
 ]
