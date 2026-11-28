@@ -1337,10 +1337,6 @@ class ConfigContainer(Container):
             )
         if getattr(model, "virtual_pipeline_model_parallel_size", None) not in (None, 1):
             raise ValueError(f"{feature} does not yet support virtual pipeline parallelism.")
-        if getattr(model, "is_hybrid_model", False):
-            raise ValueError(
-                f"{feature} does not yet support Mamba hybrid models (packed boundaries are not propagated to SSM layers)."
-            )
         if getattr(self.ddp, "use_megatron_fsdp", False):
             raise ValueError(f"{feature} is not supported with Megatron FSDP.")
         if getattr(model, "max_seqlen_per_dp_cp_rank", None) is None:
@@ -1368,8 +1364,13 @@ class ConfigContainer(Container):
                 raise ValueError(
                     f"model.min_dynamic_context_parallel_size must be a power of two in [1, dp * cp = {pool}], got {min_cp}."
                 )
+            self._validate_dynamic_cp_gated_delta_net_heads(pool)
         capacity = pool * model.max_seqlen_per_dp_cp_rank
         seq_length = getattr(self.dataset, "seq_length", None) or model.seq_length
+        offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
+        if getattr(self.dataset, "enable_offline_packing", False) and offline_packing_specs is not None:
+            # A sequence of an offline packed row can be as long as the row.
+            seq_length = max(seq_length, offline_packing_specs.packed_sequence_size)
         if capacity < seq_length:
             raise ValueError(
                 f"Bin capacity too small: {pool} ranks x max_seqlen_per_dp_cp_rank "
@@ -1377,7 +1378,33 @@ class ConfigContainer(Container):
                 "could never be scheduled."
             )
         if seq_length > model.seq_length:
-            raise ValueError(f"dataset.seq_length={seq_length} exceeds model.seq_length={model.seq_length}.")
+            raise ValueError(
+                f"Samples of up to {seq_length} tokens (dataset.seq_length or the offline packed row length) exceed "
+                f"model.seq_length={model.seq_length}."
+            )
+
+    def _validate_dynamic_cp_gated_delta_net_heads(self, pool: int) -> None:
+        """Require Gated DeltaNet's heads to split over the largest dynamic CP group, the whole ``dp * cp`` pool.
+
+        Megatron-Core's Gated DeltaNet shards its key and value heads across the context-parallel group of a
+        microbatch, and rejects at model construction a pool whose size does not divide them.
+        """
+        model = self.model
+        has_gated_delta_net = "G" in (getattr(model, "hybrid_layer_pattern", None) or "") or getattr(
+            model, "experimental_attention_variant", None
+        ) in ("gdn", "gated_delta_net")
+        if not has_gated_delta_net:
+            return
+        tp_size = getattr(model, "tensor_model_parallel_size", None) or 1
+        for name in ("linear_num_key_heads", "linear_num_value_heads"):
+            heads = getattr(model, name, None)
+            if heads is not None and (heads // tp_size) % pool:
+                raise ValueError(
+                    f"Dynamic context parallelism can run a bin on the whole dp * cp pool of {pool} ranks, but Gated "
+                    f"DeltaNet splits its {heads // tp_size} heads per tensor-parallel rank (model.{name}={heads}) "
+                    "across the bin's group. Use a dp * cp pool that divides them, for example fewer GPUs per job, "
+                    "or static context parallelism (model.dynamic_context_parallel=False)."
+                )
 
     def _validate_fixed_thd_dsv4_packing(self) -> None:
         """Require prepacked, fixed-width batches for the fixed-THD DSv4 contract."""
@@ -1515,11 +1542,11 @@ class ConfigContainer(Container):
 
         if enable_offline_packing and enable_in_batch_packing:
             raise ValueError("enable_offline_packing and enable_in_batch_packing are mutually exclusive.")
-        if enable_global_batch_packing and (
-            enable_offline_packing or enable_in_batch_packing or enable_energon_packing
-        ):
+        # Offline packing combines with global-batch packing: each packed row yields its sequences, and the
+        # scheduler re-bins them. In-batch and Energon packing already emit THD bins.
+        if enable_global_batch_packing and (enable_in_batch_packing or enable_energon_packing):
             raise ValueError(
-                "enable_global_batch_packing is mutually exclusive with offline, in-batch, and Energon packing: "
+                "enable_global_batch_packing is mutually exclusive with in-batch and Energon packing: "
                 "the scheduler packs unpacked samples itself."
             )
         if (

@@ -23,6 +23,7 @@ import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.data.datasets.gpt_sft import GPTSFTDataset
+from megatron.bridge.data.packing.global_batch import build_unpacked_sequence_sample, fold_alignment_padding
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.safe_pickle import safe_load_npy
 
@@ -148,6 +149,57 @@ class GPTSFTPackedDataset(GPTSFTDataset):
     def _maybe_cast_to_list(self, x):
         return [item.tolist() if isinstance(item, np.ndarray) else item for item in x]
 
+    def _logical_sequence_length(self, tokens: np.ndarray, loss_mask: np.ndarray) -> int:
+        """Return the length of one packed sequence without its alignment padding.
+
+        Offline packing with ``pad_seq_to_mult > 1`` stores each sequence padded with zero-loss EOS tokens. A
+        supervised terminal EOS is part of the sequence and is kept.
+        """
+        length = len(tokens)
+        if self._pad_seq_to_mult > 1:
+            while length > 0 and tokens[length - 1] == self.tokenizer.eos_id and not loss_mask[length - 1]:
+                length -= 1
+        return length
+
+    def _collate_unpacked_sequences(self, batch: list[dict]) -> list[dict[str, torch.Tensor]]:
+        """Split packed rows back into one unpacked scheduler sample per sequence.
+
+        For global-batch packing, Megatron-Core's sequence-packing scheduler re-bins the sequences of the whole
+        global batch, and under dynamic context parallelism picks a CP group for each bin. Offline packing then only
+        decides which sequences share a step: the global batch counts packed rows. Each sequence keeps its own
+        next-token labels and loss mask, and is padded to the global-batch alignment multiple instead of the offline
+        ``pad_seq_to_mult``.
+        """
+        if not batch:
+            raise ValueError("GPT SFT collation requires at least one sample.")
+        samples = []
+        for item in batch:
+            boundaries = item["seq_boundaries"]
+            input_ids = np.asarray(item["input_ids"])
+            loss_mask = np.asarray(self._build_loss_mask(item), dtype=np.float32)
+            offset = 0
+            for start, end in zip(boundaries[:-1], boundaries[1:]):
+                tokens = input_ids[start : end - 1]
+                labels = input_ids[start + 1 : end]
+                sequence_mask = loss_mask[offset : offset + len(tokens)]
+                offset += len(tokens)
+                length = self._logical_sequence_length(tokens, sequence_mask)
+                if length == 0:
+                    continue
+                sample = build_unpacked_sequence_sample(
+                    tokens[:length],
+                    labels[:length],
+                    sequence_mask[:length],
+                    pad_to_multiple_of=self.global_batch_packing_pad_to_multiple_of,
+                    pad_token_id=self.tokenizer.eos_id,
+                )
+                if self.fold_alignment_padding:
+                    fold_alignment_padding(sample)
+                samples.append(sample)
+        if not samples:
+            raise ValueError("Packed rows contain no sequence with at least one input token.")
+        return samples
+
     def collate_fn(self, batch):
         """
         Collates a list of packed sequence samples into a batch for the model.
@@ -163,8 +215,11 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         Returns:
             dict: A dictionary of batched tensors, including 'tokens', 'labels',
                   'loss_mask', 'position_ids', and the MCore/TE packed-sequence
-                  fields if `return_cu_seqlen` is True.
+                  fields if `return_cu_seqlen` is True. With global-batch packing, a list of one
+                  unpacked sample per packed sequence instead.
         """
+        if self.enable_global_batch_packing:
+            return self._collate_unpacked_sequences(batch)
         input_ids = [
             np.concatenate(
                 [
