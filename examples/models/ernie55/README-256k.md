@@ -249,7 +249,7 @@ Complete steps 1–3 for the environment, converted checkpoint and `source-12.js
 
 ```bash
 git -C "$BRIDGE" fetch origin refs/pull/7000/head
-git -C "$BRIDGE" checkout --detach 8cac6a4d7087da22ecd5b09d3f1bc8418aa8102d
+git -C "$BRIDGE" checkout --detach 8bb9cf400372b8eb38ba9b656a8e5215a6f8d492
 git -C "$MCORE" fetch origin refs/pull/9506/head
 git -C "$MCORE" checkout --detach 8882c2a3ee0d76a2a67af23affba89e43c29abf6
 python - "$DATA/source-12.jsonl" "$DATA/single1m.jsonl" <<'PY'
