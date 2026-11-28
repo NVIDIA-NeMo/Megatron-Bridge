@@ -531,7 +531,6 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.norm.weight": "backbone.layers.*.norm.weight",
             "decoder.layers.*.pre_mlp_layernorm.weight": "backbone.layers.*.norm.weight",
             "decoder.layers.*.input_layernorm.weight": "backbone.layers.*.norm.weight",
-            # TODO (@maanug): need to find a way to prune the vocab padding from the vocab dimension for these params
             "embedding.word_embeddings.weight": embedding_hf_param,
             "output_layer.weight": "lm_head.weight",
             # MoE layers

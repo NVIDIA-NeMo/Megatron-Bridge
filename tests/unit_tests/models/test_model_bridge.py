@@ -955,6 +955,32 @@ def test_truncate_vocab_padding_handles_output_bias_and_alias():
     assert result["cls.predictions.decoder.bias"].shape == (3,)
 
 
+@pytest.mark.parametrize("hf_param", ["backbone.embeddings.weight", "backbone.embedding.weight", "embed.weight"])
+def test_truncate_vocab_padding_handles_any_token_embedding_name(hf_param):
+    """Padded token-embedding rows are dropped whatever the HF checkpoint names the embedding."""
+    bridge = DummyBridge()
+    bridge.hf_config = SimpleNamespace(vocab_size=3)
+    task = SimpleNamespace(
+        global_param_name="embedding.word_embeddings.weight",
+        mapping=SimpleNamespace(hf_param=hf_param),
+    )
+
+    result = bridge._truncate_vocab_padding(task, {hf_param: torch.arange(10).reshape(5, 2)})
+
+    assert result[hf_param].shape == (3, 2)
+
+
+def test_truncate_vocab_padding_keeps_non_vocab_output_head():
+    """An output layer exported as a classification head keeps all of its rows."""
+    bridge = DummyBridge()
+    bridge.hf_config = SimpleNamespace(vocab_size=3)
+    task = SimpleNamespace(global_param_name="output_layer.weight", mapping=SimpleNamespace(hf_param="score.weight"))
+
+    result = bridge._truncate_vocab_padding(task, {"score.weight": torch.ones(5, 2)})
+
+    assert result["score.weight"].shape == (5, 2)
+
+
 @pytest.mark.parametrize("is_remote_pp", [False, True])
 def test_truncate_vocab_padding_handles_fp8_scale_task(is_remote_pp):
     bridge = DummyBridge()
