@@ -62,6 +62,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection  # noqa: 
 from megatron.core.transformer.moe import moe_layer as mcore_moe_layer  # noqa: E402
 from megatron.core.transformer.torch_norm import WrappedTorchNorm  # noqa: E402
 
+from megatron.bridge.models.conversion.glu import deinterleave_glu_tensor, interleave_glu_tensor  # noqa: E402
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge  # noqa: E402
 from megatron.bridge.models.ernie import ernie55_mappings as mappings  # noqa: E402
 from megatron.bridge.models.ernie.ernie55_mappings import (  # noqa: E402
@@ -926,38 +927,55 @@ class TestTransforms:
         generator = torch.Generator().manual_seed(3)
         fc1 = torch.randn(2 * ffn, 6, generator=generator, dtype=torch.float64)
         tokens = torch.randn(5, 6, generator=generator, dtype=torch.float64)
-        interleaved = mappings._glu_interleave(fc1, size)
+        interleaved = interleave_glu_tensor(fc1, size)
         assert torch.equal(interleaved, _interleaved_rows(fc1[:ffn], fc1[ffn:], size))
         assert torch.equal(remove(tokens @ interleaved.T, size), tokens @ fc1.T)
-        assert torch.equal(mappings._glu_deinterleave(interleaved, size), fc1)
+        assert torch.equal(deinterleave_glu_tensor(interleaved, size), fc1)
 
-    def test_grouped_expert_fc1_interleaves_on_import_and_restores_on_export(self, pg_collection):
-        gate = torch.randn(12, 6).to(torch.bfloat16)
-        up = torch.randn(12, 6).to(torch.bfloat16)
+    @pytest.mark.parametrize(
+        ("expert_path", "glu_interleave", "grouped_shared", "interleaved"),
+        [
+            ("experts.linear_fc1.weight0", "routed", False, True),
+            ("shared_experts.linear_fc1.weight", "shared", True, True),
+            ("shared_experts.linear_fc1.weight", "shared", False, False),
+            ("experts.local_experts.0.linear_fc1.weight", None, False, False),
+        ],
+    )
+    def test_grouped_expert_fc1_interleaves_on_import_and_restores_on_export(
+        self, pg_collection, expert_path, glu_interleave, grouped_shared, interleaved
+    ):
+        # Three blocks per half distinguish a single conversion from a double conversion.
+        gate = torch.randn(96, 6).to(torch.bfloat16)
+        up = torch.randn(96, 6).to(torch.bfloat16)
         module = torch.nn.Module()
-        module.weight0 = torch.nn.Parameter(torch.empty(24, 6, dtype=torch.bfloat16))
-        module.config = SimpleNamespace(moe_mlp_glu_interleave_size=4, num_moe_experts=1)
+        module.register_parameter(
+            expert_path.rsplit(".", 1)[-1], torch.nn.Parameter(torch.empty(192, 6, dtype=torch.bfloat16))
+        )
+        module.config = SimpleNamespace(
+            gated_linear_unit=True,
+            moe_mlp_glu_interleave_size=32,
+            moe_shared_expert_glu_interleave_size=32,
+            use_grouped_gemm_for_shared_expert=grouped_shared,
+            num_moe_experts=1,
+        )
         mapping = mappings._Ernie55GatedMLPMapping(
-            "decoder.layers.1.inner_layer.mlp.experts.linear_fc1.weight0",
+            f"decoder.layers.1.inner_layer.mlp.{expert_path}",
             "experts.0.w1.weight",
             "experts.0.w3.weight",
             hf_dtype=torch.bfloat16,
-            glu_interleave="routed",
+            glu_interleave=glu_interleave,
         )
         local = mapping.hf_to_megatron({"gate": gate, "up": up}, module)
-        assert torch.equal(local, _interleaved_rows(gate, up, 4))
-        exported = mapping.megatron_to_hf(local, module)
+        expected = _interleaved_rows(gate, up, 32) if interleaved else torch.cat([gate, up])
+        assert torch.equal(local, expected)
+        # Export independently constructed runtime weights, not the import result.
+        exported = mapping.megatron_to_hf(expected, module)
         assert torch.equal(exported["experts.0.w1.weight"], gate) and torch.equal(exported["experts.0.w3.weight"], up)
-        # Sequential experts and configs without the knob keep [gate; up].
+        assert all(weight.dtype == torch.bfloat16 for weight in exported.values())
+        # Configs without the knobs keep [gate; up].
         module.config.moe_mlp_glu_interleave_size = None
+        module.config.moe_shared_expert_glu_interleave_size = None
         assert torch.equal(mapping.hf_to_megatron({"gate": gate, "up": up}, module), torch.cat([gate, up]))
-
-    def test_shared_expert_interleaves_only_with_grouped_gemm(self):
-        config = SimpleNamespace(moe_shared_expert_glu_interleave_size=4, use_grouped_gemm_for_shared_expert=False)
-        assert mappings._glu_interleave_size(config, "shared") is None
-        config.use_grouped_gemm_for_shared_expert = True
-        assert mappings._glu_interleave_size(config, "shared") == 4
-        assert mappings._glu_interleave_size(config, None) is None
 
     def test_local_views_exist_only_for_tensors_stored_alike(self):
         """Bridge's local-view transfer (refit) may only skip conversion for tensors stored the same way."""

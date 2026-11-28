@@ -21,6 +21,7 @@ import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion import quant_bridge as quant_bridge_module
+from megatron.bridge.models.conversion.glu import interleave_glu_tensor
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
@@ -201,6 +202,51 @@ def test_quantized_stream_resolves_tied_embeddings_from_unwrapped_model(monkeypa
 
     assert list(exported) == []
     assert seen_models == [model]
+
+
+def test_interleaved_glu_fsdp_quantized_export_fails_on_every_rank(monkeypatch):
+    class FakeDTensor:
+        pass
+
+    name = "decoder.layers.0.mlp.experts.linear_fc1.weight0"
+    task = types.SimpleNamespace(
+        global_param_name=name,
+        mapping=GatedMLPMapping(name, gate="hf.gate", up="hf.up"),
+        # Model a non-owning PP rank; the owning rank reports FSDP through the
+        # single preflight collective below.
+        param_weight=None,
+    )
+    monkeypatch.setattr(quant_bridge_module, "DTensor", FakeDTensor)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    task.mapping.pp_group = types.SimpleNamespace(size=lambda: 2)
+    monkeypatch.setattr(
+        torch.distributed,
+        "all_gather_object",
+        lambda output, local, *, group: output.__setitem__(slice(None), [local, True]),
+    )
+
+    with pytest.raises(NotImplementedError, match="does not support Megatron FSDP"):
+        quant_bridge_module._validate_interleaved_glu_quantized_export(
+            [task],
+            types.SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=2),
+            lambda _name: True,
+        )
+
+
+def test_interleaved_glu_quantized_export_rejects_mapping_without_layout_support():
+    name = "decoder.layers.0.mlp.experts.linear_fc1.weight0"
+    task = types.SimpleNamespace(
+        global_param_name=name,
+        mapping=AutoMapping(name, "hf.gate_up_proj"),
+        param_weight=torch.zeros(12, 4),
+    )
+
+    with pytest.raises(NotImplementedError, match="is not implemented by AutoMapping"):
+        quant_bridge_module._validate_interleaved_glu_quantized_export(
+            [task],
+            types.SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=2),
+            lambda _name: True,
+        )
 
 
 def test_quantized_stream_accumulates_grouped_experts(monkeypatch):
@@ -417,6 +463,58 @@ class TestGatedMLPMappingQuant:
         assert torch.equal(result["up.weight"], q_up)
         assert torch.equal(result["gate.weight_scale_inv"], scale_gate)
         assert torch.equal(result["up.weight_scale_inv"], scale_up)
+
+    def test_megatron_to_hf_quant_deinterleaves_before_quantizing(self, mock_distributed_env, monkeypatch):
+        """Quantized export converts the logical rows before producing data and scales."""
+        monkeypatch.setenv("USE_ACT_FUSION_FOR_DENSE", "1")
+        mock_distributed_env()
+        mapping = GatedMLPMapping(
+            megatron_param="decoder.layers.0.mlp.linear_fc1.weight",
+            gate="model.layers.0.mlp.gate_proj.weight",
+            up="model.layers.0.mlp.up_proj.weight",
+        )
+        config = types.SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=2)
+        gate = torch.arange(48, dtype=torch.float32).reshape(12, 4)
+        up = torch.arange(100, 148, dtype=torch.float32).reshape(12, 4)
+        physical = interleave_glu_tensor(torch.cat((gate, up)), interleave_size=2)
+        module = MockModule(config, weight_shape=(24, 4))
+
+        result = mapping.megatron_to_hf_quant(
+            physical,
+            module,
+            quantization_checker=dummy_quantization_checker,
+            quant_fn=scaled_fp8_blockwise,
+            quant_block_size=(2, 2),
+        )
+
+        expected_gate, expected_gate_scale = scaled_fp8_blockwise(gate, (2, 2))
+        expected_up, expected_up_scale = scaled_fp8_blockwise(up, (2, 2))
+        assert torch.equal(result["model.layers.0.mlp.gate_proj.weight"], expected_gate)
+        assert torch.equal(result["model.layers.0.mlp.up_proj.weight"], expected_up)
+        assert torch.equal(result["model.layers.0.mlp.gate_proj.weight_scale_inv"], expected_gate_scale)
+        assert torch.equal(result["model.layers.0.mlp.up_proj.weight_scale_inv"], expected_up_scale)
+
+    def test_fused_expert_quantization_uses_gated_layout_conversion(self, mock_distributed_env):
+        from megatron.bridge.models.conversion.param_mapping import FusedGatedExpertMapping
+
+        mock_distributed_env()
+        mapping = FusedGatedExpertMapping("decoder.layers.0.mlp.experts.linear_fc1.weight0", "hf.experts.gate_up_proj")
+        group = types.SimpleNamespace(size=lambda: 1, rank=lambda: 0)
+        mapping.set_process_groups_from_pg_collection(
+            types.SimpleNamespace(pp=group, ep=group, tp=group, expt_tp=group)
+        )
+        config = types.SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=2, num_moe_experts=1)
+        module = MockModule(config, weight_shape=(12, 4))
+        gate = torch.arange(24, dtype=torch.float32).reshape(6, 4)
+        up = gate + 100
+        logical = torch.cat((gate, up))
+        physical = torch.cat((gate[:2], up[:2], gate[2:4], up[2:4], gate[4:], up[4:]))
+        result = mapping.megatron_to_hf_quant(
+            physical, module, dummy_quantization_checker, scaled_fp8_blockwise, (2, 2)
+        )
+        expected_weight, expected_scale = scaled_fp8_blockwise(logical, (2, 2))
+        assert torch.equal(result["hf.experts.gate_up_proj"], expected_weight)
+        assert torch.equal(result["hf.experts.gate_up_proj_scale_inv"], expected_scale)
 
     def test_megatron_to_hf_quant_skips_missing_singleton_ep_group(self, mock_distributed_env):
         """Logical EP=1 must not fall through to the default WORLD group."""

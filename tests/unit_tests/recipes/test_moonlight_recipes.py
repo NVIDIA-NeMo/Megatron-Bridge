@@ -124,6 +124,7 @@ class _FakeMoonlightModelProvider:
         self.mtp_num_layers = None
         self.bf16 = False
         self.fp16 = False
+        self.fp8_recipe = "delayed"
         self.tp_comm_overlap = False
         self.use_te_rng_tracker = False
         self.use_cpu_initialization = False
