@@ -280,7 +280,8 @@ def get_config_forward_step(config: ConfigContainer) -> str | None:
     """Read the recipe default, retaining late dataset-dependent step selection."""
     from megatron.bridge.training.forward_step import get_forward_step_reference
 
-    return get_forward_step_reference(config)
+    # Keep the lazy package import typed when checking the standalone launcher.
+    return cast("str | None", get_forward_step_reference(config))
 
 
 def step_registry_name(reference: str) -> str:
@@ -300,7 +301,7 @@ def load_forward_step(step_type: str, mode: str | None = None) -> Callable:
     if ":" in step_type:
         from megatron.bridge.training.forward_step import load_forward_step_reference
 
-        return load_forward_step_reference(step_type, mode=mode or "pretrain")
+        return cast("Callable[..., object]", load_forward_step_reference(step_type, mode=mode or "pretrain"))
     step_key = step_type.lower()
     if step_key not in STEP_FUNCTIONS:
         raise ValueError(ERR_UNKNOWN_STEP.format(step_type=step_type, choices=", ".join(STEP_FUNCTIONS)))
