@@ -14,6 +14,8 @@ qwen2.5-vl.md
 qwen3-vl.md
 qwen3.6-35b-a3b.md
 qwen3.8-27b.md
+qwen3.8-flash-next.md
+qwen3.8-flash-next-text-only.md
 qwen2-audio.md
 qwen25-omni.md
 qwen3-omni.md
@@ -31,6 +33,8 @@ qwen3-asr.md
 | Qwen3-VL | [qwen3-vl.md](qwen3-vl.md) |
 | Qwen3.6-35B-A3B | [qwen3.6-35b-a3b.md](qwen3.6-35b-a3b.md) |
 | Qwen3.8-27B | [qwen3.8-27b.md](qwen3.8-27b.md) |
+| Qwen3.8-Flash-Next VLM | [qwen3.8-flash-next.md](qwen3.8-flash-next.md) |
+| Qwen3.8-Flash-Next Text-only | [qwen3.8-flash-next-text-only.md](qwen3.8-flash-next-text-only.md) |
 | Qwen2-Audio | [qwen2-audio.md](qwen2-audio.md) |
 | Qwen2.5-Omni | [qwen25-omni.md](qwen25-omni.md) |
 | Qwen3-Omni | [qwen3-omni.md](qwen3-omni.md) |

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import weakref
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
@@ -254,6 +255,27 @@ def test_iter_local_hf_params_reports_fused_expert_etp_metadata(monkeypatch):
     assert gate.shard_dim == up.shard_dim == 0
 
 
+@pytest.mark.parametrize("fused", [False, True])
+def test_iter_local_hf_params_rejects_interleaved_views_before_yielding(fused):
+    name = "decoder.layers.0.mlp.experts.linear_fc1.weight0"
+    mapping = (
+        FusedGatedExpertMapping(name, "hf.experts.gate_up_proj")
+        if fused
+        else GatedMLPMapping(name, gate="hf.gate", up="hf.up")
+    )
+    module = torch.nn.Module()
+    module.config = SimpleNamespace(gated_linear_unit=True, moe_mlp_glu_interleave_size=2)
+    task = WeightConversionTask(
+        param_name=name,
+        global_param_name=name,
+        mapping=mapping,
+        megatron_module=module,
+        param_weight=torch.zeros(12, 4, dtype=torch.bfloat16),
+    )
+    with pytest.raises(ValueError, match="interleaved GLU storage cannot be represented"):
+        next(DummyBridge().iter_local_hf_params([task]))
+
+
 def test_iter_local_hf_params_skips_remote_pp_placeholders():
     remote = WeightConversionTask(
         param_name="decoder.remote.weight",
@@ -453,14 +475,14 @@ def test_stream_weights_hf_to_megatron_dequantizes_fp8_weights_the_bridge_hook_l
 
 
 def test_load_hf_weights_leaves_bridges_that_dequantize_in_their_hook_unchanged():
-    from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge
+    from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
 
     torch.manual_seed(0)
     state = {
         "q.weight": (torch.randn(200, 160) * 50).to(torch.float8_e4m3fn),
         "q.weight_scale_inv": torch.rand(2, 2) + 0.5,
     }
-    bridge = DeepSeekV3Bridge()
+    bridge = GLM5Bridge()
     bridge.hf_config = SimpleNamespace(quantization_config={"quant_method": "fp8", "weight_block_size": [128, 128]})
 
     expected = bridge.maybe_modify_loaded_hf_weight("q.weight", state)
@@ -1991,6 +2013,61 @@ def test_stream_weights_megatron_to_hf_finalizes_exported_tensors_before_cpu(mon
     ]
     for label in ("packed", "scale", "scale_2"):
         assert events.index(("finalize", label)) < events.index(("cpu", label))
+
+
+@pytest.mark.parametrize("weight_dtype", [None, torch.bfloat16, torch.float32])
+def test_export_dtype_preserves_lazy_shard_streaming(monkeypatch, weight_dtype):
+    bridge = DummyBridge()
+    fetched = []
+    sources = {
+        "hf.bf16": torch.tensor([0.0, -0.0, 1.5], dtype=torch.bfloat16),
+        "hf.fp32": torch.tensor([1.234567, -2.25], dtype=torch.float32),
+        "hf.integer": torch.tensor([2**40 + 1], dtype=torch.int64),
+    }
+
+    class LazyShards(Mapping):
+        def __iter__(self):
+            return iter(sources)
+
+        def __len__(self):
+            return len(sources)
+
+        def __getitem__(self, name):
+            fetched.append(name)
+            return sources[name]
+
+    class LazyMapping:
+        def megatron_to_hf(self, weight, module):
+            return LazyShards()
+
+    task = WeightConversionTask(
+        param_name="decoder.ngram_embeddings.weight",
+        global_param_name="decoder.ngram_embeddings.weight",
+        mapping=LazyMapping(),
+        param_weight=torch.empty(0),
+        weight_dtype=weight_dtype,
+    )
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
+    monkeypatch.setattr(bridge, "maybe_modify_converted_hf_weight", lambda _task, weights, _state: weights)
+    stream = bridge.stream_weights_megatron_to_hf(
+        [Mock()],
+        SimpleNamespace(),
+        cpu=True,
+        show_progress=False,
+        conversion_tasks=[task],
+        merge_adapter_weights=False,
+    )
+    assert fetched == []
+    for index, (name, source) in enumerate(sources.items()):
+        result = next(stream)
+        # Even an explicit same-dtype cast must not gather the remaining shards.
+        assert fetched == list(sources)[: index + 1]
+        assert result.param_name == name
+        expected = source.to(weight_dtype) if weight_dtype is not None and source.is_floating_point() else source
+        assert result.weight.dtype == expected.dtype
+        assert torch.equal(result.weight.view(torch.uint8), expected.view(torch.uint8))
+    with pytest.raises(StopIteration):
+        next(stream)
 
 
 @pytest.mark.parametrize(

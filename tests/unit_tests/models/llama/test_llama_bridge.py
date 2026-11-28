@@ -348,6 +348,35 @@ class TestLlamaBridgeConfigConverter:
         ):
             bridge.provider_bridge(mock_pretrained)
 
+    def test_rejects_rope_types_it_cannot_convert(self):
+        """Dynamic RoPE raises instead of converting to an unscaled model."""
+        config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            max_position_embeddings=4096,
+            vocab_size=128,
+            rope_scaling={"rope_type": "dynamic", "factor": 2.0},
+        )
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
+        bridge = LlamaBridge()
+        expected = re.escape(
+            "Unsupported RoPE type 'dynamic'. LlamaBridge converts the RoPE types "
+            "['default', 'linear', 'llama3', 'yarn']"
+        )
+
+        with pytest.raises(ValueError, match=expected):
+            bridge.hf_config_to_model_config(config)
+        with (
+            pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"),
+            pytest.raises(ValueError, match=expected),
+        ):
+            bridge.provider_bridge(mock_pretrained)
+
     def test_provider_bridge_architecture_mapping(self, mock_pretrained_llama, llama_config):
         """Test that architecture parameters are correctly mapped from HF config."""
         bridge = LlamaBridge()

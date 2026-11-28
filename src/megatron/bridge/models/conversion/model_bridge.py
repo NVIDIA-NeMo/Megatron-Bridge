@@ -61,6 +61,7 @@ from megatron.bridge.models.conversion.fp8_export import (
     detect_fp8_export_layout,
     get_fp8_export_tensors,
 )
+from megatron.bridge.models.conversion.glu import get_glu_interleave_size
 from megatron.bridge.models.conversion.gtp import (
     _gather_gtp_weight,
     _get_mapping_shape,
@@ -599,7 +600,7 @@ class MegatronModelBridge(
 
         ``HF_EXPORT_IGNORED_SOURCE_PREFIXES`` names whole modules absent from every target; this hook covers
         omissions that depend on the checkpoint, such as a checkpoint's copies of parameters the Megatron
-        model holds once (ERNIE 5.5's shared MTP body). Strict export treats the returned names as
+        model holds once, for a bridge that does not write them back. Strict export treats the returned names as
         intentionally absent instead of missing, so the shards that hold them are still written with their
         other tensors. Never return a tensor the export does yield: strict saving rejects it as unknown.
 
@@ -2193,15 +2194,20 @@ class MegatronModelBridge(
             )  # dict will be none except for one expert;
             # Finalize the converted tensor for the current export rank
             converted_weights_dict = self._truncate_vocab_padding(task, converted_weights_dict)
-            # Quantizer ranges keep their precision; ``weight_dtype`` applies to the weights only.
-            if not isinstance(task.mapping, AmaxMapping):
-                converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
             tied_output_hf_name = None
             if tied_mapping_registry is not None:
                 tied_output_hf_name = self._get_tied_output_hf_name(task, tied_mapping_registry)
 
             for hf_name, tensor in converted_weights_dict.items():
+                # Lazy mappings may gather multi-gigabyte shards. Cast each tensor
+                # as it is emitted rather than materializing the entire mapping.
+                if (
+                    not isinstance(task.mapping, AmaxMapping)
+                    and task.weight_dtype is not None
+                    and tensor.is_floating_point()
+                ):
+                    tensor = tensor.to(task.weight_dtype)
                 if not merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
                     suffix_pos = hf_name.rfind(".")
                     if suffix_pos == -1:
@@ -2792,6 +2798,11 @@ class MegatronModelBridge(
                     raise ValueError(
                         f"{global_name}: raw FP8 export does not support GTP sharding; "
                         "use gathered dequantized export or gathered quantized export instead"
+                    )
+                if get_glu_interleave_size(model_config, global_name) is not None:
+                    raise ValueError(
+                        f"{global_name}: raw FP8 export does not support interleaved GLU storage; "
+                        "use logical export to dequantize before converting rows, then requantize if needed"
                     )
                 try:
                     layout.validate()

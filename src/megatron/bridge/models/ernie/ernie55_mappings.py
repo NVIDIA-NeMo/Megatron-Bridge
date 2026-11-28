@@ -33,11 +33,12 @@ Layout. Hugging Face layer ``i`` (``model.layers.{i}``) is two hybrid layers:
 
 MTP depth ``k`` is Hugging Face layer ``num_hidden_layers + k``. ERNIE 5.5's MTP shares its body with
 the decoder's last two hybrid layers (``mtp_shared_last_layer``; SD-MTP): the body's Parameters are the
-decoder's, so ``named_parameters()`` and this registry see them once, under their decoder names, and
-the checkpoint needs no body tensors (the released checkpoints carry a copy, which the import skips:
-:func:`ernie55_mtp_body_copy_keys`). The MTP router's ``expert_bias`` is a buffer, owned by the MTP
-layer (Hugging Face ``block_sparse_moe.e_score_correction_bias``). A non-shared MTP has no checkpoint
-to validate its key layout against and is rejected.
+decoder's, so ``named_parameters()`` and this registry see them once, under their decoder names. The
+released checkpoints also store the body under every MTP layer (:func:`ernie55_mtp_body_copy_names`): the
+import skips those copies, and the export writes the ones its source checkpoint holds, because inference
+engines read their MTP draft layer for speculative decoding from them. The MTP router's ``expert_bias`` is
+a buffer, owned by the MTP layer (Hugging Face ``block_sparse_moe.e_score_correction_bias``). A non-shared
+MTP has no checkpoint to validate its key layout against and is rejected.
 
 Every hybrid layer is wrapped in a hyper-connection module, so its weights live under
 ``.inner_layer.`` and its mHC weights under ``.hyper_connection.`` (Hugging Face
@@ -123,6 +124,7 @@ __all__ = [
     "ernie55_hf_param_dtypes",
     "ernie55_mapping_registry",
     "ernie55_mtp_body_copy_keys",
+    "ernie55_mtp_body_copy_names",
     "ernie55_param_mappings",
     "join_kv_b_proj",
     "rope_row_permutation",
@@ -392,26 +394,6 @@ def _permute_rope_rows(weight: torch.Tensor, *, block: int, offset: int, perm: t
     return blocks.reshape(weight.shape)
 
 
-def _glu_interleave(weight: torch.Tensor, size: int) -> torch.Tensor:
-    """``[gate; up]`` rows to Megatron-Core's block-interleaved ``[g_0:k, u_0:k, g_k:2k, u_k:2k, ...]``.
-
-    Same layout as the GLU interleave of Bridge's checkpoint loader (``_interleave_glu_tensor``) and
-    the one ``TEGroupedMLP._remove_glu_interleaving`` undoes on the fc1 output.
-    """
-    rows = weight.shape[0]
-    if rows % (2 * size):
-        raise ValueError(f"ERNIE 5.5 GLU interleave: {rows} fc1 rows are not a multiple of 2 x {size}.")
-    return weight.reshape(2, rows // (2 * size), size, *weight.shape[1:]).transpose(0, 1).reshape(weight.shape)
-
-
-def _glu_deinterleave(weight: torch.Tensor, size: int) -> torch.Tensor:
-    """Inverse of :func:`_glu_interleave`."""
-    rows = weight.shape[0]
-    if rows % (2 * size):
-        raise ValueError(f"ERNIE 5.5 GLU interleave: {rows} fc1 rows are not a multiple of 2 x {size}.")
-    return weight.reshape(rows // (2 * size), 2, size, *weight.shape[1:]).transpose(0, 1).reshape(weight.shape)
-
-
 # ---------------------------------------------------------------------------------------------
 # Mappings
 # ---------------------------------------------------------------------------------------------
@@ -607,28 +589,13 @@ class _Ernie55KVUpMapping(_Ernie55TensorMapping):
         return _to_hf_dtype({str(self.hf_param): joined}, self.hf_dtype)
 
 
-def _glu_interleave_size(config: Any, glu_interleave: str | None) -> int | None:
-    """Megatron-Core's GLU block-interleave size of an fc1, or None when its rows are ``[gate; up]``.
-
-    Only the grouped routed experts (``TEGroupedMLP``, ``moe_mlp_glu_interleave_size``) and the grouped
-    shared expert (``use_grouped_gemm_for_shared_expert`` with ``moe_shared_expert_glu_interleave_size``)
-    read interleaved rows; ``SequentialMLP`` experts and dense MLPs always use ``[gate; up]``.
-    """
-    if glu_interleave == "routed":
-        return getattr(config, "moe_mlp_glu_interleave_size", None)
-    if glu_interleave == "shared" and getattr(config, "use_grouped_gemm_for_shared_expert", False):
-        return getattr(config, "moe_shared_expert_glu_interleave_size", None)
-    return None
-
-
 class _Ernie55GatedMLPMapping(GatedMLPMapping):
     """``linear_fc1 = [gate; up]`` of a dense MLP, the shared expert or a routed expert, in the HF dtype.
 
-    ``glu_interleave`` (``"routed"`` or ``"shared"``) names the fc1 whose rows Megatron-Core may keep
-    block-interleaved (:func:`_glu_interleave_size`); when the model config enables that, the local fc1
-    rows are interleaved on import and restored on export, as Bridge's checkpoint loader does. Tensor-
-    and expert-parallel distribution is :class:`GatedMLPMapping`'s. Import requires ``gate`` and ``up``
-    to be ``hf_dtype``.
+    :class:`GatedMLPMapping` owns GLU row-layout conversion and tensor- and expert-parallel
+    distribution. ``glu_interleave`` (``"routed"`` or ``"shared"``) identifies mappings that cannot
+    expose config-independent local HF views because their runtime rows may be block-interleaved.
+    Import requires ``gate`` and ``up`` to be ``hf_dtype``.
     """
 
     def __init__(
@@ -650,24 +617,14 @@ class _Ernie55GatedMLPMapping(GatedMLPMapping):
             glu_interleave=self.glu_interleave,
         )
 
-    def _interleave_size(self, megatron_module: nn.Module | None) -> int | None:
-        if self.glu_interleave is None or megatron_module is None:
-            return None
-        return _glu_interleave_size(self._get_config(megatron_module), self.glu_interleave)
-
     def hf_to_megatron(self, hf_weights: dict[str, torch.Tensor], megatron_module: nn.Module) -> torch.Tensor:
         for part, hf_weight in hf_weights.items():
             _check_hf_dtype(self.hf_param[part], hf_weight, self.hf_dtype)
-        local = super().hf_to_megatron(hf_weights, megatron_module)
-        size = self._interleave_size(megatron_module)
-        return _glu_interleave(local, size) if size else local
+        return super().hf_to_megatron(hf_weights, megatron_module)
 
     def megatron_to_hf(
         self, megatron_weights: torch.Tensor | None, megatron_module: nn.Module | None
     ) -> dict[str, torch.Tensor]:
-        size = self._interleave_size(megatron_module)
-        if size and megatron_weights is not None:
-            megatron_weights = _glu_deinterleave(self.maybe_dequantize(megatron_weights), size)
         return _to_hf_dtype(super().megatron_to_hf(megatron_weights, megatron_module), self.hf_dtype)
 
     def local_hf_param_specs(self, global_param_name: str | None = None) -> tuple[LocalHFParamSpec, ...]:
@@ -1020,31 +977,57 @@ def _dequantize_fp8(
     return quantization_utils.dequantize_fp8_blockwise(weight, scale_inv.float(), block_size=block_size, dtype=dtype)
 
 
-def ernie55_mtp_body_copy_keys(hf_config: Any, hf_keys: Iterable[str] | None = None) -> set[str]:
-    """Names of the MTP body copies a checkpoint may hold besides :func:`ernie55_hf_param_dtypes`.
+def ernie55_mtp_body_copy_names(hf_config: Any, hf_keys: Iterable[str] | None = None) -> dict[str, tuple[str, ...]]:
+    """For every tensor of the shared MTP body, the names a checkpoint may also store it under.
 
-    Every MTP depth shares the decoder's last layer (``mtp_shared_last_layer``), so the registry reads that body
-    once, under the last layer's names. A checkpoint that also stores it under the MTP layer, as the released ones
-    do, holds a copy of those tensors; these are the copies' names. The import skips them and the export leaves
-    them out of the expected source shards
-    (:meth:`Ernie55WeightConversionMixin.hf_export_ignored_source_keys`). The released checkpoints name the copied
-    hyper-connections ``transformer_layer.{self_attention,mlp}_hyper_connection.*``.
+    Every MTP depth shares the decoder's last layer (``mtp_shared_last_layer``), so the registry reads and writes
+    that body once, under the last layer's names. A checkpoint that also stores it under the MTP layer, as the
+    released ones do, holds a copy of those tensors; this maps each last-layer name to its copies' names. The
+    released checkpoints name the copied hyper-connections
+    ``transformer_layer.{self_attention,mlp}_hyper_connection.*``; both spellings are listed. A name the MTP
+    layer owns (its router's ``e_score_correction_bias``) is never a copy.
 
     Args:
         hf_config: The checkpoint's Hugging Face config (a ``PretrainedConfig`` or a dict).
         hf_keys: :func:`ernie55_hf_param_dtypes` of ``hf_config``, when the caller already has it.
+
+    Returns:
+        The copies' names by last-layer tensor name; a tensor without copies has no entry.
     """
     layout = Ernie55HFLayout.from_hf_config(hf_config)
     expected = set(ernie55_hf_param_dtypes(hf_config) if hf_keys is None else hf_keys)
     last = f"model.layers.{layout.num_hidden_layers - 1}."
-    bodies = [name[len(last) :] for name in expected if name.startswith(last)]
-    bodies += [f"transformer_layer.{body}" for body in bodies if "_hyper_connection." in body]
-    copies = {
-        f"model.layers.{layout.num_hidden_layers + depth}.{body}"
-        for depth in range(layout.num_mtp_layers)
-        for body in bodies
-    }
-    return copies - expected
+    names: dict[str, tuple[str, ...]] = {}
+    for name in sorted(expected):
+        if not name.startswith(last):
+            continue
+        body = name[len(last) :]
+        bodies = [body, f"transformer_layer.{body}"] if "_hyper_connection." in body else [body]
+        copies = tuple(
+            copy
+            for depth in range(layout.num_mtp_layers)
+            for copy in (f"model.layers.{layout.num_hidden_layers + depth}.{spelling}" for spelling in bodies)
+            if copy not in expected
+        )
+        if copies:
+            names[name] = copies
+    return names
+
+
+def ernie55_mtp_body_copy_keys(hf_config: Any, hf_keys: Iterable[str] | None = None) -> set[str]:
+    """Names of the MTP body copies a checkpoint may hold besides :func:`ernie55_hf_param_dtypes`.
+
+    The union of :func:`ernie55_mtp_body_copy_names`. The import skips these tensors, and the export writes the
+    ones its source checkpoint holds (:meth:`Ernie55WeightConversionMixin.maybe_modify_converted_hf_weight`).
+
+    Args:
+        hf_config: The checkpoint's Hugging Face config (a ``PretrainedConfig`` or a dict).
+        hf_keys: :func:`ernie55_hf_param_dtypes` of ``hf_config``, when the caller already has it.
+
+    Returns:
+        The copies' names.
+    """
+    return {copy for copies in ernie55_mtp_body_copy_names(hf_config, hf_keys).values() for copy in copies}
 
 
 def check_ernie55_checkpoint_keys(hf_config: Any, hf_keys: Iterable[str]) -> None:
@@ -1093,6 +1076,11 @@ def _check_checkpoint_of(hf_pretrained: Any) -> None:
         check_ernie55_checkpoint_keys(hf_pretrained.config, source.get_all_keys())
 
 
+def _exports_an_mtp_layer(tasks: Iterable[Any]) -> bool:
+    """Whether ``tasks`` convert a parameter an MTP layer owns, which a model built without MTP does not have."""
+    return any(task is not None and task.global_param_name.startswith("mtp.") for task in tasks)
+
+
 class Ernie55WeightConversionMixin:
     """ERNIE 5.5 weight conversion for a ``MegatronModelBridge`` subclass, listed before it among the bases.
 
@@ -1100,6 +1088,8 @@ class Ernie55WeightConversionMixin:
     * Loading a checkpoint first checks that it holds exactly the tensors the registry reads
       (:func:`check_ernie55_checkpoint_keys`). A weight source with no checkpoint behind it (an external
       state dict, a config-only wrapper) is not checked.
+    * Export also writes the shared MTP body under the MTP layers, for every copy the source checkpoint holds
+      (:meth:`maybe_modify_converted_hf_weight`), so the export has the source checkpoint's tensor names.
     * An FP8 checkpoint's weights are dequantized as they are loaded, with the inverse scales stored next to
       them (:func:`ernie55_fp8_block_size`); a strict export does not expect those scales in the source shards.
 
@@ -1143,21 +1133,94 @@ class Ernie55WeightConversionMixin:
             _check_checkpoint_of(hf_pretrained)
         return super().stream_weights_hf_to_megatron(hf_pretrained, megatron_model, *args, **kwargs)
 
-    def hf_export_ignored_source_keys(self, hf_pretrained: Any, source_keys: Iterable[str]) -> list[str]:
-        """The checkpoint's copies of the shared MTP body, which export writes once under the decoder's names.
+    def build_conversion_tasks(self, hf_pretrained: Any, megatron_model: Any, *args: Any, **kwargs: Any) -> Any:
+        """Build the conversion tasks as ``MegatronModelBridge`` does, and note whether the model has an MTP layer.
 
-        Export yields exactly the tensors the registry maps. A checkpoint that also stores the shared MTP
-        body under its MTP layers (:func:`ernie55_mtp_body_copy_keys`; the released checkpoints do) would
-        otherwise leave the shards holding those copies incomplete, and a strict save would refuse to write
-        them together with every other tensor they hold. A checkpoint written by this export holds no copies,
-        and the result is empty.
+        The copies of the shared MTP body belong to the MTP layer: :meth:`maybe_modify_converted_hf_weight`
+        writes them only when the export writes that layer's own tensors too. A model built without MTP exports
+        no MTP layer, and a strict save of it leaves that layer out of the expected tensors.
+
+        Returns:
+            The conversion tasks.
+        """
+        tasks = super().build_conversion_tasks(hf_pretrained, megatron_model, *args, **kwargs)
+        self._ernie55_export_writes_mtp = _exports_an_mtp_layer(tasks)
+        return tasks
+
+    def _stream_weight_events_megatron_to_hf(
+        self,
+        megatron_model: Any,
+        hf_pretrained: Any,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: Any = None,
+        merge_adapter_weights: bool = True,
+        weight_dtype: torch.dtype | None = None,
+        with_megatron_names: bool = False,
+        current_pp_stage_only: bool = False,
+    ) -> Iterable[Any]:
+        """Export as ``MegatronModelBridge`` does, and note from caller-supplied tasks whether the model has MTP.
+
+        Tasks the export builds itself go through :meth:`build_conversion_tasks` on this bridge. Supplied tasks
+        do not, and ``AutoBridge`` resolves a new bridge for every call, so the tasks of
+        ``AutoBridge.get_conversion_tasks`` reach the export on a bridge that never built any. The decision of
+        :meth:`maybe_modify_converted_hf_weight` is therefore taken here from the tasks this export runs, before
+        any pipeline-stage filtering, and not from an earlier call.
+        """
+        if conversion_tasks is not None:
+            self._ernie55_export_writes_mtp = _exports_an_mtp_layer(conversion_tasks)
+        yield from super()._stream_weight_events_megatron_to_hf(
+            megatron_model,
+            hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
+            with_megatron_names=with_megatron_names,
+            current_pp_stage_only=current_pp_stage_only,
+        )
+
+    def maybe_modify_converted_hf_weight(
+        self,
+        task: Any,
+        converted_weights_dict: dict[str, torch.Tensor],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
+        """Also write the shared MTP body under the MTP layers, for every copy the source checkpoint holds.
+
+        The registry writes the body once, under the decoder's last layer. The released checkpoints store it a
+        second time under every MTP layer (:func:`ernie55_mtp_body_copy_names`), and inference engines build
+        their MTP draft layer for speculative decoding from those names. Every copy the source checkpoint holds
+        is written with the exported tensor, so the export has the source checkpoint's tensor names and a strict
+        save completes the shards that hold the copies. Nothing is added for a source checkpoint without copies
+        (one written by an export that left them out, or a config-only wrapper), nor for a model built without
+        MTP (:meth:`build_conversion_tasks`, :meth:`_stream_weight_events_megatron_to_hf`).
 
         Args:
-            hf_pretrained: The source checkpoint wrapper; its ``config`` selects the layout.
-            source_keys: The source checkpoint's tensor names.
+            task: The conversion task of the exported tensors.
+            converted_weights_dict: The tensors the task's mapping exported, by Hugging Face name.
+            hf_state_dict: The source checkpoint's state, for its tensor names.
+
+        Returns:
+            ``converted_weights_dict``, with the copies of its tensors added.
         """
-        hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
-        return sorted(ernie55_mtp_body_copy_keys(hf_config) & set(source_keys))
+        converted_weights_dict = super().maybe_modify_converted_hf_weight(task, converted_weights_dict, hf_state_dict)
+        if not converted_weights_dict or not hf_state_dict or not getattr(self, "_ernie55_export_writes_mtp", True):
+            return converted_weights_dict
+        hf_config = getattr(self, "hf_config", None)
+        cached = getattr(self, "_ernie55_mtp_body_copy_names", None)
+        if cached is None or cached[0] is not hf_config:
+            cached = (hf_config, ernie55_mtp_body_copy_names(hf_config))
+            self._ernie55_mtp_body_copy_names = cached
+        # Clone: a checkpoint holds the two names as two tensors, and safetensors refuses two names on one storage.
+        copies = {
+            copy: tensor.clone()
+            for name, tensor in converted_weights_dict.items()
+            for copy in cached[1].get(name, ())
+            if copy in hf_state_dict
+        }
+        return {**converted_weights_dict, **copies} if copies else converted_weights_dict
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]

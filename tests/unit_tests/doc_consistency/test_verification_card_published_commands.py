@@ -19,7 +19,8 @@ own it: GPU conversion topologies must decompose over the published world size,
 an inference command must not carry a flag that belongs to the conversion
 launcher's namespace, and a checkpoint a command loads (``checkpoint.load=``,
 ``dataset.dataloader_load=``, ``--load_dir`` or a GB300 ``--pretrained_checkpoint``) must be
-written by a command in the same card, and a GB200 HybridEP command that reuses an H100 recipe must set the
+written by a command in the same card, a GB300 ``dataset.path=`` must be the output of a data preparation
+command the same card names, and a GB200 HybridEP command that reuses an H100 recipe must set the
 GB200 NVLink-domain environment.
 
 Uses only pytest, PyYAML and the standard library (no torch / megatron import) so it
@@ -27,6 +28,7 @@ scans source files directly and runs anywhere, including without the GPU stack.
 """
 
 import ast
+import re
 import shlex
 import sys
 from collections.abc import Iterator
@@ -44,6 +46,7 @@ CARDS_DIR = REPO_ROOT / "examples" / "model_verification_cards"
 CONVERSION_ARGUMENTS = REPO_ROOT / "scripts" / "conversion" / "arguments.py"
 SETUP_CONVERSION = REPO_ROOT / "scripts" / "conversion" / "setup_conversion.py"
 SETUP_INFERENCE = REPO_ROOT / "scripts" / "inference" / "setup_inference.py"
+PREPARATION_OUTPUT = re.compile(r"tutorials/data/\S+\.py[^,;\n]*?--output-dir[= ](\S+)")
 
 
 def _declared_options(source_path: Path, *, append_only: bool = False, function: str | None = None) -> set[str]:
@@ -295,6 +298,26 @@ def test_published_gb300_pretrained_checkpoints_come_from_the_same_card() -> Non
                 offenders.append(f"{leaf}: --pretrained_checkpoint {value}")
     assert not offenders, "published GB300 commands load a checkpoint no command in their card writes: " + "; ".join(
         offenders
+    )
+
+
+def test_published_gb300_dataset_paths_are_prepared_on_the_same_card() -> None:
+    """Every GB300 dataset.path is the --output-dir of a tutorials/data preparation command its card names."""
+    prepared = {
+        card.parent.name: {match.rstrip("/") for match in PREPARATION_OUTPUT.findall(card.read_text(encoding="utf-8"))}
+        for card in CARDS_DIR.glob("*/card.yaml")
+    }
+    offenders = []
+    for leaf, tokens in _published_commands():
+        if "/GB300/" not in leaf:
+            continue
+        card = leaf.split("/", 1)[0]
+        for index in range(len(tokens)):
+            name, value = _token_value(tokens, index)
+            if name == "dataset.path" and value not in prepared.get(card, set()):
+                offenders.append(f"{leaf}: dataset.path={value}")
+    assert not offenders, "published GB300 commands read a dataset no preparation command in their card builds: " + (
+        "; ".join(offenders)
     )
 
 

@@ -964,7 +964,7 @@ def test_benchmark_recipe_metadata_accepts_named_variant():
 @pytest.mark.parametrize(
     ("recipe_name", "family"),
     [
-        ("deepseek_v3_pretrain_64gpu_h100_bf16_config", "deepseek"),
+        ("deepseek_v3_pretrain_64gpu_h100_bf16_proxy_config", "deepseek"),
         ("glm51_sft_192gpu_gb200_bf16_config", "glm_moe_dsa"),
         ("nemotron_3_nano_pretrain_16gpu_h100_bf16_config", "nemotronh"),
         ("qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config", "qwen_vl"),

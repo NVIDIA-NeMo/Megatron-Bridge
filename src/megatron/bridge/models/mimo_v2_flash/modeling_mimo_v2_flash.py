@@ -291,13 +291,15 @@ class MiMoV2FlashMTPTEDotProductAttention(MiMoV2FlashTEDotProductAttention):
         super().__init__(config, layer_number, *args, **kwargs)
 
 
-def mimo_v2_flash_layer_spec(config) -> ModuleSpec:
+def mimo_v2_flash_layer_spec(config, vp_stage: int | None = None, pp_rank: int | None = None) -> ModuleSpec:
     """Layer spec for MiMo-V2-Flash with custom hybrid attention modules.
 
     Builds the block spec (handles MoE/dense split) then injects custom
     self-attention and core-attention modules into every layer spec.
+    ``vp_stage`` and ``pp_rank`` are passed to the block spec, which needs
+    ``vp_stage`` when virtual pipeline parallelism is enabled.
     """
-    spec = get_gpt_decoder_block_spec(config, use_transformer_engine=True)
+    spec = get_gpt_decoder_block_spec(config, use_transformer_engine=True, vp_stage=vp_stage, pp_rank=pp_rank)
     for layer_spec in spec.layer_specs:
         layer_spec.submodules.self_attention.module = MiMoV2FlashSelfAttention
         layer_spec.submodules.self_attention.submodules.core_attention = MiMoV2FlashTEDotProductAttention
