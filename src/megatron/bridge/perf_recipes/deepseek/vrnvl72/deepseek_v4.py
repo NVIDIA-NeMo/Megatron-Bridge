@@ -13,7 +13,6 @@
 # limitations under the License.
 """VRNVL72 performance recipes for DeepSeek V4."""
 
-from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
     _deepseek_v4_pro_pretrain_256gpu_bf16_common,
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
@@ -25,15 +24,19 @@ from megatron.bridge.training.config import ConfigContainer
 
 
 def deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Flash pretrain: 128× VRNVL72, MXFP8, NCCL EP (alias of GB300)."""
-    cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
-    _enable_ncclep(cfg)
+    """DeepSeek V4 Flash pretrain: 128× VRNVL72, MXFP8, MoK experts (derived from GB300).
 
-    # Rubin's grouped GLU kernel does not support DeepSeek V4's SwiGLU clamp parameters. This is a
-    # benchmark-only override that preserves the lower-memory CutDSL fusion and full CUDA graph.
-    cfg.model.activation_func_clamp_value = None
-    cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.moe_use_grouped_tensor = True
+    MoK applies the model's SwiGLU clamp, so the recipe no longer drops it for Rubin's grouped
+    GLU kernel. Requires a Rubin-capable MoK build.
+    """
+    cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
+
+    # Communication SM allocation from the DeepSeek V4 Pro Rubin benchmark; GB300 uses 28/28.
+    cfg.model.moe_megakernel_backend_config = {
+        **cfg.model.moe_megakernel_backend_config,
+        "fwd_num_comm_sms": 40,
+        "bwd_num_comm_sms": 40,
+    }
 
     # Keep the VRNVL72 launch environment explicit instead of inheriting it from GB300.
     cfg.env_vars = {
@@ -43,8 +46,6 @@ def deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
-        # NCCL EP dispatcher mode and one GPU per rank.
-        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
