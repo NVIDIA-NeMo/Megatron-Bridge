@@ -241,6 +241,81 @@ for layout in single uniform skew; do
 done
 ```
 
+### Single-document 1M BF16 benchmark with D indexer checkpoint reuse
+
+At 1,048,576 tokens, CP64 and EP64 use the same 64 GB300s in one NVLink domain. TP1/PP1 leaves one dense data replica. Each microbatch contains one document, each rank owns 16,384 positions and eight microbatches form one optimizer update. All arms use BF16 MoK + MoonEP with natural routing, full zigzag, one MTP layer, eager execution and uniform full recomputation in groups of two.
+
+Complete steps 1–3 for the environment, converted checkpoint and `source-12.jsonl`. Then select the following paired revisions of [Bridge #7000](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/7000) and [Megatron-Core #9506](https://github.com/NVIDIA/Megatron-LM/pull/9506) on the shared workspace. The original 256K instructions above pin earlier revisions. The 1M run reuses the same model configuration, weights and CUDA head library.
+
+```bash
+git -C "$BRIDGE" fetch origin refs/pull/7000/head
+git -C "$BRIDGE" checkout --detach 8cac6a4d7087da22ecd5b09d3f1bc8418aa8102d
+git -C "$MCORE" fetch origin refs/pull/9506/head
+git -C "$MCORE" checkout --detach 8882c2a3ee0d76a2a67af23affba89e43c29abf6
+python - "$DATA/source-12.jsonl" "$DATA/single1m.jsonl" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+source, output = map(Path, sys.argv[1:])
+tokens = [1]  # Keep one BOS for the complete document.
+with source.open() as stream:
+    for index, line in enumerate(stream):
+        if index in (0, 1, 4, 5, 8):  # Tulu rows in the public source fixture
+            ids = json.loads(line)["input_ids"]
+            assert len(ids) == 262144 and ids[0] == 1
+            needed = 1048576 - len(tokens)
+            tokens.extend(ids[1 : 1 + needed])
+assert len(tokens) == 1048576
+row = {"input_ids": tokens, "labels": [-100] * 8 + tokens[8:]}
+payload = (json.dumps(row, separators=(",", ":")) + "\n").encode()
+assert hashlib.sha256(payload).hexdigest() == "ada96a152ce369d3896729a8d4b21662fd6e2a3ce39e77758b455f87db2afe02"
+output.write_bytes(payload)
+PY
+```
+
+On each node, set `NODE_RANK` and `MASTER_ADDR`, then load the environment and define `run_arm` from step 4. Each call launches a fresh process group from the same checkpoint. Both feature flags default to false. Replay uses the cuDNN D indexer and requires full-layer recomputation.
+
+```bash
+export INPUT="$DATA/single1m.jsonl" DOCS=1 LOGS="$WORK/ernie1m-replay-logs"
+export MCORE_DSA_STABLE_INDEXER_TOPK=0
+unset ERNIE55_COMPARE_HEADS MCORE_NVTX MCORE_DSA_PRESERVE_SELECTED_SLOT_ORDER
+export CUDA_DEVICE_MAX_CONNECTIONS=1 NCCL_NVLS_ENABLE=0
+mkdir -p "$LOGS"
+run_1m() {
+  local name=$1 reuse=$2 overlap=$3
+  run_arm "$name" true model.seq_length=1048576 dataset.seq_length=1048576 \
+    model.context_parallel_size=64 dataset.pad_to_multiple_of=128 train.global_batch_size=8 \
+    model.recompute_num_layers=2 model.cp_partition_mode=zigzag model.dsv4_cp_zigzag=true \
+    "model.ernie_reuse_checkpoint_topk=$reuse" "model.ernie_overlap_latent_kv_gather=$overlap" \
+    train.train_iters=12 profiling.use_nsys_profiler=false profiling.nvtx_ranges=false
+}
+run_1m baseline false false
+run_1m replay true false
+run_1m replay-overlap true true
+run_1m replay-repeat true false
+```
+
+After all nodes finish, summarize each arm once. Updates 4–12 each contain 8,388,608 physical input positions (131,072 per GPU). Memory values are the maximum PyTorch high-water marks across all 64 ranks.
+
+```bash
+for arm in baseline replay replay-overlap replay-repeat; do
+  python "$EX/benchmark_256k.py" summarize "$LOGS"/"$arm"-node*.log
+done
+```
+
+The table records the original same-rack integration measurement. The runs used the same feature implementations on the earlier 256K source base.
+
+| Configuration, in run order | Mean step (s) | Tokens/s/GPU | TFLOP/s/GPU | Peak allocated / reserved (GiB) |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline | 57.476 | 2,280.46 | 320.5 | 240.38 / 244.48 |
+| Reuse top-k | 49.577 | 2,643.79 | 371.6 | 239.56 / 243.70 |
+| Reuse top-k + latent KV overlap | 49.398 | 2,653.38 | 373.0 | 239.56 / 241.86 |
+| Reuse top-k repeat | 49.512 | 2,647.26 | 372.1 | 239.56 / 242.70 |
+
+Reusing the original forward's selected IDs, valid counts and FP32 scores within the same layer and microbatch reduced dense indexer selections from 112 to 56 per rank per update. The sparse KL teacher and indexer gradients still execute. Throughput increased 15.93% and peak allocated memory dropped 0.82 GiB. Overlapping the latent KV all-gather added 0.30% throughput relative to the mean step time of the replay-only runs on either side.
+
 ## 5. Compare time and memory
 
 ```bash

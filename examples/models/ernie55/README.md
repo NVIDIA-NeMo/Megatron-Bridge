@@ -9,7 +9,7 @@ checkpoint with Megatron Bridge, covering data preparation, training, and export
 recipe runs on 16 nodes with four GB300 GPUs per node.
 A second recipe runs the same fine-tuning on 16 nodes with four GB200 GPUs per node.
 
-For the 64-GB300 packed 256K MoK/MoonEP BF16 benchmark, follow the [step-by-step reproduction](README-256k.md).
+For the 64-GB300 packed 256K MoK/MoonEP BF16 benchmark, follow the [step-by-step reproduction](README-256k.md). For one 1M-token document on the same 64 GPUs, see the [CP64 BF16 top-k replay recipe and measured throughput](README-256k.md#single-document-1m-bf16-benchmark-with-d-indexer-checkpoint-reuse).
 
 ## Requirements
 
