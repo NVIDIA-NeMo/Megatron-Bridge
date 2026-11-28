@@ -18,7 +18,7 @@ import functools
 import itertools
 import re
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from string import digits
 from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple, TypeVar, Union
 
@@ -30,6 +30,7 @@ from megatron.core.utils import get_pg_rank, unwrap_model
 from megatron.bridge.models.conversion.gtp import _gather_gtp_weight
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
+    ConcatenatedQKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
     _split_gdn_grouped_to_separate,
@@ -57,6 +58,7 @@ if TYPE_CHECKING:
         MegatronWeightTuple,
         WeightConversionTask,
     )
+    from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping, WeightType
     from megatron.bridge.peft.base import PEFT
 
 
@@ -883,6 +885,32 @@ class MegatronPeftBridge:
 
         return materialized
 
+    def _materialize_hf_adapter_weights(
+        self,
+        adapter_tasks: list[AdapterWeightConversionTask],
+        base_mapping: MegatronParamMapping[WeightType] | None,
+        megatron_model: list[MegatronModel],
+    ) -> list[AdapterWeight]:
+        """Gather the native factors and put concatenated QKV output rows in HF order."""
+        weights = self.materialize_adapter_weights(adapter_tasks)
+        if not isinstance(base_mapping, ConcatenatedQKVMapping):
+            return weights
+
+        for i, (task, weight) in enumerate(zip(adapter_tasks, weights, strict=True)):
+            if task.adapter_key is not None:
+                continue  # Canonical LoRA already has separate projection factors.
+            out = weight.linear_out_weight
+            module = None
+            if task.linear_out_task.megatron_module is not None:
+                prefix = out.param_name.partition(".adapter.")[0]
+                _, module = self._get_adapter_wrap_module(prefix, megatron_model, out.vp_stage)
+            config = base_mapping._export_config(module)
+            assert config is not None, "Expected an attention config for the gathered QKV adapter"
+            # Only B carries output rows. Undo their interleaving after gathering TP shards.
+            qkv = split_qkv_weights(config, out.weight, feature_dim=out.weight.shape[1])
+            weights[i] = replace(weight, linear_out_weight=out._replace(weight=torch.cat(qkv, dim=0)))
+        return weights
+
     def _materialize_grouped_expert_adapter_tensor(
         self,
         task: "WeightConversionTask",
@@ -964,7 +992,8 @@ class MegatronPeftBridge:
         mapping_registry = self.mapping_registry()  # type: ignore[attr-defined]
 
         for adapter_task in self._with_progress_tracking(adapter_tasks, "Streaming adapter weights", show_progress):
-            adapter_weight = self.materialize_adapter_weights([adapter_task])[0]
+            base_mapping = mapping_registry.megatron_to_hf_lookup(adapter_task.global_base_prefix + ".weight")
+            adapter_weight = self._materialize_hf_adapter_weights([adapter_task], base_mapping, megatron_model)[0]
 
             linear_in_tensor = adapter_weight.linear_in_weight.weight
             linear_out_tensor = adapter_weight.linear_out_weight.weight

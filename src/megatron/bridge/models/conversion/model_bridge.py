@@ -2179,7 +2179,9 @@ class MegatronModelBridge(
                 adapter_weights = materialized_adapter_weights_cache.get(task_global_base_prefix)
                 if adapter_weights is None:
                     with _mapping_export_context():
-                        adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                        adapter_weights = self._materialize_hf_adapter_weights(
+                            adapter_tasks, task.mapping, unwrapped_model_list
+                        )
                     materialized_adapter_weights_cache[task_global_base_prefix] = adapter_weights
                 converted_weights_dict = self._merge_lora_adapter_weights(
                     megatron_model,
