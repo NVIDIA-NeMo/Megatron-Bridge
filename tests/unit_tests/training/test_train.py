@@ -14,6 +14,7 @@
 
 """Tests for train module utility functions."""
 
+import functools
 import signal
 import time
 import weakref
@@ -506,6 +507,164 @@ def test_train_params_norm_uses_ddp_fsdp_setting(use_megatron_fsdp):
         train(Mock(), model, optimizer, Mock(), None, None, state, Mock(), pg_collection)
 
     calc_norm.assert_called_once_with(model, model_config, use_megatron_fsdp=use_megatron_fsdp)
+
+
+def _train_loop_state(*, iterations_to_skip):
+    """Return a global state and process groups that let train() run up to its first iteration."""
+    config = SimpleNamespace(
+        train=SimpleNamespace(
+            train_iters=1,
+            manual_gc=False,
+            check_weight_hash_across_dp_replicas_interval=None,
+            micro_batch_size=1,
+            iterations_to_skip=list(iterations_to_skip),
+        ),
+        validation=SimpleNamespace(),
+        dataset=GPTDatasetConfig(seq_length=8, random_seed=1234),
+        checkpoint=SimpleNamespace(save=None),
+        logger=SimpleNamespace(log_throughput_to_tensorboard=False),
+        model=SimpleNamespace(virtual_pipeline_model_parallel_size=None, moe_expert_rank_capacity_factor=None),
+        optimizer=SimpleNamespace(
+            optimizer="adam",
+            use_distributed_optimizer=False,
+            use_layer_wise_distributed_optimizer=False,
+            optimizer_cuda_graph=False,
+        ),
+        ddp=SimpleNamespace(use_megatron_fsdp=False, overlap_param_gather=False),
+        dist=DistributedInitConfig(),
+        straggler=None,
+        profiling=None,
+    )
+    state = SimpleNamespace(
+        cfg=config,
+        train_state=SimpleNamespace(
+            step=0, consumed_train_samples=0, skipped_train_samples=0, floating_point_operations_so_far=0.0
+        ),
+        timers=Mock(return_value=Mock()),
+        straggler_timer=Mock(),
+        energy_monitor=None,
+        nvrx_straggler_manager=None,
+    )
+    return state, SimpleNamespace(pp=SimpleNamespace(size=lambda: 1))
+
+
+def _run_train(forward_step, state, pg_collection, *, train_data_iterator=None, **train_module_patches):
+    """Run train() with its collaborators in train.py replaced by stand-ins."""
+    model_config = SimpleNamespace(cuda_graph_impl=None, fp8_recipe=None, param_sync_func=None)
+    patches = {
+        "get_model_config": Mock(return_value=model_config),
+        "get_rerun_state_machine": Mock(return_value=SimpleNamespace(current_iteration=0)),
+        "get_num_microbatches": Mock(return_value=1),
+        "get_forward_backward_func": Mock(),
+        "is_full_iteration_cuda_graph": Mock(return_value=False),
+        "P2PCommunicator": Mock(),
+        "get_data_distribution_group": Mock(return_value=SimpleNamespace(size=lambda: 1)),
+        "handle_profiling_step": Mock(),
+        "nvtx_range_push": Mock(),
+        "fault_tolerance": Mock(),
+        "update_num_microbatches": Mock(),
+        **train_module_patches,
+    }
+    with (
+        patch.multiple("megatron.bridge.training.train", **patches),
+        patch("megatron.bridge.training.train.torch.distributed.get_rank", return_value=0),
+    ):
+        train(
+            forward_step, [Mock()], SimpleNamespace(), Mock(), train_data_iterator, None, state, Mock(), pg_collection
+        )
+
+
+def _simulate_all_reduce_max(monkeypatch, result):
+    """Stand in for a gloo all-reduce over the training ranks; ``result`` maps the local value to the maximum."""
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "get_backend", lambda group=None: "gloo")
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda tensor, op: tensor.fill_(result(tensor.item())))
+
+
+def test_train_resolves_the_skip_read_policy_from_the_unwrapped_step():
+    """train() reads ``reads_batch_on_skip`` from the step it is given, not from the state-injected partial."""
+
+    class StopAtSkipCheck(Exception):
+        pass
+
+    def forward_step(state: GlobalState, data_iterator, model):
+        raise AssertionError("the loop stops before the forward step")
+
+    reads_batch_on_skip = Mock(return_value=True)
+    forward_step.reads_batch_on_skip = reads_batch_on_skip
+    state, pg_collection = _train_loop_state(iterations_to_skip=())
+    should_skip = Mock(side_effect=StopAtSkipCheck)
+
+    with pytest.raises(StopAtSkipCheck):
+        _run_train(forward_step, state, pg_collection, _should_skip_and_handle_iteration=should_skip)
+
+    assert should_skip.call_args.kwargs["reads_batch_on_skip"] is reads_batch_on_skip
+
+
+class _ReadCounter:
+    """Iterator over integers that records how many it gave out."""
+
+    def __init__(self):
+        self.reads = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        self.reads += 1
+        return self.reads - 1
+
+
+def test_train_rejects_skips_through_chunk_iterators_before_any_read_or_count():
+    """A rank that would skip through per-chunk iterators stops train() before the first skip reads or counts.
+
+    Without a process group the rank's own report is the decision; the decision across ranks is
+    covered by ``TestDummyTrainStep::test_skip_iterator_check_is_one_decision_for_every_rank``.
+    """
+
+    def forward_step(state: GlobalState, data_iterator, model):
+        raise AssertionError("the loop stops before the forward step")
+
+    forward_step.reads_batch_on_skip = lambda cfg, pg_collection: True
+    state, pg_collection = _train_loop_state(iterations_to_skip=[1])
+    chunk_iterators = [_ReadCounter(), _ReadCounter()]
+
+    with pytest.raises(ValueError, match="list of per-model-chunk training data iterators"):
+        _run_train(
+            forward_step,
+            state,
+            pg_collection,
+            train_data_iterator=chunk_iterators,
+            is_pp_first_stage=Mock(return_value=False),
+            is_pp_last_stage=Mock(return_value=False),
+        )
+
+    assert [iterator.reads for iterator in chunk_iterators] == [0, 0]
+    assert (state.train_state.step, state.train_state.consumed_train_samples) == (0, 0)
+    assert state.train_state.skipped_train_samples == 0
+
+
+def test_skip_read_policy_on_the_given_wrapper_comes_before_the_wrapped_step():
+    """An explicit policy on the object passed to train() wins over the policy of the step it wraps."""
+    from megatron.bridge.training import train as train_module
+
+    def forward_step(state, data_iterator, model):
+        raise AssertionError("not called")
+
+    forward_step.reads_batch_on_skip = Mock(name="step_policy")
+    wrapper = functools.partial(forward_step)
+    wrapper.reads_batch_on_skip = Mock(name="wrapper_policy")
+
+    @functools.wraps(forward_step)
+    def decorated(state, data_iterator, model):
+        return forward_step(state, data_iterator, model)
+
+    outer = functools.partial(wrapper)
+    assert outer.func is wrapper
+
+    assert train_module._resolve_reads_batch_on_skip(wrapper) is wrapper.reads_batch_on_skip
+    assert train_module._resolve_reads_batch_on_skip(outer) is wrapper.reads_batch_on_skip
+    assert train_module._resolve_reads_batch_on_skip(decorated) is forward_step.reads_batch_on_skip
 
 
 class TestPostTrainingStepHelpers:
@@ -1508,7 +1667,7 @@ class TestIterationSkipping:
 
         # Verify
         assert result is True
-        mock_dummy_step.assert_called_once_with(global_state, train_data_iterator, fake_pg)
+        mock_dummy_step.assert_called_once_with(global_state, train_data_iterator, fake_pg, reads_batch_on_skip=None)
 
         # Verify state updates
         assert global_state.train_state.step == 5  # incremented
@@ -1568,6 +1727,24 @@ class TestIterationSkipping:
         expected_batch_size = 8 * 8 * 2  # dp_world_size * micro_batch_size * num_microbatches = 128
         assert global_state.train_state.consumed_train_samples == expected_batch_size
         assert global_state.train_state.skipped_train_samples == expected_batch_size
+
+    @patch("megatron.bridge.training.train._dummy_train_step")
+    @patch("megatron.bridge.training.train.get_num_microbatches", return_value=4)
+    def test_skipped_iteration_passes_the_step_read_policy(self, mock_get_microbatches, mock_dummy_step):
+        """The forward step's read policy reaches the dummy step unchanged."""
+        global_state = self._create_mock_global_state(step=4, iterations_to_skip=[5])
+        train_data_iterator = Mock()
+        reads_batch_on_skip = Mock(return_value=True)
+
+        fake_pg = self._make_fake_pg(1)
+        result = _should_skip_and_handle_iteration(
+            global_state, train_data_iterator, fake_pg, reads_batch_on_skip=reads_batch_on_skip
+        )
+
+        assert result is True
+        mock_dummy_step.assert_called_once_with(
+            global_state, train_data_iterator, fake_pg, reads_batch_on_skip=reads_batch_on_skip
+        )
 
 
 class TestDummyTrainStep:
@@ -1755,6 +1932,267 @@ class TestDummyTrainStep:
         # Call function - should not raise an error
         fake_pg = type("PG", (), {"pp": object()})()
         _dummy_train_step(global_state, train_data_iterator, fake_pg)
+
+    @staticmethod
+    def _run_one_skip_on_middle_stage(monkeypatch, num_microbatches):
+        rerun_state_machine = Mock()
+        rerun_state_machine.should_run_forward_backward.side_effect = [True, False]
+        monkeypatch.setattr("megatron.bridge.training.train.get_rerun_state_machine", lambda: rerun_state_machine)
+        monkeypatch.setattr("megatron.bridge.training.train.get_num_microbatches", lambda: num_microbatches)
+        monkeypatch.setattr("megatron.bridge.training.train.is_pp_first_stage", lambda pg: False)
+        monkeypatch.setattr("megatron.bridge.training.train.is_pp_last_stage", lambda pg: False)
+
+    @pytest.mark.parametrize(
+        "dataloader_type, step_reads_batch, expected_reads",
+        [("single", True, 3), ("cyclic", True, 3), ("single", False, 0)],
+        ids=["single_consuming", "cyclic_consuming", "not_consuming"],
+    )
+    def test_dummy_train_step_follows_the_step_read_policy(
+        self, monkeypatch, dataloader_type, step_reads_batch, expected_reads
+    ):
+        """Outside batch mode, a consuming rank reads num_microbatches outer batches and another rank none."""
+        self._run_one_skip_on_middle_stage(monkeypatch, num_microbatches=3)
+        global_state = SimpleNamespace(
+            cfg=SimpleNamespace(model=SimpleNamespace(), dataset=SimpleNamespace(dataloader_type=dataloader_type))
+        )
+        fake_pg = SimpleNamespace(pp=object())
+        reads_batch_on_skip = Mock(return_value=step_reads_batch)
+        train_data_iterator = iter(range(10))
+
+        _dummy_train_step(global_state, train_data_iterator, fake_pg, reads_batch_on_skip=reads_batch_on_skip)
+
+        reads_batch_on_skip.assert_called_once_with(global_state.cfg, fake_pg)
+        assert next(train_data_iterator) == expected_reads
+
+    def test_dummy_train_step_keeps_the_global_batch_packing_reads(self, monkeypatch):
+        """The packing scheduler's reads on TP rank 0 of the first stage do not depend on the step policy."""
+        self._run_one_skip_on_middle_stage(monkeypatch, num_microbatches=3)
+        monkeypatch.setattr("megatron.bridge.training.train.is_pp_first_stage", lambda pg: True)
+        global_state = SimpleNamespace(
+            cfg=SimpleNamespace(
+                model=SimpleNamespace(sequence_packing_scheduler="default"),
+                dataset=SimpleNamespace(dataloader_type="single"),
+            )
+        )
+        fake_pg = SimpleNamespace(pp=object(), tp=SimpleNamespace(rank=lambda: 0))
+        reads_batch_on_skip = Mock(return_value=False)
+        train_data_iterator = iter(range(10))
+
+        _dummy_train_step(global_state, train_data_iterator, fake_pg, reads_batch_on_skip=reads_batch_on_skip)
+
+        reads_batch_on_skip.assert_not_called()
+        assert next(train_data_iterator) == 3
+
+    @pytest.mark.parametrize(
+        "dataset_kwargs",
+        [{"skip_getting_attention_mask_from_dataset": False}, {"inter_document_masking": True}],
+        ids=["custom_attention_mask", "document_masking"],
+    )
+    def test_dummy_train_step_custom_step_middle_stage_ignores_gpt_dataset_flags(self, monkeypatch, dataset_kwargs):
+        """A step without a read policy keeps the first/last-stage rule.
+
+        The dataset flags here make the GPT step read batches on middle stages, but a custom step
+        (for example a vision-language step) may not, so the generic loop must not infer it from them.
+        """
+
+        def custom_forward_step(data_iterator, model):
+            raise AssertionError("a skipped iteration does not run the forward step")
+
+        self._run_one_skip_on_middle_stage(monkeypatch, num_microbatches=3)
+        dataset = GPTDatasetConfig(seq_length=8, random_seed=1234)
+        for key, value in dataset_kwargs.items():
+            if not hasattr(dataset, key):
+                raise ValueError(f"Config has no field '{key}'")
+            setattr(dataset, key, value)
+        global_state = SimpleNamespace(cfg=SimpleNamespace(model=SimpleNamespace(), dataset=dataset))
+        train_data_iterator = iter(range(10))
+
+        assert getattr(custom_forward_step, "reads_batch_on_skip", None) is None
+        _dummy_train_step(global_state, train_data_iterator, SimpleNamespace(pp=object()))
+
+        assert next(train_data_iterator) == 0
+
+    @pytest.mark.parametrize(
+        "ranks, rejected",
+        [
+            ([("chunk_list", True), ("no_iterator", True)], True),
+            ([("chunk_list", False), ("chunk_list", True)], True),
+            ([("chunk_list", False), ("chunk_list", False)], False),
+            ([("single_iterator", True), ("no_iterator", True)], False),
+        ],
+        ids=[
+            "chunk_list_reader_and_rank_without_iterator",
+            "chunk_list_non_reader_and_chunk_list_reader",
+            "chunk_list_non_readers",
+            "shared_single_iterator",
+        ],
+    )
+    def test_skip_iterator_check_is_one_decision_for_every_rank(self, monkeypatch, ranks, rejected):
+        """Every rank reports its own case, and all ranks raise if any rank would skip through chunk iterators.
+
+        A rank that reads nothing on a skip, or holds no iterator, still takes part in the decision and
+        raises with the others. No rank reads a batch while deciding.
+        """
+        from megatron.bridge.training import train as train_module
+
+        self._run_one_skip_on_middle_stage(monkeypatch, num_microbatches=3)
+        iterators = {
+            "chunk_list": lambda: [_ReadCounter(), _ReadCounter()],
+            "single_iterator": _ReadCounter,
+            "no_iterator": lambda: None,
+        }
+        cfg = SimpleNamespace(model=SimpleNamespace(), dataset=SimpleNamespace(dataloader_type="single"))
+        rank_inputs = [(iterators[kind](), reads) for kind, reads in ranks]
+
+        def decide(train_data_iterator, reads):
+            train_module._check_skip_can_advance_train_data_iterator(
+                cfg,
+                train_data_iterator,
+                SimpleNamespace(pp=object()),
+                reads_batch_on_skip=lambda cfg, pg_collection: reads,
+            )
+
+        reported = []
+
+        class Reported(Exception):
+            pass
+
+        def report(local):
+            reported.append(local)
+            raise Reported
+
+        _simulate_all_reduce_max(monkeypatch, report)
+        for train_data_iterator, reads in rank_inputs:
+            with pytest.raises(Reported):
+                decide(train_data_iterator, reads)
+        assert reported == [int(kind == "chunk_list" and reads) for kind, reads in ranks]
+
+        _simulate_all_reduce_max(monkeypatch, lambda local: max(reported))
+        for train_data_iterator, reads in rank_inputs:
+            if rejected:
+                with pytest.raises(ValueError, match="list of per-model-chunk training data iterators"):
+                    decide(train_data_iterator, reads)
+            else:
+                decide(train_data_iterator, reads)
+
+        counters = [
+            counter
+            for train_data_iterator, _ in rank_inputs
+            for counter in (train_data_iterator if isinstance(train_data_iterator, list) else [train_data_iterator])
+            if counter is not None
+        ]
+        assert [counter.reads for counter in counters] == [0] * len(counters)
+
+
+class _CountingIterator:
+    """Outer data iterator that records how many global batches were read."""
+
+    def __init__(self, rows):
+        self._rows = iter(rows)
+        self.reads = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        row = next(self._rows)
+        self.reads += 1
+        return row
+
+
+def _global_batches(num_microbatches, count):
+    """Return ``count`` global batches of ``num_microbatches`` rows; every token of batch ``i`` is ``i``."""
+    return [{"tokens": torch.full((num_microbatches, 8), index)} for index in range(count)]
+
+
+@pytest.mark.parametrize("step_name", ["gpt", "dsv4", None], ids=["gpt_step", "dsv4_step", "custom_step"])
+def test_skipped_batch_mode_iteration_reads_what_train_step_reads_on_a_middle_stage(monkeypatch, step_name):
+    """With dataloader_type='batch', a middle stage reads one global batch per iteration, skipped or not.
+
+    train_step reads the global batch through prepare_finetuning_batch on every rank with an iterator,
+    before the forward step decides which micro-batch fields the stage needs. The step here reads none
+    on this stage, so its read policy is false; a skipped iteration must still read one global batch.
+    """
+    from megatron.bridge.models.deepseek import deepseek_v4_step
+    from megatron.bridge.training import gpt_step
+
+    num_microbatches = 3
+    for module in (
+        "megatron.bridge.training.train",
+        "megatron.bridge.training.gpt_step",
+        "megatron.bridge.models.deepseek.deepseek_v4_step",
+    ):
+        monkeypatch.setattr(f"{module}.is_pp_first_stage", lambda pg: False)
+        monkeypatch.setattr(f"{module}.is_pp_last_stage", lambda pg: False)
+    monkeypatch.setattr("megatron.bridge.training.train.get_num_microbatches", lambda: num_microbatches)
+    monkeypatch.setattr("megatron.bridge.training.train.get_model_config", lambda model: SimpleNamespace(seq_length=8))
+    rerun_state_machine = Mock()
+    # One forward-backward pass for the normal iteration, then one for the skipped iteration.
+    rerun_state_machine.should_run_forward_backward.side_effect = [True, False, True, False]
+    rerun_state_machine.should_checkpoint_and_exit.return_value = (False, False, 0)
+    monkeypatch.setattr("megatron.bridge.training.train.get_rerun_state_machine", lambda: rerun_state_machine)
+
+    dataset = GPTDatasetConfig(seq_length=8, random_seed=1234)
+    if not hasattr(dataset, "dataloader_type"):
+        raise ValueError("Config has no field 'dataloader_type'")
+    dataset.dataloader_type = "batch"
+    global_state = SimpleNamespace(
+        cfg=SimpleNamespace(
+            data_parallel_size=1,
+            model=SimpleNamespace(seq_length=8, qk_clip=False, log_max_attention_logit=False),
+            dataset=dataset,
+            dist=SimpleNamespace(use_decentralized_pg=True),
+            ddp=SimpleNamespace(overlap_param_gather=False),
+            optimizer=SimpleNamespace(
+                barrier_with_L1_time=False,
+                log_num_zeros_in_grad=False,
+                reuse_grad_buf_for_mxfp8_param_ag=False,
+            ),
+            train=SimpleNamespace(
+                check_optimizer_step_success=False,
+                empty_unused_memory_level=0,
+                micro_batch_size=1,
+                skip_sync_grad_norm_across_mp=True,
+            ),
+        ),
+        timers=Mock(),
+    )
+    pg_collection = SimpleNamespace(pp=object(), cp=SimpleNamespace(size=lambda: 1), mp=Mock())
+    steps = {"gpt": gpt_step, "dsv4": deepseek_v4_step}
+    reads_batch_on_skip = steps[step_name].forward_step.reads_batch_on_skip if step_name else None
+    if reads_batch_on_skip is not None:
+        assert reads_batch_on_skip(global_state.cfg, pg_collection) is False
+
+    micro_batch_iterators = []
+
+    def middle_stage_forward_backward(*, data_iterator, num_microbatches, **kwargs):
+        # The stage needs no micro-batch fields, so it reads nothing from the micro-batch iterator.
+        micro_batch_iterators.append((data_iterator, num_microbatches))
+        return []
+
+    optimizer = Mock(chained_optimizers=[])
+    optimizer.step.return_value = (True, 1.0, 0)
+    normal = _CountingIterator(_global_batches(num_microbatches, 3))
+    train_step(
+        forward_step_func=Mock(),
+        data_iterator=normal,
+        model=[Mock()],
+        optimizer=optimizer,
+        scheduler=Mock(),
+        global_state=global_state,
+        pg_collection=pg_collection,
+        forward_backward_func=middle_stage_forward_backward,
+        p2p_communicator=SimpleNamespace(is_pp_last_stage=False),
+    )
+    skipped = _CountingIterator(_global_batches(num_microbatches, 3))
+    _dummy_train_step(global_state, skipped, pg_collection, reads_batch_on_skip=reads_batch_on_skip)
+
+    assert normal.reads == 1
+    [(micro_batches, scheduled)] = micro_batch_iterators
+    assert scheduled == num_microbatches
+    assert next(micro_batches)["tokens"].unique().tolist() == [0]
+    assert skipped.reads == normal.reads
+    assert next(skipped)["tokens"].unique().tolist() == next(normal)["tokens"].unique().tolist() == [1]
 
 
 @pytest.mark.parametrize(

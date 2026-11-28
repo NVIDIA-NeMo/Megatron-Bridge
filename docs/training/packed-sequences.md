@@ -76,6 +76,25 @@ Packed sequences are usually not the right answer when:
   the main technique
 - your model family or recipe explicitly opts out of packed-sequence support
 
+## Document Masking in Pretraining
+
+For Core `GPTDataset` pretraining (`GPTDatasetConfig`), `dataset.inter_document_masking=True`
+makes the Bridge GPT step (`megatron.bridge.training.gpt_step`) and the DSv4 step pass each
+row's document boundaries to attention as THD metadata, on every pipeline stage. The feature
+carries attention boundaries only. The token labels, the next-token objective and the loss
+mask remain the dataset's: for example, `eod_mask_loss` still decides whether the last token
+of a document is trained to predict the first token of the next one.
+
+- The two steps support micro-batch size 1 and context-parallel size 1, for training and
+  evaluation, and reject CUDA graphs that capture attention. Other forward steps receive the
+  dataset's padded `cu_seqlens` unchanged and must convert them themselves.
+- A config that builds the FIM dataset (a `GPTFIMDatasetConfig` that is not a mock config) is
+  rejected, because the FIM dataset does not return the per-document lengths.
+- Masked DSv4 rows take Megatron Core's packed DSv4 path, which requires
+  `model.dsa_kernel_backend="cudnn"`. The H100 DSv4 recipe sets `"none"`, which Core rejects
+  for packed input. On SM90, when the ratio-4 CSA indexer is active with the cuDNN backend and
+  a positive indexer-loss coefficient, set `dsa_indexer_use_sparse_loss=True`.
+
 ## Choosing the Offline Pack Length
 
 For text-only LLM SFT and PEFT, use 8192 as the first offline-pack target when

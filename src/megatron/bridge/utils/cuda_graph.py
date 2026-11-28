@@ -131,6 +131,22 @@ def is_full_iteration_cuda_graph(config: Any) -> bool:
     ) or "full_iteration" in _member_names(getattr(config, "cuda_graph_scope", None))
 
 
+def cuda_graph_captures_attention(config: Any) -> bool:
+    """Return whether the configured CUDA graph captures attention layers.
+
+    That is a full-iteration graph, a Transformer Engine graph of whole layers or of attention, or a
+    local per-layer graph whose ``cuda_graph_modules`` include attention.
+    """
+
+    if is_full_iteration_cuda_graph(config):
+        return True
+    cuda_graph_impl = getattr(config, "cuda_graph_impl", "none")
+    graph_modules = cuda_graph_module_names(config)
+    if cuda_graph_impl == "transformer_engine":
+        return not graph_modules or "attn" in graph_modules
+    return cuda_graph_impl == "local" and "attn" in graph_modules
+
+
 def validate_cuda_graph_configuration(config: Any, *, config_name: str = "model") -> None:
     """Validate Bridge-supported CUDA graph implementation/scope combinations."""
     cuda_graph_impl = getattr(config, "cuda_graph_impl", "none")

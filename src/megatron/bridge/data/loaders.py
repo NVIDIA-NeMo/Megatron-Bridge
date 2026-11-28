@@ -107,6 +107,25 @@ def cyclic_iter(iter: Iterable) -> Iterator:
             yield x
 
 
+def get_eval_dataloader_type(cfg: ConfigContainer, *, is_test: bool = False) -> str | None:
+    """Return the dataloader type of the validation or test loader.
+
+    During training, GPT pretraining datasets are validated with a cyclic sampler, which yields
+    eval micro-batches whatever ``dataset.dataloader_type`` is. The validation loader of an
+    evaluation-only run (``validation.skip_train``) and the test loader use ``dataset.dataloader_type``.
+
+    Args:
+        cfg: The main configuration container.
+        is_test: Whether the loader is the test loader.
+
+    Returns:
+        The dataloader type, for example ``"batch"`` when the loader yields global batches.
+    """
+    if isinstance(cfg.dataset, GPTDatasetConfig) and not is_test and not cfg.validation.skip_train:
+        return "cyclic"
+    return cfg.dataset.dataloader_type
+
+
 def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, int]:
     """Calculate the number of samples for train, validation, and test sets.
 
@@ -451,7 +470,7 @@ def build_train_valid_test_data_loaders(
             seed=sampler_seed,
         )
     elif eval_iters > 0:
-        val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
+        val_dataloader_type = get_eval_dataloader_type(cfg)
         valid_dataloader = build_pretraining_data_loader(
             valid_ds,
             train_state.consumed_valid_samples,

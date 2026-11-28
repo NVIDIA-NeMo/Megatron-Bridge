@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import gc
 import inspect
 import os
@@ -89,7 +90,7 @@ from megatron.bridge.training.checkpointing import (
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
-from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
+from megatron.bridge.training.forward_step_func_types import ForwardStepCallable, ReadsBatchOnSkip
 from megatron.bridge.training.global_batch_packing import (
     global_batch_packing_enabled,
     wrap_data_iterator_for_global_batch_packing,
@@ -203,6 +204,9 @@ def train(
     # For functors (classes with __call__ defined):
     # - For functors: partial(functor_instance, state) still allows functor's internal state to work
     # - inspect.signature() properly inspects the __call__ method of functors
+    #
+    # Resolve the step's skip policy first: the partial built for state injection does not carry it.
+    reads_batch_on_skip = _resolve_reads_batch_on_skip(forward_step_func)
     wrapped_forward_step_func = prepare_forward_step_func(forward_step_func, global_state)
 
     # Turn on training mode which enables dropout.
@@ -453,7 +457,9 @@ def train(
         update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=True, verbose=True)
 
         # Completely skip iteration if needed.
-        if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
+        if _should_skip_and_handle_iteration(
+            global_state, train_data_iterator, pg_collection, reads_batch_on_skip=reads_batch_on_skip
+        ):
             if global_state.train_state.step == start_iteration + 1:
                 start_iteration = global_state.train_state.step
             nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
@@ -1643,10 +1649,23 @@ def _finish_train(global_state: GlobalState, checkpoint_manager: CheckpointManag
     destroy_global_state()
 
 
+def _resolve_reads_batch_on_skip(forward_step_func: ForwardStepCallable) -> ReadsBatchOnSkip | None:
+    """Return the forward step's ``reads_batch_on_skip`` policy, looking through ``functools.partial``.
+
+    See ``ReadsBatchOnSkip`` for the lookup order.
+    """
+    step = forward_step_func
+    while getattr(step, "reads_batch_on_skip", None) is None and isinstance(step, functools.partial):
+        step = step.func
+    return getattr(step, "reads_batch_on_skip", None)
+
+
 def _should_skip_and_handle_iteration(
     global_state: GlobalState,
     train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     pg_collection: ProcessGroupCollection,
+    *,
+    reads_batch_on_skip: ReadsBatchOnSkip | None = None,
 ) -> bool:
     """Check if the current iteration should be skipped and handle it if so.
 
@@ -1656,6 +1675,8 @@ def _should_skip_and_handle_iteration(
     Args:
         global_state: Global state containing training state and configuration
         train_data_iterator: Iterator over training data
+        pg_collection: Process groups of this rank
+        reads_batch_on_skip: The forward step's ``reads_batch_on_skip`` policy, if it has one
 
     Returns:
         bool: True if the iteration was skipped, False otherwise
@@ -1664,8 +1685,11 @@ def _should_skip_and_handle_iteration(
     if (global_state.train_state.step + 1) not in cfg.train.iterations_to_skip:
         return False
 
+    _check_skip_can_advance_train_data_iterator(
+        cfg, train_data_iterator, pg_collection, reads_batch_on_skip=reads_batch_on_skip
+    )
     # Perform dummy train step to fast forward train_data_iterator
-    _dummy_train_step(global_state, train_data_iterator, pg_collection)
+    _dummy_train_step(global_state, train_data_iterator, pg_collection, reads_batch_on_skip=reads_batch_on_skip)
 
     # Update step and sample counters
     global_state.train_state.step += 1
@@ -1681,43 +1705,95 @@ def _dummy_train_step(
     global_state: GlobalState,
     train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     pg_collection: ProcessGroupCollection,
+    *,
+    reads_batch_on_skip: ReadsBatchOnSkip | None = None,
 ) -> None:
     """Single dummy training step to fast forward train_data_iterator.
 
     This function consumes data from the iterator without performing any actual computation,
-    effectively skipping the iteration while maintaining data iterator consistency.
-
-    Advance the data iterator on first and last PP stages when data_iterator is not None.
+    effectively skipping the iteration while maintaining data iterator consistency. The rank reads
+    what a real iteration would read from the iterator (see ``_num_batches_read_on_skip``).
 
     Args:
         global_state: Global state containing configuration
         train_data_iterator: Iterator over training data
+        pg_collection: Process groups of this rank
+        reads_batch_on_skip: The forward step's ``reads_batch_on_skip`` policy, if it has one
     """
     cfg = global_state.cfg
-    num_microbatches = get_num_microbatches()
     rerun_state_machine = get_rerun_state_machine()
 
     while rerun_state_machine.should_run_forward_backward(train_data_iterator):
-        pp_group = pg_collection.pp
-        if global_batch_packing_enabled(cfg.model):
-            # The packing scheduler pulls samples on TP rank 0 of the first/last pipeline stage
-            # (PP > 1 is rejected in validation, so both are this rank).
-            if (
-                train_data_iterator is not None
-                and pg_collection.tp.rank() == 0
-                and (is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group))
-            ):
-                for _ in range(num_microbatches):
-                    _ = next(train_data_iterator)
-        elif is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group):
-            if train_data_iterator is not None:
-                if cfg.dataset.dataloader_type == "batch":
-                    # Finetuning: Consume global batch once
-                    _ = next(train_data_iterator)
-                else:
-                    # Pretrain: Consume microbatches one at a time
-                    for _ in range(num_microbatches):
-                        _ = next(train_data_iterator)
+        num_batches = _num_batches_read_on_skip(cfg, pg_collection, reads_batch_on_skip)
+        if train_data_iterator is not None:
+            for _ in range(num_batches):
+                _ = next(train_data_iterator)
+
+
+def _num_batches_read_on_skip(
+    cfg: ConfigContainer,
+    pg_collection: ProcessGroupCollection,
+    reads_batch_on_skip: ReadsBatchOnSkip | None,
+) -> int:
+    """Return how many batches this rank reads from its training data iterator on a skipped iteration.
+
+    1. Global-batch packing: TP rank 0 of the first/last pipeline stage reads ``num_microbatches``
+       samples for the packing scheduler.
+    2. ``dataloader_type="batch"``: every rank with an iterator reads one global batch, as
+       ``train_step`` does through ``prepare_finetuning_batch`` before the forward step runs.
+    3. Otherwise the forward step reads micro-batches itself. ``reads_batch_on_skip`` says whether
+       it does on this rank for steps that define it; without it the first and last pipeline
+       stages read. A reading rank reads ``num_microbatches`` batches.
+    """
+    pp_group = pg_collection.pp
+    if global_batch_packing_enabled(cfg.model):
+        # PP > 1 is rejected in validation, so the first and last stages are this rank.
+        reads = pg_collection.tp.rank() == 0 and (is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group))
+        return get_num_microbatches() if reads else 0
+    if cfg.dataset.dataloader_type == "batch":
+        # The training loop reads the global batch on every rank, whatever the stage needs from it.
+        return 1
+    if reads_batch_on_skip is not None:
+        reads = reads_batch_on_skip(cfg, pg_collection)
+    else:
+        reads = is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group)
+    return get_num_microbatches() if reads else 0
+
+
+def _check_skip_can_advance_train_data_iterator(
+    cfg: ConfigContainer,
+    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    pg_collection: ProcessGroupCollection,
+    *,
+    reads_batch_on_skip: ReadsBatchOnSkip | None,
+) -> None:
+    """Reject, on every training rank at once, a skipped iteration that a rank cannot perform.
+
+    A skipped iteration reads from one training data iterator. It cannot advance a caller-supplied
+    list of per-model-chunk iterators, because it does not know how many batches each chunk would
+    read. Every rank reaches the same skipped iteration, reports whether it would read while holding
+    such a list, and all ranks raise if any does, before any of them reads a batch or updates the
+    skip counters.
+
+    Raises:
+        ValueError: If any rank would have to advance a list of per-model-chunk iterators.
+    """
+    unsupported = (
+        isinstance(train_data_iterator, list)
+        and _num_batches_read_on_skip(cfg, pg_collection, reads_batch_on_skip) > 0
+    )
+    if torch.distributed.is_initialized():
+        # Every rank runs this loop, and some ranks may hold no iterator at all.
+        device = "cuda" if torch.distributed.get_backend() == "nccl" else "cpu"
+        unsupported_anywhere = torch.tensor([int(unsupported)], dtype=torch.int, device=device)
+        torch.distributed.all_reduce(unsupported_anywhere, op=torch.distributed.ReduceOp.MAX)
+        unsupported = bool(unsupported_anywhere.item())
+    if unsupported:
+        raise ValueError(
+            "train.iterations_to_skip does not support a list of per-model-chunk training data iterators on a "
+            "rank that reads batches. Pass one training data iterator, which Bridge shares between the model "
+            "chunks, or remove the iterations from train.iterations_to_skip."
+        )
 
 
 def _handle_mxfp8_param_buffer_copy(

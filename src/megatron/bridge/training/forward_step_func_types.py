@@ -73,7 +73,9 @@ from typing import Any, Iterable, Protocol, overload
 
 import torch
 from megatron.core.models.gpt import GPTModel
+from megatron.core.process_groups_config import ProcessGroupCollection
 
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.state import GlobalState
 
 
@@ -277,3 +279,32 @@ ForwardStepFunc = TwoArgForwardStep | ThreeArgStateForwardStep | ThreeArgForward
 
 # Type alias that includes both functions and functors
 ForwardStepCallable = ForwardStepFunc | ForwardStepFunctor
+
+
+class ReadsBatchOnSkip(Protocol):
+    """Optional ``reads_batch_on_skip`` attribute of a forward step.
+
+    On a skipped iteration (``train.iterations_to_skip``), ``train()`` advances the data iterator on
+    the ranks for which this returns True, so they stay on the same rows as the ranks that read
+    batches. A step without a policy advances the iterator on the first and last pipeline stages
+    only.
+
+    ``train()`` looks the policy up on the step it is given, before wrapping it for state injection:
+
+    - an attribute on that object comes first, whether it is a function, a functor or a
+      ``functools.partial``;
+    - otherwise, for a ``functools.partial``, nested or not, the policy of the function it wraps.
+
+    ``functools.wraps`` copies the attribute to a decorated function. Any other wrapper has no
+    policy unless it sets one, and a wrapper that changes which batches the step reads must set its
+    own.
+
+    Examples:
+        >>> def forward_step(state, data_iterator, model):
+        ...     ...
+        >>> forward_step.reads_batch_on_skip = lambda cfg, pg_collection: True  # every rank reads
+    """
+
+    def __call__(self, cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> bool:
+        """Return whether this rank's forward step reads the data iterator in a training iteration."""
+        ...

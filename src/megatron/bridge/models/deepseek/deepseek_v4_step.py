@@ -50,6 +50,10 @@ from megatron.bridge.training.gpt_step import (
     _forward_step_common,
     _has_packed_sequence_metadata,
     _middle_pp_stage_needs_batch,
+    _rank_reads_batch,
+    _StageBatchFields,
+    _uses_inter_document_masking,
+    _validate_inter_document_masking,
     get_batch_from_iterator,
 )
 from megatron.bridge.training.state import GlobalState
@@ -181,20 +185,11 @@ def _partition_packed_batch_contiguous(
     return batch
 
 
-def get_batch(  # pragma: no cover
-    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False, *, pg_collection, vp_stage: int | None = None
-):
-    """get_batch with DSv4 contiguous CP partition support.
-
-    Native attention_cp_layout selects contiguous partitioning. Every CP
-    pipeline stage consumes the global packed metadata before token slicing.
-    """
+def _stage_batch_fields(
+    cfg: ConfigContainer, *, pg_collection, use_mtp: bool, vp_stage: int | None
+) -> _StageBatchFields:
+    """Return the batch fields the DSv4 ``get_batch`` reads on this PP/VPP stage."""
     model_cfg = getattr(cfg, "model", None)
-    cp_size = pg_collection.cp.size()
-    if cp_size > 1 and getattr(model_cfg, "attention_cp_layout", None) != "contiguous":
-        raise ValueError("DSv4 packed context parallelism requires attention_cp_layout='contiguous'.")
-    if cp_size > 1 and getattr(model_cfg, "linear_cp_layout", None) != "contiguous":
-        raise ValueError("DSv4 packed context parallelism requires linear_cp_layout='contiguous'.")
     vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None)
     is_first = is_pp_first_stage(pg_collection.pp) and (
         vp_stage is None or is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size)
@@ -205,22 +200,58 @@ def get_batch(  # pragma: no cover
     is_middle = (not is_first) and (not is_last)
     # Packed datasets already request full fields. With CP>1, also read a
     # non-packed batch on middle stages so every stage rejects it consistently.
-    include_full_batch_fields = is_middle and (cp_size > 1 or _middle_pp_stage_needs_batch(cfg))
-    include_mtp_inputs = use_mtp and _current_stage_needs_mtp_inputs_from_layout(
-        cfg, pg_collection=pg_collection, is_last=is_last, vp_stage=vp_stage
+    middle_stage_needs_batch = pg_collection.cp.size() > 1 or _middle_pp_stage_needs_batch(cfg)
+    return _StageBatchFields(
+        is_first=is_first,
+        is_last=is_last,
+        include_full_batch_fields=is_middle and middle_stage_needs_batch,
+        include_mtp_inputs=use_mtp
+        and _current_stage_needs_mtp_inputs_from_layout(
+            cfg, pg_collection=pg_collection, is_last=is_last, vp_stage=vp_stage
+        ),
     )
-    if is_middle and not include_full_batch_fields and not include_mtp_inputs:
+
+
+def _reads_batch_on_skip(cfg: ConfigContainer, pg_collection) -> bool:
+    """Return whether the DSv4 step reads the data iterator on this rank.
+
+    ``train()`` uses it on skipped iterations (``train.iterations_to_skip``) to advance the same
+    ranks that read batches in a real iteration.
+    """
+    return _rank_reads_batch(cfg, pg_collection=pg_collection, stage_batch_fields=_stage_batch_fields)
+
+
+def get_batch(  # pragma: no cover
+    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False, *, pg_collection, vp_stage: int | None = None
+):
+    """get_batch with DSv4 contiguous CP partition support.
+
+    Native attention_cp_layout selects contiguous partitioning. Every CP
+    pipeline stage consumes the global packed metadata before token slicing.
+    """
+    inter_document_masking = _uses_inter_document_masking(cfg)
+    if inter_document_masking:
+        _validate_inter_document_masking(cfg)
+    model_cfg = getattr(cfg, "model", None)
+    cp_size = pg_collection.cp.size()
+    if cp_size > 1 and getattr(model_cfg, "attention_cp_layout", None) != "contiguous":
+        raise ValueError("DSv4 packed context parallelism requires attention_cp_layout='contiguous'.")
+    if cp_size > 1 and getattr(model_cfg, "linear_cp_layout", None) != "contiguous":
+        raise ValueError("DSv4 packed context parallelism requires linear_cp_layout='contiguous'.")
+    stage = _stage_batch_fields(cfg, pg_collection=pg_collection, use_mtp=use_mtp, vp_stage=vp_stage)
+    if not stage.reads_batch:
         return None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
-        include_mtp_inputs=include_mtp_inputs,
+        include_mtp_inputs=stage.include_mtp_inputs,
         skip_getting_attention_mask_from_dataset=getattr(
             cfg.dataset, "skip_getting_attention_mask_from_dataset", True
         ),
-        is_first_pp_stage=is_first,
-        is_last_pp_stage=is_last,
-        include_full_batch_fields=include_full_batch_fields,
+        is_first_pp_stage=stage.is_first,
+        is_last_pp_stage=stage.is_last,
+        include_full_batch_fields=stage.include_full_batch_fields,
+        inter_document_masking=inter_document_masking,
     )
 
     has_packed = _has_packed_sequence_metadata(batch)
@@ -258,3 +289,7 @@ def forward_step(  # pragma: no cover
         check_for_nan_in_loss=state.cfg.rerun_state_machine.check_for_nan_in_loss,
         check_for_spiky_loss=state.cfg.rerun_state_machine.check_for_spiky_loss,
     )
+
+
+# Read by train() before it wraps the step, so skipped iterations advance the ranks that read batches.
+forward_step.reads_batch_on_skip = _reads_batch_on_skip

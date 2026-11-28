@@ -30,6 +30,7 @@ from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_
 
 from megatron.bridge.data.batch_utils import prepare_finetuning_batch
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
+from megatron.bridge.data.loaders import get_eval_dataloader_type
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import ConfigContainer
@@ -156,6 +157,8 @@ def evaluate(
         else get_data_distribution_group(pg_collection, state.cfg.model).size()
     )
     eval_num_microbatches = eval_batch_size // (eval_micro_batch_size * eval_data_parallel_size)
+    # With dataloader_type="batch", the validation loader built for training still yields micro-batches.
+    reads_global_batches = get_eval_dataloader_type(state.cfg, is_test=is_test) == "batch"
 
     if is_multimodule and not isinstance(p2p_communicator, MultiModulePipelineCommunicator):
         raise ValueError(
@@ -229,7 +232,7 @@ def evaluate(
                         data_iterator, model_config, eval_num_microbatches, pg_collection
                     )
                 )
-            elif state.cfg.dataset.dataloader_type == "batch":
+            elif reads_global_batches:
                 # Finetuning path: prepare batch and extract dynamic seq_length
                 eval_data_iterator, seq_length = prepare_finetuning_batch(
                     data_iterator=data_iterator,
@@ -357,17 +360,19 @@ def evaluate(
             non_loss_data_iterator = data_iterator
             non_loss_seq_length = default_seq_length
 
-            if state.cfg.dataset.dataloader_type == "batch":
-                # Finetuning path: prepare batch and wrap for VPP
-                non_loss_microbatch_iterator, non_loss_seq_length = prepare_finetuning_batch(
+            if reads_global_batches:
+                # Finetuning path: prepare batch and extract dynamic seq_length
+                non_loss_data_iterator, non_loss_seq_length = prepare_finetuning_batch(
                     data_iterator=data_iterator,
                     num_microbatches=eval_num_microbatches,
                     default_seq_length=default_seq_length,
                     seq_key="tokens",
                 )
+            if not global_batch_packing_enabled(model_config):
+                # Give VPP chunks shared views for ordinary, non-scheduler evaluation.
                 non_loss_data_iterator = make_data_iterator_list(
                     model=model,
-                    data_iterator=non_loss_microbatch_iterator,
+                    data_iterator=non_loss_data_iterator,
                 )
 
             # Use injected communicator or create default P2PCommunicator

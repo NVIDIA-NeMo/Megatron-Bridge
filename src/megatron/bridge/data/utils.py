@@ -74,6 +74,14 @@ def pretrain_train_valid_test_datasets_provider(
     if dataset_config.mock:
         dataset_type = MockGPTDataset
     elif hasattr(dataset_config, "fim_data"):
+        if getattr(dataset_config, "inter_document_masking", False):
+            # GPTFIMDataset returns (tokens, document_ids), without the per-document lengths
+            # GPTDataset builds the document boundaries from.
+            raise ValueError(
+                "dataset.inter_document_masking=True is not supported with the FIM dataset: it does not return "
+                "the per-document lengths the document boundaries are built from. Set "
+                "dataset.inter_document_masking=False, or use GPTDatasetConfig without FIM."
+            )
         dataset_type = GPTFIMDataset
     else:
         dataset_type = GPTDataset

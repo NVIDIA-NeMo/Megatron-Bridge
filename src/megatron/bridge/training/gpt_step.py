@@ -15,7 +15,7 @@
 import logging
 from dataclasses import dataclass
 from functools import partial, wraps
-from typing import Iterable
+from typing import Callable, Iterable
 
 import modelopt.torch.distill as mtd
 import torch
@@ -38,7 +38,7 @@ from megatron.core.utils import (
     unwrap_model,
 )
 
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig
 from megatron.bridge.training.global_batch_packing import (
     get_batch_for_global_batch_packing,
     global_batch_packing_enabled,
@@ -49,7 +49,7 @@ from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params, get_thd_cp_partition_indices
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
-from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+from megatron.bridge.utils.cuda_graph import cuda_graph_captures_attention, cuda_graph_module_names
 
 
 logger = logging.getLogger(__name__)
@@ -236,7 +236,64 @@ def _middle_pp_stage_needs_batch(cfg: ConfigContainer) -> bool:
     uses_custom_attention_mask = not getattr(dataset_cfg, "skip_getting_attention_mask_from_dataset", True)
     dataset_kwargs = getattr(dataset_cfg, "dataset_kwargs", None) or {}
     returns_padding_mask = dataset_kwargs.get("return_padding_mask", False)
-    return uses_custom_attention_mask or _uses_packed_sequence_metadata(cfg) or returns_padding_mask
+    return (
+        uses_custom_attention_mask
+        or _uses_packed_sequence_metadata(cfg)
+        or returns_padding_mask
+        or _uses_inter_document_masking(cfg)
+    )
+
+
+def _uses_inter_document_masking(cfg: ConfigContainer) -> bool:
+    """Return whether the batch carries Core GPTDataset document boundaries to adapt for attention.
+
+    Only ``GPTDatasetConfig`` builds Core ``GPTDataset`` rows, whose padded ``cu_seqlens`` layout
+    ``get_batch_from_iterator`` adapts. Other datasets that expose an ``inter_document_masking``
+    attribute are left unchanged.
+    """
+    dataset_cfg = getattr(cfg, "dataset", None)
+    return isinstance(dataset_cfg, GPTDatasetConfig) and bool(getattr(dataset_cfg, "inter_document_masking", False))
+
+
+def _validate_inter_document_masking(cfg: ConfigContainer) -> None:
+    """Reject settings the GPT and DSv4 steps do not support with document masking.
+
+    The steps convert one row per micro-batch and do not split documents across context-parallel
+    ranks, for training and evaluation alike. A CUDA graph that captures attention would need
+    boundary tensors of one shape, while the number of documents changes from row to row. A custom
+    forward step that flattens micro-batches or partitions documents itself is not affected.
+
+    Raises:
+        ValueError: If a micro-batch size or context-parallel size is not 1, or if the CUDA graph
+            captures attention.
+    """
+    train_micro_batch_size = cfg.train.micro_batch_size
+    eval_micro_batch_size = cfg.validation.eval_micro_batch_size
+    context_parallel_size = getattr(cfg.model, "context_parallel_size", 1)
+    eval_context_parallel_size = cfg.dist.eval_context_parallel_size
+    sizes = {
+        "train.micro_batch_size": train_micro_batch_size,
+        "validation.eval_micro_batch_size": (
+            train_micro_batch_size if eval_micro_batch_size is None else eval_micro_batch_size
+        ),
+        "model.context_parallel_size": context_parallel_size,
+        "dist.eval_context_parallel_size": (
+            context_parallel_size if eval_context_parallel_size is None else eval_context_parallel_size
+        ),
+    }
+    unsupported = ", ".join(f"{name}={size}" for name, size in sizes.items() if size != 1)
+    if unsupported:
+        raise ValueError(
+            "dataset.inter_document_masking=True in the GPT and DSv4 steps requires micro-batch size 1 and "
+            f"context-parallel size 1 for training and evaluation; got {unsupported}."
+        )
+    if cuda_graph_captures_attention(cfg.model):
+        raise ValueError(
+            "dataset.inter_document_masking=True in the GPT and DSv4 steps does not support CUDA graphs that "
+            f"capture attention (model.cuda_graph_impl={getattr(cfg.model, 'cuda_graph_impl', None)!r}, "
+            f"modules {cuda_graph_module_names(cfg.model)}): the document boundaries change shape from row to "
+            "row. Disable CUDA graphs or limit them to modules without attention, such as 'mlp'."
+        )
 
 
 def _layout_stage_has_mtp(layout, *, pp_rank: int, pp_size: int, vp_stage: int) -> bool:
@@ -286,6 +343,77 @@ def _current_stage_needs_mtp_inputs_from_layout(
     return _current_stage_has_mtp_from_layout(cfg, pg_collection=pg_collection, vp_stage=vp_stage)
 
 
+@dataclass(frozen=True)
+class _StageBatchFields:
+    """Which batch fields one PP/VPP stage reads from the data iterator."""
+
+    is_first: bool
+    is_last: bool
+    include_full_batch_fields: bool
+    include_mtp_inputs: bool
+
+    @property
+    def reads_batch(self) -> bool:
+        """Whether the stage calls ``next()`` on the data iterator once per micro-batch."""
+        return self.is_first or self.is_last or self.include_full_batch_fields or self.include_mtp_inputs
+
+
+def _stage_batch_fields(
+    cfg: ConfigContainer, *, pg_collection, use_mtp: bool, vp_stage: int | None
+) -> _StageBatchFields:
+    """Return the batch fields ``get_batch`` reads on this PP/VPP stage."""
+    model_cfg = getattr(cfg, "model", None)
+    vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None)
+    is_first = is_pp_first_stage(pg_collection.pp) and (
+        vp_stage is None or is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size)
+    )
+    is_last = is_pp_last_stage(pg_collection.pp) and (
+        vp_stage is None or is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size)
+    )
+    is_middle = (not is_first) and (not is_last)
+    return _StageBatchFields(
+        is_first=is_first,
+        is_last=is_last,
+        include_full_batch_fields=is_middle and _middle_pp_stage_needs_batch(cfg),
+        include_mtp_inputs=use_mtp
+        and _current_stage_needs_mtp_inputs_from_layout(
+            cfg, pg_collection=pg_collection, is_last=is_last, vp_stage=vp_stage
+        ),
+    )
+
+
+def _rank_reads_batch(
+    cfg: ConfigContainer, *, pg_collection, stage_batch_fields: Callable[..., _StageBatchFields]
+) -> bool:
+    """Return whether any model chunk on this rank reads the data iterator in a training iteration.
+
+    With virtual pipeline parallelism the chunks read through cache views over one outer iterator
+    (``make_data_iterator_list``), so the rank advances that iterator when any chunk reads.
+
+    Args:
+        cfg: Configuration container.
+        pg_collection: Process groups of this rank.
+        stage_batch_fields: The step's per-stage read logic, with the signature of ``_stage_batch_fields``.
+    """
+    model_cfg = getattr(cfg, "model", None)
+    use_mtp = (getattr(model_cfg, "mtp_num_layers", None) or 0) > 0
+    vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None)
+    vp_stages = range(vp_size) if vp_size else (None,)
+    return any(
+        stage_batch_fields(cfg, pg_collection=pg_collection, use_mtp=use_mtp, vp_stage=vp_stage).reads_batch
+        for vp_stage in vp_stages
+    )
+
+
+def _reads_batch_on_skip(cfg: ConfigContainer, pg_collection) -> bool:
+    """Return whether the GPT step reads the data iterator on this rank.
+
+    ``train()`` uses it on skipped iterations (``train.iterations_to_skip``) to advance the same
+    ranks that read batches in a real iteration.
+    """
+    return _rank_reads_batch(cfg, pg_collection=pg_collection, stage_batch_fields=_stage_batch_fields)
+
+
 def _partition_packed_batch_for_cp(
     batch: dict[str, torch.Tensor], cp_group: torch.distributed.ProcessGroup
 ) -> dict[str, torch.Tensor]:
@@ -333,6 +461,71 @@ def _partition_packed_batch_for_cp(
     return batch
 
 
+def _adapt_document_boundaries(batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Convert the document boundaries of one Core ``GPTDataset`` row to THD Q/KV fields.
+
+    Core pads ``cu_seqlens`` to a fixed length by repeating the row's token width. Like Core's merge
+    helper, this keeps the offsets through the first occurrence of that width, so equal interior
+    offsets (empty documents) stay. It runs on the host, before the device copy.
+
+    Args:
+        batch: A micro-batch from the data iterator, with ``tokens``, ``cu_seqlens`` and ``max_seqlen``.
+
+    Returns:
+        A new batch with ``cu_seqlens_q``, ``cu_seqlens_kv``, ``max_seqlen_q`` and ``max_seqlen_kv`` in
+        place of ``cu_seqlens`` and ``max_seqlen``.
+
+    Raises:
+        ValueError: If ``cu_seqlens`` is not an int32 ``[1, n]`` tensor of non-decreasing offsets that
+            starts at 0 and ends in a run of the row's token width, or if ``max_seqlen`` is not the
+            longest document.
+    """
+    cu_seqlens = batch.get("cu_seqlens")
+    if cu_seqlens is None or batch.get("max_seqlen") is None:
+        raise ValueError("Document masking expects cu_seqlens and max_seqlen in every GPTDataset row.")
+    if cu_seqlens.dim() != 2 or cu_seqlens.size(0) != 1 or cu_seqlens.dtype != torch.int32:
+        raise ValueError(
+            "Document masking expects cu_seqlens of shape [1, n] and dtype torch.int32, one row per micro-batch; "
+            f"got shape {list(cu_seqlens.shape)} and dtype {cu_seqlens.dtype}."
+        )
+    offsets = cu_seqlens[0]
+    if offsets.numel() == 0 or offsets[0].item() != 0:
+        raise ValueError(f"Document masking expects cu_seqlens to start at 0, got {offsets[:1].tolist()}.")
+    decreasing = torch.nonzero(offsets[1:] < offsets[:-1], as_tuple=True)[0]
+    if decreasing.numel() > 0:
+        index = int(decreasing[0].item()) + 1
+        raise ValueError(
+            "Document masking expects non-decreasing cu_seqlens, "
+            f"got {offsets[index].item()} after {offsets[index - 1].item()} at index {index}."
+        )
+    row_width = batch["tokens"].size(-1)
+    if offsets[-1].item() != row_width:
+        raise ValueError(
+            f"Document masking expects cu_seqlens to end at the row's token width {row_width}, "
+            f"got {offsets[-1].item()}."
+        )
+    row_end = int(torch.nonzero(offsets == row_width, as_tuple=True)[0][0].item())
+    offsets = offsets[: row_end + 1]
+
+    max_seqlen = torch.as_tensor(batch["max_seqlen"])
+    longest = int((offsets[1:] - offsets[:-1]).max().item())
+    if max_seqlen.numel() != 1 or max_seqlen.item() != longest:
+        raise ValueError(
+            f"Document masking expects max_seqlen {longest}, the longest document in cu_seqlens, "
+            f"got {max_seqlen.tolist()}."
+        )
+
+    adapted = {key: value for key, value in batch.items() if key not in ("cu_seqlens", "max_seqlen")}
+    cu_seqlens = offsets.unsqueeze(0)
+    adapted.update(
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_kv=cu_seqlens,
+        max_seqlen_q=batch["max_seqlen"],
+        max_seqlen_kv=batch["max_seqlen"],
+    )
+    return adapted
+
+
 def get_batch_from_iterator(
     data_iterator: Iterable,
     include_mtp_inputs: bool = False,
@@ -341,6 +534,7 @@ def get_batch_from_iterator(
     is_first_pp_stage: bool,
     is_last_pp_stage: bool,
     include_full_batch_fields: bool = False,
+    inter_document_masking: bool = False,
 ) -> dict[str, torch.Tensor]:
     """Get a batch of data from the iterator.
 
@@ -349,11 +543,15 @@ def get_batch_from_iterator(
         include_mtp_inputs: Whether this PP stage needs Multi-Token Prediction input tensors.
         skip_getting_attention_mask_from_dataset: If set, the dataset will pass a None attention mask.
         include_full_batch_fields: Whether to include all standard training tensors regardless of PP stage.
+        inter_document_masking: Whether the batch is a Core GPTDataset row whose document boundaries
+            become THD Q/KV fields (see ``_adapt_document_boundaries``).
 
     Returns:
         dict[str, torch.Tensor]: A dictionary containing the batch data.
     """
     batch = next(data_iterator)
+    if inter_document_masking:
+        batch = _adapt_document_boundaries(batch)
 
     required_device_keys = set()
     required_host_keys = set()
@@ -444,30 +642,23 @@ def get_batch(
             position_ids,
             {"packed_seq_params": packed_seq_params, "padding_mask": padding_mask},
         )
-    vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None)
-    is_first = is_pp_first_stage(pg_collection.pp) and (
-        vp_stage is None or is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size)
-    )
-    is_last = is_pp_last_stage(pg_collection.pp) and (
-        vp_stage is None or is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size)
-    )
-    is_middle = (not is_first) and (not is_last)
-    include_full_batch_fields = is_middle and _middle_pp_stage_needs_batch(cfg)
-    include_mtp_inputs = use_mtp and _current_stage_needs_mtp_inputs_from_layout(
-        cfg, pg_collection=pg_collection, is_last=is_last, vp_stage=vp_stage
-    )
-    if is_middle and not include_full_batch_fields and not include_mtp_inputs:
+    inter_document_masking = _uses_inter_document_masking(cfg)
+    if inter_document_masking:
+        _validate_inter_document_masking(cfg)
+    stage = _stage_batch_fields(cfg, pg_collection=pg_collection, use_mtp=use_mtp, vp_stage=vp_stage)
+    if not stage.reads_batch:
         return None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
-        include_mtp_inputs=include_mtp_inputs,
+        include_mtp_inputs=stage.include_mtp_inputs,
         skip_getting_attention_mask_from_dataset=getattr(
             cfg.dataset, "skip_getting_attention_mask_from_dataset", True
         ),
-        is_first_pp_stage=is_first,
-        is_last_pp_stage=is_last,
-        include_full_batch_fields=include_full_batch_fields,
+        is_first_pp_stage=stage.is_first,
+        is_last_pp_stage=stage.is_last,
+        include_full_batch_fields=stage.include_full_batch_fields,
+        inter_document_masking=inter_document_masking,
     )
 
     cp_size = pg_collection.cp.size()
@@ -805,3 +996,8 @@ def _create_loss_function_modelopt(
         return partial(loss_func_kd, loss_mask=loss_mask, original_loss_fn=mnt_loss_func, model=unwrapped_model)
     else:
         return mnt_loss_func
+
+
+# Read by train() before it wraps the step, so skipped iterations advance the ranks that read batches.
+forward_step.reads_batch_on_skip = _reads_batch_on_skip
+forward_step_modelopt.reads_batch_on_skip = _reads_batch_on_skip
