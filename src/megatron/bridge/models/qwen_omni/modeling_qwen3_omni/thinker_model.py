@@ -37,8 +37,15 @@ from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config imp
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
+    preprocess_packed_seqs,
     split_data_cp_rank,
     split_deepstack_embs,
+)
+from megatron.bridge.training.utils.packed_seq_utils import (
+    get_packed_seq_cp_partition_indices,
+    get_packed_seq_q_cu_seqlens,
+    repack_mcore_thd_position_ids,
+    unpack_mcore_thd_tensor_for_position_ids,
 )
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
@@ -65,6 +72,102 @@ def _build_text_only_mrope_position_ids(input_ids: torch.Tensor) -> torch.Tensor
     base = torch.arange(seq_len, device=input_ids.device, dtype=torch.long)
     base = base.unsqueeze(0).expand(batch_size, -1)
     return torch.stack([base, base, base], dim=0)
+
+
+def _select_sequence(
+    val: torch.Tensor | None,
+    index: torch.Tensor,
+    *,
+    seq_dim: int,
+) -> torch.Tensor | None:
+    """Index-select one sequence dimension and keep the result contiguous."""
+    if val is None:
+        return None
+    return val.index_select(seq_dim, index).contiguous()
+
+
+def _is_packed_input_pre_sharded(
+    input_ids: torch.Tensor | None,
+    packed_seq_params: PackedSeqParams | None,
+    *,
+    cp_size: int,
+) -> bool:
+    """Return whether a THD input already uses MCore's zigzag CP layout."""
+    if (
+        input_ids is None
+        or packed_seq_params is None
+        or cp_size <= 1
+        or input_ids.dim() != 2
+        or input_ids.size(0) != 1
+        or packed_seq_params.qkv_format != "thd"
+    ):
+        return False
+
+    _, physical_cu_seqlens = get_packed_seq_q_cu_seqlens(packed_seq_params)
+    if (
+        not isinstance(physical_cu_seqlens, torch.Tensor)
+        or physical_cu_seqlens.dim() != 1
+        or physical_cu_seqlens.numel() < 2
+    ):
+        return False
+
+    full_token_count = int(physical_cu_seqlens[-1].item())
+    if full_token_count != cp_size * input_ids.numel():
+        return False
+    if int(physical_cu_seqlens[0].item()) != 0:
+        raise ValueError("Pre-sharded packed CP metadata must start at token offset 0.")
+
+    chunk_count = 2 * cp_size
+    segment_lengths = physical_cu_seqlens[1:] - physical_cu_seqlens[:-1]
+    if bool(torch.any(segment_lengths % chunk_count != 0).item()):
+        raise ValueError(
+            "Pre-sharded packed CP inputs require every physical segment length to be divisible by 2 * cp_size."
+        )
+    return True
+
+
+def _get_packed_seq_padding_mask(
+    packed_seq_params: PackedSeqParams | None,
+    *,
+    total_tokens: int,
+    device: torch.device,
+) -> torch.Tensor | None:
+    """Build the MoE padding mask from logical and physical THD boundaries."""
+    if packed_seq_params is None or packed_seq_params.cu_seqlens_q_padded is None:
+        return None
+
+    cu_seqlens, physical_cu_seqlens = get_packed_seq_q_cu_seqlens(packed_seq_params)
+    if (
+        not isinstance(cu_seqlens, torch.Tensor)
+        or not isinstance(physical_cu_seqlens, torch.Tensor)
+        or cu_seqlens.dim() != 1
+        or physical_cu_seqlens.shape != cu_seqlens.shape
+        or cu_seqlens.numel() < 2
+    ):
+        raise ValueError("Packed MoE padding requires matching 1D query cu_seqlens metadata.")
+
+    cu_seqlens = cu_seqlens.to(device=device)
+    physical_cu_seqlens = physical_cu_seqlens.to(device=device)
+    logical_lengths = cu_seqlens[1:] - cu_seqlens[:-1]
+    physical_lengths = physical_cu_seqlens[1:] - physical_cu_seqlens[:-1]
+    if bool(
+        torch.any(logical_lengths <= 0)
+        or torch.any(physical_lengths < logical_lengths)
+        or cu_seqlens[0] != 0
+        or physical_cu_seqlens[0] != 0
+        or physical_cu_seqlens[-1] > total_tokens
+    ):
+        raise ValueError("Packed MoE padding metadata has invalid logical or physical query boundaries.")
+    if torch.equal(logical_lengths, physical_lengths) and int(physical_cu_seqlens[-1].item()) == total_tokens:
+        return None
+
+    positions = torch.arange(total_tokens, device=device)
+    segment_indices = torch.bucketize(positions, physical_cu_seqlens[1:], right=True)
+    in_physical_segment = segment_indices < logical_lengths.numel()
+    safe_segment_indices = segment_indices.clamp(max=logical_lengths.numel() - 1)
+    offsets = positions - physical_cu_seqlens[:-1].index_select(0, safe_segment_indices)
+    valid_tokens = in_physical_segment & (offsets < logical_lengths.index_select(0, safe_segment_indices))
+    return (~valid_tokens).unsqueeze(0)
 
 
 def _configure_multimodal_attn_impl(config: object, attn_impl: str | None) -> None:
@@ -383,17 +486,84 @@ class Qwen3OmniThinkerModel(MegatronModule):
         input_features: torch.Tensor | None = None,
         feature_attention_mask: torch.Tensor | None = None,
         audio_feature_lengths: torch.Tensor | None = None,
+        padding_mask: torch.Tensor | None = None,
         **kwargs,
     ) -> torch.Tensor:
         if inference_params is not None:
             raise NotImplementedError("Qwen3-Omni Megatron inference is not implemented yet.")
-        if packed_seq_params is not None:
-            raise NotImplementedError("Qwen3-Omni packed sequence support is not implemented yet.")
 
         cp_size = self.pg_collection.cp.size() if self.pg_collection is not None else 1
         cp_rank = self.pg_collection.cp.rank() if self.pg_collection is not None else 0
         tp_size = self.pg_collection.tp.size() if self.pg_collection is not None else 1
         tp_rank = self.pg_collection.tp.rank() if self.pg_collection is not None else 0
+        legacy_packed_bshd = (
+            packed_seq_params is not None and input_ids is not None and input_ids.dim() == 2 and input_ids.size(0) > 1
+        )
+        direct_packed_thd = (
+            packed_seq_params is not None
+            and input_ids is not None
+            and input_ids.dim() == 2
+            and input_ids.size(0) == 1
+            and getattr(packed_seq_params, "qkv_format", None) == "thd"
+        )
+        packed_input_pre_sharded = _is_packed_input_pre_sharded(
+            input_ids,
+            packed_seq_params,
+            cp_size=cp_size,
+        )
+        if packed_input_pre_sharded and position_ids is None:
+            raise ValueError("Pre-sharded packed CP inputs require explicit rank-local 3D MRoPE position_ids.")
+        packed_cp_index = (
+            get_packed_seq_cp_partition_indices(
+                packed_seq_params,
+                total_tokens=input_ids.size(1),
+                cp_size=cp_size,
+                cp_rank=cp_rank,
+                device=input_ids.device,
+                cp_group=self.pg_collection.cp,
+            )
+            if packed_seq_params is not None
+            and cp_size > 1
+            and input_ids is not None
+            and direct_packed_thd
+            and not packed_input_pre_sharded
+            else None
+        )
+        lm_input_ids = input_ids
+        packed_row_starts = None
+        packed_row_lengths = None
+        mrope_input_ids = input_ids
+        mrope_attention_mask = attention_mask
+        if direct_packed_thd:
+            mrope_input_ids, mrope_attention_mask, packed_row_starts, packed_row_lengths = (
+                unpack_mcore_thd_tensor_for_position_ids(input_ids, packed_seq_params)
+            )
+        if padding_mask is None and direct_packed_thd:
+            _, physical_cu_seqlens = get_packed_seq_q_cu_seqlens(packed_seq_params)
+            if not isinstance(physical_cu_seqlens, torch.Tensor):
+                raise ValueError("Packed Qwen3-Omni input requires physical query cu_seqlens metadata.")
+            packed_total_tokens = int(physical_cu_seqlens[-1].item())
+            padding_mask = _get_packed_seq_padding_mask(
+                packed_seq_params,
+                total_tokens=packed_total_tokens,
+                device=input_ids.device,
+            )
+            if padding_mask is not None:
+                if packed_cp_index is not None:
+                    padding_mask = _select_sequence(padding_mask, packed_cp_index, seq_dim=1)
+                elif packed_input_pre_sharded:
+                    padding_mask = _select_sequence(
+                        padding_mask,
+                        get_packed_seq_cp_partition_indices(
+                            packed_seq_params,
+                            total_tokens=packed_total_tokens,
+                            cp_size=cp_size,
+                            cp_rank=cp_rank,
+                            device=input_ids.device,
+                            cp_group=self.pg_collection.cp,
+                        ),
+                        seq_dim=1,
+                    )
 
         if audio_feature_lengths is None and feature_attention_mask is not None:
             audio_feature_lengths = torch.sum(feature_attention_mask, dim=1)
@@ -404,7 +574,7 @@ class Qwen3OmniThinkerModel(MegatronModule):
                 for value in (pixel_values, pixel_values_videos, input_features, audio_feature_lengths)
             )
             if not has_multimodal_inputs:
-                position_ids = _build_text_only_mrope_position_ids(input_ids)
+                position_ids = _build_text_only_mrope_position_ids(mrope_input_ids)
             else:
                 rope_attention_mask = None if cp_size > 1 and packed_seq_params is None else attention_mask
                 position_ids, _ = get_rope_index(
@@ -415,12 +585,23 @@ class Qwen3OmniThinkerModel(MegatronModule):
                     self.vision_start_token_id,
                     self.audio_start_token_id,
                     self.position_id_per_seconds,
-                    input_ids,
+                    mrope_input_ids,
                     image_grid_thw=image_grid_thw,
                     video_grid_thw=video_grid_thw,
                     second_per_grids=video_second_per_grid,
-                    attention_mask=rope_attention_mask,
+                    attention_mask=(
+                        mrope_attention_mask
+                        if direct_packed_thd
+                        else rope_attention_mask
+                    ),
                     audio_seqlens=audio_feature_lengths,
+                )
+            if packed_row_starts is not None and packed_row_lengths is not None:
+                position_ids = repack_mcore_thd_position_ids(
+                    position_ids,
+                    padded_starts=packed_row_starts,
+                    lengths=packed_row_lengths,
+                    total_length=input_ids.size(1),
                 )
 
         if self.pre_process:
@@ -519,7 +700,7 @@ class Qwen3OmniThinkerModel(MegatronModule):
                 deepstack_visual_embeds = None
 
             if input_features is not None:
-                expected_audio_token_counts = (input_ids == self.audio_token_id).sum(dim=1)
+                expected_audio_token_counts = (mrope_input_ids == self.audio_token_id).sum(dim=1)
                 audio_embeds = self.get_audio_features(
                     input_features,
                     feature_attention_mask=feature_attention_mask,
@@ -544,9 +725,71 @@ class Qwen3OmniThinkerModel(MegatronModule):
                 combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
 
             sp_pad_len = 0
+            if packed_seq_params is not None:
+                if legacy_packed_bshd:
+                    if attention_mask is None:
+                        attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
+                    lm_input_ids, _ = preprocess_packed_seqs(
+                        input_ids,
+                        attention_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )
+
+                    if deepstack_visual_embeds is not None:
+                        assert visual_pos_masks is not None
+                        visual_pos_masks_thd = preprocess_packed_seqs(
+                            visual_pos_masks,
+                            attention_mask,
+                            pre_process=True,
+                            pg_collection=self.pg_collection,
+                        )[0].bool()
+                        tmp_embeddings = torch.zeros_like(combined_embeddings.transpose(0, 1))
+                        packed_deepstack_embeds = []
+                        for visual_embed in deepstack_visual_embeds:
+                            tmp_embeddings[visual_pos_masks] = visual_embed
+                            tmp_embeddings_thd = preprocess_packed_seqs(
+                                tmp_embeddings.contiguous(),
+                                attention_mask,
+                                pre_process=True,
+                                pg_collection=self.pg_collection,
+                            )[0]
+                            packed_deepstack_embeds.append(tmp_embeddings_thd[visual_pos_masks_thd].contiguous())
+                        visual_pos_masks = visual_pos_masks_thd
+                        deepstack_visual_embeds = packed_deepstack_embeds
+
+                    combined_embeddings = (
+                        preprocess_packed_seqs(
+                            combined_embeddings.transpose(0, 1).contiguous(),
+                            attention_mask,
+                            pre_process=True,
+                            pg_collection=self.pg_collection,
+                        )[0]
+                        .transpose(0, 1)
+                        .contiguous()
+                    )
+                elif packed_cp_index is not None:
+                    lm_input_ids = _select_sequence(input_ids, packed_cp_index, seq_dim=1)
+                    if visual_pos_masks is not None:
+                        visual_pos_masks_local = _select_sequence(visual_pos_masks, packed_cp_index, seq_dim=1)
+                    else:
+                        visual_pos_masks_local = None
+                    if deepstack_visual_embeds is not None:
+                        assert visual_pos_masks is not None
+                        assert visual_pos_masks_local is not None
+                        tmp_embeddings = torch.zeros_like(combined_embeddings.transpose(0, 1))
+                        packed_deepstack_embeds = []
+                        for visual_embed in deepstack_visual_embeds:
+                            tmp_embeddings[visual_pos_masks] = visual_embed
+                            tmp_embeddings_local = _select_sequence(tmp_embeddings, packed_cp_index, seq_dim=1)
+                            packed_deepstack_embeds.append(tmp_embeddings_local[visual_pos_masks_local].contiguous())
+                        deepstack_visual_embeds = packed_deepstack_embeds
+                    visual_pos_masks = visual_pos_masks_local
+                    combined_embeddings = _select_sequence(combined_embeddings, packed_cp_index, seq_dim=0)
+
             if self.config.sequence_parallel:
                 seq_len = combined_embeddings.shape[0]
-                sp_pad_len = (tp_size - seq_len % tp_size) % tp_size
+                sp_pad_len = 0 if packed_seq_params is not None else (tp_size - seq_len % tp_size) % tp_size
                 if sp_pad_len > 0:
                     combined_embeddings = torch.nn.functional.pad(combined_embeddings, (0, 0, 0, 0, 0, sp_pad_len))
                     if visual_pos_masks is not None:
@@ -555,28 +798,94 @@ class Qwen3OmniThinkerModel(MegatronModule):
                     combined_embeddings, group=self.pg_collection.tp
                 )
                 combined_embeddings = combined_embeddings.contiguous()
+                if padding_mask is not None:
+                    padding_mask = (
+                        tensor_parallel.scatter_to_sequence_parallel_region(
+                            padding_mask.transpose(0, 1).contiguous(),
+                            group=self.pg_collection.tp,
+                        )
+                        .transpose(0, 1)
+                        .contiguous()
+                    )
         else:
             combined_embeddings = None
             visual_pos_masks = None
             deepstack_visual_embeds = None
             sp_pad_len = 0
+            if packed_seq_params is not None:
+                if legacy_packed_bshd:
+                    if attention_mask is None:
+                        attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
+                    lm_input_ids, _ = preprocess_packed_seqs(
+                        input_ids,
+                        attention_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )
+                elif packed_cp_index is not None:
+                    lm_input_ids = _select_sequence(input_ids, packed_cp_index, seq_dim=1)
 
         if sp_pad_len > 0 and position_ids is not None:
             position_ids = torch.nn.functional.pad(position_ids, (0, sp_pad_len), mode="replicate")
 
         if self.config.sequence_parallel or cp_size > 1:
-            visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
-                visual_pos_masks,
-                deepstack_visual_embeds,
-                tp_size=tp_size,
-                tp_rank=tp_rank,
-                cp_size=cp_size,
-                cp_rank=cp_rank,
-                sequence_parallel=self.config.sequence_parallel,
-            )
+            if packed_seq_params is None:
+                visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
+                    visual_pos_masks,
+                    deepstack_visual_embeds,
+                    tp_size=tp_size,
+                    tp_rank=tp_rank,
+                    cp_size=cp_size,
+                    cp_rank=cp_rank,
+                    sequence_parallel=self.config.sequence_parallel,
+                )
+            elif self.config.sequence_parallel:
+                visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
+                    visual_pos_masks,
+                    deepstack_visual_embeds,
+                    tp_size=tp_size,
+                    tp_rank=tp_rank,
+                    cp_size=1,
+                    cp_rank=0,
+                    sequence_parallel=self.config.sequence_parallel,
+                )
 
-        return self.language_model(
-            input_ids=None if combined_embeddings is not None else input_ids,
+        if packed_seq_params is not None and position_ids is not None:
+            if legacy_packed_bshd:
+                position_ids = (
+                    preprocess_packed_seqs(
+                        position_ids.permute(1, 2, 0),
+                        attention_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0]
+                    .permute(2, 0, 1)
+                    .contiguous()
+                )
+            elif packed_cp_index is not None:
+                position_ids = _select_sequence(position_ids, packed_cp_index, seq_dim=2)
+            attention_mask = None
+
+        rotary_pos_emb = getattr(self.language_model, "rotary_pos_emb", None)
+        if rotary_pos_emb is not None:
+            rotary_pos_emb.is_thd_format = packed_seq_params is not None
+
+        if packed_seq_params is not None:
+            language_model_input_ids = lm_input_ids
+        elif combined_embeddings is not None:
+            language_model_input_ids = None
+        else:
+            language_model_input_ids = input_ids
+
+        return_sliced_loss_mask = False
+        if direct_packed_thd and packed_cp_index is not None:
+            labels = _select_sequence(labels, packed_cp_index, seq_dim=1)
+            if loss_mask is not None:
+                loss_mask = _select_sequence(loss_mask, packed_cp_index, seq_dim=1)
+                return_sliced_loss_mask = True
+
+        output = self.language_model(
+            input_ids=language_model_input_ids,
             position_ids=position_ids,
             attention_mask=attention_mask,
             decoder_input=combined_embeddings,
@@ -586,6 +895,10 @@ class Qwen3OmniThinkerModel(MegatronModule):
             runtime_gather_output=runtime_gather_output,
             extra_block_kwargs=extra_block_kwargs,
             loss_mask=loss_mask,
+            padding_mask=padding_mask,
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
         )
+        if return_sliced_loss_mask:
+            return output, loss_mask
+        return output
