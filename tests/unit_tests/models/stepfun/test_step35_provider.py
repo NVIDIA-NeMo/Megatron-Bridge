@@ -121,7 +121,7 @@ def _make_config(layer_types, sliding_setting=_UNSET, *, attention_other_setting
     """Build a TransformerConfig-like SimpleNamespace for Step35DecoderLayer."""
     if sliding_setting is _UNSET:
         sliding_setting = {
-            "window_size": [512, 0],
+            "window_size": [511, 0],
             "num_attention_heads": 96,
             "num_query_groups": 8,
             "kv_channels": 128,

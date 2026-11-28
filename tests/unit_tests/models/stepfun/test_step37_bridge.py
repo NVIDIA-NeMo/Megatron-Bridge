@@ -118,7 +118,7 @@ class TestStep37BridgeModelConfig:
         assert model_config.transformer.rotary_percents == [0.5, 1.0, 1.0, 1.0, 0.5, 1.0]
         assert model_config.transformer.swiglu_limits == [0.0, 0.0, 7.0, 7.0, 0.0, 0.0]
         assert model_config.transformer.sliding_attention_setting == {
-            "window_size": [64, 0],
+            "window_size": [63, 0],
             "num_attention_heads": 8,
             "num_query_groups": 2,
             "kv_channels": 64,

@@ -92,8 +92,8 @@ def _make_hf_config(**overrides) -> SimpleNamespace:
         moe_layers_enum="2,3",
         num_nextn_predict_layers=2,
         # HF carries ``sliding_window`` as a scalar token count; the bridge
-        # pads it into the ``[left, right]`` window form expected by
-        # ``Step35DecoderLayer``.
+        # converts it into the inclusive ``[left, right]`` window form expected
+        # by ``Step35DecoderLayer``.
         sliding_window=512,
         swiglu_limits=[None, None, None, None],
         swiglu_limits_shared=[None, None, None, None],
@@ -263,11 +263,12 @@ class TestStep35BridgeConfigKwargs:
     def test_sliding_attention_setting_populated_from_hf_config(self):
         """Shape fields are pulled out of HF's ``attention_other_setting`` and
         renamed to the Megatron-facing keys that ``Step35DecoderLayer``
-        consumes at construction time. ``window_size`` is padded from HF's
-        scalar ``sliding_window`` to a ``[left, right]`` pair."""
+        consumes at construction time. ``window_size`` is converted from HF's
+        scalar ``sliding_window`` (W keys including the query) to TE's
+        inclusive ``[W - 1, 0]`` pair."""
         _, p = self._run()
         assert p.sliding_attention_setting == {
-            "window_size": [512, 0],
+            "window_size": [511, 0],
             "num_attention_heads": 96,
             "num_query_groups": 8,
             "kv_channels": 128,
@@ -280,11 +281,28 @@ class TestStep35BridgeConfigKwargs:
             hf_overrides={"sliding_window": None, "attention_other_setting": None},
         )
         assert p.sliding_attention_setting == {
-            "window_size": [512, 0],
+            "window_size": [511, 0],
             "num_attention_heads": 96,
             "num_query_groups": 8,
             "kv_channels": 128,
         }
+
+    @pytest.mark.parametrize("sliding_window", [1, 4, 512])
+    def test_sliding_window_matches_hf_mask(self, sliding_window):
+        """TE's inclusive ``window_size`` must see the same keys as HF's sliding mask."""
+        masking_utils = pytest.importorskip("transformers.masking_utils")
+        _, p = self._run(hf_overrides={"sliding_window": sliding_window})
+        left, right = p.sliding_attention_setting["window_size"]
+        assert (left, right) == (sliding_window - 1, 0)
+
+        hf_mask_fn = masking_utils.sliding_window_causal_mask_function(sliding_window)
+        seq_len = sliding_window + 2
+        keys = torch.arange(seq_len)
+        for q in range(seq_len):
+            q_idx = torch.tensor(q)
+            hf_visible = hf_mask_fn(0, 0, q_idx, keys)
+            te_visible = (keys >= q_idx - left) & (keys <= q_idx + right)
+            assert torch.equal(hf_visible, te_visible), f"query {q}"
 
     def test_provider_restores_mtp_layer_types_after_config_validation_split(self):
         main_layer_types = [
@@ -461,7 +479,7 @@ class TestStep35BridgeModelConfig:
         assert model_config.transformer.rotary_percents == hf_config.partial_rotary_factors
         assert model_config.transformer.swiglu_limits == hf_config.swiglu_limits
         assert model_config.transformer.swiglu_limits_shared == hf_config.swiglu_limits_shared
-        assert model_config.transformer.sliding_attention_setting["window_size"] == [512, 0]
+        assert model_config.transformer.sliding_attention_setting["window_size"] == [511, 0]
         assert model_config.transformer.head_wise_attn_gate is True
         assert model_config.moe_layer_freq == [0, 0, 1, 1]
         assert model_config.mtp_num_layers == 2

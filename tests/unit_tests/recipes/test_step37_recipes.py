@@ -63,6 +63,7 @@ def _step37_hf_config() -> Step37Config:
             "moe_layers_enum": "2,3",
             "rope_theta": [5e6, 1e4, 1e4, 1e4, 5e6],
             "sliding_window": 64,
+            "partial_rotary_factors": [0.25, 1.0, 1.0, 1.0, 0.25],
             "use_moe_router_bias": True,
             "need_fp32_gate": True,
             "torch_dtype": "bfloat16",
@@ -110,6 +111,7 @@ def test_step37_sft_recipe_builds_model_config(monkeypatch):
     assert m.moe_hybridep_num_sms == 16
     assert cfg.train.micro_batch_size == 1
     assert cfg.dataset.max_packing_seqlen == 2048
+    assert cfg.tokenizer.vocab_size == m.vocab_size == _step37_hf_config().text_config.vocab_size
 
 
 def test_step37_smoke_recipe_builds_model_config(monkeypatch):
@@ -125,12 +127,15 @@ def test_step37_smoke_recipe_builds_model_config(monkeypatch):
     assert (m.num_layers_in_first_pipeline_stage, m.num_layers_in_last_pipeline_stage) == (12, 9)
     assert m.expert_model_parallel_size == 1
     assert m.variable_seq_lengths is True
-    assert m.rotary_percent == 0.5
-    assert m.window_size == [512, 0]
-    # The per-layer lists cover the 45 Step-3.7 decoder layers and live on the nested transformer config.
-    assert len(m.transformer.rotary_base_per_layer) == 45
-    assert len(m.transformer.window_attn_skip_freq) == 45
-    assert len(m.transformer.moe_layer_freq) == 45
+    hf = _step37_hf_config().text_config
+    assert m.sliding_attention_setting["window_size"] == [hf.sliding_window - 1, 0]
+    assert m.window_size is None
+    assert m.window_attn_skip_freq is None
+    assert m.layer_types == hf.layer_types
+    assert m.rotary_percents == hf.partial_rotary_factors
+    assert m.rotary_base_per_layer == hf.rope_theta
+    assert m.moe_layer_freq == [0, 0, 1, 1]
+    assert cfg.tokenizer.vocab_size == m.vocab_size == hf.vocab_size
     assert m.recompute_granularity == "full"
     assert cfg.dataset.fixed_pack_idx == 0
 
