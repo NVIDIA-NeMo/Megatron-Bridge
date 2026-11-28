@@ -637,6 +637,82 @@ def test_merge_lora_adapter_weights_grouped_expert_fused_fc1_uses_expert_tp(monk
     torch.testing.assert_close(updated["model.layers.0.mlp.experts.0.up_proj.weight"], expected_up)
 
 
+def _set_expert_tp(monkeypatch, size):
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_tensor_parallel_world_size",
+        lambda: size,
+    )
+
+
+def test_split_fused_fc1_linear_out_weight_for_experts_uses_expert_tp(monkeypatch):
+    bridge = DummyBridge()
+    # B gathered across two expert-TP ranks, each holding [gate shard; up shard]: one row per shard.
+    gathered = torch.tensor([[1.0], [10.0], [2.0], [20.0]])
+
+    _set_expert_tp(monkeypatch, 2)
+    gate, up = bridge._split_fused_fc1_linear_out_weight(gathered, is_expert=True)
+    torch.testing.assert_close(gate, torch.tensor([[1.0], [2.0]]))
+    torch.testing.assert_close(up, torch.tensor([[10.0], [20.0]]))
+
+    # The dense TP size does not shard routed experts.
+    _set_expert_tp(monkeypatch, 1)
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_tensor_model_parallel_world_size",
+        lambda: 2,
+    )
+    gate, up = bridge._split_fused_fc1_linear_out_weight(gathered, is_expert=True)
+    torch.testing.assert_close(gate, gathered[:2])
+    torch.testing.assert_close(up, gathered[2:])
+
+
+def test_merge_lora_adapter_weights_grouped_expert_fused_fc1_at_expert_tp2(monkeypatch):
+    bridge = DummyBridge()
+    converted = {
+        "model.layers.0.mlp.experts.0.gate_proj.weight": torch.zeros(2, 4),
+        "model.layers.0.mlp.experts.0.up_proj.weight": torch.zeros(2, 4),
+    }
+    linear_in = torch.arange(32, dtype=torch.float32).reshape(8, 4)
+    gate = torch.arange(16, 32, dtype=torch.float32).reshape(2, 8)
+    up = torch.arange(32, 48, dtype=torch.float32).reshape(2, 8)
+    # B as gathered across two expert-TP ranks: [gate row 0; up row 0; gate row 1; up row 1].
+    linear_out = torch.stack([gate[0], up[0], gate[1], up[1]])
+    adapter_weight = AdapterWeight(
+        global_base_prefix="decoder.layers.0.mlp.experts.linear_fc1",
+        adapter_key=None,
+        alpha=8,
+        dim=8,
+        linear_in_weight=MegatronWeightTuple("in", torch.stack([linear_in, linear_in + 100], dim=0), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out", torch.stack([linear_out, linear_out + 100], dim=0), vp_stage=0),
+    )
+    _set_expert_tp(monkeypatch, 2)
+
+    updated = bridge._merge_lora_adapter_weights(
+        [SimpleNamespace(config=SimpleNamespace(num_moe_experts=2))],
+        converted,
+        [adapter_weight],
+    )
+
+    torch.testing.assert_close(updated["model.layers.0.mlp.experts.0.gate_proj.weight"], gate @ linear_in)
+    torch.testing.assert_close(updated["model.layers.0.mlp.experts.0.up_proj.weight"], up @ linear_in)
+
+
+@pytest.mark.parametrize(
+    "hf_name", ["model.layers.0.mlp.experts.gate_up_proj", "model.layers.0.mlp.experts.gate_up_proj.weight"]
+)
+def test_fused_expert_gate_up_proj_lora_b_is_gate_then_up_at_expert_tp2(monkeypatch, hf_name):
+    bridge = DummyBridge()
+    gathered = torch.tensor([[1.0], [10.0], [2.0], [20.0]])
+    megatron_model = [SimpleNamespace(config=SimpleNamespace())]
+
+    _set_expert_tp(monkeypatch, 2)
+    per_base = bridge._get_fused_adapter_linear_out_slices(megatron_model, [hf_name], gathered, is_expert=True)
+    torch.testing.assert_close(per_base[hf_name], torch.tensor([[1.0], [2.0], [10.0], [20.0]]))
+
+    # Without expert TP the gathered B is already gate then up.
+    _set_expert_tp(monkeypatch, 1)
+    assert bridge._get_fused_adapter_linear_out_slices(megatron_model, [hf_name], gathered, is_expert=True) is None
+
+
 def test_select_expert_adapter_weight_per_expert_gathered_tensor(monkeypatch):
     bridge = DummyBridge()
     monkeypatch.setattr(
