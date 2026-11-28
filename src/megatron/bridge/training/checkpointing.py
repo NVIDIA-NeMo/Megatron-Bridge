@@ -2742,6 +2742,14 @@ def _process_state_dict_for_glu_interleaving(
             num_keys_processed += 1
             continue
 
+        if isinstance(value, ShardedTensorFactory):
+            # Grouped experts wrap each SwiGLU fc1 in a factory that splits [W; V] when it is built, so the
+            # (de-)interleave must apply to the factory's source tensor before that split.
+            new_data = _apply_glu_interleave_to_tensor_data(value.data, interleave_size, interleave)
+            processed_state_dict[key] = replace(value, data=new_data)
+            num_keys_processed += 1
+            continue
+
         if isinstance(value, torch.Tensor):
             processed_state_dict[key] = _apply_glu_interleave_to_tensor_data(value, interleave_size, interleave)
             num_keys_processed += 1

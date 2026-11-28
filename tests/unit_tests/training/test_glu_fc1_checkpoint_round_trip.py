@@ -199,6 +199,34 @@ class TestCheckpointLoadSaveRoundTrip:
         )
 
     @pytest.mark.parametrize("interleave_size", [4, 8])
+    def test_grouped_expert_factory_save_writes_contiguous_halves(self, interleave_size, patch_print_rank_0):
+        """TEGroupedMLP fc1 arrives at save as the [W; V] ShardedTensorFactory: its halves must be contiguous W and V."""
+        from megatron.core.dist_checkpointing.mapping import ShardedTensor, ShardedTensorFactory
+        from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
+
+        key = "decoder.layers.0.mlp.experts.linear_fc1.weight0"
+        contiguous = torch.randn(2 * interleave_size * 4, 16)
+        runtime = _interleave_glu_tensor(contiguous, interleave_size)
+        ep_offset = (0, 0, 2)  # expert axis: local expert 0 of 2
+        sharded = ShardedTensor.from_rank_offsets(key, runtime, ep_offset, replica_id=0, prepend_axis_num=1)
+        factory = apply_swiglu_sharded_factory(sharded, (ep_offset,))
+
+        saved = _process_state_dict_for_glu_interleaving({key: factory}, interleave_size, interleave=False)
+
+        assert isinstance(saved[key], ShardedTensorFactory)
+        w_half, v_half = saved[key].build()
+        half = contiguous.shape[0] // 2
+        assert torch.equal(w_half.data, contiguous[:half])
+        assert torch.equal(v_half.data, contiguous[half:])
+        assert torch.equal(runtime, _interleave_glu_tensor(contiguous, interleave_size)), (
+            "save must not modify the model's parameter"
+        )
+
+        loaded = saved[key].merge_fn([w_half.data, v_half.data])
+        after_load = _process_state_dict_for_glu_interleaving({key: loaded}, interleave_size, interleave=True)
+        assert torch.equal(after_load[key], runtime)
+
+    @pytest.mark.parametrize("interleave_size", [4, 8])
     def test_dense_state_dict_round_trip_with_fusion_env(self, interleave_size, monkeypatch, patch_print_rank_0):
         """Dense fc1 participates only with USE_ACT_FUSION_FOR_DENSE=1; round-trip recovers contiguous tensors."""
         monkeypatch.setenv("USE_ACT_FUSION_FOR_DENSE", "1")
