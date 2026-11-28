@@ -258,6 +258,14 @@ def _nemotron_3_ultra_gb300_fp8mx_config(
     # requires a single distributed-optimizer instance.
     _apply_nemotron_3_ultra_gtp(cfg)
 
+    # NOTE: Needs NVLS enabled and (NVIDIA/Megatron-LM#7533).
+    cfg.dist.gtp_remat_nccl_ub = True
+    cfg.dist.gtp_remat_nccl_ub_collectives = ["ag", "rs"]
+
+    # Mamba-2 training conv + SSD on the cuDNN frontend's CuTe DSL kernels.
+    # NOTE: Needs NVIDIA/Megatron-LM#9086 and nvidia-cudnn-frontend[cutedsl]>=1.33.0.
+    cfg.model.mamba_kernel_backend = "cudnn"
+
     cfg.model.cuda_graph_impl = "local"
     set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_preprocess", "moe_router"])
     # TE attention requires TE's RNG tracker while MCore local graphs are capturing.
@@ -267,6 +275,10 @@ def _nemotron_3_ultra_gb300_fp8mx_config(
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
+
+    # enabling mxfp8 for the MoE dispatch and combine
+    cfg.model.moe_dispatch_fwd_dtype = "mxfp8"
+    cfg.model.moe_combine_bwd_dtype = "mxfp8"
 
     return cfg
 
@@ -296,8 +308,8 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config(*, num_gpus: int = 256) 
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
+        # NCCL user-buffer and launch settings. NVLS backs the symmetric-memory GTP collectives.
+        "NCCL_NVLS_ENABLE": 1,
         # NCCL EP dispatcher mode and one GPU per rank.
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
@@ -374,6 +386,14 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config(*, num_gpus: int = 256) 
     # requires a single distributed-optimizer instance.
     _apply_nemotron_3_ultra_gtp(cfg)
 
+    # NOTE: Needs NVLS enabled and (NVIDIA/Megatron-LM#7533).
+    cfg.dist.gtp_remat_nccl_ub = True
+    cfg.dist.gtp_remat_nccl_ub_collectives = ["ag", "rs"]
+
+    # Mamba-2 training conv + SSD on the cuDNN frontend's CuTe DSL kernels.
+    # NOTE: Needs NVIDIA/Megatron-LM#9086 and nvidia-cudnn-frontend[cutedsl]>=1.33.0.
+    cfg.model.mamba_kernel_backend = "cudnn"
+
     cfg.model.cuda_graph_impl = "local"
     set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_preprocess", "moe_router"])
     # TE attention requires TE's RNG tracker while MCore local graphs are capturing.
@@ -393,8 +413,8 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config(*, num_gpus: int = 256) 
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
+        # NCCL user-buffer and launch settings. NVLS backs the symmetric-memory GTP collectives.
+        "NCCL_NVLS_ENABLE": 1,
         # NCCL EP dispatcher mode and one GPU per rank.
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.

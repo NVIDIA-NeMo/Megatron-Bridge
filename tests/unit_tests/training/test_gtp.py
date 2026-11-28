@@ -29,6 +29,7 @@ from megatron.bridge.training.gtp import (
     classify_gtp_remat_chains,
     configure_gtp_remat,
     get_data_distribution_group,
+    move_gtp_weights_to_symm_pool,
 )
 
 
@@ -231,6 +232,50 @@ def test_configure_gtp_remat_registers_dense_user_buffer(mock_resolve_group, mon
         mock_register.assert_not_called()
 
 
+@patch("megatron.core.process_groups_config.resolve_gtp_remat_group")
+def test_configure_gtp_remat_forwards_user_buffer_collectives(mock_resolve_group, monkeypatch):
+    mock_register = MagicMock()
+    monkeypatch.setattr(
+        tensor_parallel,
+        "gtp_api",
+        SimpleNamespace(
+            HAVE_GTP=True,
+            configure_gtp_remat_from_recipe=MagicMock(),
+            register_gtp_symm_pool=mock_register,
+        ),
+        raising=False,
+    )
+
+    configure_gtp_remat(_gtp_config(), nccl_ub=True, nccl_ub_collectives=["ag", "rs"], pg_collection=SimpleNamespace())
+
+    mock_register.assert_called_once_with(mock_resolve_group.return_value, collectives=["ag", "rs"])
+
+
+@pytest.mark.parametrize("dense_size,expert_size,moves", [(2, 1, True), (1, 1, False)])
+def test_move_gtp_weights_to_symm_pool_receives_all_model_chunks(monkeypatch, dense_size, expert_size, moves):
+    mock_move = MagicMock()
+    monkeypatch.setattr(
+        tensor_parallel,
+        "gtp_api",
+        SimpleNamespace(move_gtp_weights_to_symm_pool=mock_move),
+        raising=False,
+    )
+    model = [MagicMock(), MagicMock()]
+
+    move_gtp_weights_to_symm_pool(model, _gtp_config(dense_size=dense_size, expert_size=expert_size))
+
+    if moves:
+        mock_move.assert_called_once_with(model)
+    else:
+        mock_move.assert_not_called()
+
+
+def test_move_gtp_weights_to_symm_pool_tolerates_megatron_core_without_it(monkeypatch):
+    monkeypatch.setattr(tensor_parallel, "gtp_api", SimpleNamespace(), raising=False)
+
+    move_gtp_weights_to_symm_pool([MagicMock()], _gtp_config())
+
+
 def test_configure_gtp_remat_user_buffer_requires_process_groups(monkeypatch):
     mock_register = MagicMock()
     monkeypatch.setattr(
@@ -307,10 +352,13 @@ def test_gtp_uses_full_data_distribution_groups(mock_get_data_parallel_group):
 
 
 @pytest.mark.parametrize("fp32_accumulation", [False, True])
-@pytest.mark.parametrize("nccl_ub", [False, True])
+@pytest.mark.parametrize("nccl_ub,nccl_ub_collectives", [(False, None), (True, None), (True, ["ag", "rs"])])
 @patch("megatron.bridge.training.setup.classify_gtp_remat_chains")
+@patch("megatron.bridge.training.setup.move_gtp_weights_to_symm_pool")
 @patch("megatron.bridge.training.setup.configure_gtp_remat")
-def test_distributed_model_build_obeys_gtp_lifecycle(mock_configure, mock_classify, fp32_accumulation, nccl_ub):
+def test_distributed_model_build_obeys_gtp_lifecycle(
+    mock_configure, mock_move, mock_classify, fp32_accumulation, nccl_ub, nccl_ub_collectives
+):
     from megatron.bridge.training.config import DistributedInitConfig
     from megatron.bridge.training.setup import _build_distributed_model
 
@@ -320,6 +368,7 @@ def test_distributed_model_build_obeys_gtp_lifecycle(mock_configure, mock_classi
     model_config.finalize = MagicMock(side_effect=lambda: events.append("finalize"))
     model_config.provide_distributed_model = MagicMock(side_effect=lambda **_kwargs: events.append("build") or model)
     mock_configure.side_effect = lambda _config, **_kwargs: events.append("configure")
+    mock_move.side_effect = lambda _model, _config: events.append("move")
     mock_classify.side_effect = lambda _model, _config: events.append("classify")
     cfg = SimpleNamespace(
         model=model_config,
@@ -334,6 +383,7 @@ def test_distributed_model_build_obeys_gtp_lifecycle(mock_configure, mock_classi
             use_torch_fsdp2=False,
             gtp_remat_reduce_scatter_with_fp32_accumulation=fp32_accumulation,
             gtp_remat_nccl_ub=nccl_ub,
+            gtp_remat_nccl_ub_collectives=nccl_ub_collectives,
         ),
         rng=SimpleNamespace(data_parallel_random_init=False),
     )
@@ -346,6 +396,8 @@ def test_distributed_model_build_obeys_gtp_lifecycle(mock_configure, mock_classi
         model_config,
         reduce_scatter_with_fp32_accumulation=fp32_accumulation,
         nccl_ub=nccl_ub,
+        nccl_ub_collectives=nccl_ub_collectives,
         pg_collection=pg_collection,
     )
-    assert events == ["finalize", "configure", "build", "classify"]
+    mock_move.assert_called_once_with(model, model_config)
+    assert events == ["finalize", "configure", "build", "move", "classify"]

@@ -198,6 +198,11 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     gtp_remat_nccl_ub: bool = False
     """Register the dense GTP remat group with an NCCL symmetric-memory user buffer."""
 
+    gtp_remat_nccl_ub_collectives: list[str] | None = None
+    """GTP collectives that use the gtp_remat_nccl_ub pool: a non-empty subset of {"ag", "rs"}.
+    None keeps Megatron-Core's default. Requires a Megatron-Core whose register_gtp_symm_pool
+    accepts ``collectives``."""
+
     enable_megatron_core_experimental: bool = False
     """Enable experimental features for Megatron Core."""
 
