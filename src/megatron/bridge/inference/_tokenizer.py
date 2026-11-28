@@ -28,6 +28,10 @@ Behavior knobs let call sites preserve their historical semantics exactly:
   ``skip_special_tokens`` and always uses this value. The MCore controller passes
   ``skip_special_tokens`` only when the method accepts it, so VLM (which always kept special
   tokens) sets this to ``False`` to retain its prior behavior.
+- ``add_special_tokens``: ``tokenize`` lets the Hugging Face tokenizer add its special tokens,
+  such as BOS, as Megatron Core's own Hugging Face tokenizer does by default. Text generation and
+  serving turn it on: MCore's ``/v1/completions`` submits these ids as they are. VLM prompts are
+  rendered chat templates that already hold them, so VLM leaves it off.
 """
 
 from __future__ import annotations
@@ -43,9 +47,11 @@ class HFTokenizerAdapter:
         set_pad_token: bool = True,
         expose_vocab_size: bool = True,
         force_skip_special_tokens: bool | None = None,
+        add_special_tokens: bool = False,
     ) -> None:
         self._tokenizer = tokenizer
         self._force_skip_special_tokens = force_skip_special_tokens
+        self._add_special_tokens = add_special_tokens
         # MCore's incremental detokenizer treats ``_tokenizer`` as its Hugging Face wrapper.
         if not hasattr(tokenizer, "tokenizer"):
             tokenizer.tokenizer = tokenizer
@@ -68,8 +74,8 @@ class HFTokenizerAdapter:
         return self._tokenizer.apply_chat_template(conversation, **kwargs)
 
     def tokenize(self, text: str) -> list[int]:
-        """Tokenize text into token ids (no special tokens added)."""
-        return self._tokenizer.encode(text, add_special_tokens=False)
+        """Tokenize text into token ids, with special tokens only if ``add_special_tokens`` is set."""
+        return self._tokenizer.encode(text, add_special_tokens=self._add_special_tokens)
 
     def detokenize(self, tokens: list[int], skip_special_tokens: bool = True) -> str:
         """Convert token ids back to text.
