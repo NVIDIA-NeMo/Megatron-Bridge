@@ -152,6 +152,7 @@ def nemotron_35_super_vl_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NVTE_FLASH_ATTN_V4": 0,
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 

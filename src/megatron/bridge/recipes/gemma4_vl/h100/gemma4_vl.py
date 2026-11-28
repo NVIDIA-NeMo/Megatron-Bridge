@@ -173,6 +173,7 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -238,6 +239,7 @@ def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 

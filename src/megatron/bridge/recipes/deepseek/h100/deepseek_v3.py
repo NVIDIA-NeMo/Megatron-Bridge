@@ -267,6 +267,7 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -421,6 +422,7 @@ def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 

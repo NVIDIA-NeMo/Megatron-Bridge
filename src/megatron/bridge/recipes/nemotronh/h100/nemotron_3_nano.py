@@ -209,6 +209,7 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -233,6 +234,7 @@ def nemotron_3_5_lightning_pretrain_config() -> ConfigContainer:
     )
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -365,6 +367,7 @@ def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -381,6 +384,7 @@ def nemotron_3_5_lightning_sft_config() -> ConfigContainer:
     )
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -439,6 +443,7 @@ def nemotron_3_5_lightning_sft_openmathinstruct2_packed_config() -> ConfigContai
     cfg.ddp.check_for_large_grads = True
     cfg.rerun_state_machine.check_for_nan_in_loss = True
     cfg.dist.distributed_timeout_minutes = 120
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -602,6 +607,7 @@ def nemotron_3_nano_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora")
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -618,6 +624,7 @@ def nemotron_3_5_lightning_peft_config(peft_scheme: str | PEFT = "lora") -> Conf
     )
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 

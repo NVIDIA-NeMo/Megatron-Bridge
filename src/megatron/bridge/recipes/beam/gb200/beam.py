@@ -131,6 +131,7 @@ def beam_pretrain_64gpu_gb200_bf16_config(hf_path: str | None = None) -> ConfigC
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -239,6 +240,7 @@ def beam_sft_64gpu_gb200_bf16_config(hf_path: str | None = None) -> ConfigContai
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -359,4 +361,5 @@ def beam_peft_32gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora", hf_path:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

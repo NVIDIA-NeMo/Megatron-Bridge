@@ -46,6 +46,7 @@ def kimi_k2_pretrain_256gpu_b300_bf16_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -71,6 +72,7 @@ def kimi_k2_pretrain_256gpu_b300_fp8cs_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -96,4 +98,5 @@ def kimi_k2_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

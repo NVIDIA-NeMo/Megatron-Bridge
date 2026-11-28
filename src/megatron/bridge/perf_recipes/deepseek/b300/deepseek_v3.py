@@ -76,6 +76,7 @@ def deepseek_v3_pretrain_256gpu_b300_bf16_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -127,6 +128,7 @@ def deepseek_v3_pretrain_256gpu_b300_fp8cs_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -178,6 +180,7 @@ def deepseek_v3_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -226,6 +229,7 @@ def deepseek_v3_pretrain_256gpu_b300_nvfp4_config() -> ConfigContainer:
         "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
         "NVTE_DPA_FP8_FORMAT": "E4M3",
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -262,4 +266,5 @@ def deepseek_v3_pretrain_256gpu_b300_fp8mx_large_scale_config() -> ConfigContain
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

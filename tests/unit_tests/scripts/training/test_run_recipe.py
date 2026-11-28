@@ -43,6 +43,8 @@ def _load_module():
         "apply_determinism",
         "apply_runtime_environment",
         "bootstrap_recipe_environment",
+        "get_config_forward_step",
+        "step_registry_name",
         "load_forward_step",
         "load_recipe",
         "run_config",
@@ -60,6 +62,8 @@ def _load_module():
     recipe_runner.sync_model_pipeline_layout.side_effect = lambda config, **_: config
     recipe_runner.sync_offline_packing_alignment.side_effect = lambda config: config
     recipe_runner.sync_model_dataset_sequence_length.side_effect = lambda config: config
+    recipe_runner.get_config_forward_step.side_effect = lambda config: getattr(config, "forward_step", None)
+    recipe_runner.step_registry_name.side_effect = lambda reference: reference
     recipe_runner.load_forward_step.return_value = object()
 
     dataset_utils = types.ModuleType("megatron.bridge.recipes.utils.dataset_utils")
@@ -1572,3 +1576,20 @@ def test_dpo_mode_selects_dpo_recipe_step_and_train_loop():
     handles.recipe_runner.load_recipe.assert_called_once_with("qwen3_30b_a3b_dpo_config", peft_scheme=None)
     handles.recipe_runner.load_forward_step.assert_called_once_with("dpo_step", mode="dpo")
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "dpo"
+
+
+def test_recipe_owned_step_is_used_without_cli_step():
+    module, handles = _load_module()
+    config = SimpleNamespace(forward_step="custom.steps:forward_step")
+    handles.recipe_runner.load_recipe.return_value = config
+    module.main(["--recipe", "llama3_8b_pretrain_config"])
+    handles.recipe_runner.load_forward_step.assert_called_once_with("custom.steps:forward_step", mode="pretrain")
+
+
+def test_explicit_cli_step_wins_over_recipe_default():
+    module, handles = _load_module()
+    config = SimpleNamespace(forward_step="custom.steps:forward_step")
+    handles.recipe_runner.load_recipe.return_value = config
+    module.main(["--recipe", "llama3_8b_pretrain_config", "--step-func", "gpt_step"])
+    handles.recipe_runner.load_forward_step.assert_called_once_with("gpt_step", mode="pretrain")
+    handles.recipe_runner.get_config_forward_step.assert_not_called()

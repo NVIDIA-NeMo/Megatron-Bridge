@@ -95,7 +95,9 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config() -> ConfigContainer
     Returns:
         GB200 BF16 distributed-optimizer pretraining configuration.
     """
-    return _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config()
+    cfg = _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config()
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
+    return cfg
 
 
 def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config() -> ConfigContainer:
@@ -122,6 +124,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_deterministic_config() -> C
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 

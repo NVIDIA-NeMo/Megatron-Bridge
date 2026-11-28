@@ -13,7 +13,8 @@
 # limitations under the License.
 
 from megatron.bridge.training.callbacks import Callback, CallbackManager
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, apply_environment_variables, apply_ncclep_one_gpu_per_rank
+from megatron.bridge.training.forward_step import resolve_forward_step
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.utils.decorators import experimental_fn
@@ -22,14 +23,15 @@ from megatron.bridge.utils.decorators import experimental_fn
 @experimental_fn
 def finetune(
     config: ConfigContainer,
-    forward_step_func: ForwardStepCallable,
+    forward_step_func: ForwardStepCallable | None = None,
     callbacks: list[Callback] | CallbackManager | None = None,
 ) -> None:
     """Main function to run the finetuning.
 
     Args:
         config: The main configuration container holding all necessary parameters.
-        forward_step_func: A callable (function or functor) that performs a single
+        forward_step_func: Optional override; when omitted, use config.forward_step.
+                          A callable (function or functor) that performs a single
                           forward and backward step, returning the loss and any computed
                           metrics. Supports the following signatures:
                           - 2 args: (data_iterator, model)
@@ -50,5 +52,10 @@ def finetune(
     assert config.checkpoint.pretrained_checkpoint is not None or config.checkpoint.load is not None, (
         "Finetuning requires a loading from a pretrained checkpoint or resuming from a checkpoint"
     )
+    if forward_step_func is None:
+        # Apply environment defaults and device binding before importing the recipe step.
+        apply_environment_variables(config)
+        apply_ncclep_one_gpu_per_rank(config)
+    forward_step_func = resolve_forward_step(config, forward_step_func, mode="finetune")
     config._checkpoint_load_required = True
     return pretrain(config, forward_step_func, callbacks=callbacks)

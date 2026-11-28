@@ -139,4 +139,5 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

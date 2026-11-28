@@ -109,6 +109,7 @@ def nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 
@@ -169,6 +170,7 @@ def nemotron_35_super_vl_sft_64gpu_gb200_bf16_config() -> ConfigContainer:
         # NCCL EP dispatcher mode (high-throughput expert-major, pull dispatch / push combine).
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 
@@ -278,6 +280,7 @@ def nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config() -> ConfigCo
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 
@@ -317,6 +320,7 @@ def nemotron_35_super_vl_peft_16gpu_gb200_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 

@@ -157,6 +157,7 @@ def inkling2_small_pretrain_128gpu_gb200_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -263,6 +264,7 @@ def inkling2_small_sft_128gpu_gb200_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -369,6 +371,7 @@ def inkling2_small_sft_96gpu_gb200_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -476,6 +479,7 @@ def inkling2_small_sft_128gpu_gb200_bf16_long_context_config() -> ConfigContaine
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -586,6 +590,7 @@ def inkling2_small_peft_32gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora"
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -694,6 +699,7 @@ def inkling2_small_peft_16gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora"
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -796,6 +802,7 @@ def inkling2_small_sft_128gpu_gb200_bf16_multimodal_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -903,6 +910,7 @@ def inkling2_small_peft_32gpu_gb200_bf16_multimodal_config(peft_scheme: str | PE
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 

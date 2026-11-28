@@ -29,7 +29,9 @@ def llama31_405b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     This is a capacity/stability check, not a long-term convergence result.
     MXFP8 checkpoint save/resume was not exercised in this validation.
     """
-    return _llama31_405b_pretrain_64gpu_fp8mx_common()
+    cfg = _llama31_405b_pretrain_64gpu_fp8mx_common()
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
+    return cfg
 
 
 def _llama31_405b_pretrain_64gpu_fp8mx_common() -> ConfigContainer:

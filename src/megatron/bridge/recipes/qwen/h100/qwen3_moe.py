@@ -140,6 +140,7 @@ def qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -221,6 +222,7 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -338,6 +340,7 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -492,6 +495,7 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -535,6 +539,7 @@ def qwen3_30b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -672,6 +677,7 @@ def qwen3_235b_a22b_sft_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -841,6 +847,7 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -992,6 +999,7 @@ def qwen3_235b_a22b_peft_16gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -1058,6 +1066,7 @@ def qwen3_30b_a3b_dpo_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.lr = 5e-7
 
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
+    cfg.forward_step = "megatron.bridge.training.dpo_step:forward_step"
     return cfg
 
 

@@ -216,6 +216,7 @@ def step37_sft_64gpu_h100_bf16_flickr8k_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.stepfun.step37_flickr8k_step:forward_step"
     return cfg
 
 
@@ -440,6 +441,7 @@ def step37_sft_4gpu_h100_bf16_flickr8k_smoke_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.stepfun.step37_flickr8k_step:forward_step"
     return cfg
 
 

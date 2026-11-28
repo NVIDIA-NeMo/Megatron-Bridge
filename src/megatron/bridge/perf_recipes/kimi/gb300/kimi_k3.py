@@ -228,4 +228,5 @@ def kimi_k3_pretrain_64gpu_gb300_fp8mx_proxy_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

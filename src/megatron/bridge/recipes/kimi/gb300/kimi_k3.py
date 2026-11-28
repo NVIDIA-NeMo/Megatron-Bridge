@@ -134,4 +134,5 @@ def kimi_k3_pretrain_512gpu_gb300_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

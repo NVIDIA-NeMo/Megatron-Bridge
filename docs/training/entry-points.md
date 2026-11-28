@@ -130,3 +130,29 @@ You can customize the forward step function when you need:
 - **Custom Data Processing**: Specialized batch preprocessing for domain-specific data formats.
 - **Additional Metrics**: Computing extra evaluation metrics during training.
 - **Model-specific Logic**: Special handling for custom model architectures or training procedures.
+
+A recipe can also declare its default step on the returned `ConfigContainer`:
+
+```python
+cfg = qwen3_vl_8b_peft_energon_config()
+# The recipe sets this field; it is also editable before training.
+cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
+finetune(cfg)
+
+# A caller-supplied callable takes precedence over the recipe default.
+finetune(cfg, forward_step_func=my_forward_step)
+```
+
+`pretrain` accepts the same optional argument. The `forward_step` field stores a
+`module:attribute` reference, which survives dictionary/YAML serialization and
+configuration overrides without importing the step during recipe construction.
+Resolution uses the existing config target policy. For custom application code,
+register its target through the existing config API or pass a callable directly.
+Class references are instantiated with the training mode when they accept it.
+
+The recipe runner uses an explicit `--step-func` first, then `cfg.forward_step`,
+then its legacy name-based default if the field is `None`. Benchmark and DPO
+compatibility checks still apply. An effective Qwen-VL dataset with native Energon
+packing selects the generic VLM step when resolving the recipe default; an
+explicit caller/CLI step still wins. A direct Python call without either a recipe
+default or an explicit callable raises a missing-step error.

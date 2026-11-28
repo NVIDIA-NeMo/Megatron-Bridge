@@ -248,6 +248,7 @@ def glm_45v_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -405,6 +406,7 @@ def glm_45v_peft_32gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 

@@ -149,6 +149,7 @@ def flux_12b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.diffusion.models.flux.flux_step:FluxForwardStep"
     return cfg
 
 
@@ -174,6 +175,7 @@ def flux_12b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.diffusion.models.flux.flux_step:FluxForwardStep"
     return cfg
 
 

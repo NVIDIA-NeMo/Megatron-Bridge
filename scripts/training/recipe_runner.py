@@ -276,8 +276,32 @@ def load_recipe(
     )
 
 
+def get_config_forward_step(config: ConfigContainer) -> str | None:
+    """Read the recipe default, retaining late dataset-dependent step selection."""
+    from megatron.bridge.training.forward_step import get_forward_step_reference
+
+    # Keep the lazy package import typed when checking the standalone launcher.
+    return cast("str | None", get_forward_step_reference(config))
+
+
+def step_registry_name(reference: str) -> str:
+    """Recognize existing aliases when validating a recipe's import reference."""
+    if ":" not in reference:
+        return reference
+    # Prefer llm_step to its gpt_step alias, retaining the DPO mode adapter.
+    for name in ("llm_step", *STEP_FUNCTIONS):
+        entry = STEP_FUNCTIONS[name]
+        if isinstance(entry, tuple) and reference == ":".join(entry):
+            return name
+    return reference
+
+
 def load_forward_step(step_type: str, mode: str | None = None) -> Callable:
     """Load a forward-step callable by name."""
+    if ":" in step_type:
+        from megatron.bridge.training.forward_step import load_forward_step_reference
+
+        return cast("Callable[..., object]", load_forward_step_reference(step_type, mode=mode or "pretrain"))
     step_key = step_type.lower()
     if step_key not in STEP_FUNCTIONS:
         raise ValueError(ERR_UNKNOWN_STEP.format(step_type=step_type, choices=", ".join(STEP_FUNCTIONS)))

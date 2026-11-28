@@ -77,4 +77,5 @@ def wan_14b_pretrain_16gpu_gb200_bf16_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_FUSED_ATTN": 1,
     }
+    cfg.forward_step = "megatron.bridge.diffusion.models.wan.wan_step:WanForwardStep"
     return cfg

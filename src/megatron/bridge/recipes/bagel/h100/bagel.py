@@ -67,6 +67,7 @@ def bagel_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.bagel.bagel_step:BagelForwardStep"
     return cfg
 
 
@@ -84,6 +85,7 @@ def bagel_7b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.bagel.bagel_step:BagelForwardStep"
     return cfg
 
 
@@ -99,6 +101,7 @@ def bagel_7b_finetune_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.models.bagel.bagel_step:BagelForwardStep"
     return cfg
 
 

@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 def dpo_train(
     config: ConfigContainer,
-    forward_step_func: ForwardStepCallable,
+    forward_step_func: ForwardStepCallable | None = None,
     callbacks: list[Callback] | CallbackManager | None = None,
 ) -> None:
     """Run DPO training over a scored preference dataset."""

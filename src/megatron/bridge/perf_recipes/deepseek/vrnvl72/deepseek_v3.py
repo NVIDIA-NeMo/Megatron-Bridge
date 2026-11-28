@@ -81,6 +81,7 @@ def deepseek_v3_pretrain_128gpu_vrnvl72_bf16_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -132,6 +133,7 @@ def deepseek_v3_pretrain_128gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -189,6 +191,7 @@ def deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         # The fused SwiGLU dprob uses atomic reductions; TE has no deterministic kernel for it here.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -243,6 +246,7 @@ def deepseek_v3_pretrain_128gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -273,6 +277,7 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -301,6 +306,7 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -399,6 +405,7 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
         # MLPerf allows nondeterministic Transformer Engine kernels.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -464,6 +471,7 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
         # MLPerf allows nondeterministic Transformer Engine kernels.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -499,6 +507,7 @@ def deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
         "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
         "NVTE_DPA_FP8_FORMAT": "E4M3",
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -538,6 +547,7 @@ def deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config() -> ConfigContainer:
         "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
         "NVTE_DPA_FP8_FORMAT": "E4M3",
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -612,6 +622,7 @@ def deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
         # Allow cuDNN attention kernels without deterministic dprob support on Rubin.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -658,4 +669,5 @@ def deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config() -> ConfigContainer:
         "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
         "NVTE_DPA_FP8_FORMAT": "E4M3",
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

@@ -199,6 +199,7 @@ def nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 
@@ -250,6 +251,7 @@ def nemotron_35_super_vl_sft_64gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 
@@ -367,6 +369,7 @@ def nemotron_35_super_vl_peft_16gpu_h100_bf16_config(
         **COMMON_RECIPE_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 

@@ -74,6 +74,7 @@ def muse_glimmer_30b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -97,6 +98,7 @@ def muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 

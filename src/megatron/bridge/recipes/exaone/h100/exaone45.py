@@ -100,6 +100,7 @@ def exaone45_vl_33b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -127,6 +128,7 @@ def exaone45_vl_33b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora")
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 

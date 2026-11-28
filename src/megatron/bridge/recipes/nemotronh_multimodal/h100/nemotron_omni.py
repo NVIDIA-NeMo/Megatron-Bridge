@@ -102,6 +102,7 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 
@@ -186,6 +187,7 @@ def nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 
@@ -258,6 +260,7 @@ def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigCont
         in_batch_packing_pad_to_multiple_of=8,
     )
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS, "CUDA_DEVICE_MAX_CONNECTIONS": 32}
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 
@@ -317,6 +320,7 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 
@@ -412,6 +416,7 @@ def nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 
@@ -509,6 +514,7 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 
@@ -556,6 +562,7 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    cfg.forward_step = "megatron.bridge.training.nemotron_omni_step:forward_step"
     return cfg
 
 

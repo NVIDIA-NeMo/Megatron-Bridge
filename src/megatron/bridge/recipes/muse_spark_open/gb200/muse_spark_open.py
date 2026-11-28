@@ -150,6 +150,7 @@ def muse_spark_open_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -243,6 +244,7 @@ def muse_spark_open_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -347,6 +349,7 @@ def muse_spark_open_pretrain_16gpu_gb200_bf16_proxy_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -452,6 +455,7 @@ def muse_spark_open_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -556,6 +560,7 @@ def muse_spark_open_sft_256gpu_gb200_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -658,6 +663,7 @@ def muse_spark_open_sft_192gpu_gb200_bf16_long_context_config() -> ConfigContain
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -762,6 +768,7 @@ def muse_spark_open_sft_192gpu_gb200_bf16_coderforge_64k_config() -> ConfigConta
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -886,6 +893,7 @@ def muse_spark_open_peft_64gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -981,6 +989,7 @@ def muse_spark_open_peft_16gpu_gb200_bf16_multimodal_config(peft_scheme: str | P
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 
@@ -1078,6 +1087,7 @@ def muse_spark_open_sft_192gpu_gb200_bf16_multimodal_config() -> ConfigContainer
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.vlm_step:forward_step"
     return cfg
 
 

@@ -175,6 +175,7 @@ def qwen35_vl_397b_a17b_pretrain_config() -> ConfigContainer:
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"
 
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -329,6 +330,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"
 
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -409,6 +411,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_config() -> ConfigContai
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 

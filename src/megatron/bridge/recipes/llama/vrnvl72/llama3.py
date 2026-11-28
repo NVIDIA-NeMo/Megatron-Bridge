@@ -28,4 +28,5 @@ def llama31_405b_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.comm_overlap.tp_comm_overlap = False
     cfg.dataset.create_attention_mask = False
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

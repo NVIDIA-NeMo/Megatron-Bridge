@@ -62,4 +62,5 @@ def deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config() -> ConfigContainer:
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg

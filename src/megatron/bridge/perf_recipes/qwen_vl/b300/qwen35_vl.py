@@ -79,6 +79,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -108,6 +109,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_b300_fp8cs_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -137,6 +139,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -192,6 +195,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b300_bf16_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -221,6 +225,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b300_fp8cs_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -250,6 +255,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b300_fp8mx_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -305,6 +311,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -334,6 +341,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b300_fp8cs_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg
 
 
@@ -363,4 +371,5 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
     }
+    cfg.forward_step = "megatron.bridge.models.qwen_vl.qwen3_vl_step:forward_step"
     return cfg

@@ -176,6 +176,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_bf16_config(
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
 
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -312,6 +313,7 @@ def nemotron_3_super_sft_64gpu_gb200_bf16_config(
         "USE_MNNVL": 1,
     }
 
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -465,6 +467,7 @@ def nemotron_3_super_peft_16gpu_gb200_bf16_config(
         "USE_MNNVL": 1,
     }
 
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 

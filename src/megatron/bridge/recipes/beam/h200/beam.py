@@ -193,6 +193,7 @@ def beam_pretrain_128gpu_h200_bf16_config(hf_path: str | None = None) -> ConfigC
     # The mixed-precision setup copies this onto the DDP config at runtime.
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -220,6 +221,7 @@ def beam_sft_128gpu_h200_bf16_config(hf_path: str | None = None) -> ConfigContai
     _set_convergence_v2_optimizer(cfg, lr=5e-6)
 
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
 
 
@@ -260,4 +262,5 @@ def beam_peft_16gpu_h200_bf16_config(
     _set_convergence_v2_optimizer(cfg, lr=1e-4)
 
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    cfg.forward_step = "megatron.bridge.training.gpt_step:forward_step"
     return cfg
