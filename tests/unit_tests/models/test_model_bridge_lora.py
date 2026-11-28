@@ -658,6 +658,147 @@ def test_select_expert_adapter_weight_per_expert_gathered_tensor(monkeypatch):
     torch.testing.assert_close(selected, torch.full((2, 2), 4.0))
 
 
+def _set_expert_parallel(monkeypatch, size):
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        lambda: size,
+    )
+
+
+def test_merge_lora_adapter_weights_sequential_expert_takes_each_ep_ranks_adapter(monkeypatch):
+    bridge = DummyBridge()
+    # Local expert 1 of 2 per rank: global experts 1 (EP rank 0) and 3 (EP rank 1), both gathered here.
+    converted = {
+        "model.layers.0.mlp.experts.1.down_proj.weight": torch.zeros(2, 2),
+        "model.layers.0.mlp.experts.3.down_proj.weight": torch.zeros(2, 2),
+    }
+    adapter_weight = AdapterWeight(
+        global_base_prefix="decoder.layers.0.mlp.experts.local_experts.1.linear_fc2",
+        adapter_key=None,
+        alpha=2,
+        dim=2,
+        linear_in_weight=MegatronWeightTuple("in", torch.eye(2), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out", torch.eye(2), vp_stage=0),
+    )
+    _set_expert_parallel(monkeypatch, 2)
+    # This rank's adapter, then EP rank 1's.
+    monkeypatch.setattr(bridge, "_gather_expert_adapter_weight", lambda weight: [weight, 3 * weight])
+
+    updated = bridge._merge_lora_adapter_weights(
+        [SimpleNamespace(config=SimpleNamespace(num_moe_experts=4))], converted, [adapter_weight]
+    )
+
+    torch.testing.assert_close(updated["model.layers.0.mlp.experts.1.down_proj.weight"], torch.eye(2))
+    torch.testing.assert_close(updated["model.layers.0.mlp.experts.3.down_proj.weight"], 9 * torch.eye(2))
+
+
+def test_merge_canonical_adapter_sequential_expert_takes_each_ep_ranks_adapter(monkeypatch):
+    bridge = DummyBridge()
+    converted = {
+        "model.layers.0.mlp.experts.0.gate_proj.weight": torch.zeros(2, 2),
+        "model.layers.0.mlp.experts.2.gate_proj.weight": torch.zeros(2, 2),
+    }
+    adapter_gate = AdapterWeight(
+        global_base_prefix="decoder.layers.0.mlp.experts.local_experts.0.linear_fc1",
+        adapter_key="adapter_gate",
+        alpha=1,
+        dim=1,
+        linear_in_weight=MegatronWeightTuple("in_gate", torch.eye(2), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out_gate", torch.ones(2, 2), vp_stage=0),
+    )
+    _set_expert_parallel(monkeypatch, 2)
+    monkeypatch.setattr(bridge, "_gather_expert_adapter_weight", lambda weight: [weight, 2 * weight])
+
+    updated = bridge._merge_canonical_adapter_from_weights(
+        [SimpleNamespace(config=SimpleNamespace(num_moe_experts=4))], converted, [adapter_gate]
+    )
+
+    torch.testing.assert_close(updated["model.layers.0.mlp.experts.0.gate_proj.weight"], torch.ones(2, 2))
+    torch.testing.assert_close(updated["model.layers.0.mlp.experts.2.gate_proj.weight"], 4 * torch.ones(2, 2))
+
+
+def test_stream_adapter_weights_sequential_expert_emits_every_ep_ranks_adapter(monkeypatch):
+    bridge = DummyBridge()
+    prefix = "decoder.layers.0.mlp.experts.local_experts.1.linear_fc2"
+    adapter_task = AdapterWeightConversionTask(
+        global_base_prefix=prefix,
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_task=WeightConversionTask(
+            param_name="local_in", global_param_name=f"{prefix}.adapter.linear_in.weight", mapping=Mock()
+        ),
+        linear_out_task=WeightConversionTask(
+            param_name="local_out", global_param_name=f"{prefix}.adapter.linear_out.weight", mapping=Mock()
+        ),
+    )
+    adapter_weight = AdapterWeight(
+        global_base_prefix=prefix,
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_weight=MegatronWeightTuple("local_in", torch.full((2, 2), 1.0), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("local_out", torch.full((2, 2), 10.0), vp_stage=0),
+    )
+    monkeypatch.setattr(bridge, "build_adapter_conversion_tasks", lambda *_args, **_kwargs: {prefix: [adapter_task]})
+    monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
+    # The HF name follows the Megatron prefix's expert index.
+    monkeypatch.setattr(
+        bridge,
+        "_get_base_hf_param_names_for_adapter",
+        lambda _registry, base_prefix, _key, _suffix: [
+            f"model.layers.0.mlp.experts.{base_prefix.split('.local_experts.')[1].split('.')[0]}.down_proj.weight"
+        ],
+    )
+    _set_expert_parallel(monkeypatch, 2)
+    # Local expert 1 is global expert 1 on EP rank 0 and global expert 3 on EP rank 1.
+    monkeypatch.setattr(bridge, "_gather_expert_adapter_weight", lambda weight: [weight, weight + 1])
+
+    weights = {
+        w.param_name: w.weight
+        for w in bridge.stream_adapter_weights_megatron_to_hf(
+            [SimpleNamespace(config=SimpleNamespace(num_moe_experts=4))], cpu=False, show_progress=False
+        )
+    }
+
+    assert sorted(weights) == [
+        "model.layers.0.mlp.experts.1.down_proj.lora_A.weight",
+        "model.layers.0.mlp.experts.1.down_proj.lora_B.weight",
+        "model.layers.0.mlp.experts.3.down_proj.lora_A.weight",
+        "model.layers.0.mlp.experts.3.down_proj.lora_B.weight",
+    ]
+    torch.testing.assert_close(
+        weights["model.layers.0.mlp.experts.1.down_proj.lora_A.weight"], torch.full((2, 2), 1.0)
+    )
+    torch.testing.assert_close(
+        weights["model.layers.0.mlp.experts.1.down_proj.lora_B.weight"], torch.full((2, 2), 10.0)
+    )
+    torch.testing.assert_close(
+        weights["model.layers.0.mlp.experts.3.down_proj.lora_A.weight"], torch.full((2, 2), 2.0)
+    )
+    torch.testing.assert_close(
+        weights["model.layers.0.mlp.experts.3.down_proj.lora_B.weight"], torch.full((2, 2), 11.0)
+    )
+
+
+def test_adapter_tasks_for_base_finds_a_sequential_expert_by_its_local_index():
+    tasks = {"decoder.layers.0.mlp.experts.local_experts.1.linear_fc1": ["fc1 adapter"]}
+    find = model_bridge_module._adapter_tasks_for_base
+
+    # Expert-parallel rank 1 of 2 with 2 experts each: its local expert 1 is global expert 3.
+    assert find(
+        tasks,
+        "decoder.layers.0.mlp.experts.local_experts.3.linear_fc1",
+        "decoder.layers.0.mlp.experts.local_experts.1.linear_fc1.to_wrap.weight",
+    ) == ["fc1 adapter"]
+    assert find(
+        tasks,
+        "decoder.layers.0.mlp.experts.local_experts.1.linear_fc1",
+        "decoder.layers.0.mlp.experts.local_experts.1.linear_fc1.to_wrap.weight",
+    ) == ["fc1 adapter"]
+    assert find(tasks, "decoder.layers.0.mlp.linear_fc1", "decoder.layers.0.mlp.linear_fc1.to_wrap.weight") is None
+
+
 def test_merge_canonical_adapter_from_weights(monkeypatch):
     bridge = DummyBridge()
     converted = {

@@ -417,6 +417,26 @@ def _get_ep_group(megatron_model: MegatronModule | List[MegatronModule] | None):
     return parallel_state.get_expert_model_parallel_group()
 
 
+def _adapter_tasks_for_base(
+    adapter_tasks_by_base: Mapping[str, Any], global_base_prefix: str, local_param_name: str
+) -> Any:
+    """The adapter tasks of a base weight, or None.
+
+    A sequential expert's base weight has a global name (``local_experts.<global index>``), while
+    adapter names keep the local expert index (see :func:`_megatron_local_name_to_global`), so an
+    expert on another expert-parallel rank is looked up by the local index of its own parameter.
+    """
+    adapter_tasks = adapter_tasks_by_base.get(global_base_prefix)
+    if adapter_tasks is None and ".local_experts." in global_base_prefix:
+        local_match = re.search(r"\.local_experts\.(\d+)\.", local_param_name)
+        if local_match is not None:
+            local_prefix = re.sub(
+                r"\.local_experts\.\d+\.", f".local_experts.{local_match.group(1)}.", global_base_prefix, count=1
+            )
+            adapter_tasks = adapter_tasks_by_base.get(local_prefix)
+    return adapter_tasks
+
+
 def _megatron_local_name_to_global(
     models: MegatronModule | List[MegatronModule],
     config: TransformerConfig,
@@ -442,7 +462,8 @@ def _megatron_local_name_to_global(
 
     # EP — fetched lazily because dense models may not have an EP group at all
     # (and for the decentralized PG path, ``pg_collection.ep`` may be ``None``).
-    # For now adapters are not sharded across EP ranks.
+    # Adapter names keep the local expert index: adapter export and merges gather routed-expert
+    # adapters across expert-parallel ranks themselves (peft_bridge).
     is_grouped_expert_param = ".experts.linear_fc" in param_name
     is_local_expert_param = ".experts.local_experts." in param_name
     is_expert_param = (is_grouped_expert_param or is_local_expert_param) and ".adapter." not in param_name
@@ -2119,7 +2140,9 @@ class MegatronModelBridge(
             task_global_base_prefix = None
             if merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
                 task_global_base_prefix, _, _ = task.global_param_name.partition(".to_wrap.weight")
-                adapter_tasks = adapter_tasks_by_base.get(task_global_base_prefix)
+                adapter_tasks = _adapter_tasks_for_base(
+                    adapter_tasks_by_base, task_global_base_prefix, task.param_name
+                )
 
             # --- Grouped export path: accumulate per-expert weights, yield when complete ---
             if getattr(task.mapping, "is_grouped_export", False):
