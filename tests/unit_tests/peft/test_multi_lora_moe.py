@@ -30,6 +30,7 @@ Single-GPU integration (needs CUDA + model-parallel init):
     and the all-empty case (Megatron's grad buffers expect one hook per parameter)
 """
 
+import math
 import os
 from unittest.mock import patch
 
@@ -523,6 +524,19 @@ class TestMultiLoRAGroupedExpertLinearGPU:
         )
         # The stream must also actually exist, or the fork would raise at runtime.
         assert mcore_random.get_expert_parallel_rng_tracker_name() in real_tracker.get_states()
+
+    def test_reset_adapter_matches_construction_init_scale(self):
+        """A reused slot must start at the scale of a freshly built one (per-expert xavier fans)."""
+        hidden, dim = 256, 16
+        layer, _ = self._build(hidden=hidden, ffn=64, num_local_experts=8, dim=dim)
+        fresh_std = layer.adapters[0].linear_in.weight.float().std().item()
+
+        layer.clear_adapter_slot(0)
+
+        # Fans read off the packed [experts, rank, in] weight would give ~0.018 here.
+        reset_std = layer.adapters[0].linear_in.weight.float().std().item()
+        assert reset_std == pytest.approx(math.sqrt(2.0 / (hidden + dim)), rel=0.05)
+        assert reset_std == pytest.approx(fresh_std, rel=0.05)
 
     @pytest.mark.parametrize(
         "field, value, message",
